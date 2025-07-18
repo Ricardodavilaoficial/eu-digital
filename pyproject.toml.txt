@@ -1,0 +1,11 @@
+[project]
+name = "python-template"
+version = "0.1.0"
+description = ""
+authors = [{name = "Ricardo d'Avila", email = "ricardodavilaoficial@gmail.com"}]
+requires-python = ">=3.11"
+dependencies = [
+    "flask>=3.1.1",
+    "pydub>=0.25.1",
+    "python-dotenv>=1.1.0",
+]
