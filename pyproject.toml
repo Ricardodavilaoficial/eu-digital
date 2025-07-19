@@ -1,7 +1,7 @@
 [project]
 name = "python-template"
 version = "0.1.0"
-description = ""
+description = "Meu projeto Eu Digital"
 authors = [{name = "Ricardo d'Avila", email = "ricardodavilaoficial@gmail.com"}] # Sua linha corrigida
 requires-python = ">=3.11"
 package-mode = false # <<-- ADICIONE ESTA LINHA
