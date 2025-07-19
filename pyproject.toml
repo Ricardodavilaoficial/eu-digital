@@ -2,8 +2,9 @@
 name = "python-template"
 version = "0.1.0"
 description = ""
-authors = [{name = "Ricardo d'Avila", email = "ricardodavilaoficial@gmail.com"}]
+authors = [{name = "Ricardo d'Avila", email = "ricardodavilaoficial@gmail.com"}] # Sua linha corrigida
 requires-python = ">=3.11"
+package-mode = false # <<-- ADICIONE ESTA LINHA
 dependencies = [
     "flask>=3.1.1",
     "pydub>=0.25.1",
