@@ -11,4 +11,5 @@ python = ">=3.13,<3.14"
 flask = "^3.1.1"
 pydub = "^0.25.1"
 python-dotenv = "^1.1.1"
-openai = "^1.0"  # <<-- ESTA LINHA PRECISA ESTAR AQUI!
+openai = "^1.0"
+google-cloud-storage = "^2.0" # <<-- ADICIONE ESTA LINHA AQUI!
