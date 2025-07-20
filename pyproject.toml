@@ -2,11 +2,13 @@
 name = "python-template"
 version = "0.1.0"
 description = "Meu projeto Eu Digital"
-authors = [{name = "Ricardo d'Avila", email = "ricardodavilaoficial@gmail.com"}] # Sua linha corrigida
+authors = [{name = "Ricardo d'Avila", email = "ricardodavilaoficial@gmail.com"}]
 requires-python = ">=3.11"
-package-mode = false # <<-- ADICIONE ESTA LINHA
-dependencies = [
-    "flask>=3.1.1",
-    "pydub>=0.25.1",
-    "python-dotenv>=1.1.0",
-]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.13,<3.14"
+flask = "^3.1.1"
+pydub = "^0.25.1"
+python-dotenv = "^1.1.1"
+openai = "^1.0"  # <<-- ESTA LINHA PRECISA ESTAR AQUI!
