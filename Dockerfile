@@ -10,13 +10,14 @@ WORKDIR /app
 # Copie TODOS os arquivos do seu projeto para o contêiner
 COPY . .
 
-# Instale Poetry e as dependências do Python.
-# O Python virtual environment criado pelo Poetry será '.venv' no WORKDIR.
-# Garanta que o Poetry e os binários do venv estejam no PATH.
+# Instale Poetry globalmente e instale as dependências.
+# Explicitamente defina o local do venv do Poetry dentro do contêiner.
+# Isso garante que o Render.com possa encontrá-lo e que o Poetry saiba onde está.
 RUN pip install poetry && \
+    poetry config virtualenvs.in-project true && \
     poetry install --no-root --no-dev
 
 # Comando para iniciar sua aplicação.
-# Agora, vamos chamar o Python DENTRO do ambiente virtual do Poetry diretamente.
-# Isso garante que todos os pacotes instalados (como Flask) sejam encontrados.
-CMD ["/usr/local/bin/python", "-m", "poetry", "run", "python", "main.py"]
+# Ative o ambiente virtual do Poetry e então execute o main.py.
+# 'source' precisa ser executado dentro de um shell (sh -c).
+CMD ["sh", "-c", "source .venv/bin/activate && python main.py"]
