@@ -9,15 +9,12 @@ RUN apt-get update && apt-get install -y ffmpeg --no-install-recommends && rm -r
 # Crie e defina o diretório de trabalho dentro do contêiner
 WORKDIR /app
 
-# Copie os arquivos de configuração do Poetry
-COPY pyproject.toml poetry.lock ./
+# Copie TODOS os arquivos do seu projeto para o contêiner ANTES de instalar as dependências Python
+COPY . .
 
 # Instale as dependências do Python usando Poetry
 # Utilize o --no-root para não instalar o pacote do projeto como um pacote Python (já que é um app)
 RUN pip install poetry && poetry install --no-root
-
-# Copie o restante do seu código para o contêiner
-COPY . .
 
 # Comando para iniciar sua aplicação
 # Ajuste 'main.py' se o nome do seu arquivo principal for diferente
