@@ -7,15 +7,19 @@ RUN apt-get update && apt-get install -y ffmpeg --no-install-recommends && rm -r
 # Crie e defina o diretório de trabalho dentro do contêiner
 WORKDIR /app
 
-# Copie apenas o requirements.txt primeiro para otimizar o cache
-COPY requirements.txt ./
+# Copie os arquivos de dependência do Poetry primeiro para aproveitar o cache do Docker
+COPY pyproject.toml poetry.lock ./
 
-# Instale as dependências usando pip
-RUN pip install -r requirements.txt
+# Instale Poetry globalmente e configure-o para criar o venv in-project
+# Em seguida, instale as dependências com Poetry
+RUN pip install poetry && \
+    poetry config virtualenvs.in-project true && \
+    poetry install --no-root --no-dev
 
 # Copie o restante do seu código para o contêiner
 COPY . .
 
 # Comando para iniciar sua aplicação.
-# O Python agora pode encontrar o Flask porque foi instalado globalmente pelo pip.
-CMD ["python", "main.py"]
+# Ative o ambiente virtual do Poetry e então execute o main.py usando o python desse venv.
+# 'source' precisa ser executado dentro de um shell (sh -c).
+CMD ["sh", "-c", "source .venv/bin/activate && /app/.venv/bin/python main.py"]
