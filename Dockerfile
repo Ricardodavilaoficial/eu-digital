@@ -20,4 +20,4 @@ RUN pip install poetry && \
 # Comando para iniciar sua aplicação.
 # Ative o ambiente virtual do Poetry e então execute o main.py.
 # 'source' precisa ser executado dentro de um shell (sh -c).
-CMD ["sh", "-c", "source .venv/bin/activate && python main.py"]
+CMD ["sh", "-c", "source .venv/bin/activate && /app/.venv/bin/python main.py"]
