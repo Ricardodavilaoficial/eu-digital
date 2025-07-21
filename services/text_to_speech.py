@@ -3,7 +3,8 @@
 import os
 import tempfile
 from dotenv import load_dotenv
-from elevenlabs import ElevenLabs, Voice, VoiceSettings # Importações ajustadas para a nova API
+from elevenlabs.client import ElevenLabs
+from elevenlabs import Voice, VoiceSettings
 
 load_dotenv() # Carrega as variáveis do .env (para uso local)
 
