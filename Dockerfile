@@ -9,22 +9,16 @@ WORKDIR /app
 
 # Copie os arquivos de dependência primeiro para aproveitar o cache do Docker
 # Isso otimiza o build, pois se apenas o código mudar, esta camada não precisa ser reconstruída
-COPY pyproject.toml poetry.lock requirements.txt ./ # <<-- LINHA CORRIGIDA AQUI!
+COPY pyproject.toml poetry.lock requirements.txt ./
 
-# Instale Poetry globalmente
-RUN pip install poetry
-
-# Exporte as dependências do Poetry para um requirements.txt
-# E instale-as usando pip no ambiente global do contêiner.
-# O '--without-hashes' é importante para o pip funcionar corretamente em alguns ambientes.
-RUN poetry export -f requirements.txt --output requirements.txt --without-hashes && \
-    pip install -r requirements.txt
+# Instale as dependências usando pip a partir do requirements.txt copiado
+RUN pip install -r requirements.txt
 
 # Copie o restante do seu código para o contêiner
 # Isso inclui main.py, services/, interfaces/, etc.
 COPY . .
 
 # Comando para iniciar sua aplicação.
-# Agora, o Python pode encontrar o Flask e outras libs porque foram instaladas globalmente pelo pip.
+# O Python agora pode encontrar o Flask porque foi instalado globalmente pelo pip.
 # Certifique-se de que seu Flask app está configurado para ouvir na porta 10000 (ou na variável de ambiente PORT).
 CMD ["python", "main.py"]
