@@ -9,7 +9,7 @@ WORKDIR /app
 
 # Copie os arquivos de dependência primeiro para aproveitar o cache do Docker
 # Isso otimiza o build, pois se apenas o código mudar, esta camada não precisa ser reconstruída
-COPY pyproject.toml poetry.lock ./
+COPY pyproject.toml poetry.lock requirements.txt ./ # <<-- LINHA CORRIGIDA AQUI!
 
 # Instale Poetry globalmente
 RUN pip install poetry
