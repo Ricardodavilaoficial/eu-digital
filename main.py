@@ -9,6 +9,7 @@ import uuid
 import traceback
 from dotenv import load_dotenv
 from interfaces.web_interface import html_index
+# Forçando rebuild no Render
 
 load_dotenv()
 
