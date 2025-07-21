@@ -4,7 +4,7 @@ from services.text_to_speech import gerar_audio_elevenlabs
 
 from services.audio_processing import transcrever_audio_google
 from pydub import AudioSegment
-import os
+import os # Importar 'os' é necessário para acessar variáveis de ambiente
 import uuid
 import traceback
 from dotenv import load_dotenv
@@ -28,4 +28,7 @@ def index():
 # As linhas abaixo foram reposicionadas para fora da função 'index'.
 # Elas devem estar no nível mais externo do seu arquivo.
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    # --- Linha ALTERADA para usar a porta do ambiente Render.com (10000) ---
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, debug=True)
+    # --- Fim da linha ALTERADA ---
