@@ -14,8 +14,12 @@ COPY . .
 
 # Instale as dependências do Python usando Poetry
 # Utilize o --no-root para não instalar o pacote do projeto como um pacote Python (já que é um app)
-RUN pip install poetry && poetry install --no-root
+# A variável PATH é ajustada para incluir o diretório de scripts do venv do Poetry
+# Isso permite que os comandos 'python' e 'pip' apontem para o venv
+RUN pip install poetry && poetry install --no-root --no-dev && \
+    export PATH="/root/.poetry/bin:$PATH" && \
+    export PATH="$(poetry env info --path)/bin:$PATH"
 
 # Comando para iniciar sua aplicação
-# Ajuste 'main.py' se o nome do seu arquivo principal for diferente
-CMD ["poetry", "run", "python", "main.py"]
+# Este comando agora ativa o ambiente virtual do Poetry e então executa o main.py
+CMD ["sh", "-c", "source $(poetry env info --path)/bin/activate && python main.py"]
