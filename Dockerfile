@@ -1,17 +1,18 @@
+# Usa imagem leve do Python
 FROM python:3.10-slim
 
-# Cria diretório do app
+# Define diretório de trabalho
 WORKDIR /app
 
-# Copia arquivos
-COPY . .
+# Copia todos os arquivos do projeto para o container
+COPY . /app
 
-# Instala dependências
+# Atualiza pip e instala dependências
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-# Expõe porta exigida pelo Render
+# Expõe a porta usada pelo Render.com (você já está usando a 10000 corretamente)
 EXPOSE 10000
 
-# Comando para rodar a aplicação
+# Comando para iniciar o app
 CMD ["python", "main.py"]

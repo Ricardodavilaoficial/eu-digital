@@ -29,8 +29,10 @@ conteudo_cache = {}  # Agora dicionário por caminho
 from google.oauth2 import service_account
 import os
 
-credentials = service_account.Credentials.from_service_account_file(
-    "gcloud-key.json")
+import json
+
+creds_info = json.loads(os.environ['GOOGLE_APPLICATION_CREDENTIALS_JSON'])
+credentials = service_account.Credentials.from_service_account_info(creds_info)
 storage_client = storage.Client(credentials=credentials)
 BUCKET_NAME = "eu-digital-ricardo"
 
