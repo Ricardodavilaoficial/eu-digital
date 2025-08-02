@@ -2,6 +2,7 @@ services:
   - type: web
     name: MEI Robô
     env: python
+    pythonVersion: "3.11.4"  # <-- Esta é a linha que você precisa adicionar
     plan: starter
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python main.py"
