@@ -35,7 +35,7 @@ def receber_mensagem():
             with open(caminho_webm, "wb") as f:
                 f.write(arquivo.read())
 
-            audio = AudioSegment.from_file(caminho_webm)
+            audio = AudioSegment.from_file(caminho_webm, format="webm")
             audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
             audio.export(caminho_wav, format="wav")
 
