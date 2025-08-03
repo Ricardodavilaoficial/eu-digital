@@ -101,3 +101,19 @@ def converter_para_wav(audio_file_path):
     except Exception as e:
         print(f"Erro ao converter áudio para WAV com Pydub: {e}")
         return None
+        # 🔧 Função adicionada para compatibilidade com audio_route.py
+def processar_audio(caminho_arquivo):
+    """
+    Processa um arquivo de áudio: converte para WAV e transcreve.
+    Retorna o texto transcrito.
+    """
+    try:
+        wav_path = converter_para_wav(caminho_arquivo)
+        if not wav_path:
+            raise Exception("Falha ao converter para WAV.")
+        
+        texto = transcrever_audio_google(wav_path)
+        return texto
+    except Exception as e:
+        print(f"Erro no processamento de áudio: {e}")
+        return ""
