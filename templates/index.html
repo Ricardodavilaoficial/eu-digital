@@ -7,11 +7,13 @@
   <body>
     <h1>🎤 Fale com a IA do MEI Robô</h1>
     <button id="record">▶️ Gravar (5s)</button>
+    <p id="status" style="color: green;"></p>
     <audio id="audioPlayer" controls style="display: none;"></audio>
 
     <script>
       const recordBtn = document.getElementById("record");
       const audioPlayer = document.getElementById("audioPlayer");
+      const statusPara = document.getElementById("status");
 
       recordBtn.onclick = async () => {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -27,7 +29,7 @@
         mediaRecorder.onstop = async () => {
           const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
           const formData = new FormData();
-          formData.append("file", audioBlob, "audio.webm");
+          formData.append("audio", audioBlob, "audio.webm"); // 🔧 Corrigido aqui: era "file", agora "audio"
 
           try {
             const response = await fetch("/audio", {
@@ -37,22 +39,19 @@
 
             if (!response.ok) {
               console.error("❌ Erro na resposta da IA:", response.statusText);
-              alert("Erro ao processar o áudio.");
+              statusPara.textContent = "❌ Erro na resposta da IA.";
               return;
             }
 
-            const audioBuffer = await response.blob();
-            audioPlayer.src = URL.createObjectURL(audioBuffer);
-            audioPlayer.style.display = "block";
-            audioPlayer.play();
+            const data = await response.json();
+            statusPara.textContent = `✅ Resposta da IA: ${data.resposta}`;
           } catch (err) {
             console.error("❌ Erro na requisição:", err);
-            alert("Erro ao enviar áudio.");
+            statusPara.textContent = "❌ Erro na requisição.";
           }
         };
 
         mediaRecorder.start();
-
         setTimeout(() => {
           mediaRecorder.stop();
         }, 5000); // Grava por 5 segundos
