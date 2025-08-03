@@ -21,7 +21,7 @@ app = Flask(__name__)
 from routes.routes import routes
 
 app.register_blueprint(routes)
-app.register_blueprint(media_routes)
+app.register_blueprint(media_route)
 app.register_blueprint(audio_blueprint)
 
 
