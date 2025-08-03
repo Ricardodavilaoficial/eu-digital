@@ -1,7 +1,7 @@
 Flask
 flask-cors
 openai==0.28.1
-pydub
+pydub==0.25.1
 requests
 python-dotenv
 elevenlabs>=1.0.0
