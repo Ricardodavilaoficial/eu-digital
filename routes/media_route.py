@@ -31,7 +31,7 @@ def receber_mensagem():
             temp_id = str(uuid.uuid4())
             caminho_webm = f"/tmp/{temp_id}.webm"
             caminho_wav = f"/tmp/{temp_id}.wav"
-            
+
             with open(caminho_webm, "wb") as f:
                 f.write(arquivo.read())
 
@@ -45,5 +45,4 @@ def receber_mensagem():
                 return jsonify({"erro": f"Erro ao converter áudio: {e}"}), 500
 
             texto_transcrito = transcrever_audio_google(caminho_wav)
-            resposta = obter_resposta_openai(texto_transcrito)
-            caminho
+            respo
