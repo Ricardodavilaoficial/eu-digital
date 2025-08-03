@@ -78,4 +78,5 @@ def receber_audio():
     try:
         print("🧪 Arquivos recebidos:", request.files)  # DEBUG no Render
         if "file" not in request.files:
-            return jsonify({"erro": "
+            return jsonify({"erro": "Formato de mensagem não reconhecido ou incompleto."}), 400
+
