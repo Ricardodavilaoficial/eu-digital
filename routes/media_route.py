@@ -79,10 +79,15 @@ def receber_mensagem():
 def receber_audio():
     try:
         print("🧪 Arquivos recebidos:", request.files)
+
         if "file" not in request.files:
+            print("🚫 Campo 'file' não encontrado no request.")
             return jsonify({"erro": "Arquivo de áudio não encontrado"}), 400
 
         arquivo = request.files["file"]
+        print("📦 Nome do arquivo recebido:", arquivo.filename)
+        print("📦 Tipo do arquivo recebido:", arquivo.content_type)
+
         temp_id = str(uuid.uuid4())
         caminho_webm = f"/tmp/{temp_id}.webm"
         caminho_wav = f"/tmp/{temp_id}.wav"
