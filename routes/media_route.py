@@ -31,4 +31,28 @@ def receber_mensagem():
                 "audio": caminho_audio
             })
 
-        elif tipo == "audio" and
+        elif tipo == "audio" and arquivo:
+            temp_id = str(uuid.uuid4())
+            caminho_webm = f"/tmp/{temp_id}.webm"
+            caminho_wav = f"/tmp/{temp_id}.wav"
+
+            with open(caminho_webm, "wb") as f:
+                f.write(arquivo.read())
+
+            try:
+                print("📥 Tentando abrir áudio com pydub (formato webm)...")
+                audio = AudioSegment.from_file(caminho_webm, format="webm")
+                audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+                audio.export(caminho_wav, format="wav")
+            except Exception as e:
+                print("❌ Erro ao processar áudio webm:", e)
+                return jsonify({"erro": f"Erro ao converter áudio: {e}"}), 500
+
+            texto_transcrito = transcrever_audio_google(caminho_wav)
+            resposta = obter_resposta_openai(texto_transcrito)
+            caminho_audio = gerar_audio_elevenlabs(resposta)
+
+            return jsonify({
+                "transcricao": texto_transcrito,
+                "mensagem": resposta,
+                "audio": caminho_audio
