@@ -1,6 +1,6 @@
 # routes/media_route.py
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 from services.openai_handler import obter_resposta_openai
 from services.text_to_speech import gerar_audio_elevenlabs
 from services.audio_processing import transcrever_audio_google
@@ -56,7 +56,6 @@ def receber_mensagem():
             blob = bucket.blob(nome_arquivo)
             blob.upload_from_file(arquivo)
 
-            # Mensagem informal padrão para arquivos ainda não processáveis
             resposta = f"Recebi seu arquivo aqui 🤙 Assim que possível dou uma olhada nisso!"
             caminho_audio = gerar_audio_elevenlabs(resposta)
 
@@ -71,3 +70,12 @@ def receber_mensagem():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"erro": f"Erro ao processar mensagem: {e}"}), 500
+
+
+# ✅ NOVA ROTA /audio para o botão do HTML
+@media_route.route("/audio", methods=["POST"])
+def receber_audio():
+    try:
+        print("🧪 Arquivos recebidos:", request.files)  # DEBUG no Render
+        if "file" not in request.files:
+            return jsonify({"erro": "
