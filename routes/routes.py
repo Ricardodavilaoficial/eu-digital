@@ -20,7 +20,7 @@ def index():
 def processar_audio():
     try:
         # Captura o arquivo de áudio enviado
-        audio_file = request.files.get("file")
+        audio_file = request.files.get("audio")
         if not audio_file:
             return jsonify({"error": "Nenhum arquivo de áudio enviado"}), 400
 
