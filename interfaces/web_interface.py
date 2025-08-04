@@ -53,7 +53,7 @@ def html_index():
 
                         const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
                         const formData = new FormData();
-                        formData.append("file", audioBlob, "gravacao.webm");
+                        formData.append("audio", audioBlob, "gravacao.webm");
                         formData.append("tipo", "audio");
 
                         try {

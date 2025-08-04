@@ -1,6 +1,0 @@
-services:
-  - type: web
-    name: mei-robo
-    env: docker
-    plan: starter
-    dockerfilePath: Dockerfile
