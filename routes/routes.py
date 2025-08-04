@@ -22,7 +22,9 @@ def processar_audio():
         print("🔍 request.files.keys():", list(request.files.keys()))
         print("🔍 request.form.keys():", list(request.form.keys()))
 
-        audio_file = request.files.get("audio") or request.files.get("file")
+        print("📥 request.content_type:", request.content_type)
+        print("📥 request.files:", request.files)
+        print("📥 request.form:", request.form)
         if not audio_file:
             print("🚫 Nenhum arquivo encontrado no campo 'audio' ou 'file'")
             return jsonify({"error": "Nenhum arquivo de áudio enviado"}), 400
