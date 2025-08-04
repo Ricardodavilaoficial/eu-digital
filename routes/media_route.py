@@ -18,7 +18,7 @@ media_route = Blueprint("media_route", __name__)
 @media_route.route("/mensagem", methods=["POST"])
 def receber_mensagem():
     try:
-        tipo = request.form.get("tipo")  # texto, audio, imagem, pdf...
+        tipo = request.form.get("tipo")
         usuario = request.form.get("usuario") or "cliente_desconhecido"
         arquivo = request.files.get("file")
         texto = request.form.get("texto")
@@ -40,12 +40,12 @@ def receber_mensagem():
                 f.write(arquivo.read())
 
             try:
-                print("📥 Tentando abrir áudio com pydub (formato webm)...")
+                print("📥 Convertendo .webm → .wav usando pydub")
                 audio = AudioSegment.from_file(caminho_webm, format="webm")
                 audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
                 audio.export(caminho_wav, format="wav")
             except Exception as e:
-                print("❌ Erro ao processar áudio webm:", e)
+                print("❌ Erro ao converter áudio webm:", e)
                 return jsonify({"erro": f"Erro ao converter áudio: {e}"}), 500
 
             texto_transcrito = transcrever_audio_google(caminho_wav)
@@ -82,15 +82,22 @@ def receber_mensagem():
 @media_route.route("/audio", methods=["POST"])
 def receber_audio():
     try:
-        print("🧪 Arquivos recebidos:", request.files)
+        print("📥 Requisição recebida em /audio")
+        print("📦 request.content_type:", request.content_type)
+        print("📦 request.files:", request.files)
 
         if "file" not in request.files:
-            print("🚫 Campo 'file' não encontrado no request.")
-            return jsonify({"erro": "Arquivo de áudio não encontrado"}), 400
+            print("🚫 Campo 'file' ausente no request.")
+            return jsonify({"erro": "Campo 'file' ausente."}), 400
 
         arquivo = request.files["file"]
-        print("📦 Nome do arquivo recebido:", arquivo.filename)
-        print("📦 Tipo do arquivo recebido:", arquivo.content_type)
+
+        if not arquivo or arquivo.filename == "":
+            print("🚫 Nenhum arquivo válido foi enviado.")
+            return jsonify({"erro": "Nenhum arquivo enviado."}), 400
+
+        print("📄 Nome do arquivo:", arquivo.filename)
+        print("🧾 Tipo do arquivo:", arquivo.content_type)
 
         temp_id = str(uuid.uuid4())
         caminho_webm = f"/tmp/{temp_id}.webm"
@@ -100,20 +107,23 @@ def receber_audio():
             f.write(arquivo.read())
 
         try:
-            print("📥 Tentando abrir áudio com pydub (formato webm)...")
+            print("🔄 Convertendo webm → wav com Pydub")
             audio = AudioSegment.from_file(caminho_webm, format="webm")
             audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
             audio.export(caminho_wav, format="wav")
         except Exception as e:
-            print("❌ Erro ao converter áudio webm:", e)
+            print("❌ Erro na conversão com pydub:", e)
             return jsonify({"erro": f"Erro ao converter áudio: {e}"}), 500
 
+        print("🧠 Transcrevendo áudio com Google Speech-to-Text...")
         texto_transcrito = transcrever_audio_google(caminho_wav)
+        print("📝 Texto transcrito:", texto_transcrito)
+
+        print("🧠 Enviando texto para OpenAI...")
         resposta = obter_resposta_openai(texto_transcrito)
+        print("💬 Resposta da IA:", resposta)
+
         caminho_audio = gerar_audio_elevenlabs(resposta)
+        print("🔊 Áudio gerado em:", caminho_audio)
 
-        return send_file(caminho_audio, mimetype="audio/mpeg")
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"erro": f"Erro ao processar áudio: {e}"}), 500
+        return s
