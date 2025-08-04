@@ -15,7 +15,8 @@ def index():
 
 @routes.route("/audio", methods=["POST"])
 def processar_audio():
-    try:
+    raise Exception("⚠️ Teste de log: a função /audio está atualizada e rodando")
+        try:
         print("📥 POST /audio recebido")
         print("🔍 request.files:", request.files)
         print("🔍 request.form:", request.form)
