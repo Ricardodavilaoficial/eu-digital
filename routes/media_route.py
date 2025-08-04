@@ -126,4 +126,9 @@ def receber_audio():
         caminho_audio = gerar_audio_elevenlabs(resposta)
         print("🔊 Áudio gerado em:", caminho_audio)
 
-        return s
+        return send_file(caminho_audio, mimetype="audio/mpeg")
+
+    except Exception as e:
+        print("🔥 Erro geral ao processar áudio:", e)
+        traceback.print_exc()
+        return jsonify({"erro": f"Erro geral: {e}"}), 500
