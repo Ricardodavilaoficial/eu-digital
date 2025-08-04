@@ -19,13 +19,8 @@ def index():
 @routes.route("/audio", methods=["POST"])
 def processar_audio():
     try:
-        print("📥 Requisição recebida em /audio")
-        print("🔍 request.files:", request.files)
-        print("🔍 request.form:", request.form)
-        print("🔍 request.content_type:", request.content_type)
-
-        # Captura o arquivo de áudio enviado
-        audio_file = request.files.get("audio")
+        # Tenta pegar tanto "audio" quanto "file"
+        audio_file = request.files.get("audio") or request.files.get("file")
         if not audio_file:
             return jsonify({"error": "Nenhum arquivo de áudio enviado"}), 400
 
@@ -34,27 +29,21 @@ def processar_audio():
         caminho_original = f"/tmp/{unique_id}_original.webm"
         caminho_wav = f"/tmp/{unique_id}.wav"
 
-        # Salva o áudio enviado
         with open(caminho_original, "wb") as f:
             f.write(audio_file.read())
 
-        # Converte para WAV compatível com a API de transcrição
+        # Converte para WAV
         audio = AudioSegment.from_file(caminho_original)
         audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
         audio.export(caminho_wav, format="wav")
 
-        # Transcreve o áudio para texto
         texto = transcrever_audio_google(caminho_wav)
         if not texto:
             return jsonify({"error": "Não foi possível transcrever o áudio"}), 400
 
-        # Consulta o OpenAI com o texto transcrito
         resposta = obter_resposta_openai(texto)
-
-        # Gera a resposta em áudio com a voz clonada
         caminho_resposta_audio = gerar_audio_elevenlabs(resposta)
 
-        # Retorna o áudio gerado para o navegador
         return send_file(caminho_resposta_audio, mimetype="audio/mpeg")
 
     except Exception as e:
