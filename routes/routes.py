@@ -35,27 +35,42 @@ def processar_audio():
             print("🚫 Nome de arquivo vazio")
             return jsonify({"error": "Arquivo de áudio inválido"}), 400
 
-        # Salva e converte o áudio
+        # Gera caminhos únicos
         unique_id = str(uuid.uuid4())
         caminho_original = f"/tmp/{unique_id}.webm"
         caminho_wav = f"/tmp/{unique_id}.wav"
-        audio_file.save(caminho_original)
+        caminho_debug_wav = f"/tmp/debug_audios/{unique_id}.wav"
 
-        print("🔄 Convertendo .webm para .wav")
+        # Salva o arquivo original
+        audio_file.save(caminho_original)
+        print(f"💾 Áudio .webm salvo em: {caminho_original}")
+
+        # Converte para .wav
+        print("🔄 Convertendo .webm para .wav...")
         audio = AudioSegment.from_file(caminho_original)
         audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
         audio.export(caminho_wav, format="wav")
+        print(f"✅ Convertido para WAV: {caminho_wav}")
 
-        print("📝 Transcrevendo áudio...")
+        # Salva uma cópia para debug
+        os.makedirs("/tmp/debug_audios", exist_ok=True)
+        os.system(f"cp {caminho_wav} {caminho_debug_wav}")
+        print(f"🧪 Copia de debug salva em: {caminho_debug_wav}")
+
+        # Transcreve o áudio
+        print("📝 Enviando para transcrição...")
         texto = transcrever_audio_google(caminho_wav)
-        print("📄 Texto transcrito:", texto)
+        print(f"📄 Texto transcrito: '{texto}'")
 
-        if not texto:
+        if not texto or texto.strip() == "":
+            print("⚠️ Transcrição vazia ou inaudível.")
             return jsonify({"error": "Não foi possível transcrever o áudio"}), 400
 
+        # IA responde
         resposta = obter_resposta_openai(texto)
         print("🤖 Resposta da IA:", resposta)
 
+        # Converte resposta em áudio
         caminho_audio_resposta = gerar_audio_elevenlabs(resposta)
         print("🔊 Caminho do áudio gerado:", caminho_audio_resposta)
 
