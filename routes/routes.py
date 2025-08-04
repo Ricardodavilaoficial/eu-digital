@@ -18,8 +18,9 @@ def processar_audio():
 
     try:
         print("📥 POST /audio recebido")
-        print("🔍 request.files:", request.files)
-        print("🔍 request.form:", request.form)
+        print("🔍 request.content_type:", request.content_type)
+        print("🔍 request.files.keys():", list(request.files.keys()))
+        print("🔍 request.form.keys():", list(request.form.keys()))
 
         audio_file = request.files.get("audio") or request.files.get("file")
         if not audio_file:
