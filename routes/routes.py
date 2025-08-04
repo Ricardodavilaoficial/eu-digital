@@ -19,15 +19,26 @@ def processar_audio():
     try:
         print("📥 POST /audio recebido")
         print("🔍 request.files:", request.files)
+        print("🔍 request.form:", request.form)
+        print("🔍 request.content_type:", request.content_type)
+        print("🔍 request.mimetype:", request.mimetype)
+        print("🔍 request.headers:", request.headers)
 
-        audio_file = request.files.get("audio")
-        if not audio_file:
-            return jsonify({"error": "Nenhum arquivo de áudio enviado"}), 400
+        # Verifica se veio algum arquivo
+        if 'audio' not in request.files:
+            print("🚫 Campo 'audio' não encontrado em request.files")
+            return jsonify({"error": "Campo 'audio' não encontrado no form-data"}), 400
 
+        audio_file = request.files['audio']
+
+        if audio_file.filename == "":
+            print("🚫 Nome de arquivo vazio")
+            return jsonify({"error": "Arquivo de áudio inválido"}), 400
+
+        # Salva e converte o áudio
         unique_id = str(uuid.uuid4())
         caminho_original = f"/tmp/{unique_id}.webm"
         caminho_wav = f"/tmp/{unique_id}.wav"
-
         audio_file.save(caminho_original)
 
         print("🔄 Convertendo .webm para .wav")
