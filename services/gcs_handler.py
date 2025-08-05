@@ -2,32 +2,14 @@
 
 import os
 import io
-import json
 from google.cloud import storage
-from google.oauth2 import service_account
+from google.auth import default
 from docx import Document
-from dotenv import load_dotenv
+# from dotenv import load_dotenv  # Não necessário no Render
 
-# Esta linha não deve ser usada no Render.com, pois ele gerencia as variáveis de ambiente.
-# load_dotenv()
-
+# Inicializa o cliente do Google Cloud Storage usando credenciais do arquivo via variável GOOGLE_APPLICATION_CREDENTIALS
 def get_storage_client():
-    """
-    Inicializa o cliente do Google Cloud Storage usando credenciais de uma
-    variável de ambiente JSON, que é o método recomendado para o Render.com.
-    """
-    creds_json_content = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-
-    if creds_json_content is None:
-        raise ValueError(
-            "A variável de ambiente GOOGLE_APPLICATION_CREDENTIALS_JSON "
-            "não foi encontrada. Por favor, adicione o conteúdo do seu "
-            "arquivo de credenciais JSON nela no painel do Render."
-        )
-
-    creds_info = json.loads(creds_json_content)
-    credentials = service_account.Credentials.from_service_account_info(creds_info)
-    
+    credentials, project = default()
     return storage.Client(credentials=credentials)
 
 storage_client = get_storage_client()
@@ -37,7 +19,6 @@ bucket = storage_client.bucket(bucket_name)
 
 # Cache simples por nome do arquivo
 arquivo_cache = {}
-
 
 def ler_arquivo_docx_especifico(caminho):
     if caminho in arquivo_cache:
@@ -55,7 +36,6 @@ def ler_arquivo_docx_especifico(caminho):
         print(f"Erro ao ler o arquivo {caminho} do bucket: {e}")
         return None
 
-
 def detectar_arquivos_relevantes(pergunta):
     """
     Retorna uma lista de caminhos de arquivos relevantes com base em palavras-chave simples.
@@ -71,7 +51,6 @@ def detectar_arquivos_relevantes(pergunta):
                 caminhos_relevantes.append(blob.name)
 
     return caminhos_relevantes[:3]  # no máximo 3 arquivos
-
 
 def montar_contexto_para_pergunta(pergunta):
     caminhos = detectar_arquivos_relevantes(pergunta)
