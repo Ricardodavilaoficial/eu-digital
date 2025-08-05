@@ -46,3 +46,24 @@ def gerar_audio_elevenlabs(texto):
             f.write(audio_data.content)
 
         return caminho_temp.name
+
+    except Exception as e:
+        print(f"❌ Erro ao gerar áudio com ElevenLabs: {e}")
+        traceback.print_exc()
+        return None
+
+
+if __name__ == "__main__":
+    print("🔊 Testando geração de áudio ElevenLabs localmente...")
+    if ELEVEN_API_KEY:
+        try:
+            temp_audio_file = gerar_audio_elevenlabs("Olá, Ricardo, este é um teste de áudio com a sua nova função.")
+            if temp_audio_file:
+                print(f"✅ Áudio gerado em: {temp_audio_file}")
+            else:
+                print("⚠️ Falha ao gerar áudio de teste.")
+        except Exception as e:
+            print(f"❌ Erro no teste local: {e}")
+            traceback.print_exc()
+    else:
+        print("⚠️ API Key da ElevenLabs não encontrada para teste local.")
