@@ -1,5 +1,6 @@
 import openai
 import os
+import traceback
 from services.gcs_handler import montar_contexto_para_pergunta
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -13,7 +14,7 @@ def obter_resposta_openai(pergunta):
         
         # Novo: monta um contexto enxuto baseado na pergunta
         contexto_extra = montar_contexto_para_pergunta(pergunta)
-        print(f"📚 Contexto montado: {contexto_extra[:100]}...")  # Exibe só os primeiros 100 caracteres
+        print(f"📚 Contexto montado: {contexto_extra[:100]}...")  # Mostra os primeiros 100 caracteres
 
         # Limpa o histórico se já está muito longo
         if len(chat_history) > 6:
@@ -35,14 +36,13 @@ def obter_resposta_openai(pergunta):
         # Adiciona a pergunta do usuário ao histórico
         chat_history.append({"role": "user", "content": pergunta})
 
-        # Escolhe o modelo (GPT-3.5 ou GPT-4) com base na complexidade
+        # Escolhe o modelo com base na complexidade da pergunta
         usar_gpt_4 = (
             len(pergunta.split()) > 15
             or "detalhe" in pergunta.lower()
             or "explique" in pergunta.lower()
             or "aprofund" in pergunta.lower()
         )
-
         modelo_escolhido = "gpt-4" if usar_gpt_4 else "gpt-3.5-turbo"
         print(f"🤖 Modelo escolhido: {modelo_escolhido}")
 
@@ -51,14 +51,19 @@ def obter_resposta_openai(pergunta):
             messages=chat_history
         )
 
+        if not resposta or not resposta.choices or not resposta.choices[0].message:
+            print("⚠️ Resposta da IA vazia ou inválida.")
+            return "Desculpe, não consegui formular uma resposta agora."
+
         resposta_texto = resposta.choices[0].message.content.strip()
         print(f"✅ Resposta gerada: {resposta_texto}")
 
-        # Adiciona a resposta da IA ao histórico
+        # Adiciona ao histórico
         chat_history.append({"role": "assistant", "content": resposta_texto})
 
         return resposta_texto
 
     except Exception as e:
-        print("❌ Erro com OpenAI:", e)
+        print("❌ Erro ao gerar resposta com OpenAI:")
+        traceback.print_exc()
         return "Desculpe, houve um problema ao tentar responder."
