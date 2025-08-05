@@ -2,18 +2,27 @@
 
 import os
 import io
+import json
 from google.cloud import storage
-from google.auth import default
+from google.oauth2 import service_account
 from docx import Document
-# from dotenv import load_dotenv  # Não necessário no Render
 
-# Inicializa o cliente do Google Cloud Storage usando credenciais do arquivo via variável GOOGLE_APPLICATION_CREDENTIALS
+# Inicializa o cliente do Google Cloud Storage usando JSON inline (para Render.com)
 def get_storage_client():
-    credentials, project = default()
-    return storage.Client(credentials=credentials)
+    if 'GOOGLE_APPLICATION_CREDENTIALS_JSON' in os.environ:
+        try:
+            creds_info = json.loads(os.environ['GOOGLE_APPLICATION_CREDENTIALS_JSON'])
+            credentials = service_account.Credentials.from_service_account_info(creds_info)
+            return storage.Client(credentials=credentials)
+        except Exception as e:
+            print(f"Erro ao carregar credenciais do GCS: {e}")
+            return storage.Client()
+    else:
+        print("Variável 'GOOGLE_APPLICATION_CREDENTIALS_JSON' não encontrada. Tentando autenticação padrão...")
+        return storage.Client()
 
+# Instancia o cliente e o bucket
 storage_client = get_storage_client()
-
 bucket_name = "eu-digital-ricardo"
 bucket = storage_client.bucket(bucket_name)
 
