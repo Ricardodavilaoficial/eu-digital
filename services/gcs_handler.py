@@ -65,4 +65,46 @@ def ler_arquivo_docx_especifico(caminho):
 
 def detectar_arquivos_relevantes(pergunta):
     """
-    Retorna até 3
+    Retorna até 3 arquivos .docx relevantes com base em palavras-chave da pergunta.
+    """
+    if not bucket:
+        return []
+
+    try:
+        blobs = list(bucket.list_blobs())
+        caminhos_relevantes = []
+        pergunta_lower = pergunta.lower()
+
+        for blob in blobs:
+            if blob.name.endswith(".docx") and not blob.name.startswith("~$"):
+                nome = blob.name.lower()
+                if any(palavra in nome for palavra in pergunta_lower.split()):
+                    caminhos_relevantes.append(blob.name)
+
+        return caminhos_relevantes[:3]
+    except Exception as e:
+        print(f"❌ Erro ao detectar arquivos relevantes: {e}")
+        traceback.print_exc()
+        return []
+
+
+def montar_contexto_para_pergunta(pergunta):
+    """
+    Monta um texto concatenado com o conteúdo de até 3 arquivos relevantes.
+    """
+    try:
+        caminhos = detectar_arquivos_relevantes(pergunta)
+        if not caminhos:
+            return ""
+
+        contexto = ""
+        for caminho in caminhos:
+            conteudo_arquivo = ler_arquivo_docx_especifico(caminho)
+            if conteudo_arquivo:
+                contexto += conteudo_arquivo
+
+        return contexto
+    except Exception as e:
+        print(f"❌ Erro ao montar contexto para a pergunta: {e}")
+        traceback.print_exc()
+        return ""
