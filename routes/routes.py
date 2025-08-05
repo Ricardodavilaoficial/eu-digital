@@ -73,4 +73,6 @@ def processar_audio():
         caminho_audio_resposta = gerar_audio_elevenlabs(resposta)
         print("🔊 Caminho do áudio gerado:", caminho_audio_resposta)
 
-        if not caminho_audio_resposta or not os.path.
+        if not caminho_audio_resposta or not os.path.exists(caminho_audio_resposta):
+        print("❌ Caminho do áudio não encontrado ou inválido!")
+        return jsonify({"erro": "Falha ao gerar áudio com a IA"}), 500
