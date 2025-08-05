@@ -17,48 +17,42 @@ def index():
 @routes.route("/audio", methods=["POST"])
 def processar_audio():
     try:
-        print("📥 POST /audio recebido")
-        print("🔍 request.files:", request.files)
-        print("🔍 request.form:", request.form)
-        print("🔍 request.content_type:", request.content_type)
-        print("🔍 request.mimetype:", request.mimetype)
-        print("🔍 request.headers:", request.headers)
+        print("\U0001F4E5 POST /audio recebido")
+        print("\U0001F50D request.files:", request.files)
+        print("\U0001F50D request.form:", request.form)
+        print("\U0001F50D request.content_type:", request.content_type)
+        print("\U0001F50D request.mimetype:", request.mimetype)
+        print("\U0001F50D request.headers:", request.headers)
 
-        # Verifica se veio algum arquivo
         if 'audio' not in request.files:
-            print("🚫 Campo 'audio' não encontrado em request.files")
+            print("\u274C Campo 'audio' não encontrado em request.files")
             return jsonify({"error": "Campo 'audio' não encontrado no form-data"}), 400
 
         audio_file = request.files['audio']
 
         if audio_file.filename == "":
-            print("🚫 Nome de arquivo vazio")
+            print("\u274C Nome de arquivo vazio")
             return jsonify({"error": "Arquivo de áudio inválido"}), 400
 
-        # Gera caminhos únicos
         unique_id = str(uuid.uuid4())
         caminho_original = f"/tmp/{unique_id}.webm"
         caminho_wav = f"/tmp/{unique_id}.wav"
         caminho_debug_wav = f"/tmp/debug_audios/{unique_id}.wav"
 
-        # Salva o arquivo original
         audio_file.save(caminho_original)
-        print(f"💾 Áudio .webm salvo em: {caminho_original}")
+        print(f"\U0001F4BE Áudio .webm salvo em: {caminho_original}")
 
-        # Converte para .wav
-        print("🔄 Convertendo .webm para .wav...")
+        print("\U0001F504 Convertendo .webm para .wav...")
         audio = AudioSegment.from_file(caminho_original)
         audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
         audio.export(caminho_wav, format="wav")
         print(f"✅ Convertido para WAV: {caminho_wav}")
 
-        # Salva uma cópia para debug
         os.makedirs("/tmp/debug_audios", exist_ok=True)
         os.system(f"cp {caminho_wav} {caminho_debug_wav}")
-        print(f"🧪 Copia de debug salva em: {caminho_debug_wav}")
+        print(f"\U0001F9EA Copia de debug salva em: {caminho_debug_wav}")
 
-        # Transcreve o áudio
-        print("📝 Enviando para transcrição...")
+        print("\U0001F4DD Enviando para transcrição...")
         texto = transcrever_audio_google(caminho_wav)
         print(f"📄 Texto transcrito: '{texto}'")
 
@@ -66,13 +60,15 @@ def processar_audio():
             print("⚠️ Transcrição vazia ou inaudível.")
             return jsonify({"error": "Não foi possível transcrever o áudio"}), 400
 
-        # IA responde
         resposta = obter_resposta_openai(texto)
         print("🤖 Resposta da IA:", resposta)
 
-        # Converte resposta em áudio
         caminho_audio_resposta = gerar_audio_elevenlabs(resposta)
-        print("🔊 Caminho do áudio gerado:", caminho_audio_resposta)
+        print("\U0001F50A Caminho do áudio gerado:", caminho_audio_resposta)
+
+        if not caminho_audio_resposta or not os.path.exists(caminho_audio_resposta):
+            print("❌ Caminho do áudio não encontrado ou inválido!")
+            return jsonify({"erro": "Falha ao gerar áudio com a IA"}), 500
 
         return send_file(caminho_audio_resposta, mimetype="audio/mpeg")
 
