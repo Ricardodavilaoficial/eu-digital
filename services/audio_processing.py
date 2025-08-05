@@ -1,10 +1,10 @@
 import os
 import io
 import json
+import traceback
 from google.cloud import speech
 from google.oauth2 import service_account
 from pydub import AudioSegment
-import traceback
 
 
 def get_speech_client():
@@ -17,7 +17,7 @@ def get_speech_client():
             credentials = service_account.Credentials.from_service_account_info(creds_info)
             return speech.SpeechClient(credentials=credentials)
         except Exception as e:
-            print(f"❌ Erro ao carregar credenciais do JSON embutido: {e}")
+            print(f"❌ Erro ao carregar credenciais GCS: {e}")
             traceback.print_exc()
     else:
         print("⚠️ Variável GOOGLE_APPLICATION_CREDENTIALS_JSON não encontrada. Usando fallback padrão.")
@@ -25,7 +25,7 @@ def get_speech_client():
     try:
         return speech.SpeechClient()
     except Exception as e:
-        print(f"❌ Erro ao iniciar SpeechClient padrão: {e}")
+        print(f"❌ Erro ao inicializar GCS Client: {e}")
         traceback.print_exc()
         return None
 
@@ -99,4 +99,9 @@ def processar_audio(caminho_arquivo):
         if not wav_path:
             raise Exception("Falha ao converter para WAV.")
         
-        texto = transcreve
+        texto = transcrever_audio_google(wav_path)
+        return texto
+    except Exception as e:
+        print(f"❌ Erro no processamento de áudio: {e}")
+        traceback.print_exc()
+        return ""
