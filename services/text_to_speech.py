@@ -2,7 +2,7 @@ import os
 import tempfile
 import traceback
 from dotenv import load_dotenv
-from elevenlabs import Voice, VoiceSettings, generate
+from elevenlabs import Voice, VoiceSettings
 
 # Carrega variáveis do .env
 load_dotenv()
