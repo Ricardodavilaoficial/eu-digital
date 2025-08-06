@@ -43,7 +43,8 @@ def gerar_audio_elevenlabs(texto):
         # Cria arquivo temporário com áudio
         caminho_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
         with open(caminho_temp.name, "wb") as f:
-            f.write(audio_data)
+            for chunk in audio_data:
+                f.write(chunk)
 
         return caminho_temp.name
 
