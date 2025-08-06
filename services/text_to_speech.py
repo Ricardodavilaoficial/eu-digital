@@ -29,7 +29,7 @@ def gerar_audio_elevenlabs(texto):
         audio_data = client.generate(
             text=texto,
             voice=Voice(
-                voice_id="pTx3O7lpdS2VfDrrK4Gl",
+                voice_id="yNI0cEjjllppsJrp9PWG",
                 settings=VoiceSettings(
                     stability=0.75,
                     similarity_boost=0.75,
