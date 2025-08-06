@@ -1,9 +1,9 @@
 # Usa imagem leve e moderna do Python
 FROM python:3.11-slim
 
-# Instala dependências do sistema, incluindo ffmpeg para processar áudios
+# Instala dependências do sistema, incluindo ffmpeg, git e outros
 RUN apt-get update && \
-    apt-get install -y ffmpeg gcc libffi-dev libsndfile1-dev && \
+    apt-get install -y ffmpeg git gcc libffi-dev libsndfile1-dev && \
     apt-get clean
 
 # Define o diretório de trabalho no container
