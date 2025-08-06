@@ -2,7 +2,8 @@ import os
 import tempfile
 import traceback
 from dotenv import load_dotenv
-from elevenlabs import generate, Voice, VoiceSettings
+from elevenlabs.client import ElevenLabs
+from elevenlabs import Voice, VoiceSettings
 
 # Carrega variáveis do .env
 load_dotenv()
@@ -13,6 +14,9 @@ ELEVEN_API_KEY = os.getenv("ELEVEN_API_KEY")
 if not ELEVEN_API_KEY:
     print("❌ ERRO: Variável de ambiente ELEVEN_API_KEY não configurada!")
 
+# Instancia o cliente ElevenLabs
+client = ElevenLabs(api_key=ELEVEN_API_KEY)
+
 def gerar_audio_elevenlabs(texto):
     """
     Gera um arquivo de áudio .mp3 com a voz do Ricardo via ElevenLabs.
@@ -22,7 +26,7 @@ def gerar_audio_elevenlabs(texto):
         if not ELEVEN_API_KEY:
             raise Exception("Chave da ElevenLabs não configurada.")
 
-        audio_data = generate(
+        audio_data = client.generate(
             text=texto,
             voice=Voice(
                 voice_id="pTx3O7lpdS2VfDrrK4Gl",
@@ -33,8 +37,7 @@ def gerar_audio_elevenlabs(texto):
                     use_speaker_boost=True
                 )
             ),
-            model="eleven_multilingual_v2",
-            api_key=ELEVEN_API_KEY
+            model="eleven_multilingual_v2"
         )
 
         # Cria arquivo temporário com áudio
@@ -57,3 +60,4 @@ if __name__ == "__main__":
         print(f"✅ Áudio gerado em: {temp_audio_file}")
     else:
         print("⚠️ Falha ao gerar áudio.")
+
