@@ -2,8 +2,7 @@ import os
 import tempfile
 import traceback
 from dotenv import load_dotenv
-from elevenlabs.client import ElevenLabs
-from elevenlabs import Voice, VoiceSettings
+from elevenlabs import generate, save, set_api_key, Voice, VoiceSettings
 
 # Carrega variáveis do .env para ambiente local
 load_dotenv()
@@ -14,8 +13,8 @@ ELEVEN_API_KEY = os.getenv("ELEVEN_API_KEY")
 if not ELEVEN_API_KEY:
     print("❌ ERRO: Variável de ambiente ELEVEN_API_KEY não configurada!")
 
-# Inicializa o cliente ElevenLabs somente se a chave estiver definida
-client = ElevenLabs(api_key=ELEVEN_API_KEY) if ELEVEN_API_KEY else None
+# Define a chave de API da ElevenLabs
+set_api_key(ELEVEN_API_KEY)
 
 def gerar_audio_elevenlabs(texto):
     """
@@ -23,10 +22,9 @@ def gerar_audio_elevenlabs(texto):
     Retorna o caminho do arquivo gerado ou None em caso de erro.
     """
     try:
-        if not client:
-            raise Exception("Cliente ElevenLabs não configurado corretamente.")
+        print("🎤 Gerando áudio com ElevenLabs...")
 
-        audio_data = client.audio.generate(
+        audio_data = generate(
             text=texto,
             voice=Voice(
                 voice_id="pTx3O7lpdS2VfDrrK4Gl",
@@ -42,9 +40,9 @@ def gerar_audio_elevenlabs(texto):
         )
 
         caminho_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-        with open(caminho_temp.name, "wb") as f:
-            f.write(audio_data.content)
+        save(audio_data, caminho_temp.name)
 
+        print(f"✅ Áudio salvo em: {caminho_temp.name}")
         return caminho_temp.name
 
     except Exception as e:
