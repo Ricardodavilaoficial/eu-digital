@@ -12,9 +12,11 @@ WORKDIR /app
 # Copia os arquivos do projeto
 COPY . /app
 
-# Atualiza o pip e instala as dependências Python
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+# Atualiza pip, setuptools e wheel SEM CACHE
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Instala dependências do projeto SEM CACHE
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Expõe a porta que o Render usará
 EXPOSE 10000
