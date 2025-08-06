@@ -4,7 +4,7 @@ openai==0.28.1
 pydub==0.25.1
 requests
 python-dotenv
-elevenlabs==1.1.4
+elevenlabs==1.13.5
 google-cloud-texttospeech
 google-cloud-speech
 google-cloud-storage
