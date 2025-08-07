@@ -1,6 +1,6 @@
 from services.gcs_handler import montar_contexto_para_pergunta
 
-def construir_prompt(pergunta):
+def gerar_prompt_base(pergunta):
     """
     Cria o prompt do 'clone digital' com contexto enxuto, estilo e instruções do usuário.
     """
