@@ -1,6 +1,6 @@
 from flask import Blueprint, request, send_file, jsonify
 from services.audio_processing import transcrever_audio_google
-from services.openai_handler import obter_resposta_openai
+from services.openai.openai_handler import obter_resposta_openai
 from services.text_to_speech import gerar_audio_elevenlabs
 from interfaces.web_interface import html_index
 import uuid
