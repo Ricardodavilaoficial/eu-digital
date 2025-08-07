@@ -3,7 +3,7 @@ import openai
 import traceback
 
 from services.gcs_handler import montar_contexto_para_pergunta
-from services.openai.prompt_manager import gerar_prompt_base
+from services.openai.prompt_builder import gerar_prompt_base
 from services.openai.history_manager import (
     limpar_e_iniciar,
     adicionar_entrada,
