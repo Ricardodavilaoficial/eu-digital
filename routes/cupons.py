@@ -41,3 +41,27 @@ def ativar_cupom():
     })
 
     return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!"})
+import random
+import string
+
+@cupons_bp.route("/gerar-cupom", methods=["POST"])
+def gerar_cupom():
+    dados = request.json
+    dias_validade = dados.get("validadeDias", 3)
+    plano = dados.get("plano", "start")
+
+    codigo = "MEIROBO-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+    db = firestore.Client()
+    cupom_ref = db.collection("cuponsAtivacao").document(codigo)
+
+    cupom_ref.set({
+        "used": False,
+        "redeemedBy": None,
+        "redeemedAt": None,
+        "createdAt": datetime.utcnow(),
+        "validUntil": datetime.utcnow() + timedelta(days=dias_validade),
+        "planActivated": plano
+    })
+
+    return jsonify({"codigo": codigo, "validade": dias_validade, "plano": plano})
