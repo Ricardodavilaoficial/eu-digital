@@ -10,10 +10,12 @@ import os
 
 routes = Blueprint("routes", __name__)
 
+# Página inicial renderizada pela interface HTML (usada em testes locais ou debug)
 @routes.route("/", methods=["GET"])
 def index():
     return html_index()
 
+# Rota para processar um áudio recebido (ex: do WhatsApp ou formulário)
 @routes.route("/audio", methods=["POST"])
 def processar_audio():
     try:
@@ -24,7 +26,7 @@ def processar_audio():
         print("🔍 request.mimetype:", request.mimetype)
         print("🔍 request.headers:", request.headers)
 
-        # Verifica se veio algum arquivo
+        # Verifica se veio algum arquivo chamado 'audio' no form-data
         if 'audio' not in request.files:
             print("🚫 Campo 'audio' não encontrado em request.files")
             return jsonify({"error": "Campo 'audio' não encontrado no form-data"}), 400
@@ -35,19 +37,21 @@ def processar_audio():
             print("🚫 Nome de arquivo vazio")
             return jsonify({"error": "Arquivo de áudio inválido"}), 400
 
-        # Salva e converte o áudio
+        # Gera caminho único e temporário para salvar o áudio
         unique_id = str(uuid.uuid4())
         caminho_original = f"/tmp/{unique_id}.webm"
         caminho_wav = f"/tmp/{unique_id}.wav"
         audio_file.save(caminho_original)
         print(f"💾 Áudio salvo em: {caminho_original}")
 
+        # Converte para WAV com padrão ideal para STT
         print("🔄 Convertendo .webm para .wav")
         audio = AudioSegment.from_file(caminho_original)
         audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
         audio.export(caminho_wav, format="wav")
         print(f"✅ Conversão concluída: {caminho_wav}")
 
+        # Transcreve o áudio com Google STT
         print("📝 Transcrevendo áudio...")
         texto = transcrever_audio_google(caminho_wav)
         print(f"📄 Texto transcrito: '{texto}'")
@@ -56,12 +60,15 @@ def processar_audio():
             print("⚠️ Transcrição vazia ou falhou.")
             return jsonify({"error": "Não foi possível transcrever o áudio"}), 400
 
+        # Gera resposta via OpenAI
         resposta = obter_resposta_openai(texto)
         print(f"🤖 Resposta da IA: '{resposta}'")
 
+        # Converte a resposta em áudio (voz clonada do cliente)
         caminho_audio_resposta = gerar_audio_elevenlabs(resposta)
         print(f"🔊 Caminho do áudio gerado: {caminho_audio_resposta}")
 
+        # Retorna o áudio para o frontend
         return send_file(caminho_audio_resposta, mimetype="audio/mpeg")
 
     except Exception as e:
