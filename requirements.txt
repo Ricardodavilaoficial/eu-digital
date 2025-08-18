@@ -1,12 +1,25 @@
+# Web
 Flask
 flask-cors
-openai==0.28.1
-pydub==0.25.1
+gunicorn
+
+# Utilidades
 requests
 python-dotenv
+python-dateutil
+pytz
+
+# IA / Voz
+openai==0.28.1
+pydub==0.25.1
 elevenlabs==1.13.5
+
+# Google Cloud
+firebase-admin
+google-cloud-firestore
 google-cloud-texttospeech
 google-cloud-speech
 google-cloud-storage
+
+# Docs (seu uso atual)
 python-docx
-google-cloud-firestore
