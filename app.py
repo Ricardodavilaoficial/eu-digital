@@ -2,6 +2,17 @@ import os
 from flask import Flask, request
 
 app = Flask(__name__)
+# --- Drop A: Core API (licenças + agenda) ---
+try:
+    from flask_cors import CORS
+    CORS(app, supports_credentials=True)
+except Exception:
+    pass
+
+from routes.core_api import core_api
+app.register_blueprint(core_api)
+# --- fim Drop A ---
+
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "meirobo123")
 
 @app.route("/webhook", methods=["GET"])
