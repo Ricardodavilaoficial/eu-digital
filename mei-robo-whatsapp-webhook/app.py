@@ -2,6 +2,41 @@ from flask import Flask, request
 import os, requests, json
 
 app = Flask(__name__)
+# --- Drop A: Core API (licenças + agenda) DENTRO do webhook app ---
+# permite importar módulos da pasta raiz do repositório
+import os, sys
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+# registra o blueprint principal (rotas novas)
+from routes.core_api import core_api
+
+# CORS (útil se o front chamar direto)
+try:
+    from flask_cors import CORS
+    CORS(app, supports_credentials=True)
+except Exception:
+    pass
+
+app.register_blueprint(core_api)
+
+# Health direto aqui (fora do blueprint) e rota de diagnóstico
+from flask import jsonify
+
+@app.get("/healthz")
+def _healthz():
+    return jsonify({"ok": True}), 200
+
+@app.get("/__routes")
+def _routes_dump():
+    lines = []
+    for rule in app.url_map.iter_rules():
+        methods = ",".join(sorted(rule.methods - {"HEAD", "OPTIONS"}))
+        lines.append(f"{methods:6}  {rule.rule}")
+    return "\n".join(sorted(lines)), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+# --- fim Drop A no webhook app ---
 
 # Variáveis (defina no Render)
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "meirobo123")
