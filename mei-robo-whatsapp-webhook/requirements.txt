@@ -1,3 +1,25 @@
-flask==3.0.3
-gunicorn==21.2.0
+# Web
+Flask
+gunicorn
+flask-cors
+
+# Utilidades
 requests
+python-dotenv
+python-dateutil
+pytz
+
+# IA / Voz (seu projeto já usava)
+openai==0.28.1
+pydub==0.25.1
+elevenlabs==1.13.5
+
+# Google Cloud / Firebase (necessários para Drop A)
+firebase-admin
+google-cloud-firestore
+google-cloud-texttospeech
+google-cloud-speech
+google-cloud-storage
+
+# Docs (seu uso atual)
+python-docx
