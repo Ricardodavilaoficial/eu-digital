@@ -28,6 +28,22 @@ def verify():
 def receive():
     # Aqui você processa as mensagens/events (por enquanto só confirma)
     return "EVENT_RECEIVED", 200
+# --- Healthcheck direto (fora do blueprint) ---
+from flask import jsonify
+
+@app.get("/healthz")
+def _healthz():
+    return jsonify({"ok": True}), 200
+
+# --- Dump de rotas para diagnóstico ---
+@app.get("/__routes")
+def _routes_dump():
+    # Mostra todas as rotas registradas, para conferirmos se o core_api entrou
+    lines = []
+    for rule in app.url_map.iter_rules():
+        methods = ",".join(sorted(rule.methods - {"HEAD", "OPTIONS"}))
+        lines.append(f"{methods:6}  {rule.rule}")
+    return "\n".join(sorted(lines)), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
