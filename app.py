@@ -1,5 +1,5 @@
 # app.py — entrypoint para runtime Python do Render (produção)
-# Unifica CORS, healthcheck, blueprints antigos e novos + rota de debug /__routes
+# Unifica CORS, healthcheck, blueprints antigos e novos + rotas de debug
 
 import os
 import traceback
@@ -20,7 +20,6 @@ except Exception as e:
 # Registro de Blueprints
 # -------------------------
 def _register_bp(bp, name: str):
-    """Registra um blueprint e loga sucesso/erro."""
     try:
         app.register_blueprint(bp)
         print(f"[bp] Registrado: {name}")
@@ -57,7 +56,7 @@ except Exception as e:
     print(f"[bp][erro] import core_api: {e}")
     traceback.print_exc()
 
-# Novos blueprints (onboarding + importação de preços)
+# Novos (onboarding + importação de preços)
 try:
     from routes.configuracao import config_bp
     _register_bp(config_bp, "config_bp (/api/configuracao)")
@@ -79,36 +78,6 @@ except Exception as e:
 def healthz():
     return jsonify(ok=True, scope="app")
 
-# Lista todas as rotas carregadas (debug)
-# -------------------------
-# Diagnóstico de imports (on-demand)
-# -------------------------
-@app.route("/__import_check", methods=["GET"])
-def import_check():
-    import importlib, traceback
-    results = {}
-
-    # helper para registrar só se ainda não estiver
-    def ensure_registered(bp_name: str, module_name: str, attr_name: str):
-        try:
-            mod = importlib.import_module(module_name)
-            bp = getattr(mod, attr_name)
-            if bp_name not in app.blueprints:
-                app.register_blueprint(bp)
-            return {"ok": True, "registered": True}
-        except Exception as e:
-            return {
-                "ok": False,
-                "error": f"{type(e).__name__}: {e}",
-                "trace": traceback.format_exc()
-            }
-
-    # Tenta importar/registrar os dois blueprints novos
-    results["configuracao"] = ensure_registered("config", "routes.configuracao", "config_bp")
-    results["importar_precos"] = ensure_registered("importar_precos", "routes.importar_precos", "importar_bp")
-
-    return jsonify(results)
-
 @app.route("/__routes", methods=["GET"])
 def list_routes():
     rules = []
@@ -117,6 +86,25 @@ def list_routes():
         rules.append({"rule": str(r), "endpoint": r.endpoint, "methods": methods})
     return jsonify(routes=rules, count=len(rules))
 
+@app.route("/__import_check", methods=["GET"])
+def import_check():
+    import importlib, traceback as tb
+    results = {}
+
+    def ensure_registered(bp_name: str, module_name: str, attr_name: str):
+        try:
+            mod = importlib.import_module(module_name)
+            bp = getattr(mod, attr_name)
+            if bp_name not in app.blueprints:
+                app.register_blueprint(bp)
+            return {"ok": True, "registered": True}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}", "trace": tb.format_exc()}
+
+    results["configuracao"] = ensure_registered("config", "routes.configuracao", "config_bp")
+    results["importar_precos"] = ensure_registered("importar_precos", "routes.importar_precos", "importar_bp")
+    return jsonify(results)
+
 # -------------------------
 # Página inicial
 # -------------------------
@@ -124,7 +112,6 @@ def list_routes():
 def index():
     return render_template("index.html")
 
-# Execução local opcional (não usado no Render)
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
