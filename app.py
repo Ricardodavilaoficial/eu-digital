@@ -1,52 +1,51 @@
-import os
-from flask import Flask, request
+# app.py — entrypoint para runtime Python do Render (produção)
+# Reúne tudo que estava no main.py + blueprints existentes e novos.
 
+import os
+from flask import Flask, render_template, jsonify
+
+# 1) Cria app
 app = Flask(__name__)
-# --- Drop A: Core API (licenças + agenda) ---
+
+# 2) Limites e CORS (para frontend local chamar /api/* com segurança)
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
+
 try:
     from flask_cors import CORS
-    CORS(app, supports_credentials=True)
+    CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 except Exception:
-    pass
+    pass  # se flask-cors não estiver, o app ainda sobe (mas habilite no requirements)
 
+# 3) Blueprints já existentes (do seu projeto)
+from routes.routes import routes
+from routes.teste_eleven_route import teste_eleven_route
+from routes.cupons import cupons_bp
 from routes.core_api import core_api
+
+app.register_blueprint(routes)
+app.register_blueprint(teste_eleven_route)
+app.register_blueprint(cupons_bp)
 app.register_blueprint(core_api)
-# --- fim Drop A ---
 
-VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "meirobo123")
+# 4) Blueprints novos (opcionais — try/except para não quebrar)
+try:
+    from routes.configuracao import config_bp
+    app.register_blueprint(config_bp)
+except Exception as e:
+    print(f"[warn] config_bp não registrado: {e}")
 
-@app.route("/webhook", methods=["GET"])
-def verify():
-    mode = request.args.get("hub.mode")
-    token = request.args.get("hub.verify_token")
-    challenge = request.args.get("hub.challenge")
-    if mode == "subscribe" and token == VERIFY_TOKEN:
-        return challenge, 200
-    return "Verification token mismatch", 403
+try:
+    from routes.importar_precos import importar_bp
+    app.register_blueprint(importar_bp)
+except Exception as e:
+    print(f"[warn] importar_bp não registrado: {e}")
 
-@app.route("/webhook", methods=["POST"])
-def receive():
-    # Aqui você processa as mensagens/events (por enquanto só confirma)
-    return "EVENT_RECEIVED", 200
-# --- Healthcheck direto (fora do blueprint) ---
-from flask import jsonify
+# 5) Healthcheck
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    return jsonify(ok=True, scope="app")
 
-@app.get("/healthz")
-def _healthz():
-    return jsonify({"ok": True}), 200
-
-# --- Dump de rotas para diagnóstico ---
-@app.get("/__routes")
-def _routes_dump():
-    # Mostra todas as rotas registradas, para conferirmos se o core_api entrou
-    lines = []
-    for rule in app.url_map.iter_rules():
-        methods = ",".join(sorted(rule.methods - {"HEAD", "OPTIONS"}))
-        lines.append(f"{methods:6}  {rule.rule}")
-    return "\n".join(sorted(lines)), 200, {"Content-Type": "text/plain; charset=utf-8"}
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-
-
+# 6) Página inicial (usa /templates/index.html)
+@app.route("/", methods=["GET"])
+def index():
+    return render_template("index.html")
