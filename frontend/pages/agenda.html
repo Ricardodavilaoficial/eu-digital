@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Agenda — MEI Robô</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <script defer src="/assets/layout.js"></script>
+</head>
+<body>
+  <div id="app-header"></div>
+  <main class="container">
+    <div class="card">
+      <h2>Agenda</h2>
+      <p>Cadastre compromissos manualmente (a IA também agenda via WhatsApp). Regras v1: <span class="badge">+2 dias</span> • <span class="badge">sem fins de semana</span> • <span class="badge">sem conflito</span>.</p>
+
+      <div class="grid grid-2" style="margin-top:16px">
+        <div>
+          <label for="tipo">Tipo de compromisso</label>
+          <select id="tipo" class="input">
+            <option value="visita">Visita no cliente</option>
+            <option value="visitaRecebida">Cliente vem até mim</option>
+            <option value="video">Reunião por vídeo</option>
+            <option value="outro">Outro</option>
+          </select>
+        </div>
+        <div>
+          <label for="local">Local (opcional)</label>
+          <input id="local" class="input" placeholder="Endereço, link de vídeo, etc." />
+        </div>
+
+        <div>
+          <label for="data">Data</label>
+          <input id="data" class="input" type="date" />
+        </div>
+        <div>
+          <label for="hora">Horário</label>
+          <input id="hora" class="input" type="time" />
+        </div>
+
+        <div>
+          <label for="duracaoMin">Duração (minutos)</label>
+          <input id="duracaoMin" class="input" type="number" min="15" step="5" value="30" />
+        </div>
+
+        <div>
+          <label for="clienteId">ID do Cliente</label>
+          <input id="clienteId" class="input" placeholder="ex.: cli-001" />
+        </div>
+
+        <div>
+          <label for="servicoId">ID do Serviço</label>
+          <input id="servicoId" class="input" placeholder="ex.: srv-001" />
+        </div>
+
+        <div style="grid-column:1/-1">
+          <label for="observacoes">Observações</label>
+          <textarea id="observacoes" class="input" rows="3" placeholder="Ex.: levar a lata de tinta azul"></textarea>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-top:14px">
+        <button class="btn" id="criar">Criar compromisso</button>
+        <button class="btn secondary" id="listar">Atualizar lista</button>
+      </div>
+      <pre id="out" style="margin-top:12px"></pre>
+
+      <h3 style="margin-top:20px">Meus agendamentos</h3>
+      <table class="table" id="tbl">
+        <thead>
+          <tr>
+            <th>id</th><th>data</th><th>hora</th><th>dur</th><th>tipo</th><th>estado</th><th>Ações</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+  <div id="app-footer"></div>
+
+  <script>
+    // Pega token salvo pelo login da sua UI (ou use DEV_FAKE_UID no backend)
+    const token = () => localStorage.getItem('idToken');
+
+    function isoFromLocalDateTime(dateStr, timeStr){
+      // Converte data/hora local para ISO UTC (terminando com Z) mantendo o horário que o usuário digitou
+      if(!dateStr || !timeStr) return null;
+      const [y,m,d] = dateStr.split('-').map(Number);
+      const [hh,mm] = timeStr.split(':').map(Number);
+      const local = new Date(y, m-1, d, hh, mm, 0);
+      // normaliza para UTC ISO:
+      const iso = new Date(local.getTime() - local.getTimezoneOffset()*60000).toISOString();
+      return iso.replace('.000Z','Z');
+    }
+
+    async function listar(){
+      const r = await fetch('/agendamentos', {headers:{'Authorization':'Bearer '+token()}});
+      const arr = await r.json();
+      const tb = document.querySelector('#tbl tbody');
+      tb.innerHTML = '';
+      (arr||[]).forEach(x => {
+        const dt = new Date(x.dataHora);
+        const data = dt.toLocaleDateString('pt-BR');
+        const hora = dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${x.id}</td>
+          <td>${data}</td>
+          <td>${hora}</td>
+          <td>${x.duracaoMin}</td>
+          <td>${x.tipo||'-'}</td>
+          <td>${x.estado}</td>
+          <td>
+            <button class='btn' data-id='${x.id}' data-ac='confirmar'>Confirmar</button>
+            <button class='btn secondary' data-id='${x.id}' data-ac="cancelar">Cancelar</button>
+          </td>`;
+        tb.appendChild(tr);
+      });
+      tb.querySelectorAll('button').forEach(b => b.onclick = async (ev)=>{
+        const id = ev.target.getAttribute('data-id');
+        const ac = ev.target.getAttribute('data-ac');
+        const r = await fetch(`/agendamentos/${id}`, {
+          method:'PATCH',
+          headers:{'Content-Type':'application/json','Authorization':'Bearer '+token()},
+          body: JSON.stringify({acao:ac})
+        });
+        const t = await r.text();
+        alert(t);
+        listar();
+      });
+    }
+    document.getElementById('listar').onclick = listar;
+
+    document.getElementById('criar').onclick = async () => {
+      const data = document.getElementById('data').value;
+      const hora = document.getElementById('hora').value;
+      const dataHoraISO = isoFromLocalDateTime(data, hora);
+
+      const body = {
+        clienteId:  document.getElementById('clienteId').value.trim(),
+        servicoId:  document.getElementById('servicoId').value.trim(),
+        dataHora:   dataHoraISO,
+        duracaoMin: Number(document.getElementById('duracaoMin').value || 30),
+        tipo:       document.getElementById('tipo').value,
+        local:      document.getElementById('local').value.trim() || null,
+        observacoes:document.getElementById('observacoes').value.trim() || null
+      };
+
+      const r = await fetch('/agendamentos', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+token()},
+        body: JSON.stringify(body)
+      });
+      const j = await r.json();
+      document.getElementById('out').textContent = JSON.stringify(j, null, 2);
+      if(!j.erro) listar();
+    };
+
+    // Carrega a lista ao abrir a página
+    window.addEventListener('DOMContentLoaded', listar);
+  </script>
+</body>
+</html>

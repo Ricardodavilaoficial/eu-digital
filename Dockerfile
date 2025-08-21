@@ -1,25 +1,25 @@
-# Usa imagem leve e moderna do Python
+# Dockerfile - produção (Render + Gunicorn)
 FROM python:3.11-slim
 
-# Instala dependências do sistema, incluindo ffmpeg, git e outros
+# Logs sem buffer / sem .pyc
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Dependências do sistema (enxutas)
 RUN apt-get update && \
-    apt-get install -y ffmpeg git gcc libffi-dev libsndfile1-dev && \
-    apt-get clean
+    apt-get install -y --no-install-recommends \
+        ffmpeg git curl libffi-dev libsndfile1 && \
+    rm -rf /var/lib/apt/lists/*
 
-# Define o diretório de trabalho no container
 WORKDIR /app
-
-# Copia os arquivos do projeto
 COPY . /app
 
-# Atualiza pip, setuptools e wheel SEM CACHE
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+# Python deps
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Instala dependências do projeto SEM CACHE
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Expõe a porta que o Render usará
 EXPOSE 10000
 
-# Comando para rodar a aplicação
-CMD ["python", "main.py"]
+# Gunicorn lendo a porta do Render ($PORT)
+# (shell form para interpolar $PORT corretamente)
+CMD gunicorn -w 2 -k gthread -b 0.0.0.0:$PORT main:app

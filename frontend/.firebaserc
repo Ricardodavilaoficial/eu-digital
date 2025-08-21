@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "prod": "mei-robo-prod"
+  },
+  "targets": {},
+  "etags": {}
+}

@@ -1,7 +1,7 @@
 # Web
 Flask
-flask-cors
 gunicorn
+flask-cors
 
 # Utilidades
 requests
@@ -14,12 +14,16 @@ openai==0.28.1
 pydub==0.25.1
 elevenlabs==1.13.5
 
-# Google Cloud
+# Google Cloud / Firebase
 firebase-admin
 google-cloud-firestore
 google-cloud-texttospeech
 google-cloud-speech
 google-cloud-storage
 
-# Docs (seu uso atual)
+# Tabelas (importação de preços)
+pandas
+openpyxl
+
+# Docs (opcional, para leitura .docx no GCS)
 python-docx
