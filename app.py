@@ -80,6 +80,35 @@ def healthz():
     return jsonify(ok=True, scope="app")
 
 # Lista todas as rotas carregadas (debug)
+# -------------------------
+# Diagnóstico de imports (on-demand)
+# -------------------------
+@app.route("/__import_check", methods=["GET"])
+def import_check():
+    import importlib, traceback
+    results = {}
+
+    # helper para registrar só se ainda não estiver
+    def ensure_registered(bp_name: str, module_name: str, attr_name: str):
+        try:
+            mod = importlib.import_module(module_name)
+            bp = getattr(mod, attr_name)
+            if bp_name not in app.blueprints:
+                app.register_blueprint(bp)
+            return {"ok": True, "registered": True}
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": f"{type(e).__name__}: {e}",
+                "trace": traceback.format_exc()
+            }
+
+    # Tenta importar/registrar os dois blueprints novos
+    results["configuracao"] = ensure_registered("config", "routes.configuracao", "config_bp")
+    results["importar_precos"] = ensure_registered("importar_precos", "routes.importar_precos", "importar_bp")
+
+    return jsonify(results)
+
 @app.route("/__routes", methods=["GET"])
 def list_routes():
     rules = []
