@@ -160,3 +160,4 @@ cython_debug/
 #.idea/.venv/ 
 nova chave openai.txt 
 crafty-granite-462012-h5-8c0c72fd46ce.json 
+.env* 
