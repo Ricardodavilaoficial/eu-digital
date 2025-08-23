@@ -72,6 +72,14 @@ except Exception as e:
     print(f"[bp][warn] importar_bp não registrado: {e}")
     traceback.print_exc()
 
+# Seed (criação/atualização de profissionais sem exigir áudio)
+try:
+    from routes.seed import seed_bp
+    _register_bp(seed_bp, "seed_bp (/_seed/profissional)")
+except Exception as e:
+    print(f"[bp][warn] seed_bp não registrado: {e}")
+    traceback.print_exc()
+
 # -------------------------
 # Healthcheck e Debug
 # -------------------------
