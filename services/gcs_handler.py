@@ -26,19 +26,23 @@ def get_storage_client():
     """
     Prioridade das credenciais:
       1) GOOGLE_APPLICATION_CREDENTIALS_JSON (conteúdo JSON inline)
-      2) GOOGLE_APPLICATION_CREDENTIALS (caminho para arquivo .json)
-      3) ADC (Application Default Credentials)
+      2) FIREBASE_SERVICE_ACCOUNT_JSON (mesma chave usada no Firestore)
+      3) GOOGLE_APPLICATION_CREDENTIALS (caminho para arquivo .json)
+      4) ADC (Application Default Credentials)
     """
-    # 1) JSON inline (Render)
-    json_inline = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    # 1) JSON inline (preferido no Render)
+    json_inline = (
+        os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        or os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")  # compat
+    )
     if json_inline:
         try:
             creds_info = json.loads(json_inline)
             credentials = service_account.Credentials.from_service_account_info(creds_info)
-            print("[GCS] Using GOOGLE_APPLICATION_CREDENTIALS_JSON (inline).")
-            return storage.Client(credentials=credentials)
+            print("[GCS] Using inline JSON credentials.")
+            return storage.Client(credentials=credentials, project=creds_info.get("project_id"))
         except Exception as e:
-            print(f"[GCS][ERR] Invalid GOOGLE_APPLICATION_CREDENTIALS_JSON: {e}")
+            print(f"[GCS][ERR] Invalid inline JSON credentials: {e}")
             traceback.print_exc()
 
     # 2) Caminho de arquivo
@@ -55,7 +59,7 @@ def get_storage_client():
         else:
             print(f"[GCS][WARN] File not found at GOOGLE_APPLICATION_CREDENTIALS: {json_path}")
 
-    # 3) ADC
+    # 3) ADC (último recurso, ex.: local dev com `gcloud auth application-default login`)
     try:
         print("[GCS] Using Application Default Credentials (ADC).")
         return storage.Client()
@@ -69,7 +73,7 @@ def get_storage_client():
 _storage_client = get_storage_client()
 
 # Defina no Render: GCS_BUCKET = seu-bucket
-_BUCKET_FALLBACK = "eu-digital-ricardo"  # seu atual; mantido como fallback
+_BUCKET_FALLBACK = "eu-digital-ricardo"  # fallback antigo; pode trocar p/ bucket do mei-robo-prod
 _BUCKET_NAME = os.environ.get("GCS_BUCKET") or _BUCKET_FALLBACK
 
 _bucket = _storage_client.bucket(_BUCKET_NAME) if _storage_client else None
@@ -92,8 +96,6 @@ def upload_fileobj(file_obj, dest_path: str, content_type: str = None, public: b
     """
     Sobe um arquivo (objeto file-like) para o bucket no caminho `dest_path`.
     Retorna URL pública (se public=True) OU uma Signed URL com validade de `signed_url_minutes`.
-
-    Ex.: upload_fileobj(request.files['voz'], 'profissionais/demo/voz/arquivo.wav', 'audio/wav')
     """
     bucket = _ensure_bucket()
     blob = bucket.blob(dest_path)
@@ -119,9 +121,7 @@ def upload_fileobj(file_obj, dest_path: str, content_type: str = None, public: b
 
 def upload_bytes(data: bytes, dest_path: str, content_type: str = None, public: bool = True,
                  cache_control: str = "public, max-age=3600", signed_url_minutes: int = 15) -> str:
-    """
-    Versão com bytes em memória.
-    """
+    """Versão com bytes em memória."""
     bucket = _ensure_bucket()
     blob = bucket.blob(dest_path)
     try:
@@ -144,9 +144,7 @@ def upload_bytes(data: bytes, dest_path: str, content_type: str = None, public: 
 
 
 def download_bytes(path: str) -> bytes:
-    """
-    Baixa um blob como bytes. Lança exceção se falhar.
-    """
+    """Baixa um blob como bytes. Lança exceção se falhar."""
     bucket = _ensure_bucket()
     blob = bucket.blob(path)
     try:
@@ -160,7 +158,6 @@ def download_bytes(path: str) -> bytes:
 # ----------------------------
 # Funções DOCX (opcionais)
 # ----------------------------
-# Cache simples por nome do arquivo (evita re-downloads repetidos)
 _arquivo_cache = {}
 
 def ler_arquivo_docx_especifico(caminho: str):
@@ -190,7 +187,7 @@ def ler_arquivo_docx_especifico(caminho: str):
 
 def detectar_arquivos_relevantes(pergunta: str):
     """
-    Faz uma busca simples por palavras da pergunta nos nomes dos .docx do bucket.
+    Busca simples por palavras da pergunta nos nomes dos .docx do bucket.
     Retorna até 3 caminhos.
     """
     bucket = _ensure_bucket()
