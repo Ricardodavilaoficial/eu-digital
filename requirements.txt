@@ -27,3 +27,6 @@ openpyxl
 
 # Docs (opcional, para leitura .docx no GCS)
 python-docx
+
+pyaudioop
+

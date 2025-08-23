@@ -3,9 +3,10 @@
 
 import os
 import traceback
-from flask import Flask, render_template, jsonify
+from flask import Flask, jsonify, request, send_from_directory
 
-app = Flask(__name__)
+# Serve arquivos estáticos da pasta /public como raiz do site
+app = Flask(__name__, static_folder="public", static_url_path="/")
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
 
 # CORS apenas para /api/* (frontend local chamando backend no Render)
@@ -105,12 +106,65 @@ def import_check():
     results["importar_precos"] = ensure_registered("importar_precos", "routes.importar_precos", "importar_bp")
     return jsonify(results)
 
+# --- Firestore debug (consulta direta) ---
+from services import db as dbsvc
+
+@app.route("/__doc", methods=["GET"])
+def debug_doc():
+    """
+    Ex.: /__doc?path=profissionais/demo
+    Mostra dados do doc e suas subcoleções.
+    """
+    path = (request.args.get("path") or "").strip()
+    if not path:
+        return jsonify(error="use ?path=colecao/doc[/subcolecao/doc]"), 400
+    ref = dbsvc.db.document(path)
+    snap = ref.get()
+    subcols = []
+    if snap.exists:
+        try:
+            subcols = [c.id for c in ref.collections()]
+        except Exception:
+            subcols = []
+    return jsonify(
+        path=path,
+        exists=bool(snap.exists),
+        data=(snap.to_dict() if snap.exists else None),
+        subcollections=subcols
+    )
+
+@app.route("/__list", methods=["GET"])
+def debug_list():
+    """
+    Ex.: /__list?col=profissionais/demo/precos&limit=5
+    Lista documentos de uma coleção/subcoleção.
+    """
+    col = (request.args.get("col") or "").strip()
+    try:
+        limit = int(request.args.get("limit") or 5)
+    except Exception:
+        limit = 5
+    if not col:
+        return jsonify(error="use ?col=colecao[/subcolecao]"), 400
+    q = dbsvc.db.collection(col).limit(max(1, min(50, limit)))
+    try:
+        docs = [{"id": d.id, **(d.to_dict() or {})} for d in q.stream()]
+    except Exception as e:
+        return jsonify(error=str(e)), 500
+    return jsonify(col=col, count=len(docs), docs=docs)
+
 # -------------------------
-# Página inicial
+# Página inicial (estática)
 # -------------------------
 @app.route("/", methods=["GET"])
 def index():
-    return render_template("index.html")
+    # Serve /public/index.html diretamente (sem Jinja)
+    return app.send_static_file("index.html")
+
+# (Opcional) Servir outros arquivos de /public/ (assets, pages, etc.)
+@app.route("/<path:path>", methods=["GET"])
+def static_proxy(path):
+    return send_from_directory(app.static_folder, path)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
