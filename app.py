@@ -1,7 +1,10 @@
 # app.py — entrypoint para runtime Python do Render (produção)
 # Unifica CORS, healthcheck, blueprints antigos e novos + rotas de debug
+# + Webhook da Meta (GET challenge + POST eventos)
 
 import os
+import json
+import logging
 import traceback
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -160,6 +163,30 @@ def debug_list():
     except Exception as e:
         return jsonify(error=str(e)), 500
     return jsonify(col=col, count=len(docs), docs=docs)
+
+# -------------------------
+# Webhook da Meta (GET challenge + POST eventos)
+# -------------------------
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
+
+@app.route("/webhook", methods=["GET"])
+def verify_webhook():
+    mode = request.args.get("hub.mode")
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+    if mode == "subscribe" and token == VERIFY_TOKEN:
+        return challenge or "OK", 200
+    return "Forbidden", 403
+
+@app.route("/webhook", methods=["POST"])
+def receive_webhook():
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+        logging.getLogger().info("[WEBHOOK][INCOMING] %s", json.dumps(payload))
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        logging.getLogger().exception("[WEBHOOK][ERROR] %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 # -------------------------
 # Página inicial (estática)
