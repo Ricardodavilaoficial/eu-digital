@@ -7,6 +7,7 @@ import json
 import logging
 import traceback
 import requests
+import re
 from flask import Flask, jsonify, request, send_from_directory
 print("[boot] app.py raiz carregado ✅", flush=True)
 
@@ -242,10 +243,10 @@ def verify_webhook():
     print(f"[WEBHOOK][VERIFY] fail mode={mode} token={token}", flush=True)
     return "Forbidden", 403
 
-# POST /webhook (eventos reais) — PRIORIZA RAW; remove BOM; force=True fallback
+# POST /webhook — prioriza RAW e tem fallback por REGEX para self-test no Windows
 @app.post("/webhook")
 def receive_webhook():
-    # 0) Info de cabeçalho/diagnóstico
+    # 0) Cabeçalhos p/ debug
     try:
         ct = request.content_type or "<none>"
         clen = request.content_length
@@ -253,7 +254,7 @@ def receive_webhook():
     except Exception:
         pass
 
-    # 1) Leia o corpo cru e remova BOM + espaços
+    # 1) RAW (remove BOM)
     try:
         raw = request.get_data(cache=True, as_text=True) or ""
         if raw:
@@ -265,21 +266,21 @@ def receive_webhook():
 
     data = {}
 
-    # 2) Primeiro: tentar json.loads(raw_clean)
+    # 2) Tenta json.loads(raw_clean)
     if raw_clean:
         try:
             data = json.loads(raw_clean)
         except Exception as e:
             print("[WEBHOOK][PARSE][raw][ERROR]", repr(e), flush=True)
 
-    # 3) Segundo: tentar parser do Flask (force=True)
+    # 3) Tenta parser do Flask (force=True)
     if not data:
         try:
             data = request.get_json(force=True, silent=True) or {}
         except Exception as e:
             print("[WEBHOOK][PARSE][flask][ERROR]", repr(e), flush=True)
 
-    # 4) Terceiro: tentar form-encoded com campo "entry"
+    # 4) Tenta form-encoded "entry"
     if not data and request.form:
         entry = request.form.get("entry")
         if entry:
@@ -288,14 +289,24 @@ def receive_webhook():
             except Exception as e:
                 print("[WEBHOOK][PARSE][form][ERROR]", repr(e), flush=True)
 
-    # 5) Log do payload interpretado
+    # 5) Fallback final: extrai "from" por REGEX e responde mesmo sem JSON válido
+    if not data and raw_clean:
+        m = re.search(r'"from"\s*:\s*"([^"]+)"', raw_clean)
+        if m:
+            from_number = m.group(1)
+            to_msisdn = _normalize_br_msisdn(from_number)
+            print(f"[WEBHOOK][FALLBACK][regex] from={from_number} -> {to_msisdn}", flush=True)
+            _send_text(to_msisdn, "Olá! MEI Robô ativo ✅ — webhook fallback (regex).")
+            return "EVENT_RECEIVED", 200
+
+    # 6) Log do payload interpretado
     try:
         print("[WEBHOOK][INCOMING]", json.dumps(data, ensure_ascii=False)[:1200], flush=True)
         logging.getLogger().info("[WEBHOOK][INCOMING] %s", json.dumps(data, ensure_ascii=False)[:1200])
     except Exception:
         print("[WEBHOOK][INCOMING] (non-json-printable)", flush=True)
 
-    # 6) Processamento normal (auto-reply + status)
+    # 7) Processamento normal
     try:
         for entry in data.get("entry", []):
             for change in entry.get("changes", []):
