@@ -8,11 +8,19 @@ import logging
 import traceback
 import requests
 import re
-from flask import Flask, jsonify, request, send_from_directory
-print("[boot] app.py raiz carregado ✅", flush=True)
-# --- DEBUG: fingerprint seguro do token em runtime ---
 import hashlib
+from flask import Flask, jsonify, request, send_from_directory
 
+print("[boot] app.py raiz carregado ✅", flush=True)
+
+# -------- logging básico --------
+logging.basicConfig(level=logging.INFO)
+
+# Serve arquivos estáticos da pasta /public como raiz do site
+app = Flask(__name__, static_folder="public", static_url_path="/")
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
+
+# --- DEBUG: fingerprint seguro do token em runtime ---
 def _token_fingerprint(tok: str):
     if not tok:
         return {"present": False, "length": 0, "sha256_12": None}
@@ -28,13 +36,6 @@ def __wa_debug():
         "token_fingerprint": fp,   # só length + sha256_12 (não revela o token)
         "pid": os.getpid(),
     }), 200
-
-# -------- logging básico --------
-logging.basicConfig(level=logging.INFO)
-
-# Serve arquivos estáticos da pasta /public como raiz do site
-app = Flask(__name__, static_folder="public", static_url_path="/")
-app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
 
 # CORS apenas para /api/* (frontend local chamando backend no Render)
 try:
@@ -246,7 +247,7 @@ def _send_text(to: str, body: str):
         print(f"[WHATSAPP][OUTBOUND] to={to_digits} status={r.status_code} resp={json.dumps(resp_json, ensure_ascii=False)[:800]}", flush=True)
         return r.ok, resp_json
     except Exception as e:
-        print("[ERROR] SEND:", repr(e), flush=True)
+        print("[ERROR] SEND]:", repr(e), flush=True)
         return False, {"error": repr(e)}
 
 # GET /webhook (verificação da Meta)
