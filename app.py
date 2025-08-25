@@ -1,12 +1,15 @@
 # app.py — entrypoint para runtime Python do Render (produção)
 # Unifica CORS, healthcheck, blueprints antigos e novos + rotas de debug
-# + Webhook da Meta (GET challenge + POST eventos)
+# + Webhook da Meta (GET challenge + POST eventos) com log em stdout
 
 import os
 import json
 import logging
 import traceback
 from flask import Flask, jsonify, request, send_from_directory
+
+# -------- logging básico --------
+logging.basicConfig(level=logging.INFO)
 
 # Serve arquivos estáticos da pasta /public como raiz do site
 app = Flask(__name__, static_folder="public", static_url_path="/")
@@ -182,9 +185,13 @@ def verify_webhook():
 def receive_webhook():
     try:
         payload = request.get_json(force=True, silent=True) or {}
-        logging.getLogger().info("[WEBHOOK][INCOMING] %s", json.dumps(payload))
+        # loga no stdout (Render mostra) e também no logger
+        pretty = json.dumps(payload, ensure_ascii=False)
+        print("[WEBHOOK][INCOMING]", pretty, flush=True)
+        logging.getLogger().info("[WEBHOOK][INCOMING] %s", pretty)
         return jsonify({"ok": True}), 200
     except Exception as e:
+        print("[WEBHOOK][ERROR]", str(e), flush=True)
         logging.getLogger().exception("[WEBHOOK][ERROR] %s", e)
         return jsonify({"ok": False, "error": str(e)}), 500
 
