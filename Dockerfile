@@ -8,28 +8,36 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Dependências do sistema (enxutas)
 # - ffmpeg: necessário pro pydub
 # - build-essential: compila wheels nativas quando necessário
-# - libsndfile1: alguns libs de áudio usam
+# - libsndfile1: algumas libs de áudio usam
 # - git/curl: úteis p/ instalar deps e diagnósticos
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg git curl libffi-dev libsndfile1 build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Use o path padrão do Render para evitar surpresas em paths relativos
+# Path padrão do Render; mantém imports relativos do projeto
 WORKDIR /opt/render/project/src
+ENV PYTHONPATH=/opt/render/project/src
 
-# Instale deps primeiro p/ melhor cache
+# Instala deps primeiro p/ melhor cache
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copie o restante do app
+# Copia o restante do app
 COPY . .
 
-# Render define $PORT em runtime (não precisa expor, mas mantém por clareza)
+# Render define $PORT em runtime (EXPOSE é opcional, mas ajuda em DX)
 EXPOSE 10000
+ENV PORT=10000
 
-# IMPORTANTE: se seu app principal é app.py, use app:app
-# (Se for main.py, troque para main:app)
-# Shell form para interpolar $PORT corretamente
-CMD gunicorn -w 2 -k gthread -b 0.0.0.0:$PORT app:app
+# Inicia o app PRINCIPAL da raiz (app.py -> app)
+# - gthread p/ IO (webhook/HTTP) + threads extras
+# - logs no stdout/stderr (Render capta)
+CMD gunicorn app:app \
+    -k gthread \
+    --workers 2 \
+    --threads 8 \
+    --bind 0.0.0.0:$PORT \
+    --access-logfile - \
+    --error-logfile -
