@@ -31,10 +31,10 @@ COPY . .
 EXPOSE 10000
 ENV PORT=10000
 
-# Inicia o app PRINCIPAL da raiz (app.py -> app)
+# Inicia o app PRINCIPAL carregado via server.py (ponte para app.py)
 # - gthread p/ IO (webhook/HTTP) + threads extras
 # - logs no stdout/stderr (Render capta)
-CMD gunicorn app:app \
+CMD gunicorn server:app \
     -k gthread \
     --workers 2 \
     --threads 8 \
