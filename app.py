@@ -242,57 +242,66 @@ def verify_webhook():
     print(f"[WEBHOOK][VERIFY] fail mode={mode} token={token}", flush=True)
     return "Forbidden", 403
 
-# POST /webhook (eventos reais) — resiliente a JSON inválido (fallback RAW)
+# POST /webhook (eventos reais) — PRIORIZA RAW; remove BOM; force=True fallback
 @app.post("/webhook")
 def receive_webhook():
-    # 1) Leia o corpo cru (para diagnosticar e fallback)
+    # 0) Info de cabeçalho/diagnóstico
     try:
-        raw = request.get_data(cache=True, as_text=True)  # cache=True permite reuso
+        ct = request.content_type or "<none>"
+        clen = request.content_length
+        print(f"[WEBHOOK][CT] {ct} | len={clen}", flush=True)
+    except Exception:
+        pass
+
+    # 1) Leia o corpo cru e remova BOM + espaços
+    try:
+        raw = request.get_data(cache=True, as_text=True) or ""
         if raw:
             print(f"[WEBHOOK][RAW] {raw[:800]}", flush=True)
-        else:
-            print("[WEBHOOK][RAW] <vazio>", flush=True)
+        raw_clean = raw.lstrip("\ufeff").strip()
     except Exception as e:
-        raw = ""
+        raw, raw_clean = "", ""
         print("[WEBHOOK][RAW][ERROR]", repr(e), flush=True)
 
-    # 2) Tente parsear como JSON; se vier vazio, tente do RAW e, como fallback,
-    #    tente extrair de form-encoded (quando proxies enviam como form)
     data = {}
-    try:
-        data = request.get_json(silent=True) or {}
-    except Exception:
-        data = {}
 
-    if not data and raw:
+    # 2) Primeiro: tentar json.loads(raw_clean)
+    if raw_clean:
         try:
-            data = json.loads(raw)
-        except Exception:
-            data = {}
+            data = json.loads(raw_clean)
+        except Exception as e:
+            print("[WEBHOOK][PARSE][raw][ERROR]", repr(e), flush=True)
 
+    # 3) Segundo: tentar parser do Flask (force=True)
+    if not data:
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+        except Exception as e:
+            print("[WEBHOOK][PARSE][flask][ERROR]", repr(e), flush=True)
+
+    # 4) Terceiro: tentar form-encoded com campo "entry"
     if not data and request.form:
-        # alguns clientes mandam como form: entry=[...] (string JSON)
         entry = request.form.get("entry")
         if entry:
             try:
                 data = {"entry": json.loads(entry)}
-            except Exception:
-                pass
+            except Exception as e:
+                print("[WEBHOOK][PARSE][form][ERROR]", repr(e), flush=True)
 
-    # 3) Log do payload interpretado
+    # 5) Log do payload interpretado
     try:
         print("[WEBHOOK][INCOMING]", json.dumps(data, ensure_ascii=False)[:1200], flush=True)
         logging.getLogger().info("[WEBHOOK][INCOMING] %s", json.dumps(data, ensure_ascii=False)[:1200])
     except Exception:
         print("[WEBHOOK][INCOMING] (non-json-printable)", flush=True)
 
-    # 4) Processamento normal (auto-reply + status)
+    # 6) Processamento normal (auto-reply + status)
     try:
         for entry in data.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
 
-                # 1) Mensagens do usuário -> empresa
+                # Mensagens do usuário -> empresa
                 for msg in value.get("messages", []):
                     from_number = msg.get("from")
                     if not from_number:
@@ -303,24 +312,17 @@ def receive_webhook():
                     msg_id = msg.get("id")
                     print(f"[WEBHOOK][MESSAGE] id={msg_id} type={msg_type} from={from_number}", flush=True)
 
-                    if from_number and msg_type in {"text", "audio", "image", "video", "document", "interactive", "sticker", "location"}:
+                    if from_number and msg_type in {"text","audio","image","video","document","interactive","sticker","location"}:
                         to_msisdn = _normalize_br_msisdn(from_number)
-                        body_preview = "Olá! MEI Robô ativo ✅ — sua mensagem foi recebida."
-                        _send_text(to_msisdn, body_preview)
+                        _send_text(to_msisdn, "Olá! MEI Robô ativo ✅ — sua mensagem foi recebida.")
 
-                # 2) Status de mensagens (delivered, read, sent, failed)
+                # Status (delivered/read/failed)
                 for st in value.get("statuses", []):
-                    status = st.get("status")
-                    message_id = st.get("id")
-                    ts = st.get("timestamp")
-                    recipient_id = st.get("recipient_id")
-                    errors = st.get("errors")
-                    print(f"[WEBHOOK][STATUS] id={message_id} status={status} ts={ts} recipient={recipient_id} errors={errors}", flush=True)
+                    print(f"[WEBHOOK][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}", flush=True)
 
     except Exception as e:
         print("[ERROR] HANDLER:", repr(e), flush=True)
 
-    # Resposta padrão esperada pela Meta
     return "EVENT_RECEIVED", 200
 
 # -------------------------
