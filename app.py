@@ -242,16 +242,51 @@ def verify_webhook():
     print(f"[WEBHOOK][VERIFY] fail mode={mode} token={token}", flush=True)
     return "Forbidden", 403
 
-# POST /webhook (eventos reais)
+# POST /webhook (eventos reais) — resiliente a JSON inválido (fallback RAW)
 @app.post("/webhook")
 def receive_webhook():
-    data = request.get_json(silent=True) or {}
+    # 1) Leia o corpo cru (para diagnosticar e fallback)
+    try:
+        raw = request.get_data(cache=True, as_text=True)  # cache=True permite reuso
+        if raw:
+            print(f"[WEBHOOK][RAW] {raw[:800]}", flush=True)
+        else:
+            print("[WEBHOOK][RAW] <vazio>", flush=True)
+    except Exception as e:
+        raw = ""
+        print("[WEBHOOK][RAW][ERROR]", repr(e), flush=True)
+
+    # 2) Tente parsear como JSON; se vier vazio, tente do RAW e, como fallback,
+    #    tente extrair de form-encoded (quando proxies enviam como form)
+    data = {}
+    try:
+        data = request.get_json(silent=True) or {}
+    except Exception:
+        data = {}
+
+    if not data and raw:
+        try:
+            data = json.loads(raw)
+        except Exception:
+            data = {}
+
+    if not data and request.form:
+        # alguns clientes mandam como form: entry=[...] (string JSON)
+        entry = request.form.get("entry")
+        if entry:
+            try:
+                data = {"entry": json.loads(entry)}
+            except Exception:
+                pass
+
+    # 3) Log do payload interpretado
     try:
         print("[WEBHOOK][INCOMING]", json.dumps(data, ensure_ascii=False)[:1200], flush=True)
         logging.getLogger().info("[WEBHOOK][INCOMING] %s", json.dumps(data, ensure_ascii=False)[:1200])
     except Exception:
         print("[WEBHOOK][INCOMING] (non-json-printable)", flush=True)
 
+    # 4) Processamento normal (auto-reply + status)
     try:
         for entry in data.get("entry", []):
             for change in entry.get("changes", []):
