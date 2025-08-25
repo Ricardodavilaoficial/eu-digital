@@ -10,6 +10,24 @@ import requests
 import re
 from flask import Flask, jsonify, request, send_from_directory
 print("[boot] app.py raiz carregado ✅", flush=True)
+# --- DEBUG: fingerprint seguro do token em runtime ---
+import hashlib
+
+def _token_fingerprint(tok: str):
+    if not tok:
+        return {"present": False, "length": 0, "sha256_12": None}
+    sha12 = hashlib.sha256(tok.encode("utf-8")).hexdigest()[:12]
+    return {"present": True, "length": len(tok), "sha256_12": sha12}
+
+@app.get("/__wa_debug")
+def __wa_debug():
+    fp = _token_fingerprint(os.getenv("WHATSAPP_TOKEN", ""))
+    return jsonify({
+        "graph_version": os.getenv("GRAPH_VERSION", "v22.0"),
+        "phone_number_id": os.getenv("PHONE_NUMBER_ID"),
+        "token_fingerprint": fp,   # só length + sha256_12 (não revela o token)
+        "pid": os.getpid(),
+    }), 200
 
 # -------- logging básico --------
 logging.basicConfig(level=logging.INFO)
