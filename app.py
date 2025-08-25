@@ -1,12 +1,14 @@
 # app.py — entrypoint para runtime Python do Render (produção)
 # Unifica CORS, healthcheck, blueprints antigos e novos + rotas de debug
-# + Webhook da Meta (GET challenge + POST eventos) com log em stdout
+# + Webhook da Meta (GET challenge + POST eventos) com auto-reply e logs
 
 import os
 import json
 import logging
 import traceback
+import requests
 from flask import Flask, jsonify, request, send_from_directory
+print("[boot] app.py raiz carregado ✅", flush=True)
 
 # -------- logging básico --------
 logging.basicConfig(level=logging.INFO)
@@ -93,6 +95,16 @@ except Exception as e:
 def healthz():
     return jsonify(ok=True, scope="app")
 
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify(
+        ok=True,
+        service="mei-robo-prod",
+        has_whatsapp_token=bool(os.getenv("WHATSAPP_TOKEN")),
+        has_phone_number_id=bool(os.getenv("PHONE_NUMBER_ID")),
+        graph_version=os.getenv("GRAPH_VERSION", "v22.0"),
+    )
+
 @app.route("/__routes", methods=["GET"])
 def list_routes():
     rules = []
@@ -168,32 +180,138 @@ def debug_list():
     return jsonify(col=col, count=len(docs), docs=docs)
 
 # -------------------------
-# Webhook da Meta (GET challenge + POST eventos)
+# WhatsApp / Webhook + Utilidades
 # -------------------------
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
+GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v22.0")
 
-@app.route("/webhook", methods=["GET"])
+def _normalize_br_msisdn(wa_id: str) -> str:
+    """
+    Ajusta MSISDN do Brasil para apenas dígitos.
+    Se vier sem o '9' após o DDD (12 dígitos no total), insere o '9'.
+    Ex.: 55 51 8XXXXXXX -> 55 51 9 8XXXXXXX
+    """
+    if not wa_id:
+        return ""
+    digits = "".join(ch for ch in wa_id if ch.isdigit())
+    if digits.startswith("55") and len(digits) == 12:  # sem o 9
+        digits = digits[:4] + "9" + digits[4:]
+    return digits
+
+def _send_text(to: str, body: str):
+    """Envia mensagem de texto pelo WhatsApp Cloud API."""
+    to_digits = "".join(ch for ch in (to or "") if ch.isdigit())
+    if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
+        print("[ERROR] CONFIG: Missing WHATSAPP_TOKEN or PHONE_NUMBER_ID", flush=True)
+        return False, {"error": "missing_whatsapp_config"}
+
+    url = f"https://graph.facebook.com/{GRAPH_VERSION}/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_digits,
+        "type": "text",
+        "text": {"body": body},
+    }
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=15)
+        try:
+            resp_json = r.json()
+        except Exception:
+            resp_json = {"raw": r.text}
+        print(f"[WHATSAPP][OUTBOUND] to={to_digits} status={r.status_code} resp={json.dumps(resp_json, ensure_ascii=False)[:800]}", flush=True)
+        return r.ok, resp_json
+    except Exception as e:
+        print("[ERROR] SEND:", repr(e), flush=True)
+        return False, {"error": repr(e)}
+
+# GET /webhook (verificação da Meta)
+@app.get("/webhook")
 def verify_webhook():
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
     if mode == "subscribe" and token == VERIFY_TOKEN:
-        return challenge or "OK", 200
+        print("[WEBHOOK][VERIFY] success", flush=True)
+        return str(challenge or "OK"), 200
+    print(f"[WEBHOOK][VERIFY] fail mode={mode} token={token}", flush=True)
     return "Forbidden", 403
 
-@app.route("/webhook", methods=["POST"])
+# POST /webhook (eventos reais)
+@app.post("/webhook")
 def receive_webhook():
+    data = request.get_json(silent=True) or {}
     try:
-        payload = request.get_json(force=True, silent=True) or {}
-        # loga no stdout (Render mostra) e também no logger
-        pretty = json.dumps(payload, ensure_ascii=False)
-        print("[WEBHOOK][INCOMING]", pretty, flush=True)
-        logging.getLogger().info("[WEBHOOK][INCOMING] %s", pretty)
-        return jsonify({"ok": True}), 200
+        print("[WEBHOOK][INCOMING]", json.dumps(data, ensure_ascii=False)[:1200], flush=True)
+        logging.getLogger().info("[WEBHOOK][INCOMING] %s", json.dumps(data, ensure_ascii=False)[:1200])
+    except Exception:
+        print("[WEBHOOK][INCOMING] (non-json-printable)", flush=True)
+
+    try:
+        for entry in data.get("entry", []):
+            for change in entry.get("changes", []):
+                value = change.get("value", {})
+
+                # 1) Mensagens do usuário -> empresa
+                for msg in value.get("messages", []):
+                    from_number = msg.get("from")
+                    if not from_number:
+                        contacts = value.get("contacts", [])
+                        if contacts and isinstance(contacts, list):
+                            from_number = contacts[0].get("wa_id")
+                    msg_type = msg.get("type")
+                    msg_id = msg.get("id")
+                    print(f"[WEBHOOK][MESSAGE] id={msg_id} type={msg_type} from={from_number}", flush=True)
+
+                    if from_number and msg_type in {"text", "audio", "image", "video", "document", "interactive", "sticker", "location"}:
+                        to_msisdn = _normalize_br_msisdn(from_number)
+                        body_preview = "Olá! MEI Robô ativo ✅ — sua mensagem foi recebida."
+                        _send_text(to_msisdn, body_preview)
+
+                # 2) Status de mensagens (delivered, read, sent, failed)
+                for st in value.get("statuses", []):
+                    status = st.get("status")
+                    message_id = st.get("id")
+                    ts = st.get("timestamp")
+                    recipient_id = st.get("recipient_id")
+                    errors = st.get("errors")
+                    print(f"[WEBHOOK][STATUS] id={message_id} status={status} ts={ts} recipient={recipient_id} errors={errors}", flush=True)
+
     except Exception as e:
-        print("[WEBHOOK][ERROR]", str(e), flush=True)
-        logging.getLogger().exception("[WEBHOOK][ERROR] %s", e)
-        return jsonify({"ok": False, "error": str(e)}), 500
+        print("[ERROR] HANDLER:", repr(e), flush=True)
+
+    # Resposta padrão esperada pela Meta
+    return "EVENT_RECEIVED", 200
+
+# -------------------------
+# API utilitária de envio (Plano A)
+# -------------------------
+@app.route("/api/send-text", methods=["GET", "POST"])
+def api_send_text():
+    """
+    GET: /api/send-text?to=+55XXXXXXXXXXX&body=Mensagem
+    POST: JSON { "to": "+55XXXXXXXXXXX", "body": "Mensagem" }
+    """
+    if request.method == "GET":
+        to = request.args.get("to", "")
+        body = request.args.get("body", "")
+    else:
+        data = request.get_json(silent=True) or {}
+        to = data.get("to", "")
+        body = data.get("body", "")
+
+    if not to or not body:
+        return {"ok": False, "error": "missing_to_or_body"}, 400
+
+    to_norm = _normalize_br_msisdn(to)
+    print(f"[API][SEND_TEXT] to={to} normalized={to_norm} body_preview={body[:80]}", flush=True)
+    ok, resp = _send_text(to_norm, body)
+    return ({"ok": True, "resp": resp}, 200) if ok else ({"ok": False, "resp": resp}, 500)
 
 # -------------------------
 # Página inicial (estática)
