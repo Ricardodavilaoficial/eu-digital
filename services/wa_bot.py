@@ -1,5 +1,6 @@
 # services/wa_bot.py
 # Lógica do bot WhatsApp (texto + áudio com STT) + preços, agendar e reagendar — isolada do app.py
+# Agora com normalizador PT-BR de data/hora para melhorar entendimento de áudio.
 
 import os
 import re
@@ -35,12 +36,12 @@ def fallback_text(app_tag: str, context: str) -> str:
 
 def _detect_keyword(body: str):
     t = _strip_accents_lower(body)
-    if any(k in t for k in ["preco", "precos", "preços", "tabela", "lista", "valores",
-                            "servico", "servicos", "serviço", "serviços"]):
+    if any(k in t for k in ["preco","precos","preços","tabela","lista","valores",
+                            "servico","servicos","serviço","serviços"]):
         return "precos"
     if "agendar" in t or "agenda " in t or "marcar" in t or "agendamento" in t:
         return "agendar"
-    if any(k in t for k in ["reagendar", "remarcar", "mudar horario", "mudar horário", "trocar horario", "trocar horário"]):
+    if any(k in t for k in ["reagendar","remarcar","mudar horario","mudar horário","trocar horario","trocar horário"]):
         return "reagendar"
     return None
 
@@ -155,10 +156,158 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     print("[STT] nenhum backend retornou transcrição", flush=True)
     return ""
 
+# ---------- normalizador PT-BR de data/hora ----------
+_MONTHS = {
+    "jan":1,"janeiro":1,
+    "fev":2,"fevereiro":2,
+    "mar":3,"marco":3,"março":3,
+    "abr":4,"abril":4,
+    "mai":5,"maio":5,
+    "jun":6,"junho":6,
+    "jul":7,"julho":7,
+    "ago":8,"agosto":8,
+    "set":9,"setembro":9,
+    "out":10,"outubro":10,
+    "nov":11,"novembro":11,
+    "dez":12,"dezembro":12,
+}
+_UNITS = {
+    "zero":0,"um":1,"uma":1,"primeiro":1,"dois":2,"duas":2,"tres":3,"três":3,"quatro":4,
+    "cinco":5,"seis":6,"sete":7,"oito":8,"nove":9,"dez":10,"onze":11,"doze":12,"treze":13,
+    "catorze":14,"quatorze":14,"quinze":15,"dezesseis":16,"desesseis":16,"dezessete":17,"desessete":17,
+    "dezoito":18,"dezenove":19,
+}
+_TENS = {"vinte":20,"trinta":30,"quarenta":40,"cinquenta":50}
+_PERIOD = {"manha":"manhã","manha": "manha","tarde":"tarde","noite":"noite"}
+
+def _words_to_int_pt(s: str):
+    """Converte 'vinte e tres' -> 23; 'onze' -> 11; retorna None se não entender."""
+    if not s: return None
+    s = s.strip()
+    if s in _UNITS: return _UNITS[s]
+    if s in _TENS: return _TENS[s]
+    # tens + (e + unit)
+    m = re.match(r"(vinte|trinta|quarenta|cinquenta)\s+e\s+([a-z]+)$", s)
+    if m:
+        tens = _TENS.get(m.group(1), 0)
+        unit = _UNITS.get(m.group(2), 0)
+        if tens and unit is not None:
+            return tens + unit
+    return None
+
+def _extract_day_month_from_words(t: str):
+    """Procura 'dia <word|num> de <mes>' e retorna (dd, mm) ou None."""
+    m = re.search(r"(?:\bdia\s+)?(?P<d>(\d{1,2}|[a-z]+))\s+de\s+(?P<m>[a-z]{3,9})", t)
+    if not m:
+        return None
+    d_raw = m.group("d")
+    month_raw = m.group("m")
+    # mês
+    mm = _MONTHS.get(month_raw)
+    if not mm:
+        return None
+    # dia
+    if d_raw.isdigit():
+        dd = int(d_raw)
+    else:
+        dd = _words_to_int_pt(d_raw)
+    if not dd:
+        return None
+    return dd, mm
+
+def _extract_time_from_words(t: str):
+    """
+    Retorna (hh, mi) de:
+      - 'as 14', '14:30', '10h', '10 horas', '10 e meia'
+      - 'duas da tarde', 'dez e meia da manha', 'meio dia', 'meia noite'
+    """
+    # 1) direto com dígitos
+    m = re.search(r"\b(?:as|às)?\s*(?P<h>\d{1,2})(?:[:h](?P<m>\d{2}))?\s*(?:horas?)?", t)
+    period = None
+    if re.search(r"\bda\s+manha\b|\bde\s+manha\b|\bmanh[ãa]\b", t): period = "manha"
+    elif re.search(r"\bda\s+tarde\b|\bde\s+tarde\b|\btarde\b", t): period = "tarde"
+    elif re.search(r"\bda\s+noite\b|\bde\s+noite\b|\bnoite\b", t): period = "noite"
+
+    # especiais
+    if re.search(r"\bmeio\s+dia\b", t):
+        hh, mi = 12, 0
+        if re.search(r"\bmeio\s+dia\s+e\s+meia\b", t): mi = 30
+        return hh, mi
+    if re.search(r"\bmeia\s+noite\b", t):
+        hh, mi = 0, 0
+        if re.search(r"\bmeia\s+noite\s+e\s+meia\b", t): mi = 30
+        return hh, mi
+
+    if m:
+        hh = int(m.group("h"))
+        mi = int(m.group("m")) if m.group("m") else 0
+        # 'e meia'
+        if re.search(rf"\b{hh}\s+e\s+meia\b", t):
+            mi = 30
+        # período
+        if period in ("tarde","noite") and 1 <= hh <= 11:
+            hh += 12
+        return hh, mi
+
+    # 2) horas por extenso
+    m2 = re.search(r"\b(?:as|às)?\s*([a-z]+)(?:\s*e\s*meia)?\s*(?:horas?)?", t)
+    if m2:
+        word = m2.group(1)
+        hh = _words_to_int_pt(word)
+        if hh is not None:
+            mi = 30 if re.search(r"\b"+re.escape(word)+r"\s*e\s*meia\b", t) else 0
+            if period in ("tarde","noite") and 1 <= hh <= 11:
+                hh += 12
+            return hh, mi
+
+    return None
+
+def _normalize_datetime_pt(t: str) -> str:
+    """
+    Se já tem dd/mm e hh:mm -> retorna t.
+    Senão, tenta extrair por palavras/abreviações e ANEXA ' dd/mm hh:mm' ao texto.
+    Suporta 'amanha' e 'depois de amanha'.
+    """
+    if re.search(r"\b\d{1,2}[\/\.]\d{1,2}\b", t) and re.search(r"\b\d{1,2}[:h]\d{2}\b", t):
+        return t
+
+    now = datetime.now(SP_TZ)
+    dd = mm = None
+    # 'amanha' / 'depois de amanha'
+    if "depois de amanha" in t:
+        base = now + timedelta(days=2)
+        dd, mm = base.day, base.month
+    elif "amanha" in t:
+        base = now + timedelta(days=1)
+        dd, mm = base.day, base.month
+
+    # 'dia <x> de <mes>'
+    dm = _extract_day_month_from_words(t)
+    if dm:
+        dd, mm = dm
+
+    # hora
+    hh = mi = None
+    # já há horário em dígitos?
+    if re.search(r"\b\d{1,2}[:h]\d{2}\b", t):
+        hm = re.search(r"\b(\d{1,2})[:h](\d{2})\b", t)
+        hh, mi = int(hm.group(1)), int(hm.group(2))
+        # período (tarde/noite) pode ajustar
+        if re.search(r"\b(tarde|noite)\b", t) and 1 <= hh <= 11:
+            hh += 12
+    else:
+        ht = _extract_time_from_words(t)
+        if ht:
+            hh, mi = ht
+
+    if dd and mm and hh is not None and mi is not None:
+        return f"{t} {dd:02d}/{mm:02d} {hh:02d}:{mi:02d}"
+    return t
+
 # ---------- helpers agenda ----------
 def _parse_datetime_br(text_norm: str):
-    d = re.search(r'(\b\d{1,2})[\/\.-](\d{1,2})(?:[\/\.-](\d{2,4}))?', text_norm)
-    h = re.search(r'(\b\d{1,2})[:h](\d{2})', text_norm)
+    d = re.search(r"(\b\d{1,2})[\/\.-](\d{1,2})(?:[\/\.-](\d{2,4}))?", text_norm)
+    h = re.search(r"(\b\d{1,2})[:h](\d{2})", text_norm)
     if not d or not h:
         return None
     day = int(d.group(1))
@@ -202,13 +351,6 @@ def _resolve_cliente_id(uid_default: str, wa_id: str, to_msisdn: str) -> str:
     return wa_id or to_msisdn or "anon"
 
 def _find_target_agendamento(uid: str, cliente_id: str, wa_id: str, telefone: str):
-    """
-    Busca o agendamento 'ativo' mais recente do cliente:
-      1) por clienteId; fallback
-      2) por clienteWaId; fallback
-      3) por telefone
-    Estados considerados: solicitado, confirmado
-    """
     estados = ["solicitado", "confirmado"]
     candidatos = []
 
@@ -250,7 +392,6 @@ def _find_target_agendamento(uid: str, cliente_id: str, wa_id: str, telefone: st
     if not candidatos:
         return None
 
-    # escolher o mais recente por createdAt (ou inicio)
     def _iso_or_none(s):
         try:
             return datetime.fromisoformat(s.replace("Z","+00:00"))
@@ -270,10 +411,13 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
                 "Ex.: agendar Pitch 30/08 14:00\n\n"
                 f"Serviços disponíveis: {nomes}")
 
-    dt = _parse_datetime_br(text_norm)
+    # NORMALIZAÇÃO (fala -> dd/mm hh:mm)
+    text_norm2 = _normalize_datetime_pt(text_norm)
+    dt = _parse_datetime_br(text_norm2)
     if not dt:
         return "Informe a data e hora assim: dd/mm hh:mm\nEx.: agendar Pitch 30/08 14:00"
 
+    # dados do contato
     wa_id = ""
     nome_contato = ""
     try:
@@ -337,7 +481,9 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
             f"Se precisar alterar, responda: reagendar <dd/mm> <hh:mm>")
 
 def _reagendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str):
-    dt = _parse_datetime_br(text_norm)
+    # NORMALIZAÇÃO (fala -> dd/mm hh:mm)
+    text_norm2 = _normalize_datetime_pt(text_norm)
+    dt = _parse_datetime_br(text_norm2)
     if not dt:
         return "Para reagendar, envie assim: reagendar <dd/mm> <hh:mm>"
 
