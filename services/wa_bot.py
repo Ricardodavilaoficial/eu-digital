@@ -68,7 +68,7 @@ def load_prices(uid: str):
         for d in q:
             obj = d.to_dict() or {}
             if obj.get("ativo", True):
-                obj["id"] = d.id  # <--- IMPORTANTE: id do documento
+                obj["id"] = d.id  # id do documento
                 obj["nomeLower"] = obj.get("nomeLower") or (obj.get("nome", "") or "").lower()
                 ps_items.append(obj)
     except Exception as e:
@@ -253,10 +253,11 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
         "clienteWaId": wa_id,
         "clienteNome": nome_contato,
         "telefone": to_msisdn,
-        "servicoId": servico_id,           # <--- AGORA ENVIAMOS
+        "servicoId": servico_id,           # requerido
         "servicoNome": svc.get("nome") or svc.get("nomeLower"),
         "duracaoMin": dur,
         "preco": svc.get("preco") or svc.get("valor"),
+        "dataHora": dt.isoformat(),        # <--- NOVO: compat c/ services.schedule
         "inicio": dt.isoformat(),
         "fim": fim.isoformat(),
         "observacoes": (body_text or "")[:500],
