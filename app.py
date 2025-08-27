@@ -1,5 +1,6 @@
 # app.py — entrypoint para runtime Python do Render (produção)
 # Webhook Meta + auto-reply + handler "precos" (texto) consultando Firestore
+# + ÁUDIO: STT -> mesma detecção de 'precos' e listagem dinâmica
 
 import os
 import json
@@ -157,10 +158,10 @@ def _strip_accents_lower(s: str) -> str:
 
 def _detect_keyword(body: str):
     t = _strip_accents_lower(body)
-    # aceita variações: preco, preços, servico(s), tabela
-    if any(k in t for k in ["preco", "precos", "preços", "tabela"]):
+    # aceita variações: preco, preços, servico(s), tabela, lista, valores
+    if any(k in t for k in ["preco", "precos", "preços", "tabela", "lista", "valores"]):
         return "precos"
-    if any(k in t for k in ["servico", "servicos", "serviço", "serviços", "lista", "valores"]):
+    if any(k in t for k in ["servico", "servicos", "serviço", "serviços"]):
         return "precos"
     return None
 
@@ -178,7 +179,9 @@ def load_prices(uid: str):
 
     ps_items = []
     try:
-        q = DB.collection("profissionais").document(uid).collection("produtosEServicos").where("ativo", "==", True).stream()
+        q = (DB.collection("profissionais").document(uid)
+                .collection("produtosEServicos")
+                .where("ativo", "==", True).stream())
         for d in q:
             obj = d.to_dict() or {}
             if obj.get("ativo", True):
@@ -238,6 +241,21 @@ def _send_text(to: str, body: str):
     except Exception as e:
         print("[ERROR] SEND]:", repr(e), flush=True)
         return False, {"error": repr(e)}
+
+# --- STT helper: tenta usar services.audio_processing; se falhar, retorna vazio ---
+def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: str = "pt-BR") -> str:
+    """
+    Preferência: services.audio_processing.transcribe_audio_bytes(...)
+    Deve retornar string da transcrição. Em caso de falha, retorna "".
+    """
+    try:
+        from services.audio_processing import transcribe_audio_bytes
+        text = transcribe_audio_bytes(audio_bytes, mime_type=mime_type, language=language) or ""
+        print(f"[STT] ok text='{text[:120]}'", flush=True)
+        return text
+    except Exception as e:
+        print(f"[STT][WARN] fallback sem transcrição ({e})", flush=True)
+        return ""
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
@@ -333,7 +351,8 @@ def receive_webhook():
                     print(f"[WEBHOOK][MESSAGE] id={msg_id} type={msg_type} from={from_number}", flush=True)
 
                     to_msisdn = _normalize_br_msisdn(from_number or "")
-                    # Apenas tratamos TEXTO nesta etapa
+
+                    # TEXTO
                     if msg_type == "text":
                         body = (msg.get("text") or {}).get("body", "")
                         kw = _detect_keyword(body)
@@ -345,9 +364,61 @@ def receive_webhook():
                             _send_text(to_msisdn, reply)
                             continue
 
+                    # ÁUDIO -> STT -> mesma detecção
+                    elif msg_type == "audio":
+                        token = os.getenv("WHATSAPP_TOKEN")
+                        gv = os.getenv("GRAPH_VERSION", "v22.0")
+                        audio = msg.get("audio") or {}
+                        media_id = audio.get("id")
+                        try:
+                            if not media_id:
+                                print("[AUDIO] sem media_id", flush=True)
+                                _send_text(to_msisdn, fallback_text("audio:sem-media_id"))
+                                continue
+
+                            # 1) obter URL do media
+                            info = requests.get(
+                                f"https://graph.facebook.com/{gv}/{media_id}",
+                                headers={"Authorization": f"Bearer {token}"}, timeout=15
+                            ).json()
+                            media_url = info.get("url")
+                            print(f"[AUDIO] media_id={media_id} url={bool(media_url)}", flush=True)
+                            if not media_url:
+                                _send_text(to_msisdn, fallback_text("audio:sem-url"))
+                                continue
+
+                            # 2) baixar bytes
+                            r = requests.get(media_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+                            audio_bytes = r.content or b""
+                            print(f"[AUDIO] bytes={len(audio_bytes)}", flush=True)
+                            if not audio_bytes:
+                                _send_text(to_msisdn, fallback_text("audio:bytes=0"))
+                                continue
+
+                            # 3) transcrever (pt-BR)
+                            text = stt_transcribe(audio_bytes, mime_type="audio/ogg", language="pt-BR")
+                            text_norm = _strip_accents_lower(text)
+                            print(f"[AUDIO][STT] '{text_norm}'", flush=True)
+
+                            # 4) detectar keyword e responder
+                            kw = _detect_keyword(text_norm)
+                            if kw == "precos":
+                                uid = UID_DEFAULT
+                                items, dbg = load_prices(uid)
+                                dbg["uid"] = uid
+                                reply = format_prices_reply(items, dbg)
+                                _send_text(to_msisdn, reply)
+                            else:
+                                _send_text(to_msisdn, fallback_text(f"audio:kw-nok::{text_norm[:30]}"))
+
+                        except Exception as e:
+                            print("[AUDIO][ERROR]", repr(e), flush=True)
+                            _send_text(to_msisdn, fallback_text("audio:error"))
+
                     # Demais casos (ou não reconheceu keyword) -> fallback etiquetado
-                    if to_msisdn:
-                        _send_text(to_msisdn, fallback_text("path=app.py:default"))
+                    else:
+                        if to_msisdn:
+                            _send_text(to_msisdn, fallback_text("path=app.py:default"))
 
                 # --- statuses ---
                 for st in value.get("statuses", []):
