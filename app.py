@@ -242,20 +242,77 @@ def _send_text(to: str, body: str):
         print("[ERROR] SEND]:", repr(e), flush=True)
         return False, {"error": repr(e)}
 
-# --- STT helper: tenta usar services.audio_processing; se falhar, retorna vazio ---
+# --- STT helper: tenta vários nomes em services.audio_processing; fallback para OpenAI Whisper ---
 def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: str = "pt-BR") -> str:
-    """
-    Preferência: services.audio_processing.transcribe_audio_bytes(...)
-    Deve retornar string da transcrição. Em caso de falha, retorna "".
-    """
+    # 1) tentar services.audio_processing com vários nomes de função
     try:
-        from services.audio_processing import transcribe_audio_bytes
-        text = transcribe_audio_bytes(audio_bytes, mime_type=mime_type, language=language) or ""
-        print(f"[STT] ok text='{text[:120]}'", flush=True)
-        return text
+        import inspect
+        import services.audio_processing as ap
+        candidates = [
+            "transcribe_audio_bytes", "transcribe_audio", "stt_transcribe",
+            "speech_to_text", "stt_bytes", "transcrever_audio_bytes", "transcrever_audio"
+        ]
+        for name in candidates:
+            f = getattr(ap, name, None)
+            if not callable(f):
+                continue
+            try:
+                # tentativas de chamada com assinaturas diferentes
+                try:
+                    text = f(audio_bytes, mime_type=mime_type, language=language)
+                except TypeError:
+                    try:
+                        text = f(audio_bytes, language=language)
+                    except TypeError:
+                        try:
+                            text = f(audio_bytes)
+                        except TypeError:
+                            # última cartada: inspeciona e mapeia kwargs suportados
+                            sig = inspect.signature(f)
+                            kwargs = {}
+                            if "mime_type" in sig.parameters: kwargs["mime_type"] = mime_type
+                            if "language" in sig.parameters: kwargs["language"] = language
+                            text = f(audio_bytes, **kwargs)
+                text = (text or "").strip()
+                if text:
+                    print(f"[STT] services.audio_processing.{name}='{text[:120]}'", flush=True)
+                    return text
+            except Exception as e:
+                print(f"[STT] {name} falhou: {e}", flush=True)
     except Exception as e:
-        print(f"[STT][WARN] fallback sem transcrição ({e})", flush=True)
-        return ""
+        print(f"[STT] módulo services.audio_processing indisponível: {e}", flush=True)
+
+    # 2) fallback OpenAI Whisper (se OPENAI_API_KEY estiver setado)
+    try:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key and audio_bytes:
+            # normalizar idioma: pt-BR -> pt
+            lang = "pt" if language.lower().startswith("pt") else language.split("-")[0]
+            files = {
+                "file": ("audio.ogg", audio_bytes, mime_type or "audio/ogg"),
+            }
+            data = {
+                "model": "whisper-1",
+                "language": lang
+            }
+            headers = {"Authorization": f"Bearer {api_key}"}
+            resp = requests.post("https://api.openai.com/v1/audio/transcriptions",
+                                 headers=headers, files=files, data=data, timeout=60)
+            js = {}
+            try:
+                js = resp.json()
+            except Exception:
+                pass
+            text = (js.get("text") if isinstance(js, dict) else "") or ""
+            text = text.strip()
+            print(f"[STT] openai whisper status={resp.status_code} text='{text[:120]}'", flush=True)
+            return text
+    except Exception as e:
+        print(f"[STT] openai whisper erro: {e}", flush=True)
+
+    # 3) sem STT
+    print("[STT] nenhum backend retornou transcrição", flush=True)
+    return ""
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
@@ -396,7 +453,8 @@ def receive_webhook():
                                 continue
 
                             # 3) transcrever (pt-BR)
-                            text = stt_transcribe(audio_bytes, mime_type="audio/ogg", language="pt-BR")
+                            mt = (audio.get("mime_type") or "audio/ogg").split(";")[0].strip()
+                            text = stt_transcribe(audio_bytes, mime_type=mt, language="pt-BR")
                             text_norm = _strip_accents_lower(text)
                             print(f"[AUDIO][STT] '{text_norm}'", flush=True)
 
