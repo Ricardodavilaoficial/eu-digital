@@ -1,5 +1,5 @@
 # services/wa_bot.py
-# Lógica do bot WhatsApp (texto + áudio com STT) + "agendar", isolada do app.py
+# Lógica do bot WhatsApp (texto + áudio com STT) + preços, agendar e reagendar — isolada do app.py
 
 import os
 import re
@@ -40,9 +40,11 @@ def _detect_keyword(body: str):
         return "precos"
     if "agendar" in t or "agenda " in t or "marcar" in t or "agendamento" in t:
         return "agendar"
+    if any(k in t for k in ["reagendar", "remarcar", "mudar horario", "mudar horário", "trocar horario", "trocar horário"]):
+        return "reagendar"
     return None
 
-# ---------- Firestore (preços) ----------
+# ---------- preços ----------
 def load_prices(uid: str):
     """
     Retorna (items, debug) onde cada item tem:
@@ -68,13 +70,12 @@ def load_prices(uid: str):
         for d in q:
             obj = d.to_dict() or {}
             if obj.get("ativo", True):
-                obj["id"] = d.id  # id do documento
+                obj["id"] = d.id
                 obj["nomeLower"] = obj.get("nomeLower") or (obj.get("nome", "") or "").lower()
                 ps_items.append(obj)
     except Exception as e:
         print(f"[prices] erro lendo subcol produtosEServicos: {e}", flush=True)
 
-    # dedup por nomeLower (prioriza map)
     dedup = {}
     for it in map_items + ps_items:
         key = (it.get("nomeLower") or "").strip()
@@ -99,7 +100,6 @@ def format_prices_reply(uid: str, items, debug):
 
 # ---------- STT ----------
 def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: str = "pt-BR") -> str:
-    # 1) tentar services.audio_processing com nomes variados
     try:
         import inspect
         import services.audio_processing as ap
@@ -132,7 +132,6 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     except Exception as e:
         print(f"[STT] módulo services.audio_processing indisponível: {e}", flush=True)
 
-    # 2) fallback OpenAI Whisper (se habilitado e houver chave)
     try:
         if os.getenv("ENABLE_STT_OPENAI","true").lower() in ("1","true","yes"):
             api_key = os.getenv("OPENAI_API_KEY")
@@ -156,12 +155,8 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     print("[STT] nenhum backend retornou transcrição", flush=True)
     return ""
 
-# ---------- helpers de agenda ----------
+# ---------- helpers agenda ----------
 def _parse_datetime_br(text_norm: str):
-    """
-    Extrai dd/mm e hh:mm do texto normalizado. Retorna datetime tz-aware (SP) ou None.
-    Ex.: 'agendar pitch 30/08 14:00'
-    """
     d = re.search(r'(\b\d{1,2})[\/\.-](\d{1,2})(?:[\/\.-](\d{2,4}))?', text_norm)
     h = re.search(r'(\b\d{1,2})[:h](\d{2})', text_norm)
     if not d or not h:
@@ -179,7 +174,6 @@ def _parse_datetime_br(text_norm: str):
         return None
 
 def _choose_service(items, text_norm: str):
-    """Escolhe serviço pela melhor ocorrência no texto; se 1 item, usa direto."""
     if not items:
         return None
     if len(items) == 1:
@@ -191,17 +185,12 @@ def _choose_service(items, text_norm: str):
         alias_norm = _strip_accents_lower(alias)
         if not alias_norm:
             continue
-        if alias_norm in text_norm:
-            if len(alias_norm) > best_len:
-                best = it
-                best_len = len(alias_norm)
+        if alias_norm in text_norm and len(alias_norm) > best_len:
+            best = it
+            best_len = len(alias_norm)
     return best
 
 def _resolve_cliente_id(uid_default: str, wa_id: str, to_msisdn: str) -> str:
-    """
-    Tenta achar cliente em profissionais/{uid}/clientes por waId.
-    Se não achar, usa o próprio wa_id (ou o msisdn) como clienteId.
-    """
     try:
         if wa_id:
             q = (DB.collection(f"profissionais/{uid_default}/clientes")
@@ -212,8 +201,67 @@ def _resolve_cliente_id(uid_default: str, wa_id: str, to_msisdn: str) -> str:
         print(f"[WA_BOT][AGENDA] lookup cliente por waId falhou: {e}", flush=True)
     return wa_id or to_msisdn or "anon"
 
+def _find_target_agendamento(uid: str, cliente_id: str, wa_id: str, telefone: str):
+    """
+    Busca o agendamento 'ativo' mais recente do cliente:
+      1) por clienteId; fallback
+      2) por clienteWaId; fallback
+      3) por telefone
+    Estados considerados: solicitado, confirmado
+    """
+    estados = ["solicitado", "confirmado"]
+    candidatos = []
+
+    try:
+        q = (DB.collection(f"profissionais/{uid}/agendamentos")
+               .where("clienteId", "==", cliente_id)
+               .where("estado", "in", estados).limit(10).stream())
+        for d in q:
+            obj = d.to_dict() or {}
+            obj["_id"] = d.id
+            candidatos.append(obj)
+    except Exception as e:
+        print(f"[WA_BOT][AGENDA] query por clienteId falhou: {e}", flush=True)
+
+    if not candidatos and wa_id:
+        try:
+            q = (DB.collection(f"profissionais/{uid}/agendamentos")
+                   .where("clienteWaId", "==", wa_id)
+                   .where("estado", "in", estados).limit(10).stream())
+            for d in q:
+                obj = d.to_dict() or {}
+                obj["_id"] = d.id
+                candidatos.append(obj)
+        except Exception as e:
+            print(f"[WA_BOT][AGENDA] query por clienteWaId falhou: {e}", flush=True)
+
+    if not candidatos and telefone:
+        try:
+            q = (DB.collection(f"profissionais/{uid}/agendamentos")
+                   .where("telefone", "==", telefone)
+                   .where("estado", "in", estados).limit(10).stream())
+            for d in q:
+                obj = d.to_dict() or {}
+                obj["_id"] = d.id
+                candidatos.append(obj)
+        except Exception as e:
+            print(f"[WA_BOT][AGENDA] query por telefone falhou: {e}", flush=True)
+
+    if not candidatos:
+        return None
+
+    # escolher o mais recente por createdAt (ou inicio)
+    def _iso_or_none(s):
+        try:
+            return datetime.fromisoformat(s.replace("Z","+00:00"))
+        except Exception:
+            return None
+
+    candidatos.sort(key=lambda x: _iso_or_none(x.get("createdAt") or x.get("inicio")) or datetime.min.replace(tzinfo=SP_TZ), reverse=True)
+    return candidatos[0]
+
+# ---------- fluxos ----------
 def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items):
-    # selecionar serviço
     svc = _choose_service(items, text_norm)
     if not svc:
         nomes = ", ".join([it.get("nome") or it.get("nomeLower") for it in items[:5]]) or "o serviço"
@@ -222,12 +270,10 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
                 "Ex.: agendar Pitch 30/08 14:00\n\n"
                 f"Serviços disponíveis: {nomes}")
 
-    # data/hora
     dt = _parse_datetime_br(text_norm)
     if not dt:
         return "Informe a data e hora assim: dd/mm hh:mm\nEx.: agendar Pitch 30/08 14:00"
 
-    # dados do contato
     wa_id = ""
     nome_contato = ""
     try:
@@ -241,7 +287,6 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
 
     cliente_id = _resolve_cliente_id(uid_default, wa_id, to_msisdn)
 
-    # montar agendamento
     dur = int(svc.get("duracaoMin") or svc.get("duracao") or 60)
     fim = dt + timedelta(minutes=dur)
     servico_id = svc.get("id") or f"map:{(svc.get('nomeLower') or svc.get('nome') or 'servico').strip().lower()}"
@@ -249,22 +294,21 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
     ag = {
         "estado": "solicitado",
         "canal": "whatsapp",
-        "clienteId": cliente_id,           # requerido pelo validar_agendamento_v1
+        "clienteId": cliente_id,
         "clienteWaId": wa_id,
         "clienteNome": nome_contato,
         "telefone": to_msisdn,
-        "servicoId": servico_id,           # requerido
+        "servicoId": servico_id,
         "servicoNome": svc.get("nome") or svc.get("nomeLower"),
         "duracaoMin": dur,
         "preco": svc.get("preco") or svc.get("valor"),
-        "dataHora": dt.isoformat(),        # <--- NOVO: compat c/ services.schedule
+        "dataHora": dt.isoformat(),
         "inicio": dt.isoformat(),
         "fim": fim.isoformat(),
         "observacoes": (body_text or "")[:500],
         "createdAt": datetime.now(SP_TZ).isoformat(),
     }
 
-    # validar e salvar via services.schedule (se existir)
     saved_id = None
     try:
         import services.schedule as sched
@@ -276,7 +320,6 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
             saved_id = saved_id.get("id") or saved_id.get("ag_id")
     except Exception as e:
         print(f"[WA_BOT][AGENDA] validar/salvar via services.schedule falhou: {e}", flush=True)
-        # fallback: salvar direto
         try:
             ref = DB.collection(f"profissionais/{uid_default}/agendamentos").document()
             ref.set(ag)
@@ -293,9 +336,41 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
     return (f"✅ Agendamento solicitado: {ag['servicoNome']} em {dia} às {hora}{preco_txt}.{sid}\n"
             f"Se precisar alterar, responda: reagendar <dd/mm> <hh:mm>")
 
-# ---------- Processamento ----------
+def _reagendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str):
+    dt = _parse_datetime_br(text_norm)
+    if not dt:
+        return "Para reagendar, envie assim: reagendar <dd/mm> <hh:mm>"
+
+    wa_id = ""
+    try:
+        contacts = value.get("contacts") or []
+        if contacts and isinstance(contacts, list):
+            wa_id = contacts[0].get("wa_id") or ""
+    except Exception:
+        pass
+
+    cliente_id = _resolve_cliente_id(uid_default, wa_id, to_msisdn)
+    alvo = _find_target_agendamento(uid_default, cliente_id, wa_id, to_msisdn)
+    if not alvo:
+        return ("Não encontrei um agendamento ativo seu.\n"
+                "Você pode enviar: reagendar <ID> <dd/mm> <hh:mm> (ID aparece na mensagem de confirmação)")
+
+    ag_id = alvo.get("_id")
+    try:
+        import services.schedule as sched
+        body = {"acao": "reagendar", "dataHora": dt.isoformat()}
+        sched.atualizar_estado_agendamento(uid_default, ag_id, body)
+    except Exception as e:
+        print(f"[WA_BOT][AGENDA][REAGENDAR] erro: {e}", flush=True)
+        return "Não consegui reagendar agora. Pode tentar novamente em instantes?"
+
+    dia = dt.strftime("%d/%m")
+    hora = dt.strftime("%H:%M")
+    nome = alvo.get("servicoNome") or "serviço"
+    return f"✅ Reagendamento solicitado: {nome} para {dia} às {hora} (id {ag_id})"
+
+# ---------- Processamento principal ----------
 def process_change(value: dict, send_text, uid_default: str, app_tag: str):
-    # mensagens
     for msg in value.get("messages", []):
         from_number = msg.get("from")
         if not from_number:
@@ -323,6 +398,10 @@ def process_change(value: dict, send_text, uid_default: str, app_tag: str):
                 reply = _agendar_por_texto(value, to_msisdn, uid_default, app_tag, body, text_norm, items)
                 send_text(to_msisdn, reply)
                 continue
+            if kw == "reagendar":
+                reply = _reagendar_por_texto(value, to_msisdn, uid_default, app_tag, body, text_norm)
+                send_text(to_msisdn, reply)
+                continue
             send_text(to_msisdn, fallback_text(app_tag, "wa_bot:text-default"))
             continue
 
@@ -337,7 +416,6 @@ def process_change(value: dict, send_text, uid_default: str, app_tag: str):
                     print("[WA_BOT][AUDIO] sem media_id", flush=True)
                     send_text(to_msisdn, fallback_text(app_tag, "audio:sem-media_id"))
                     continue
-                # 1) info
                 info = requests.get(
                     f"https://graph.facebook.com/{gv}/{media_id}",
                     headers={"Authorization": f"Bearer {token}"}, timeout=15
@@ -347,19 +425,16 @@ def process_change(value: dict, send_text, uid_default: str, app_tag: str):
                 if not media_url:
                     send_text(to_msisdn, fallback_text(app_tag, "audio:sem-url"))
                     continue
-                # 2) download
                 r = requests.get(media_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
                 audio_bytes = r.content or b""
                 print(f"[WA_BOT][AUDIO] bytes={len(audio_bytes)}", flush=True)
                 if not audio_bytes:
                     send_text(to_msisdn, fallback_text(app_tag, "audio:bytes=0"))
                     continue
-                # 3) STT
                 mt = (audio.get("mime_type") or "audio/ogg").split(";")[0].strip()
                 text = stt_transcribe(audio_bytes, mime_type=mt, language="pt-BR")
                 text_norm = _strip_accents_lower(text)
                 print(f"[WA_BOT][AUDIO][STT] '{text_norm}'", flush=True)
-                # 4) detecção
                 kw = _detect_keyword(text_norm)
                 if kw == "precos":
                     items, dbg = load_prices(uid_default)
@@ -369,6 +444,9 @@ def process_change(value: dict, send_text, uid_default: str, app_tag: str):
                     items, _ = load_prices(uid_default)
                     reply = _agendar_por_texto(value, to_msisdn, uid_default, app_tag, text, text_norm, items)
                     send_text(to_msisdn, reply)
+                elif kw == "reagendar":
+                    reply = _reagendar_por_texto(value, to_msisdn, uid_default, app_tag, text, text_norm)
+                    send_text(to_msisdn, reply)
                 else:
                     send_text(to_msisdn, fallback_text(app_tag, f"audio:kw-nok::{text_norm[:30]}"))
             except Exception as e:
@@ -376,10 +454,9 @@ def process_change(value: dict, send_text, uid_default: str, app_tag: str):
                 send_text(to_msisdn, fallback_text(app_tag, "audio:error"))
             continue
 
-        # OUTROS TIPOS -> fallback
+        # OUTROS TIPOS
         if to_msisdn:
             send_text(to_msisdn, fallback_text(app_tag, "wa_bot:default"))
 
-    # statuses (log)
     for st in value.get("statuses", []):
         print(f"[WA_BOT][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}", flush=True)
