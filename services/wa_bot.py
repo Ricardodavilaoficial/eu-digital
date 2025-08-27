@@ -44,13 +44,19 @@ def _detect_keyword(body: str):
 
 # ---------- Firestore (preços) ----------
 def load_prices(uid: str):
+    """
+    Retorna (items, debug) onde cada item tem:
+      - id: doc.id da subcoleção ou 'map:<nomeLower>' do mapa raiz
+      - nome / nomeLower / duracaoMin|duracao / preco|valor / ativo ...
+    """
     doc = DB.collection("profissionais").document(uid).get()
     root = doc.to_dict() if doc.exists else {}
     map_items = []
     if root and isinstance(root.get("precos"), dict):
         for nome, it in (root.get("precos") or {}).items():
             if isinstance(it, dict) and it.get("ativo", True):
-                item = {"nome": nome, "nomeLower": (nome or "").lower()}
+                nomeLower = (nome or "").strip().lower()
+                item = {"id": f"map:{nomeLower}", "nome": nome, "nomeLower": nomeLower}
                 item.update(it)
                 map_items.append(item)
 
@@ -62,11 +68,13 @@ def load_prices(uid: str):
         for d in q:
             obj = d.to_dict() or {}
             if obj.get("ativo", True):
+                obj["id"] = d.id  # <--- IMPORTANTE: id do documento
                 obj["nomeLower"] = obj.get("nomeLower") or (obj.get("nome", "") or "").lower()
                 ps_items.append(obj)
     except Exception as e:
         print(f"[prices] erro lendo subcol produtosEServicos: {e}", flush=True)
 
+    # dedup por nomeLower (prioriza map)
     dedup = {}
     for it in map_items + ps_items:
         key = (it.get("nomeLower") or "").strip()
@@ -236,13 +244,16 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
     # montar agendamento
     dur = int(svc.get("duracaoMin") or svc.get("duracao") or 60)
     fim = dt + timedelta(minutes=dur)
+    servico_id = svc.get("id") or f"map:{(svc.get('nomeLower') or svc.get('nome') or 'servico').strip().lower()}"
+
     ag = {
         "estado": "solicitado",
         "canal": "whatsapp",
-        "clienteId": cliente_id,           # <-- IMPORTANTE p/ validar_agendamento_v1
+        "clienteId": cliente_id,           # requerido pelo validar_agendamento_v1
         "clienteWaId": wa_id,
         "clienteNome": nome_contato,
         "telefone": to_msisdn,
+        "servicoId": servico_id,           # <--- AGORA ENVIAMOS
         "servicoNome": svc.get("nome") or svc.get("nomeLower"),
         "duracaoMin": dur,
         "preco": svc.get("preco") or svc.get("valor"),
