@@ -148,7 +148,7 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     print("[STT] nenhum backend retornou transcrição", flush=True)
     return ""
 
-# ---------- AGENDAR ----------
+# ---------- helpers de agenda ----------
 def _parse_datetime_br(text_norm: str):
     """
     Extrai dd/mm e hh:mm do texto normalizado. Retorna datetime tz-aware (SP) ou None.
@@ -189,26 +189,37 @@ def _choose_service(items, text_norm: str):
                 best_len = len(alias_norm)
     return best
 
+def _resolve_cliente_id(uid_default: str, wa_id: str, to_msisdn: str) -> str:
+    """
+    Tenta achar cliente em profissionais/{uid}/clientes por waId.
+    Se não achar, usa o próprio wa_id (ou o msisdn) como clienteId.
+    """
+    try:
+        if wa_id:
+            q = (DB.collection(f"profissionais/{uid_default}/clientes")
+                   .where("waId", "==", wa_id).limit(1).stream())
+            for d in q:
+                return d.id
+    except Exception as e:
+        print(f"[WA_BOT][AGENDA] lookup cliente por waId falhou: {e}", flush=True)
+    return wa_id or to_msisdn or "anon"
+
 def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items):
     # selecionar serviço
     svc = _choose_service(items, text_norm)
     if not svc:
-        # instrução de como pedir
         nomes = ", ".join([it.get("nome") or it.get("nomeLower") for it in items[:5]]) or "o serviço"
-        return f"Para agendar, envie assim:\n" \
-               f"agendar <serviço> <dd/mm> <hh:mm>\n" \
-               f"Ex.: agendar Pitch 30/08 14:00\n\n" \
-               f"Serviços disponíveis: {nomes}"
+        return ("Para agendar, envie assim:\n"
+                "agendar <serviço> <dd/mm> <hh:mm>\n"
+                "Ex.: agendar Pitch 30/08 14:00\n\n"
+                f"Serviços disponíveis: {nomes}")
 
     # data/hora
     dt = _parse_datetime_br(text_norm)
     if not dt:
         return "Informe a data e hora assim: dd/mm hh:mm\nEx.: agendar Pitch 30/08 14:00"
 
-    # montar agendamento
-    dur = int(svc.get("duracaoMin") or svc.get("duracao") or 60)
-    fim = dt + timedelta(minutes=dur)
-
+    # dados do contato
     wa_id = ""
     nome_contato = ""
     try:
@@ -220,9 +231,15 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
     except Exception:
         pass
 
+    cliente_id = _resolve_cliente_id(uid_default, wa_id, to_msisdn)
+
+    # montar agendamento
+    dur = int(svc.get("duracaoMin") or svc.get("duracao") or 60)
+    fim = dt + timedelta(minutes=dur)
     ag = {
         "estado": "solicitado",
         "canal": "whatsapp",
+        "clienteId": cliente_id,           # <-- IMPORTANTE p/ validar_agendamento_v1
         "clienteWaId": wa_id,
         "clienteNome": nome_contato,
         "telefone": to_msisdn,
@@ -261,8 +278,8 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
     preco = ag.get("preco")
     preco_txt = f" — R${preco}" if preco not in (None, "", "?") else ""
     sid = f" (id {saved_id})" if saved_id else ""
-    return f"✅ Agendamento solicitado: {ag['servicoNome']} em {dia} às {hora}{preco_txt}.{sid}\n" \
-           f"Se precisar alterar, responda: reagendar <dd/mm> <hh:mm>"
+    return (f"✅ Agendamento solicitado: {ag['servicoNome']} em {dia} às {hora}{preco_txt}.{sid}\n"
+            f"Se precisar alterar, responda: reagendar <dd/mm> <hh:mm>")
 
 # ---------- Processamento ----------
 def process_change(value: dict, send_text, uid_default: str, app_tag: str):
