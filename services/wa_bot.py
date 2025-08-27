@@ -1,6 +1,7 @@
 # services/wa_bot.py
-# Lógica do bot WhatsApp (texto + áudio com STT) + preços, agendar e reagendar — isolada do app.py
-# Agora com normalizador PT-BR de data/hora para melhorar entendimento de áudio.
+# Lógica do bot WhatsApp (texto + áudio com STT) + preços, agendar e reagendar
+# Sessão/slot-filling leve (Firestore) + normalizador PT-BR (meses, números por extenso, 'e meia',
+# períodos (manhã/tarde/noite), dias da semana, 'amanhã/semana que vem').
 
 import os
 import re
@@ -11,9 +12,9 @@ from datetime import datetime, timedelta, timezone
 from services import db as dbsvc
 
 DB = dbsvc.db
-SP_TZ = timezone(timedelta(hours=-3))  # America/Sao_Paulo (sem horário de verão)
+SP_TZ = timezone(timedelta(hours=-3))  # America/Sao_Paulo (sem DST)
 
-# ---------- utils ----------
+# ========== Utils básicos ==========
 def _only_digits(s: str) -> str:
     return "".join(ch for ch in str(s or "") if ch.isdigit())
 
@@ -39,19 +40,17 @@ def _detect_keyword(body: str):
     if any(k in t for k in ["preco","precos","preços","tabela","lista","valores",
                             "servico","servicos","serviço","serviços"]):
         return "precos"
-    if "agendar" in t or "agenda " in t or "marcar" in t or "agendamento" in t:
+    if "agendar" in t or "agenda " in t or "marcar" in t or "agendamento" in t or "reservar" in t:
         return "agendar"
     if any(k in t for k in ["reagendar","remarcar","mudar horario","mudar horário","trocar horario","trocar horário"]):
         return "reagendar"
+    if any(k in t for k in ["cancelar","limpar","resetar","apagar conversa","apagar sessão","apagar sessao"]):
+        return "cancelar"
     return None
 
-# ---------- preços ----------
+# ========== Preços ==========
 def load_prices(uid: str):
-    """
-    Retorna (items, debug) onde cada item tem:
-      - id: doc.id da subcoleção ou 'map:<nomeLower>' do mapa raiz
-      - nome / nomeLower / duracaoMin|duracao / preco|valor / ativo ...
-    """
+    """Retorna (items, debug). Cada item: id/nome/nomeLower/duracaoMin|duracao/preco|valor/ativo."""
     doc = DB.collection("profissionais").document(uid).get()
     root = doc.to_dict() if doc.exists else {}
     map_items = []
@@ -99,8 +98,25 @@ def format_prices_reply(uid: str, items, debug):
         lines.append(f"- {nome} — {dur}min — R${val}")
     return "\n".join(lines)
 
-# ---------- STT ----------
+def _choose_service(items, text_norm: str):
+    """Escolhe serviço pela melhor ocorrência; se só 1, usa direto."""
+    if not items:
+        return None
+    if len(items) == 1:
+        return items[0]
+    best = None
+    best_len = 0
+    for it in items:
+        alias = (it.get("nomeLower") or it.get("nome") or "").lower()
+        alias_norm = _strip_accents_lower(alias)
+        if alias_norm and alias_norm in text_norm and len(alias_norm) > best_len:
+            best = it
+            best_len = len(alias_norm)
+    return best
+
+# ========== STT ==========
 def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: str = "pt-BR") -> str:
+    # 1) tentar services.audio_processing com nomes comuns
     try:
         import inspect
         import services.audio_processing as ap
@@ -133,6 +149,7 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     except Exception as e:
         print(f"[STT] módulo services.audio_processing indisponível: {e}", flush=True)
 
+    # 2) Whisper (opcional)
     try:
         if os.getenv("ENABLE_STT_OPENAI","true").lower() in ("1","true","yes"):
             api_key = os.getenv("OPENAI_API_KEY")
@@ -156,19 +173,11 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     print("[STT] nenhum backend retornou transcrição", flush=True)
     return ""
 
-# ---------- normalizador PT-BR de data/hora ----------
+# ========== Normalizador PT-BR de data/hora ==========
 _MONTHS = {
-    "jan":1,"janeiro":1,
-    "fev":2,"fevereiro":2,
-    "mar":3,"marco":3,"março":3,
-    "abr":4,"abril":4,
-    "mai":5,"maio":5,
-    "jun":6,"junho":6,
-    "jul":7,"julho":7,
-    "ago":8,"agosto":8,
-    "set":9,"setembro":9,
-    "out":10,"outubro":10,
-    "nov":11,"novembro":11,
+    "jan":1,"janeiro":1,"fev":2,"fevereiro":2,"mar":3,"marco":3,"março":3,
+    "abr":4,"abril":4,"mai":5,"maio":5,"jun":6,"junho":6,"jul":7,"julho":7,
+    "ago":8,"agosto":8,"set":9,"setembro":9,"out":10,"outubro":10,"nov":11,"novembro":11,
     "dez":12,"dezembro":12,
 }
 _UNITS = {
@@ -178,35 +187,37 @@ _UNITS = {
     "dezoito":18,"dezenove":19,
 }
 _TENS = {"vinte":20,"trinta":30,"quarenta":40,"cinquenta":50}
-_PERIOD = {"manha":"manhã","manha": "manha","tarde":"tarde","noite":"noite"}
+_WEEKDAYS = {
+    "segunda":0,"segunda-feira":0,
+    "terca":1,"terça":1,"terça-feira":1,"terca-feira":1,
+    "quarta":2,"quarta-feira":2,
+    "quinta":3,"quinta-feira":3,
+    "sexta":4,"sexta-feira":4,
+    "sabado":5,"sábado":5,
+    "domingo":6,
+}
 
 def _words_to_int_pt(s: str):
-    """Converte 'vinte e tres' -> 23; 'onze' -> 11; retorna None se não entender."""
     if not s: return None
     s = s.strip()
     if s in _UNITS: return _UNITS[s]
     if s in _TENS: return _TENS[s]
-    # tens + (e + unit)
     m = re.match(r"(vinte|trinta|quarenta|cinquenta)\s+e\s+([a-z]+)$", s)
     if m:
         tens = _TENS.get(m.group(1), 0)
         unit = _UNITS.get(m.group(2), 0)
-        if tens and unit is not None:
-            return tens + unit
+        return tens + (unit or 0)
     return None
 
 def _extract_day_month_from_words(t: str):
-    """Procura 'dia <word|num> de <mes>' e retorna (dd, mm) ou None."""
-    m = re.search(r"(?:\bdia\s+)?(?P<d>(\d{1,2}|[a-z]+))\s+de\s+(?P<m>[a-z]{3,9})", t)
+    m = re.search(r"(?:\bdia\s+)?(?P<d>(\d{1,2}|[a-z]+))\s+de\s+(?P<m>[a-z]{3,12})", t)
     if not m:
         return None
     d_raw = m.group("d")
     month_raw = m.group("m")
-    # mês
     mm = _MONTHS.get(month_raw)
     if not mm:
         return None
-    # dia
     if d_raw.isdigit():
         dd = int(d_raw)
     else:
@@ -216,40 +227,28 @@ def _extract_day_month_from_words(t: str):
     return dd, mm
 
 def _extract_time_from_words(t: str):
-    """
-    Retorna (hh, mi) de:
-      - 'as 14', '14:30', '10h', '10 horas', '10 e meia'
-      - 'duas da tarde', 'dez e meia da manha', 'meio dia', 'meia noite'
-    """
-    # 1) direto com dígitos
-    m = re.search(r"\b(?:as|às)?\s*(?P<h>\d{1,2})(?:[:h](?P<m>\d{2}))?\s*(?:horas?)?", t)
+    # especiais
+    if re.search(r"\bmeio\s+dia\b", t):
+        mi = 30 if re.search(r"\bmeio\s+dia\s+e\s+meia\b", t) else 0
+        return 12, mi
+    if re.search(r"\bmeia\s+noite\b", t):
+        mi = 30 if re.search(r"\bmeia\s+noite\s+e\s+meia\b", t) else 0
+        return 0, mi
+
     period = None
     if re.search(r"\bda\s+manha\b|\bde\s+manha\b|\bmanh[ãa]\b", t): period = "manha"
     elif re.search(r"\bda\s+tarde\b|\bde\s+tarde\b|\btarde\b", t): period = "tarde"
     elif re.search(r"\bda\s+noite\b|\bde\s+noite\b|\bnoite\b", t): period = "noite"
 
-    # especiais
-    if re.search(r"\bmeio\s+dia\b", t):
-        hh, mi = 12, 0
-        if re.search(r"\bmeio\s+dia\s+e\s+meia\b", t): mi = 30
-        return hh, mi
-    if re.search(r"\bmeia\s+noite\b", t):
-        hh, mi = 0, 0
-        if re.search(r"\bmeia\s+noite\s+e\s+meia\b", t): mi = 30
-        return hh, mi
-
+    m = re.search(r"\b(?:as|às)?\s*(?P<h>\d{1,2})(?:[:h](?P<m>\d{2}))?\s*(?:horas?)?", t)
     if m:
         hh = int(m.group("h"))
         mi = int(m.group("m")) if m.group("m") else 0
-        # 'e meia'
-        if re.search(rf"\b{hh}\s+e\s+meia\b", t):
-            mi = 30
-        # período
+        if re.search(rf"\b{hh}\s+e\s+meia\b", t): mi = 30
         if period in ("tarde","noite") and 1 <= hh <= 11:
             hh += 12
         return hh, mi
 
-    # 2) horas por extenso
     m2 = re.search(r"\b(?:as|às)?\s*([a-z]+)(?:\s*e\s*meia)?\s*(?:horas?)?", t)
     if m2:
         word = m2.group(1)
@@ -262,37 +261,57 @@ def _extract_time_from_words(t: str):
 
     return None
 
+def _weekday_to_date(next_text: str, weekday_word: str):
+    """Converte 'terça' (e variações) para a próxima data útil (ou 'próxima'/'semana que vem')."""
+    if weekday_word not in _WEEKDAYS:
+        return None
+    today = datetime.now(SP_TZ).date()
+    wd_target = _WEEKDAYS[weekday_word]
+    wd_today = today.weekday()  # Monday=0
+    delta = (wd_target - wd_today) % 7
+    if delta == 0:
+        delta = 7  # mesma semana -> próxima ocorrência
+    # 'próxima' ou 'semana que vem' força pular uma semana
+    if re.search(r"\bproxim[aoa]|\bsemana\s+que\s+vem", next_text):
+        delta += 7
+    return today + timedelta(days=delta)
+
 def _normalize_datetime_pt(t: str) -> str:
-    """
-    Se já tem dd/mm e hh:mm -> retorna t.
-    Senão, tenta extrair por palavras/abreviações e ANEXA ' dd/mm hh:mm' ao texto.
-    Suporta 'amanha' e 'depois de amanha'.
-    """
+    """Se não houver dd/mm hh:mm, tenta extrair por palavras e ANEXA ' dd/mm hh:mm' ao texto original."""
     if re.search(r"\b\d{1,2}[\/\.]\d{1,2}\b", t) and re.search(r"\b\d{1,2}[:h]\d{2}\b", t):
         return t
 
-    now = datetime.now(SP_TZ)
+    base_now = datetime.now(SP_TZ)
     dd = mm = None
-    # 'amanha' / 'depois de amanha'
+
+    # 'depois de amanha' / 'amanha'
     if "depois de amanha" in t:
-        base = now + timedelta(days=2)
+        base = base_now + timedelta(days=2)
         dd, mm = base.day, base.month
     elif "amanha" in t:
-        base = now + timedelta(days=1)
+        base = base_now + timedelta(days=1)
         dd, mm = base.day, base.month
 
+    # dia da semana
+    if dd is None:
+        for w in sorted(_WEEKDAYS.keys(), key=len, reverse=True):
+            if re.search(rf"\b{re.escape(w)}\b", t):
+                d = _weekday_to_date(t, w)
+                if d:
+                    dd, mm = d.day, d.month
+                    break
+
     # 'dia <x> de <mes>'
-    dm = _extract_day_month_from_words(t)
-    if dm:
-        dd, mm = dm
+    if dd is None:
+        dm = _extract_day_month_from_words(t)
+        if dm:
+            dd, mm = dm
 
     # hora
     hh = mi = None
-    # já há horário em dígitos?
-    if re.search(r"\b\d{1,2}[:h]\d{2}\b", t):
-        hm = re.search(r"\b(\d{1,2})[:h](\d{2})\b", t)
+    hm = re.search(r"\b(\d{1,2})[:h](\d{2})\b", t)
+    if hm:
         hh, mi = int(hm.group(1)), int(hm.group(2))
-        # período (tarde/noite) pode ajustar
         if re.search(r"\b(tarde|noite)\b", t) and 1 <= hh <= 11:
             hh += 12
     else:
@@ -304,122 +323,64 @@ def _normalize_datetime_pt(t: str) -> str:
         return f"{t} {dd:02d}/{mm:02d} {hh:02d}:{mi:02d}"
     return t
 
-# ---------- helpers agenda ----------
+# ========== Parse dd/mm hh:mm ==========
 def _parse_datetime_br(text_norm: str):
     d = re.search(r"(\b\d{1,2})[\/\.-](\d{1,2})(?:[\/\.-](\d{2,4}))?", text_norm)
     h = re.search(r"(\b\d{1,2})[:h](\d{2})", text_norm)
     if not d or not h:
         return None
-    day = int(d.group(1))
-    month = int(d.group(2))
+    day = int(d.group(1)); month = int(d.group(2))
     year = d.group(3)
     year = int(year) + (2000 if year and len(year) == 2 else 0) if year else datetime.now(SP_TZ).year
-    hour = int(h.group(1))
-    minute = int(h.group(2))
+    hour = int(h.group(1)); minute = int(h.group(2))
     try:
-        dt = datetime(year, month, day, hour, minute, tzinfo=SP_TZ)
-        return dt
+        return datetime(year, month, day, hour, minute, tzinfo=SP_TZ)
     except Exception:
         return None
 
-def _choose_service(items, text_norm: str):
-    if not items:
-        return None
-    if len(items) == 1:
-        return items[0]
-    best = None
-    best_len = 0
-    for it in items:
-        alias = (it.get("nomeLower") or it.get("nome") or "").lower()
-        alias_norm = _strip_accents_lower(alias)
-        if not alias_norm:
-            continue
-        if alias_norm in text_norm and len(alias_norm) > best_len:
-            best = it
-            best_len = len(alias_norm)
-    return best
+# ========== Sessão (Firestore) ==========
+def _sess_ref(uid: str, wa_id: str):
+    return DB.collection(f"profissionais/{uid}/sessions").document(wa_id)
 
-def _resolve_cliente_id(uid_default: str, wa_id: str, to_msisdn: str) -> str:
+def _get_session(uid: str, wa_id: str) -> dict:
     try:
-        if wa_id:
-            q = (DB.collection(f"profissionais/{uid_default}/clientes")
-                   .where("waId", "==", wa_id).limit(1).stream())
-            for d in q:
-                return d.id
+        snap = _sess_ref(uid, wa_id).get()
+        sess = snap.to_dict() if snap.exists else {}
     except Exception as e:
-        print(f"[WA_BOT][AGENDA] lookup cliente por waId falhou: {e}", flush=True)
-    return wa_id or to_msisdn or "anon"
-
-def _find_target_agendamento(uid: str, cliente_id: str, wa_id: str, telefone: str):
-    estados = ["solicitado", "confirmado"]
-    candidatos = []
-
+        print(f"[WA_BOT][SESS] get erro: {e}", flush=True)
+        sess = {}
+    # expiração 30 min
     try:
-        q = (DB.collection(f"profissionais/{uid}/agendamentos")
-               .where("clienteId", "==", cliente_id)
-               .where("estado", "in", estados).limit(10).stream())
-        for d in q:
-            obj = d.to_dict() or {}
-            obj["_id"] = d.id
-            candidatos.append(obj)
+        ts_str = sess.get("updatedAt") or sess.get("createdAt")
+        if ts_str:
+            ts = datetime.fromisoformat(ts_str.replace("Z","+00:00"))
+            if datetime.now(SP_TZ) - ts > timedelta(minutes=30):
+                _clear_session(uid, wa_id)
+                return {}
+    except Exception:
+        pass
+    return sess or {}
+
+def _save_session(uid: str, wa_id: str, sess: dict):
+    now = datetime.now(SP_TZ).isoformat()
+    sess = {**(sess or {}), "updatedAt": now}
+    if "createdAt" not in sess:
+        sess["createdAt"] = now
+    try:
+        _sess_ref(uid, wa_id).set(sess)
     except Exception as e:
-        print(f"[WA_BOT][AGENDA] query por clienteId falhou: {e}", flush=True)
+        print(f"[WA_BOT][SESS] save erro: {e}", flush=True)
 
-    if not candidatos and wa_id:
-        try:
-            q = (DB.collection(f"profissionais/{uid}/agendamentos")
-                   .where("clienteWaId", "==", wa_id)
-                   .where("estado", "in", estados).limit(10).stream())
-            for d in q:
-                obj = d.to_dict() or {}
-                obj["_id"] = d.id
-                candidatos.append(obj)
-        except Exception as e:
-            print(f"[WA_BOT][AGENDA] query por clienteWaId falhou: {e}", flush=True)
+def _clear_session(uid: str, wa_id: str):
+    try:
+        _sess_ref(uid, wa_id).delete()
+    except Exception as e:
+        print(f"[WA_BOT][SESS] clear erro: {e}", flush=True)
 
-    if not candidatos and telefone:
-        try:
-            q = (DB.collection(f"profissionais/{uid}/agendamentos")
-                   .where("telefone", "==", telefone)
-                   .where("estado", "in", estados).limit(10).stream())
-            for d in q:
-                obj = d.to_dict() or {}
-                obj["_id"] = d.id
-                candidatos.append(obj)
-        except Exception as e:
-            print(f"[WA_BOT][AGENDA] query por telefone falhou: {e}", flush=True)
-
-    if not candidatos:
-        return None
-
-    def _iso_or_none(s):
-        try:
-            return datetime.fromisoformat(s.replace("Z","+00:00"))
-        except Exception:
-            return None
-
-    candidatos.sort(key=lambda x: _iso_or_none(x.get("createdAt") or x.get("inicio")) or datetime.min.replace(tzinfo=SP_TZ), reverse=True)
-    return candidatos[0]
-
-# ---------- fluxos ----------
-def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items):
-    svc = _choose_service(items, text_norm)
-    if not svc:
-        nomes = ", ".join([it.get("nome") or it.get("nomeLower") for it in items[:5]]) or "o serviço"
-        return ("Para agendar, envie assim:\n"
-                "agendar <serviço> <dd/mm> <hh:mm>\n"
-                "Ex.: agendar Pitch 30/08 14:00\n\n"
-                f"Serviços disponíveis: {nomes}")
-
-    # NORMALIZAÇÃO (fala -> dd/mm hh:mm)
-    text_norm2 = _normalize_datetime_pt(text_norm)
-    dt = _parse_datetime_br(text_norm2)
-    if not dt:
-        return "Informe a data e hora assim: dd/mm hh:mm\nEx.: agendar Pitch 30/08 14:00"
-
+# ========== Construção/salvamento do agendamento ==========
+def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, svc: dict, dt: datetime, body_text: str):
     # dados do contato
-    wa_id = ""
-    nome_contato = ""
+    wa_id = ""; nome_contato = ""
     try:
         contacts = value.get("contacts") or []
         if contacts and isinstance(contacts, list):
@@ -429,11 +390,10 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
     except Exception:
         pass
 
-    cliente_id = _resolve_cliente_id(uid_default, wa_id, to_msisdn)
-
     dur = int(svc.get("duracaoMin") or svc.get("duracao") or 60)
     fim = dt + timedelta(minutes=dur)
     servico_id = svc.get("id") or f"map:{(svc.get('nomeLower') or svc.get('nome') or 'servico').strip().lower()}"
+    cliente_id = _resolve_cliente_id(uid_default, wa_id, to_msisdn)
 
     ag = {
         "estado": "solicitado",
@@ -458,7 +418,7 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
         import services.schedule as sched
         ok, motivo, conflito = sched.validar_agendamento_v1(uid_default, ag)
         if not ok:
-            return f"Não foi possível agendar: {motivo}"
+            return False, f"Não foi possível agendar: {motivo}"
         saved_id = sched.salvar_agendamento(uid_default, ag)
         if isinstance(saved_id, dict):
             saved_id = saved_id.get("id") or saved_id.get("ag_id")
@@ -470,36 +430,136 @@ def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: s
             saved_id = ref.id
         except Exception as e2:
             print(f"[WA_BOT][AGENDA][FALLBACK_SAVE] erro: {e2}", flush=True)
-            return "Tive um problema ao salvar seu agendamento. Pode tentar novamente em instantes?"
+            return False, "Tive um problema ao salvar seu agendamento. Pode tentar novamente em instantes?"
 
-    dia = dt.strftime("%d/%m")
-    hora = dt.strftime("%H:%M")
+    dia = dt.strftime("%d/%m"); hora = dt.strftime("%H:%M")
     preco = ag.get("preco")
     preco_txt = f" — R${preco}" if preco not in (None, "", "?") else ""
     sid = f" (id {saved_id})" if saved_id else ""
-    return (f"✅ Agendamento solicitado: {ag['servicoNome']} em {dia} às {hora}{preco_txt}.{sid}\n"
-            f"Se precisar alterar, responda: reagendar <dd/mm> <hh:mm>")
+    return True, f"✅ Agendamento solicitado: {ag['servicoNome']} em {dia} às {hora}{preco_txt}.{sid}\nSe precisar alterar, responda: reagendar <dd/mm> <hh:mm>"
 
-def _reagendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str):
-    # NORMALIZAÇÃO (fala -> dd/mm hh:mm)
+def _resolve_cliente_id(uid_default: str, wa_id: str, to_msisdn: str) -> str:
+    try:
+        if wa_id:
+            q = (DB.collection(f"profissionais/{uid_default}/clientes")
+                   .where("waId", "==", wa_id).limit(1).stream())
+            for d in q:
+                return d.id
+    except Exception as e:
+        print(f"[WA_BOT][AGENDA] lookup cliente por waId falhou: {e}", flush=True)
+    return wa_id or to_msisdn or "anon"
+
+def _find_target_agendamento(uid: str, cliente_id: str, wa_id: str, telefone: str):
+    estados = ["solicitado", "confirmado"]
+    candidatos = []
+    try:
+        q = (DB.collection(f"profissionais/{uid}/agendamentos")
+               .where("clienteId", "==", cliente_id)
+               .where("estado", "in", estados).limit(10).stream())
+        for d in q:
+            obj = d.to_dict() or {}; obj["_id"] = d.id; candidatos.append(obj)
+    except Exception as e:
+        print(f"[WA_BOT][AGENDA] query por clienteId falhou: {e}", flush=True)
+
+    if not candidatos and wa_id:
+        try:
+            q = (DB.collection(f"profissionais/{uid}/agendamentos")
+                   .where("clienteWaId", "==", wa_id)
+                   .where("estado", "in", estados).limit(10).stream())
+            for d in q:
+                obj = d.to_dict() or {}; obj["_id"] = d.id; candidatos.append(obj)
+        except Exception as e:
+            print(f"[WA_BOT][AGENDA] query por clienteWaId falhou: {e}", flush=True)
+
+    if not candidatos and telefone:
+        try:
+            q = (DB.collection(f"profissionais/{uid}/agendamentos")
+                   .where("telefone", "==", telefone)
+                   .where("estado", "in", estados).limit(10).stream())
+            for d in q:
+                obj = d.to_dict() or {}; obj["_id"] = d.id; candidatos.append(obj)
+        except Exception as e:
+            print(f"[WA_BOT][AGENDA] query por telefone falhou: {e}", flush=True)
+
+    if not candidatos:
+        return None
+
+    def _iso_or_none(s):
+        try: return datetime.fromisoformat(s.replace("Z","+00:00"))
+        except Exception: return None
+
+    candidatos.sort(key=lambda x: _iso_or_none(x.get("createdAt") or x.get("inicio")) or datetime.min.replace(tzinfo=SP_TZ), reverse=True)
+    return candidatos[0]
+
+# ========== Fluxos de alto nível ==========
+def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items, sess: dict, wa_id: str):
+    """Slot-filling: tenta preencher serviço e data/hora a partir de texto + sessão e agenda."""
+    # serviço
+    svc = None
+    if sess.get("servicoId") or sess.get("servicoNome"):
+        # recuperar serviço por nomeLower/id
+        for it in items:
+            if it.get("id") == sess.get("servicoId") or it.get("nomeLower") == sess.get("servicoNome"):
+                svc = it; break
+    if not svc:
+        svc = _choose_service(items, text_norm)
+
+    # data/hora
     text_norm2 = _normalize_datetime_pt(text_norm)
     dt = _parse_datetime_br(text_norm2)
-    if not dt:
-        return "Para reagendar, envie assim: reagendar <dd/mm> <hh:mm>"
+    if not dt and sess.get("dataHora"):
+        try: dt = datetime.fromisoformat(sess["dataHora"])
+        except Exception: dt = None
 
-    wa_id = ""
+    have_svc = svc is not None
+    have_dt = dt is not None
+
+    if have_svc and have_dt:
+        ok, msg = _build_and_save_agendamento(uid_default, value, to_msisdn, svc, dt, body_text)
+        if ok:
+            _clear_session(uid_default, wa_id)
+        return msg
+
+    # Atualizar sessão e perguntar o que falta
+    new_sess = {
+        "intent": "agendar",
+        "servicoId": svc.get("id") if svc else None,
+        "servicoNome": (svc.get("nomeLower") or svc.get("nome")) if svc else None,
+        "dataHora": dt.isoformat() if dt else None,
+    }
+    _save_session(uid_default, wa_id, new_sess)
+
+    if not have_svc and not have_dt:
+        return "Vamos agendar! Qual serviço você quer e para quando? Ex.: Pitch na terça às 10h"
+    if not have_svc:
+        nomes = ", ".join([it.get("nome") or it.get("nomeLower") for it in items[:5]]) or "o serviço"
+        return f"Certo. Para qual serviço? Tenho: {nomes}."
+    return "Perfeito. Qual data e horário? Ex.: 01/09 14:00, ou 'terça 10h', ou 'semana que vem sexta 9:30'."
+
+def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, sess: dict, wa_id: str):
+    text_norm2 = _normalize_datetime_pt(text_norm)
+    dt = _parse_datetime_br(text_norm2)
+    if not dt and sess.get("dataHora"):
+        try: dt = datetime.fromisoformat(sess["dataHora"])
+        except Exception: dt = None
+
+    if not dt:
+        _save_session(uid_default, wa_id, {"intent": "reagendar"})
+        return "Qual nova data e horário? Ex.: 02/09 10:00, ou 'quarta 15h'."
+
+    # encontrar alvo e reagendar
+    wa = ""; 
     try:
         contacts = value.get("contacts") or []
         if contacts and isinstance(contacts, list):
-            wa_id = contacts[0].get("wa_id") or ""
+            wa = contacts[0].get("wa_id") or ""
     except Exception:
         pass
-
-    cliente_id = _resolve_cliente_id(uid_default, wa_id, to_msisdn)
-    alvo = _find_target_agendamento(uid_default, cliente_id, wa_id, to_msisdn)
+    cliente_id = _resolve_cliente_id(uid_default, wa, to_msisdn)
+    alvo = _find_target_agendamento(uid_default, cliente_id, wa, to_msisdn)
     if not alvo:
         return ("Não encontrei um agendamento ativo seu.\n"
-                "Você pode enviar: reagendar <ID> <dd/mm> <hh:mm> (ID aparece na mensagem de confirmação)")
+                "Você pode enviar: reagendar <ID> <dd/mm> <hh:mm> (ID aparece na confirmação)")
 
     ag_id = alvo.get("_id")
     try:
@@ -510,12 +570,12 @@ def _reagendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag:
         print(f"[WA_BOT][AGENDA][REAGENDAR] erro: {e}", flush=True)
         return "Não consegui reagendar agora. Pode tentar novamente em instantes?"
 
-    dia = dt.strftime("%d/%m")
-    hora = dt.strftime("%H:%M")
+    _clear_session(uid_default, wa_id)
+    dia = dt.strftime("%d/%m"); hora = dt.strftime("%H:%M")
     nome = alvo.get("servicoNome") or "serviço"
     return f"✅ Reagendamento solicitado: {nome} para {dia} às {hora} (id {ag_id})"
 
-# ---------- Processamento principal ----------
+# ========== Processamento principal ==========
 def process_change(value: dict, send_text, uid_default: str, app_tag: str):
     for msg in value.get("messages", []):
         from_number = msg.get("from")
@@ -528,30 +588,56 @@ def process_change(value: dict, send_text, uid_default: str, app_tag: str):
         print(f"[WA_BOT][MESSAGE] id={msg_id} type={msg_type} from={from_number}", flush=True)
 
         to_msisdn = _normalize_br_msisdn(from_number or "")
+        wa_id = from_number or to_msisdn
 
-        # TEXTO
+        # ---------- TEXTO ----------
         if msg_type == "text":
             body = (msg.get("text") or {}).get("body", "")
             text_norm = _strip_accents_lower(body)
             kw = _detect_keyword(body)
+
+            # comandos rápidos
+            if kw == "cancelar":
+                _clear_session(uid_default, wa_id)
+                send_text(to_msisdn, "Ok, limpei nossa conversa. Se quiser recomeçar, diga 'agendar' ou 'precos'.")
+                continue
+
             if kw == "precos":
                 items, dbg = load_prices(uid_default)
-                reply = format_prices_reply(uid_default, items, dbg)
-                send_text(to_msisdn, reply)
+                send_text(to_msisdn, format_prices_reply(uid_default, items, dbg))
                 continue
+
+            # obter sessão
+            sess = _get_session(uid_default, wa_id)
+
             if kw == "agendar":
                 items, _ = load_prices(uid_default)
-                reply = _agendar_por_texto(value, to_msisdn, uid_default, app_tag, body, text_norm, items)
+                reply = _agendar_fluxo(value, to_msisdn, uid_default, app_tag, body, text_norm, items, sess, wa_id)
                 send_text(to_msisdn, reply)
                 continue
+
             if kw == "reagendar":
-                reply = _reagendar_por_texto(value, to_msisdn, uid_default, app_tag, body, text_norm)
+                reply = _reagendar_fluxo(value, to_msisdn, uid_default, app_tag, body, text_norm, sess, wa_id)
                 send_text(to_msisdn, reply)
                 continue
+
+            # Sem keyword explícita: se há sessão pendente, tentar preencher slots
+            if sess.get("intent") in ("agendar","reagendar"):
+                if sess["intent"] == "agendar":
+                    items, _ = load_prices(uid_default)
+                    reply = _agendar_fluxo(value, to_msisdn, uid_default, app_tag, body, text_norm, items, sess, wa_id)
+                    send_text(to_msisdn, reply)
+                    continue
+                else:
+                    reply = _reagendar_fluxo(value, to_msisdn, uid_default, app_tag, body, text_norm, sess, wa_id)
+                    send_text(to_msisdn, reply)
+                    continue
+
+            # fallback conversacional
             send_text(to_msisdn, fallback_text(app_tag, "wa_bot:text-default"))
             continue
 
-        # ÁUDIO
+        # ---------- ÁUDIO ----------
         if msg_type == "audio":
             token = os.getenv("WHATSAPP_TOKEN")
             gv = os.getenv("GRAPH_VERSION", "v22.0")
@@ -559,50 +645,59 @@ def process_change(value: dict, send_text, uid_default: str, app_tag: str):
             media_id = audio.get("id")
             try:
                 if not media_id:
-                    print("[WA_BOT][AUDIO] sem media_id", flush=True)
-                    send_text(to_msisdn, fallback_text(app_tag, "audio:sem-media_id"))
-                    continue
+                    send_text(to_msisdn, fallback_text(app_tag, "audio:sem-media_id")); continue
                 info = requests.get(
                     f"https://graph.facebook.com/{gv}/{media_id}",
                     headers={"Authorization": f"Bearer {token}"}, timeout=15
                 ).json()
                 media_url = info.get("url")
-                print(f"[WA_BOT][AUDIO] media_id={media_id} url={bool(media_url)}", flush=True)
                 if not media_url:
-                    send_text(to_msisdn, fallback_text(app_tag, "audio:sem-url"))
-                    continue
+                    send_text(to_msisdn, fallback_text(app_tag, "audio:sem-url")); continue
                 r = requests.get(media_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
                 audio_bytes = r.content or b""
-                print(f"[WA_BOT][AUDIO] bytes={len(audio_bytes)}", flush=True)
                 if not audio_bytes:
-                    send_text(to_msisdn, fallback_text(app_tag, "audio:bytes=0"))
-                    continue
+                    send_text(to_msisdn, fallback_text(app_tag, "audio:bytes=0")); continue
+
                 mt = (audio.get("mime_type") or "audio/ogg").split(";")[0].strip()
                 text = stt_transcribe(audio_bytes, mime_type=mt, language="pt-BR")
                 text_norm = _strip_accents_lower(text)
                 print(f"[WA_BOT][AUDIO][STT] '{text_norm}'", flush=True)
+
                 kw = _detect_keyword(text_norm)
+                sess = _get_session(uid_default, wa_id)
+
+                if kw == "cancelar":
+                    _clear_session(uid_default, wa_id)
+                    send_text(to_msisdn, "Ok, limpei nossa conversa. Se quiser recomeçar, diga 'agendar' ou 'precos'.")
+                    continue
+
                 if kw == "precos":
                     items, dbg = load_prices(uid_default)
-                    reply = format_prices_reply(uid_default, items, dbg)
-                    send_text(to_msisdn, reply)
-                elif kw == "agendar":
+                    send_text(to_msisdn, format_prices_reply(uid_default, items, dbg))
+                    continue
+
+                if kw == "agendar" or (sess.get("intent") == "agendar"):
                     items, _ = load_prices(uid_default)
-                    reply = _agendar_por_texto(value, to_msisdn, uid_default, app_tag, text, text_norm, items)
+                    reply = _agendar_fluxo(value, to_msisdn, uid_default, app_tag, text, text_norm, items, sess, wa_id)
                     send_text(to_msisdn, reply)
-                elif kw == "reagendar":
-                    reply = _reagendar_por_texto(value, to_msisdn, uid_default, app_tag, text, text_norm)
+                    continue
+
+                if kw == "reagendar" or (sess.get("intent") == "reagendar"):
+                    reply = _reagendar_fluxo(value, to_msisdn, uid_default, app_tag, text, text_norm, sess, wa_id)
                     send_text(to_msisdn, reply)
-                else:
-                    send_text(to_msisdn, fallback_text(app_tag, f"audio:kw-nok::{text_norm[:30]}"))
+                    continue
+
+                send_text(to_msisdn, fallback_text(app_tag, f"audio:kw-nok::{text_norm[:30]}"))
+
             except Exception as e:
                 print("[WA_BOT][AUDIO][ERROR]", repr(e), flush=True)
                 send_text(to_msisdn, fallback_text(app_tag, "audio:error"))
             continue
 
-        # OUTROS TIPOS
+        # ---------- Outros tipos ----------
         if to_msisdn:
             send_text(to_msisdn, fallback_text(app_tag, "wa_bot:default"))
 
+    # statuses (log)
     for st in value.get("statuses", []):
         print(f"[WA_BOT][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}", flush=True)
