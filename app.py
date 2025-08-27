@@ -207,6 +207,15 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v22.0")
 
+# Tag configurável de fallback (pode ajustar via env APP_TAG)
+APP_TAG = os.getenv("APP_TAG", "2025-08-27")
+
+def fallback_text(context: str) -> str:
+    """
+    Gera texto de fallback com etiqueta única para rastrear a origem.
+    """
+    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
+
 def _normalize_br_msisdn(wa_id: str) -> str:
     """
     Ajusta MSISDN do Brasil para apenas dígitos.
@@ -265,11 +274,12 @@ def verify_webhook():
 # POST /webhook — prioriza RAW e tem fallback por REGEX para self-test no Windows
 @app.post("/webhook")
 def receive_webhook():
-    # 0) Cabeçalhos p/ debug
+    # 0) Cabeçalhos p/ debug (checar origem Meta via HMAC)
     try:
         ct = request.content_type or "<none>"
         clen = request.content_length
-        print(f"[WEBHOOK][CT] {ct} | len={clen}", flush=True)
+        sig = request.headers.get("X-Hub-Signature-256")
+        print(f"[WEBHOOK][CT] {ct} | len={clen} | has_sig256={bool(sig)}", flush=True)
     except Exception:
         pass
 
@@ -315,7 +325,7 @@ def receive_webhook():
             from_number = m.group(1)
             to_msisdn = _normalize_br_msisdn(from_number)
             print(f"[WEBHOOK][FALLBACK][regex] from={from_number} -> {to_msisdn}", flush=True)
-            _send_text(to_msisdn, "Olá! MEI Robô ativo ✅ — webhook fallback (regex).")
+            _send_text(to_msisdn, fallback_text("path=app.py:regex"))
             return "EVENT_RECEIVED", 200
 
     # 6) Log do payload interpretado
@@ -344,7 +354,8 @@ def receive_webhook():
 
                     if from_number and msg_type in {"text","audio","image","video","document","interactive","sticker","location"}:
                         to_msisdn = _normalize_br_msisdn(from_number)
-                        _send_text(to_msisdn, "Olá! MEI Robô ativo ✅ — sua mensagem foi recebida.")
+                        # Resposta padrão COM ETIQUETA (para rastrear origem real do fallback)
+                        _send_text(to_msisdn, fallback_text("path=app.py:default"))
 
                 # Status (delivered/read/failed)
                 for st in value.get("statuses", []):
