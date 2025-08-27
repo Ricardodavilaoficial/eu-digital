@@ -1,13 +1,16 @@
 # services/wa_bot.py
-# Lógica do bot WhatsApp (texto + áudio com STT), isolada do app.py
+# Lógica do bot WhatsApp (texto + áudio com STT) + "agendar", isolada do app.py
 
 import os
+import re
 import json
 import requests
 import unicodedata
+from datetime import datetime, timedelta, timezone
 from services import db as dbsvc
 
 DB = dbsvc.db
+SP_TZ = timezone(timedelta(hours=-3))  # America/Sao_Paulo (sem horário de verão)
 
 # ---------- utils ----------
 def _only_digits(s: str) -> str:
@@ -35,6 +38,8 @@ def _detect_keyword(body: str):
     if any(k in t for k in ["preco", "precos", "preços", "tabela", "lista", "valores",
                             "servico", "servicos", "serviço", "serviços"]):
         return "precos"
+    if "agendar" in t or "agenda " in t or "marcar" in t or "agendamento" in t:
+        return "agendar"
     return None
 
 # ---------- Firestore (preços) ----------
@@ -143,6 +148,122 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     print("[STT] nenhum backend retornou transcrição", flush=True)
     return ""
 
+# ---------- AGENDAR ----------
+def _parse_datetime_br(text_norm: str):
+    """
+    Extrai dd/mm e hh:mm do texto normalizado. Retorna datetime tz-aware (SP) ou None.
+    Ex.: 'agendar pitch 30/08 14:00'
+    """
+    d = re.search(r'(\b\d{1,2})[\/\.-](\d{1,2})(?:[\/\.-](\d{2,4}))?', text_norm)
+    h = re.search(r'(\b\d{1,2})[:h](\d{2})', text_norm)
+    if not d or not h:
+        return None
+    day = int(d.group(1))
+    month = int(d.group(2))
+    year = d.group(3)
+    year = int(year) + (2000 if year and len(year) == 2 else 0) if year else datetime.now(SP_TZ).year
+    hour = int(h.group(1))
+    minute = int(h.group(2))
+    try:
+        dt = datetime(year, month, day, hour, minute, tzinfo=SP_TZ)
+        return dt
+    except Exception:
+        return None
+
+def _choose_service(items, text_norm: str):
+    """Escolhe serviço pela melhor ocorrência no texto; se 1 item, usa direto."""
+    if not items:
+        return None
+    if len(items) == 1:
+        return items[0]
+    best = None
+    best_len = 0
+    for it in items:
+        alias = (it.get("nomeLower") or it.get("nome") or "").lower()
+        alias_norm = _strip_accents_lower(alias)
+        if not alias_norm:
+            continue
+        if alias_norm in text_norm:
+            if len(alias_norm) > best_len:
+                best = it
+                best_len = len(alias_norm)
+    return best
+
+def _agendar_por_texto(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items):
+    # selecionar serviço
+    svc = _choose_service(items, text_norm)
+    if not svc:
+        # instrução de como pedir
+        nomes = ", ".join([it.get("nome") or it.get("nomeLower") for it in items[:5]]) or "o serviço"
+        return f"Para agendar, envie assim:\n" \
+               f"agendar <serviço> <dd/mm> <hh:mm>\n" \
+               f"Ex.: agendar Pitch 30/08 14:00\n\n" \
+               f"Serviços disponíveis: {nomes}"
+
+    # data/hora
+    dt = _parse_datetime_br(text_norm)
+    if not dt:
+        return "Informe a data e hora assim: dd/mm hh:mm\nEx.: agendar Pitch 30/08 14:00"
+
+    # montar agendamento
+    dur = int(svc.get("duracaoMin") or svc.get("duracao") or 60)
+    fim = dt + timedelta(minutes=dur)
+
+    wa_id = ""
+    nome_contato = ""
+    try:
+        contacts = value.get("contacts") or []
+        if contacts and isinstance(contacts, list):
+            wa_id = contacts[0].get("wa_id") or ""
+            prof = contacts[0].get("profile") or {}
+            nome_contato = prof.get("name") or ""
+    except Exception:
+        pass
+
+    ag = {
+        "estado": "solicitado",
+        "canal": "whatsapp",
+        "clienteWaId": wa_id,
+        "clienteNome": nome_contato,
+        "telefone": to_msisdn,
+        "servicoNome": svc.get("nome") or svc.get("nomeLower"),
+        "duracaoMin": dur,
+        "preco": svc.get("preco") or svc.get("valor"),
+        "inicio": dt.isoformat(),
+        "fim": fim.isoformat(),
+        "observacoes": (body_text or "")[:500],
+        "createdAt": datetime.now(SP_TZ).isoformat(),
+    }
+
+    # validar e salvar via services.schedule (se existir)
+    saved_id = None
+    try:
+        import services.schedule as sched
+        ok, motivo, conflito = sched.validar_agendamento_v1(uid_default, ag)
+        if not ok:
+            return f"Não foi possível agendar: {motivo}"
+        saved_id = sched.salvar_agendamento(uid_default, ag)
+        if isinstance(saved_id, dict):
+            saved_id = saved_id.get("id") or saved_id.get("ag_id")
+    except Exception as e:
+        print(f"[WA_BOT][AGENDA] validar/salvar via services.schedule falhou: {e}", flush=True)
+        # fallback: salvar direto
+        try:
+            ref = DB.collection(f"profissionais/{uid_default}/agendamentos").document()
+            ref.set(ag)
+            saved_id = ref.id
+        except Exception as e2:
+            print(f"[WA_BOT][AGENDA][FALLBACK_SAVE] erro: {e2}", flush=True)
+            return "Tive um problema ao salvar seu agendamento. Pode tentar novamente em instantes?"
+
+    dia = dt.strftime("%d/%m")
+    hora = dt.strftime("%H:%M")
+    preco = ag.get("preco")
+    preco_txt = f" — R${preco}" if preco not in (None, "", "?") else ""
+    sid = f" (id {saved_id})" if saved_id else ""
+    return f"✅ Agendamento solicitado: {ag['servicoNome']} em {dia} às {hora}{preco_txt}.{sid}\n" \
+           f"Se precisar alterar, responda: reagendar <dd/mm> <hh:mm>"
+
 # ---------- Processamento ----------
 def process_change(value: dict, send_text, uid_default: str, app_tag: str):
     # mensagens
@@ -161,10 +282,16 @@ def process_change(value: dict, send_text, uid_default: str, app_tag: str):
         # TEXTO
         if msg_type == "text":
             body = (msg.get("text") or {}).get("body", "")
+            text_norm = _strip_accents_lower(body)
             kw = _detect_keyword(body)
             if kw == "precos":
                 items, dbg = load_prices(uid_default)
                 reply = format_prices_reply(uid_default, items, dbg)
+                send_text(to_msisdn, reply)
+                continue
+            if kw == "agendar":
+                items, _ = load_prices(uid_default)
+                reply = _agendar_por_texto(value, to_msisdn, uid_default, app_tag, body, text_norm, items)
                 send_text(to_msisdn, reply)
                 continue
             send_text(to_msisdn, fallback_text(app_tag, "wa_bot:text-default"))
@@ -208,6 +335,10 @@ def process_change(value: dict, send_text, uid_default: str, app_tag: str):
                 if kw == "precos":
                     items, dbg = load_prices(uid_default)
                     reply = format_prices_reply(uid_default, items, dbg)
+                    send_text(to_msisdn, reply)
+                elif kw == "agendar":
+                    items, _ = load_prices(uid_default)
+                    reply = _agendar_por_texto(value, to_msisdn, uid_default, app_tag, text, text_norm, items)
                     send_text(to_msisdn, reply)
                 else:
                     send_text(to_msisdn, fallback_text(app_tag, f"audio:kw-nok::{text_norm[:30]}"))
