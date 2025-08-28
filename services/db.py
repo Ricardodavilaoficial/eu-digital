@@ -1,17 +1,16 @@
 # services/db.py
 # Cliente Firestore via Firebase Admin — inicialização robusta e helpers
 # Compatível com:
-#   from services.db import get_db
-#   from services import db as dbsvc  (compat: dbsvc.db.document(...))
+#   from services.db import get_db, get_doc, set_doc, list_collection, add_doc
+#   from services import db as dbsvc  (compat: dbsvc.document(...), dbsvc.collection(...))
 
 import os
 import json
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 import firebase_admin
 from firebase_admin import credentials, firestore as fa_firestore
-
 
 # ------------------------
 # Utilidades de timestamp
@@ -20,20 +19,18 @@ def now_ts() -> str:
     """Retorna ISO8601 UTC com 'Z' no fim (string)."""
     return datetime.utcnow().isoformat() + "Z"
 
-
 # -----------------------------------
 # Inicialização do Firebase / Firestore
 # -----------------------------------
 _APP: Optional[firebase_admin.App] = None
 _DB: Optional[fa_firestore.Client] = None
 
-
 def _load_credentials_from_inline_json():
     """
     Tenta ler credenciais do ambiente (JSON inline), nesta ordem:
       1) FIREBASE_CREDENTIALS_JSON (preferido)
       2) FIREBASE_SERVICE_ACCOUNT_JSON (compat)
-      3) GOOGLE_APPLICATION_CREDENTIALS_JSON (para SDKs GCP usando a mesma chave)
+      3) GOOGLE_APPLICATION_CREDENTIALS_JSON (compat GCP)
     Retorna (cred_obj, project_id_from_key) ou (None, None) se não houver.
     """
     raw = (
@@ -51,7 +48,6 @@ def _load_credentials_from_inline_json():
     except Exception as e:
         print("[FIREBASE] ERRO ao ler JSON inline de credencial:", e)
         return None, None
-
 
 def _load_credentials_from_file():
     """
@@ -73,7 +69,6 @@ def _load_credentials_from_file():
         print("[FIREBASE] ERRO ao ler GOOGLE_APPLICATION_CREDENTIALS:", e)
         return None, None
 
-
 def _ensure_project_match(key_project_id: Optional[str], env_project_id: Optional[str]):
     """Garante que o project_id da chave bate com o do ENV."""
     if not env_project_id:
@@ -84,7 +79,6 @@ def _ensure_project_match(key_project_id: Optional[str], env_project_id: Optiona
         raise RuntimeError(
             f"[FIREBASE] Project mismatch: key={key_project_id} env={env_project_id}"
         )
-
 
 def _init_firebase_app() -> firebase_admin.App:
     """
@@ -132,7 +126,6 @@ def _init_firebase_app() -> firebase_admin.App:
         "ou GOOGLE_APPLICATION_CREDENTIALS (arquivo)."
     )
 
-
 def get_db() -> fa_firestore.Client:
     """Retorna um client do Firestore (cacheado)."""
     global _DB
@@ -141,7 +134,6 @@ def get_db() -> fa_firestore.Client:
     _init_firebase_app()
     _DB = fa_firestore.client()
     return _DB
-
 
 def reset_db_for_tests():
     """Reseta singletons (útil em testes)."""
@@ -153,7 +145,6 @@ def reset_db_for_tests():
         pass
     _APP = None
     _DB = None
-
 
 # -------------------------------
 # Compat: exporta 'db' como lazy
@@ -176,35 +167,45 @@ class _LazyFirestore:
     def __repr__(self):
         return "<LazyFirestore: pending>" if self._client is None else repr(self._client)
 
-
 db = _LazyFirestore()  # compat: from services import db as dbsvc
-
 
 # ------------------------
 # Helpers genéricos (CRUD)
 # ------------------------
-def get_doc(path: str):
+def get_doc(path: str) -> Optional[Dict[str, Any]]:
     """Lê um documento por caminho 'colecao/doc[/subcolecao/doc]'."""
     snap = db.document(path).get()
     return snap.to_dict() if snap.exists else None
 
-
-def set_doc(path: str, data: dict, merge: bool = True):
+def set_doc(path: str, data: Dict[str, Any], merge: bool = True) -> None:
     """Cria/atualiza documento com merge por padrão."""
     if data is None:
         data = {}
     data.setdefault("updatedAt", now_ts())
     db.document(path).set(data, merge=merge)
 
-
-def update_doc(path: str, data: dict):
+def update_doc(path: str, data: Dict[str, Any]) -> None:
     """Alias para set_doc com merge=True."""
     set_doc(path, data, merge=True)
 
-
-def add_subdoc(col_path: str, data: dict) -> str:
+def list_collection(col_path: str, limit: int = 10) -> List[Dict[str, Any]]:
     """
-    Adiciona documento com ID aleatório em uma coleção (ex.: 'profissionais/{uid}/precos').
+    Lista documentos de uma coleção Firestore.
+    Ex.: 'profissionais/{uid}/produtosEServicos'
+    Retorna lista de dicts com campo adicional "_id".
+    """
+    docs = db.collection(col_path).limit(limit).stream()
+    out: List[Dict[str, Any]] = []
+    for d in docs:
+        payload = d.to_dict() or {}
+        payload["_id"] = d.id
+        out.append(payload)
+    return out
+
+def add_doc(col_path: str, data: Dict[str, Any]) -> str:
+    """
+    Adiciona documento com ID aleatório em uma coleção (compat).
+    Ex.: add_doc('profissionais/{uid}/agendamentos', {...})
     Retorna o ID criado.
     """
     if data is None:
@@ -216,11 +217,16 @@ def add_subdoc(col_path: str, data: dict) -> str:
     ref.set(data)
     return ref.id
 
+def add_subdoc(col_path: str, data: Dict[str, Any]) -> str:
+    """
+    Alias para add_doc (mantido por compatibilidade com chamadas antigas).
+    """
+    return add_doc(col_path, data)
 
 # ---------------------------------------
 # Funções específicas usadas pelas rotas
 # ---------------------------------------
-def salvar_config_profissional(uid: str, doc: dict):
+def salvar_config_profissional(uid: str, doc: Dict[str, Any]) -> None:
     """
     Salva (com merge) os dados de configuração em 'profissionais/{uid}'.
     Não sobrescreve campos já existentes indevidamente.
@@ -231,8 +237,7 @@ def salvar_config_profissional(uid: str, doc: dict):
     path = f"profissionais/{uid}"
     db.document(path).set(doc, merge=True)
 
-
-def salvar_tabela_precos(uid: str, itens: list) -> int:
+def salvar_tabela_precos(uid: str, itens: List[Dict[str, Any]]) -> int:
     """
     Salva itens de preços em 'profissionais/{uid}/precos' usando batch.
     Campos mínimos esperados por item: nome, preco, duracaoPadraoMin.
