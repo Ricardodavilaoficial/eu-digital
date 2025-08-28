@@ -8,6 +8,7 @@ import traceback
 import requests
 import re
 import hashlib
+import importlib, types  # <-- p/ lazy import do handler
 from flask import Flask, jsonify, request, send_from_directory
 
 print("[boot] app.py raiz carregado ✅", flush=True)
@@ -72,7 +73,7 @@ def _send_text(to: str, body: str):
         "messaging_product": "whatsapp",
         "to": to_digits,
         "type": "text",
-        "text": {"body": body[:4096]}
+        "text": {"body": (body or "")[:4096]},
     }
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=15)
@@ -169,6 +170,14 @@ def list_routes():
         rules.append({"rule": str(r), "endpoint": r.endpoint, "methods": methods})
     return jsonify(routes=rules, count=len(rules))
 
+@app.get("/__whoami")
+def server_whoami():
+    return jsonify({
+        "pid": os.getpid(),
+        "app_tag": APP_TAG,
+        "uid_default": UID_DEFAULT,
+    }), 200
+
 # -------------------------
 # Debug WA + Env Seguro
 # -------------------------
@@ -219,6 +228,7 @@ def env_safe():
         "WHATSAPP_TOKEN": _mask_secret(os.getenv("WHATSAPP_TOKEN")),
         "OPENAI_API_KEY": _mask_secret(os.getenv("OPENAI_API_KEY")),
         "FIREBASE_PROJECT_ID": os.getenv("FIREBASE_PROJECT_ID"),
+        "FIREBASE_CREDENTIALS_JSON": {"present": bool(os.getenv("FIREBASE_CREDENTIALS_JSON"))},
         "FIREBASE_SERVICE_ACCOUNT_JSON": {"present": bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON"))},
         "GOOGLE_APPLICATION_CREDENTIALS_JSON": {"present": bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))},
         "ELEVEN_API_KEY": _mask_secret(os.getenv("ELEVEN_API_KEY")),
@@ -245,7 +255,6 @@ def ping_firestore():
         return jsonify({"ok": False, "error": "services.db not available"}), 500
     try:
         client = get_db()
-        # tocar no cliente para validar credenciais (tenta pegar o primeiro iterável)
         _ = next(client.collections(), None)
         return jsonify({"ok": True})
     except Exception as e:
@@ -271,7 +280,6 @@ def debug_doc():
     parts = [p for p in path.split("/") if p]
     try:
         if len(parts) % 2 == 0:
-            # documento
             doc = get_doc(path)
             if doc is None:
                 return jsonify({"ok": True, "kind": "doc", "path": path, "data": None})
@@ -279,7 +287,6 @@ def debug_doc():
                 return jsonify({"ok": True, "kind": "doc", "path": path, "field": field, "data": doc.get(field)})
             return jsonify({"ok": True, "kind": "doc", "path": path, "data": doc})
         else:
-            # coleção
             items = list_collection(path, limit=limit)
             return jsonify({"ok": True, "kind": "collection", "collection": path, "count": len(items), "items": items})
     except Exception as e:
@@ -313,12 +320,35 @@ def verify_webhook():
     print(f"[WEBHOOK][VERIFY] fail mode={mode} token={token}", flush=True)
     return "Forbidden", 403
 
-# delegação para o handler externo
-try:
-    from services import wa_bot  # espera função process_change(value, send_text_fn, uid_default, app_tag)
-except Exception as e:
-    wa_bot = None
-    print(f"[warn] services.wa_bot indisponível: {e}")
+# --- Lazy import do handler do WhatsApp ---
+_WA_BOT_MOD = None
+def _load_wa_bot():
+    """Tenta importar (ou reimportar) services.wa_bot de forma segura."""
+    global _WA_BOT_MOD
+    if _WA_BOT_MOD and isinstance(_WA_BOT_MOD, types.ModuleType):
+        return _WA_BOT_MOD
+    try:
+        _WA_BOT_MOD = importlib.import_module("services.wa_bot")
+        print("[init] services.wa_bot importado", flush=True)
+        return _WA_BOT_MOD
+    except Exception as e:
+        print(f"[init][erro] não consegui importar services.wa_bot: {e}", flush=True)
+        _WA_BOT_MOD = None
+        return None
+
+def _first_from_number(value: dict) -> str:
+    """Extrai o primeiro 'from' do payload do WhatsApp para fallback."""
+    try:
+        for entry in value.get("entry", []):
+            for change in entry.get("changes", []):
+                msgs = (change.get("value") or {}).get("messages") or []
+                if msgs and isinstance(msgs, list):
+                    f = msgs[0].get("from")
+                    if f:
+                        return _normalize_br_msisdn(f)
+    except Exception:
+        pass
+    return ""
 
 @app.post("/webhook")
 def receive_webhook():
@@ -381,15 +411,33 @@ def receive_webhook():
     except Exception:
         print("[WEBHOOK][INCOMING] (non-json-printable)", flush=True)
 
-    # 7) Delegar processamento do change.value
+    # 7) Carregar handler
+    wa_mod = _load_wa_bot()
+
+    # 8) Delegar processamento do change.value (ou responder fallback se indisponível)
     try:
-        if wa_bot is None:
-            print("[ERROR] HANDLER: services.wa_bot não disponível", flush=True)
-        else:
-            for entry in data.get("entry", []):
-                for change in entry.get("changes", []):
-                    value = change.get("value", {})
-                    wa_bot.process_change(value, _send_text, UID_DEFAULT, APP_TAG)
+        for entry in data.get("entry", []):
+            for change in entry.get("changes", []):
+                value = change.get("value", {})
+
+                if not wa_mod or not hasattr(wa_mod, "process_change"):
+                    # tenta avisar o usuário, sem deixar a conversa “muda”
+                    try:
+                        to_msisdn = ""
+                        msgs = value.get("messages") or []
+                        if msgs and isinstance(msgs, list):
+                            to_msisdn = _normalize_br_msisdn(msgs[0].get("from") or "")
+                        if not to_msisdn:
+                            to_msisdn = _first_from_number({"entry":[{"changes":[{"value":value}]}]})
+                        if to_msisdn:
+                            _send_text(to_msisdn, fallback_text("handler-indisponivel"))
+                    except Exception:
+                        pass
+                    print("[ERROR] HANDLER: services.wa_bot não disponível ou sem process_change", flush=True)
+                    continue
+
+                # handler ok
+                wa_mod.process_change(value, _send_text, UID_DEFAULT, APP_TAG)
     except Exception as e:
         print("[ERROR] HANDLER:", repr(e), flush=True)
 
