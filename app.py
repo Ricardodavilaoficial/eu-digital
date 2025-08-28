@@ -8,7 +8,7 @@ import traceback
 import requests
 import re
 import hashlib
-import importlib, types  # <-- p/ lazy import do handler
+import importlib, types  # <-- lazy import do handler
 from flask import Flask, jsonify, request, send_from_directory
 
 print("[boot] app.py raiz carregado ✅", flush=True)
@@ -170,14 +170,6 @@ def list_routes():
         rules.append({"rule": str(r), "endpoint": r.endpoint, "methods": methods})
     return jsonify(routes=rules, count=len(rules))
 
-@app.get("/__whoami")
-def server_whoami():
-    return jsonify({
-        "pid": os.getpid(),
-        "app_tag": APP_TAG,
-        "uid_default": UID_DEFAULT,
-    }), 200
-
 # -------------------------
 # Debug WA + Env Seguro
 # -------------------------
@@ -336,20 +328,6 @@ def _load_wa_bot():
         _WA_BOT_MOD = None
         return None
 
-def _first_from_number(value: dict) -> str:
-    """Extrai o primeiro 'from' do payload do WhatsApp para fallback."""
-    try:
-        for entry in value.get("entry", []):
-            for change in entry.get("changes", []):
-                msgs = (change.get("value") or {}).get("messages") or []
-                if msgs and isinstance(msgs, list):
-                    f = msgs[0].get("from")
-                    if f:
-                        return _normalize_br_msisdn(f)
-    except Exception:
-        pass
-    return ""
-
 @app.post("/webhook")
 def receive_webhook():
     # 0) Headers para debug
@@ -423,14 +401,11 @@ def receive_webhook():
                 if not wa_mod or not hasattr(wa_mod, "process_change"):
                     # tenta avisar o usuário, sem deixar a conversa “muda”
                     try:
-                        to_msisdn = ""
                         msgs = value.get("messages") or []
                         if msgs and isinstance(msgs, list):
                             to_msisdn = _normalize_br_msisdn(msgs[0].get("from") or "")
-                        if not to_msisdn:
-                            to_msisdn = _first_from_number({"entry":[{"changes":[{"value":value}]}]})
-                        if to_msisdn:
-                            _send_text(to_msisdn, fallback_text("handler-indisponivel"))
+                            if to_msisdn:
+                                _send_text(to_msisdn, fallback_text("handler-indisponivel"))
                     except Exception:
                         pass
                     print("[ERROR] HANDLER: services.wa_bot não disponível ou sem process_change", flush=True)
