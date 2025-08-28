@@ -8,18 +8,18 @@ import traceback
 import requests
 import re
 import hashlib
-import importlib, types  # <-- lazy import do handler
+import importlib, types
 from flask import Flask, jsonify, request, send_from_directory
 
 print("[boot] app.py raiz carregado ✅", flush=True)
 logging.basicConfig(level=logging.INFO)
 
-# -------------------------
-# Flask / Static / CORS
-# -------------------------
 app = Flask(__name__, static_folder="public", static_url_path="/")
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
 
+# -------------------------
+# CORS
+# -------------------------
 try:
     from flask_cors import CORS
     CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
@@ -28,7 +28,7 @@ except Exception as e:
     print(f"[warn] flask-cors indisponível: {e}")
 
 # -------------------------
-# Helpers comuns
+# Helpers
 # -------------------------
 def _token_fingerprint(tok: str):
     if not tok:
@@ -43,7 +43,7 @@ def _normalize_br_msisdn(wa_id: str) -> str:
     if not wa_id:
         return ""
     digits = _only_digits(wa_id)
-    # normaliza celulares BR (inserindo 9 quando vier sem)
+    # normaliza celulares BR (inserindo o 9 quando vier sem)
     if digits.startswith("55") and len(digits) == 12:
         digits = digits[:4] + "9" + digits[4:]
     return digits
@@ -52,12 +52,12 @@ APP_TAG = os.getenv("APP_TAG", "2025-08-27")
 UID_DEFAULT = os.getenv("UID_DEFAULT", "ricardo-prod-uid")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
 
-# -------------------------
-# WhatsApp helpers
-# -------------------------
 def fallback_text(context: str) -> str:
     return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
 
+# -------------------------
+# WhatsApp send helper
+# -------------------------
 def _send_text(to: str, body: str):
     to_digits = _only_digits(to)
     token = os.getenv("WHATSAPP_TOKEN")
@@ -81,14 +81,17 @@ def _send_text(to: str, body: str):
             resp_json = r.json()
         except Exception:
             resp_json = {"raw": r.text}
-        print(f"[WHATSAPP][OUTBOUND] to={to_digits} status={r.status_code} resp={json.dumps(resp_json, ensure_ascii=False)[:800]}", flush=True)
+        print(
+            f"[WHATSAPP][OUTBOUND] to={to_digits} status={r.status_code} resp={json.dumps(resp_json, ensure_ascii=False)[:800]}",
+            flush=True,
+        )
         return r.ok, resp_json
     except Exception as e:
         print("[ERROR][SEND]", repr(e), flush=True)
         return False, {"error": repr(e)}
 
 # -------------------------
-# Blueprints existentes
+# Blueprints
 # -------------------------
 def _register_bp(bp, name: str):
     try:
@@ -148,7 +151,7 @@ except Exception as e:
     traceback.print_exc()
 
 # -------------------------
-# Health / util
+# Health / routes list
 # -------------------------
 @app.route("/health", methods=["GET"])
 def health():
@@ -247,6 +250,7 @@ def ping_firestore():
         return jsonify({"ok": False, "error": "services.db not available"}), 500
     try:
         client = get_db()
+        # tocar no cliente para validar credenciais
         _ = next(client.collections(), None)
         return jsonify({"ok": True})
     except Exception as e:
@@ -254,11 +258,6 @@ def ping_firestore():
 
 @app.route("/__doc", methods=["GET"])
 def debug_doc():
-    """
-    Auto-detecta: se path tiver número PAR de segmentos => documento.
-                 se path tiver número ÍMPAR de segmentos => coleção (lista).
-    Suporta ?field=nomeCampo para retornar apenas um campo de um documento.
-    """
     if get_doc is None:
         return jsonify({"ok": False, "error": "services.db not available"}), 500
 
@@ -272,6 +271,7 @@ def debug_doc():
     parts = [p for p in path.split("/") if p]
     try:
         if len(parts) % 2 == 0:
+            # documento
             doc = get_doc(path)
             if doc is None:
                 return jsonify({"ok": True, "kind": "doc", "path": path, "data": None})
@@ -279,6 +279,7 @@ def debug_doc():
                 return jsonify({"ok": True, "kind": "doc", "path": path, "field": field, "data": doc.get(field)})
             return jsonify({"ok": True, "kind": "doc", "path": path, "data": doc})
         else:
+            # coleção
             items = list_collection(path, limit=limit)
             return jsonify({"ok": True, "kind": "collection", "collection": path, "count": len(items), "items": items})
     except Exception as e:
@@ -299,7 +300,7 @@ def debug_list():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 # -------------------------
-# Webhook
+# Webhook verification
 # -------------------------
 @app.get("/webhook")
 def verify_webhook():
@@ -312,22 +313,44 @@ def verify_webhook():
     print(f"[WEBHOOK][VERIFY] fail mode={mode} token={token}", flush=True)
     return "Forbidden", 403
 
-# --- Lazy import do handler do WhatsApp ---
+# -------------------------
+# Lazy import do wa_bot + status
+# -------------------------
 _WA_BOT_MOD = None
+_WA_BOT_LAST_ERR = None
+
 def _load_wa_bot():
-    """Tenta importar (ou reimportar) services.wa_bot de forma segura."""
-    global _WA_BOT_MOD
+    global _WA_BOT_MOD, _WA_BOT_LAST_ERR
     if _WA_BOT_MOD and isinstance(_WA_BOT_MOD, types.ModuleType):
         return _WA_BOT_MOD
     try:
         _WA_BOT_MOD = importlib.import_module("services.wa_bot")
+        _WA_BOT_LAST_ERR = None
         print("[init] services.wa_bot importado", flush=True)
         return _WA_BOT_MOD
     except Exception as e:
-        print(f"[init][erro] não consegui importar services.wa_bot: {e}", flush=True)
         _WA_BOT_MOD = None
+        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\n" + (traceback.format_exc(limit=3) or "")
+        print(f"[init][erro] não consegui importar services.wa_bot: {e}", flush=True)
         return None
 
+@app.get("/__wa_bot_status")
+def wa_bot_status():
+    mod = _load_wa_bot()
+    return jsonify({
+        "ok": True,
+        "service": "mei-robo-prod",
+        "app_tag": APP_TAG,
+        "uid_default": UID_DEFAULT,
+        "loaded": bool(mod and hasattr(mod, "process_change")),
+        "has_process_change": bool(getattr(mod, "process_change", None)) if mod else False,
+        "last_error": _WA_BOT_LAST_ERR,
+        "module": getattr(mod, "__file__", None) if mod else None,
+    }), 200
+
+# -------------------------
+# Webhook receiver
+# -------------------------
 @app.post("/webhook")
 def receive_webhook():
     # 0) Headers para debug
@@ -389,17 +412,14 @@ def receive_webhook():
     except Exception:
         print("[WEBHOOK][INCOMING] (non-json-printable)", flush=True)
 
-    # 7) Carregar handler
+    # 7) Lazy load + delegação
     wa_mod = _load_wa_bot()
 
-    # 8) Delegar processamento do change.value (ou responder fallback se indisponível)
     try:
         for entry in data.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
-
                 if not wa_mod or not hasattr(wa_mod, "process_change"):
-                    # tenta avisar o usuário, sem deixar a conversa “muda”
                     try:
                         msgs = value.get("messages") or []
                         if msgs and isinstance(msgs, list):
@@ -408,10 +428,8 @@ def receive_webhook():
                                 _send_text(to_msisdn, fallback_text("handler-indisponivel"))
                     except Exception:
                         pass
-                    print("[ERROR] HANDLER: services.wa_bot não disponível ou sem process_change", flush=True)
+                    print("[ERROR] HANDLER: services.wa_bot indisponível; last_error=", _WA_BOT_LAST_ERR, flush=True)
                     continue
-
-                # handler ok
                 wa_mod.process_change(value, _send_text, UID_DEFAULT, APP_TAG)
     except Exception as e:
         print("[ERROR] HANDLER:", repr(e), flush=True)
@@ -450,6 +468,9 @@ def index():
 def static_proxy(path):
     return send_from_directory(app.static_folder, path)
 
+# -------------------------
+# Main
+# -------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
