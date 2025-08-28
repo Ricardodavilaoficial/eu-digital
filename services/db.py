@@ -2,7 +2,7 @@
 # Cliente Firestore via Firebase Admin — inicialização robusta e helpers
 # Compatível com:
 #   from services.db import get_db, get_doc, set_doc, list_collection, add_doc
-#   from services import db as dbsvc  (compat: dbsvc.document(...), dbsvc.collection(...))
+#   from services import db as dbsvc  (compat: dbsvc.document(...), dbsvc.collection(...), dbsvc() -> client)
 
 import os
 import json
@@ -153,6 +153,7 @@ class _LazyFirestore:
     """
     Wrapper que inicializa o client só quando for usado.
     Permite chamadas como: db.document(...), db.collection(...), etc.
+    E também ser chamado como função: db() -> client (compat com código antigo).
     """
     _client: Optional[fa_firestore.Client] = None
 
@@ -166,6 +167,11 @@ class _LazyFirestore:
 
     def __repr__(self):
         return "<LazyFirestore: pending>" if self._client is None else repr(self._client)
+
+    # >>> compat: permitir chamada como função (db())
+    def __call__(self):
+        self._ensure()
+        return self._client
 
 db = _LazyFirestore()  # compat: from services import db as dbsvc
 

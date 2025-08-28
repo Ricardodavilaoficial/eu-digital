@@ -1,5 +1,5 @@
 # app.py — entrypoint para runtime Python do Render (produção)
-# Magro: Webhook Meta + delegação para services/wa_bot (texto+áudio) + endpoints de debug seguros
+# Webhook Meta + delegação para services/wa_bot (texto+áudio) + endpoints de debug seguros
 
 import os
 import json
@@ -42,7 +42,7 @@ def _normalize_br_msisdn(wa_id: str) -> str:
     if not wa_id:
         return ""
     digits = _only_digits(wa_id)
-    # normaliza celulares BR (inserindo 9 no meio quando vem sem)
+    # normaliza celulares BR (inserindo 9 quando vier sem)
     if digits.startswith("55") and len(digits) == 12:
         digits = digits[:4] + "9" + digits[4:]
     return digits
@@ -184,7 +184,6 @@ def __wa_debug():
         "openai_model": os.getenv("OPENAI_NLU_MODEL"),
         "use_llm_for_all": os.getenv("USE_LLM_FOR_ALL"),
     }
-    # tenta enriquecer com orçamento se existir
     try:
         from services.budget_guard import budget_fingerprint
         out["budget"] = budget_fingerprint()
@@ -201,7 +200,6 @@ def _mask_secret(value: str):
 
 @app.route("/__env_safe", methods=["GET"])
 def env_safe():
-    # proteção simples via query ?key=VERIFY_TOKEN
     key = request.args.get("key", "")
     if key != VERIFY_TOKEN:
         return jsonify({"ok": False, "error": "forbidden"}), 403
@@ -218,7 +216,6 @@ def env_safe():
         "STT_SECONDS_AVG": os.getenv("STT_SECONDS_AVG"),
         "UID_DEFAULT": os.getenv("UID_DEFAULT"),
         "APP_TAG": os.getenv("APP_TAG"),
-        # mascaradas:
         "WHATSAPP_TOKEN": _mask_secret(os.getenv("WHATSAPP_TOKEN")),
         "OPENAI_API_KEY": _mask_secret(os.getenv("OPENAI_API_KEY")),
         "FIREBASE_PROJECT_ID": os.getenv("FIREBASE_PROJECT_ID"),
@@ -235,33 +232,56 @@ def env_safe():
 # Firestore utils (debug)
 # -------------------------
 try:
-    from services.db import get_doc, list_collection, db as _db
+    from services.db import get_doc, list_collection, get_db
 except Exception as e:
     get_doc = None
     list_collection = None
-    _db = None
+    get_db = None
     print(f"[warn] services.db indisponível: {e}")
 
 @app.route("/__ping_firestore", methods=["GET"])
 def ping_firestore():
-    if _db is None:
+    if get_db is None:
         return jsonify({"ok": False, "error": "services.db not available"}), 500
     try:
-        _db().collections()  # sanity check
+        client = get_db()
+        # tocar no cliente para validar credenciais (tenta pegar o primeiro iterável)
+        _ = next(client.collections(), None)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/__doc", methods=["GET"])
 def debug_doc():
+    """
+    Auto-detecta: se path tiver número PAR de segmentos => documento.
+                 se path tiver número ÍMPAR de segmentos => coleção (lista).
+    Suporta ?field=nomeCampo para retornar apenas um campo de um documento.
+    """
     if get_doc is None:
         return jsonify({"ok": False, "error": "services.db not available"}), 500
-    path = request.args.get("path")
+
+    path = request.args.get("path", "").strip()
+    field = request.args.get("field", "").strip()
+    limit = int(request.args.get("limit", "10"))
+
     if not path:
         return jsonify({"ok": False, "error": "missing ?path="}), 400
+
+    parts = [p for p in path.split("/") if p]
     try:
-        doc = get_doc(path)
-        return jsonify({"ok": True, "path": path, "data": doc})
+        if len(parts) % 2 == 0:
+            # documento
+            doc = get_doc(path)
+            if doc is None:
+                return jsonify({"ok": True, "kind": "doc", "path": path, "data": None})
+            if field:
+                return jsonify({"ok": True, "kind": "doc", "path": path, "field": field, "data": doc.get(field)})
+            return jsonify({"ok": True, "kind": "doc", "path": path, "data": doc})
+        else:
+            # coleção
+            items = list_collection(path, limit=limit)
+            return jsonify({"ok": True, "kind": "collection", "collection": path, "count": len(items), "items": items})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
