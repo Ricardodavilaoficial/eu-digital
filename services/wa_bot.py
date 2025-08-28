@@ -51,8 +51,11 @@ if _DB_CLIENT is None:
         _DB_CLIENT = None
         _ext_get_doc_rel = None  # type: ignore
 
-# escolhemos qualquer get_doc que tenha vindo
-_GET_DOC_FN = _ext_get_doc_abs or (_ext_get_doc_rel if "ext_get_doc_rel" in globals() else None)
+# escolhemos qualquer get_doc que tenha vindo (corrigido)
+try:
+    _GET_DOC_FN = _ext_get_doc_abs or _ext_get_doc_rel  # type: ignore
+except NameError:
+    _GET_DOC_FN = None  # type: ignore
 
 def _get_firestore_doc_ref(path: str):
     """Navega até um documento Firestore a partir de 'col/doc[/col/doc...]'."""
@@ -109,7 +112,6 @@ def _list_collection_safe(path: str, limit: int = 500) -> List[Dict[str, Any]]:
     if col_ref is None:
         return out
     try:
-        # nem todo client aceita .limit em subcol path string — mas no oficial funciona
         docs = col_ref.limit(int(limit)).stream()  # type: ignore
         for d in docs:
             obj = d.to_dict() or {}
@@ -236,6 +238,14 @@ def _pick_phone(value: Dict) -> str:
         return (value.get("messages", [{}])[0] or {}).get("from") or (value.get("contacts", [{}])[0] or {}).get("wa_id") or ""
     except Exception:
         return ""
+
+# ---- Helper para chave de cache (evita backslash em f-string) ----
+def _mk_price_cache_key(uid: str, user_text: str) -> str:
+    try:
+        norm = re.sub(r"\s+", " ", (user_text or "").strip().lower())[:120]
+    except Exception:
+        norm = ""
+    return f"{uid}:price:{norm}"
 
 # ========== Profissão & especializações ==========
 def _load_prof_context(uid: str) -> Dict[str, Any]:
@@ -747,7 +757,7 @@ def _reply_prices(uid: str, to: str, send_text):
     return send_text(to, msg)
 
 def _reply_price_from_cache_or_data(uid: str, to: str, user_text: str, send_text):
-    key = f"{uid}:price:{re.sub(r'\\s+', ' ', (user_text or '').strip().lower())[:120]}"
+    key = _mk_price_cache_key(uid, user_text)
     cached = cache_get(key)
     if cached:
         logging.info("[CACHE] price hit")
