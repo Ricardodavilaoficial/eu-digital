@@ -1,5 +1,5 @@
 # app.py — entrypoint para runtime Python do Render (produção)
-# Magro: Webhook Meta + delegação para services/wa_bot (texto+áudio)
+# Magro: Webhook Meta + delegação para services/wa_bot (texto+áudio) + endpoints de debug seguros
 
 import os
 import json
@@ -19,28 +19,72 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__, static_folder="public", static_url_path="/")
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
 
-def _token_fingerprint(tok: str):
-    if not tok:
-        return {"present": False, "length": 0, "sha256_12": None}
-    sha12 = hashlib.sha256(tok.encode("utf-8")).hexdigest()[:12]
-    return {"present": True, "length": len(tok), "sha256_12": sha12}
-
-@app.get("/__wa_debug")
-def __wa_debug():
-    fp = _token_fingerprint(os.getenv("WHATSAPP_TOKEN", ""))
-    return jsonify({
-        "graph_version": os.getenv("GRAPH_VERSION", "v22.0"),
-        "phone_number_id": os.getenv("PHONE_NUMBER_ID"),
-        "token_fingerprint": fp,
-        "pid": os.getpid(),
-    }), 200
-
 try:
     from flask_cors import CORS
     CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
     print("[init] CORS habilitado para /api/*")
 except Exception as e:
     print(f"[warn] flask-cors indisponível: {e}")
+
+# -------------------------
+# Helpers comuns
+# -------------------------
+def _token_fingerprint(tok: str):
+    if not tok:
+        return {"present": False, "length": 0, "sha256_12": None}
+    sha12 = hashlib.sha256(tok.encode("utf-8")).hexdigest()[:12]
+    return {"present": True, "length": len(tok), "sha256_12": sha12}
+
+def _only_digits(s: str) -> str:
+    return "".join(ch for ch in str(s or "") if ch.isdigit())
+
+def _normalize_br_msisdn(wa_id: str) -> str:
+    if not wa_id:
+        return ""
+    digits = _only_digits(wa_id)
+    # normaliza celulares BR (inserindo 9 no meio quando vem sem)
+    if digits.startswith("55") and len(digits) == 12:
+        digits = digits[:4] + "9" + digits[4:]
+    return digits
+
+APP_TAG = os.getenv("APP_TAG", "2025-08-27")
+UID_DEFAULT = os.getenv("UID_DEFAULT", "ricardo-prod-uid")
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
+
+# -------------------------
+# WhatsApp helpers
+# -------------------------
+def fallback_text(context: str) -> str:
+    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
+
+def _send_text(to: str, body: str):
+    to_digits = _only_digits(to)
+    token = os.getenv("WHATSAPP_TOKEN")
+    pnid = os.getenv("PHONE_NUMBER_ID")
+    gv = os.getenv("GRAPH_VERSION", "v23.0")
+    if not token or not pnid:
+        print("[ERROR] CONFIG: Missing WHATSAPP_TOKEN or PHONE_NUMBER_ID", flush=True)
+        return False, {"error": "missing_whatsapp_config"}
+
+    url = f"https://graph.facebook.com/{gv}/{pnid}/messages"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_digits,
+        "type": "text",
+        "text": {"body": body[:4096]}
+    }
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=15)
+        try:
+            resp_json = r.json()
+        except Exception:
+            resp_json = {"raw": r.text}
+        print(f"[WHATSAPP][OUTBOUND] to={to_digits} status={r.status_code} resp={json.dumps(resp_json, ensure_ascii=False)[:800]}", flush=True)
+        return r.ok, resp_json
+    except Exception as e:
+        print("[ERROR][SEND]", repr(e), flush=True)
+        return False, {"error": repr(e)}
 
 # -------------------------
 # Blueprints existentes
@@ -112,7 +156,9 @@ def health():
         service="mei-robo-prod",
         has_whatsapp_token=bool(os.getenv("WHATSAPP_TOKEN")),
         has_phone_number_id=bool(os.getenv("PHONE_NUMBER_ID")),
-        graph_version=os.getenv("GRAPH_VERSION", "v22.0"),
+        graph_version=os.getenv("GRAPH_VERSION", "v23.0"),
+        app_tag=APP_TAG,
+        uid_default=UID_DEFAULT,
     )
 
 @app.route("/__routes", methods=["GET"])
@@ -124,50 +170,114 @@ def list_routes():
     return jsonify(routes=rules, count=len(rules))
 
 # -------------------------
-# WhatsApp helpers
+# Debug WA + Env Seguro
 # -------------------------
-def _only_digits(s: str) -> str:
-    return "".join(ch for ch in str(s or "") if ch.isdigit())
-
-def _normalize_br_msisdn(wa_id: str) -> str:
-    if not wa_id:
-        return ""
-    digits = _only_digits(wa_id)
-    if digits.startswith("55") and len(digits) == 12:
-        digits = digits[:4] + "9" + digits[4:]
-    return digits
-
-APP_TAG = os.getenv("APP_TAG", "2025-08-27")
-UID_DEFAULT = os.getenv("UID_DEFAULT", "ricardo-prod-uid")
-
-def fallback_text(context: str) -> str:
-    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
-
-def _send_text(to: str, body: str):
-    to_digits = _only_digits(to)
-    token = os.getenv("WHATSAPP_TOKEN")
-    pnid = os.getenv("PHONE_NUMBER_ID")
-    gv = os.getenv("GRAPH_VERSION", "v22.0")
-    if not token or not pnid:
-        print("[ERROR] CONFIG: Missing WHATSAPP_TOKEN or PHONE_NUMBER_ID", flush=True)
-        return False, {"error": "missing_whatsapp_config"}
-
-    url = f"https://graph.facebook.com/{gv}/{pnid}/messages"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {"messaging_product": "whatsapp", "to": to_digits, "type": "text", "text": {"body": body}}
+@app.get("/__wa_debug")
+def __wa_debug():
+    fp = _token_fingerprint(os.getenv("WHATSAPP_TOKEN", ""))
+    out = {
+        "graph_version": os.getenv("GRAPH_VERSION", "v23.0"),
+        "phone_number_id": os.getenv("PHONE_NUMBER_ID"),
+        "token_fingerprint": fp,
+        "pid": os.getpid(),
+        "app_tag": APP_TAG,
+        "openai_model": os.getenv("OPENAI_NLU_MODEL"),
+        "use_llm_for_all": os.getenv("USE_LLM_FOR_ALL"),
+    }
+    # tenta enriquecer com orçamento se existir
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=15)
-        try:
-            resp_json = r.json()
-        except Exception:
-            resp_json = {"raw": r.text}
-        print(f"[WHATSAPP][OUTBOUND] to={to_digits} status={r.status_code} resp={json.dumps(resp_json, ensure_ascii=False)[:800]}", flush=True)
-        return r.ok, resp_json
-    except Exception as e:
-        print("[ERROR] SEND]:", repr(e), flush=True)
-        return False, {"error": repr(e)}
+        from services.budget_guard import budget_fingerprint
+        out["budget"] = budget_fingerprint()
+    except Exception:
+        out["budget"] = {"available": False}
+    return jsonify(out), 200
 
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
+def _mask_secret(value: str):
+    if not value:
+        return {"present": False}
+    v = value.strip()
+    sha12 = hashlib.sha256(v.encode()).hexdigest()[:12]
+    return {"present": True, "length": len(v), "sha256_12": sha12}
+
+@app.route("/__env_safe", methods=["GET"])
+def env_safe():
+    # proteção simples via query ?key=VERIFY_TOKEN
+    key = request.args.get("key", "")
+    if key != VERIFY_TOKEN:
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    safe = {
+        "VERIFY_TOKEN": bool(os.getenv("VERIFY_TOKEN")),
+        "GRAPH_VERSION": os.getenv("GRAPH_VERSION"),
+        "PHONE_NUMBER_ID": os.getenv("PHONE_NUMBER_ID"),
+        "OPENAI_NLU_MODEL": os.getenv("OPENAI_NLU_MODEL"),
+        "USE_LLM_FOR_ALL": os.getenv("USE_LLM_FOR_ALL"),
+        "BUDGET_MONTHLY_USD": os.getenv("BUDGET_MONTHLY_USD"),
+        "BUDGET_RESERVE_PCT": os.getenv("BUDGET_RESERVE_PCT"),
+        "TZ": os.getenv("TZ"),
+        "STT_SECONDS_AVG": os.getenv("STT_SECONDS_AVG"),
+        "UID_DEFAULT": os.getenv("UID_DEFAULT"),
+        "APP_TAG": os.getenv("APP_TAG"),
+        # mascaradas:
+        "WHATSAPP_TOKEN": _mask_secret(os.getenv("WHATSAPP_TOKEN")),
+        "OPENAI_API_KEY": _mask_secret(os.getenv("OPENAI_API_KEY")),
+        "FIREBASE_PROJECT_ID": os.getenv("FIREBASE_PROJECT_ID"),
+        "FIREBASE_SERVICE_ACCOUNT_JSON": {"present": bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON"))},
+        "GOOGLE_APPLICATION_CREDENTIALS_JSON": {"present": bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))},
+        "ELEVEN_API_KEY": _mask_secret(os.getenv("ELEVEN_API_KEY")),
+        "ELEVEN_VOICE_ID": os.getenv("ELEVEN_VOICE_ID"),
+        "DEV_FORCE_ADMIN": os.getenv("DEV_FORCE_ADMIN"),
+        "DEV_FAKE_UID": os.getenv("DEV_FAKE_UID"),
+    }
+    return jsonify({"ok": True, "env": safe})
+
+# -------------------------
+# Firestore utils (debug)
+# -------------------------
+try:
+    from services.db import get_doc, list_collection, db as _db
+except Exception as e:
+    get_doc = None
+    list_collection = None
+    _db = None
+    print(f"[warn] services.db indisponível: {e}")
+
+@app.route("/__ping_firestore", methods=["GET"])
+def ping_firestore():
+    if _db is None:
+        return jsonify({"ok": False, "error": "services.db not available"}), 500
+    try:
+        _db().collections()  # sanity check
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/__doc", methods=["GET"])
+def debug_doc():
+    if get_doc is None:
+        return jsonify({"ok": False, "error": "services.db not available"}), 500
+    path = request.args.get("path")
+    if not path:
+        return jsonify({"ok": False, "error": "missing ?path="}), 400
+    try:
+        doc = get_doc(path)
+        return jsonify({"ok": True, "path": path, "data": doc})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/__list", methods=["GET"])
+def debug_list():
+    if list_collection is None:
+        return jsonify({"ok": False, "error": "services.db not available"}), 500
+    col = request.args.get("col")
+    limit = int(request.args.get("limit", "5"))
+    if not col:
+        return jsonify({"ok": False, "error": "missing ?col="}), 400
+    try:
+        items = list_collection(col, limit=limit)
+        return jsonify({"ok": True, "collection": col, "count": len(items), "items": items})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 # -------------------------
 # Webhook
@@ -184,7 +294,11 @@ def verify_webhook():
     return "Forbidden", 403
 
 # delegação para o handler externo
-from services import wa_bot  # <— NOVO
+try:
+    from services import wa_bot  # espera função process_change(value, send_text_fn, uid_default, app_tag)
+except Exception as e:
+    wa_bot = None
+    print(f"[warn] services.wa_bot indisponível: {e}")
 
 @app.post("/webhook")
 def receive_webhook():
@@ -249,10 +363,13 @@ def receive_webhook():
 
     # 7) Delegar processamento do change.value
     try:
-        for entry in data.get("entry", []):
-            for change in entry.get("changes", []):
-                value = change.get("value", {})
-                wa_bot.process_change(value, _send_text, UID_DEFAULT, APP_TAG)
+        if wa_bot is None:
+            print("[ERROR] HANDLER: services.wa_bot não disponível", flush=True)
+        else:
+            for entry in data.get("entry", []):
+                for change in entry.get("changes", []):
+                    value = change.get("value", {})
+                    wa_bot.process_change(value, _send_text, UID_DEFAULT, APP_TAG)
     except Exception as e:
         print("[ERROR] HANDLER:", repr(e), flush=True)
 
