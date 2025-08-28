@@ -18,86 +18,187 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-# --- DB helpers (tolerante a ausências) ---
-try:
-    from services.db import get_doc, list_collection
-    from services import db as dbsvc  # Lazy client p/ writes/sessions
-    DB = dbsvc.db
-except Exception as e:
-    logging.exception("[wa_bot] services.db indisponível: %s", e)
-    def get_doc(_): return None
-    def list_collection(_col, limit=10): return []
-    class _FakeDB:
-        def collection(self, *_a, **_k): raise RuntimeError("DB indisponível")
-    DB = _FakeDB()
+# ========== DB helpers (imports tolerantes + helpers internos) ==========
+_DB_LAST_ERR = None
 
-# --- NLU leve ---
+# tentamos absolute...
 try:
-    from services.openai.nlu_intent import extract_intent  # retorna {intent, serviceName, dateText, timeText}
-except Exception as e:
-    logging.exception("[wa_bot] nlu_intent indisponível: %s", e)
-    def extract_intent(text: str) -> Dict[str, Optional[str]]:
-        t = (text or "").lower()
-        if re.search(r"\b(preço|preços|tabela|valor|valores|serviço|serviços)\b", t): return {"intent":"precos","serviceName":None,"dateText":None,"timeText":None}
-        if re.search(r"\b(agendar|agenda|marcar|agendamento|reservar)\b", t):
-            mdate = re.search(r"(\d{1,2}/\d{1,2})", t)
-            mtime = re.search(r"(\d{1,2}:\d{2})", t)
-            return {"intent":"agendar","serviceName":None,"dateText": mdate.group(1) if mdate else None,"timeText": mtime.group(1) if mtime else None}
-        if re.search(r"\b(reagendar|remarcar|mudar\s+hor[aó]rio|trocar\s+hor[aó]rio)\b", t): return {"intent":"reagendar","serviceName":None,"dateText":None,"timeText":None}
-        if re.search(r"\b(endereç|localiza|maps?)\b", t): return {"intent":"localizacao","serviceName":None,"dateText":None,"timeText":None}
-        if re.search(r"\b(hor[aá]rio|funciona)\b", t): return {"intent":"horarios","serviceName":None,"dateText":None,"timeText":None}
-        if re.search(r"\b(telefone|whats|contato)\b", t): return {"intent":"telefone","serviceName":None,"dateText":None,"timeText":None}
-        if re.search(r"\b(pix|pagamento|pagar)\b", t): return {"intent":"pagamento","serviceName":None,"dateText":None,"timeText":None}
-        return {"intent":"fallback","serviceName":None,"dateText":None,"timeText":None}
+    from services import db as _dbsvc_abs
+    _DB_CLIENT = getattr(_dbsvc_abs, "db", None)
+    try:
+        # get_doc pode não existir no módulo; tratamos abaixo
+        from services.db import get_doc as _ext_get_doc_abs  # type: ignore
+    except Exception:
+        _ext_get_doc_abs = None  # type: ignore
+except Exception as e_abs:
+    _DB_LAST_ERR = f"abs:{e_abs}"
+    _dbsvc_abs = None
+    _DB_CLIENT = None
+    _ext_get_doc_abs = None  # type: ignore
 
-# --- Budget Guard ---
-try:
-    from services.budget_guard import budget_fingerprint, charge, can_use_audio, can_use_gpt4o
-except Exception as e:
-    logging.exception("[wa_bot] budget_guard indisponível: %s", e)
-    def budget_fingerprint(): return {"can_audio": True, "can_gpt4o": False}
-    def charge(*args, **kwargs): pass
-    def can_use_audio(): return True
-    def can_use_gpt4o(): return False
-
-# --- Cache de respostas de preço ---
-try:
-    from services.answers_cache import is_price_question, get as cache_get, put as cache_put
-except Exception as e:
-    logging.exception("[wa_bot] answers_cache indisponível: %s", e)
-    def is_price_question(text: str) -> bool:
-        return bool(re.search(r"\b(quanto|preço|valor|custa|tá|ta)\b", text or "", re.I))
-    def cache_get(_k): return None
-    def cache_put(_k, _v): pass
-
-# --- Schedule (regras de negócio/CRUD) ---
-try:
-    from services.schedule import can_book, save_booking, validar_agendamento_v1, salvar_agendamento, atualizar_estado_agendamento
-except Exception as e:
-    logging.exception("[wa_bot] schedule indisponível: %s", e)
-    def can_book(date_str, time_str, tz="America/Sao_Paulo"):
-        # fallback: mínimo +2 dias e sem fim de semana
+# ...ou relative
+if _DB_CLIENT is None:
+    try:
+        from . import db as _dbsvc_rel  # type: ignore
+        _DB_CLIENT = getattr(_dbsvc_rel, "db", None)
         try:
-            dd, mm = [int(x) for x in re.findall(r"\d{1,2}", date_str)[:2]]
-            hh, mi = [int(x) for x in re.findall(r"\d{1,2}", time_str)[:2]]
-            tzinfo = timezone(timedelta(hours=-3))
-            now = datetime.now(tzinfo)
-            year = now.year
-            dt = datetime(year, mm, dd, hh, mi, tzinfo=tzinfo)
-            if (dt.date() - now.date()).days < 2:
-                return (False, "Preciso de pelo menos 2 dias de antecedência.")
-            if dt.weekday() >= 5:
-                return (False, "Não atendemos em fins de semana.")
-            return (True, None)
+            from .db import get_doc as _ext_get_doc_rel  # type: ignore
         except Exception:
-            return (False, "Data/hora inválida.")
-    def save_booking(uid, serviceName, dateText, timeText):
-        return {"servico": serviceName or "serviço", "data": dateText, "hora": timeText}
-    def validar_agendamento_v1(uid, ag): return (True, None, None)
-    def salvar_agendamento(uid, ag): return {"id":"fake"}
-    def atualizar_estado_agendamento(uid, ag_id, body): return True
+            _ext_get_doc_rel = None  # type: ignore
+    except Exception as e_rel:
+        _DB_LAST_ERR = (_DB_LAST_ERR or "") + f" | rel:{e_rel}"
+        _dbsvc_rel = None
+        _DB_CLIENT = None
+        _ext_get_doc_rel = None  # type: ignore
 
-# --- Constantes / TZ ---
+# escolhemos qualquer get_doc que tenha vindo
+_GET_DOC_FN = _ext_get_doc_abs or (_ext_get_doc_rel if "ext_get_doc_rel" in globals() else None)
+
+def _get_firestore_doc_ref(path: str):
+    """Navega até um documento Firestore a partir de 'col/doc[/col/doc...]'."""
+    if _DB_CLIENT is None:
+        return None
+    parts = [p for p in (path or "").split("/") if p]
+    if not parts or len(parts) % 2 != 0:
+        return None  # precisa ser doc (número PAR de segmentos)
+    ref = _DB_CLIENT
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            ref = ref.collection(part)
+        else:
+            ref = ref.document(part)
+    return ref
+
+def _get_firestore_col_ref(path: str):
+    """Navega até uma coleção Firestore a partir de 'col[/doc/col...]' (número ÍMPAR de segmentos)."""
+    if _DB_CLIENT is None:
+        return None
+    parts = [p for p in (path or "").split("/") if p]
+    if not parts or len(parts) % 2 != 1:
+        return None
+    ref = _DB_CLIENT
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            ref = ref.collection(part)
+        else:
+            ref = ref.document(part)
+    return ref  # CollectionReference
+
+def _get_doc_safe(path: str) -> Optional[Dict[str, Any]]:
+    """Usa get_doc do services.db se existir; caso contrário, lê via client."""
+    if callable(_GET_DOC_FN):
+        try:
+            return _GET_DOC_FN(path)  # type: ignore
+        except Exception as e:
+            logging.info("[wa_bot] _GET_DOC_FN falhou: %s", e)
+    # fallback via client
+    ref = _get_firestore_doc_ref(path)
+    if ref is None:
+        return None
+    try:
+        snap = ref.get()
+        return snap.to_dict() if getattr(snap, "exists", False) else None
+    except Exception as e:
+        logging.info("[wa_bot] get via client falhou: %s", e)
+        return None
+
+def _list_collection_safe(path: str, limit: int = 500) -> List[Dict[str, Any]]:
+    """Lista documentos de uma coleção por caminho textual (sem depender de list_collection externa)."""
+    col_ref = _get_firestore_col_ref(path)
+    out: List[Dict[str, Any]] = []
+    if col_ref is None:
+        return out
+    try:
+        # nem todo client aceita .limit em subcol path string — mas no oficial funciona
+        docs = col_ref.limit(int(limit)).stream()  # type: ignore
+        for d in docs:
+            obj = d.to_dict() or {}
+            obj["_id"] = d.id
+            out.append(obj)
+    except Exception as e:
+        logging.info("[wa_bot] stream collection falhou: %s", e)
+    return out
+
+# Alias curto para o client (para writes/sessions)
+DB = _DB_CLIENT
+
+# ========== NLU leve (imports tolerantes) ==========
+try:
+    from services.openai.nlu_intent import extract_intent  # abs
+except Exception as e_abs:
+    try:
+        from .openai.nlu_intent import extract_intent  # rel
+    except Exception as e_rel:
+        logging.exception("[wa_bot] nlu_intent indisponível: abs=%s | rel=%s", e_abs, e_rel)
+        def extract_intent(text: str) -> Dict[str, Optional[str]]:
+            t = (text or "").lower()
+            if re.search(r"\b(preço|preços|tabela|valor|valores|serviço|serviços)\b", t): return {"intent":"precos","serviceName":None,"dateText":None,"timeText":None}
+            if re.search(r"\b(agendar|agenda|marcar|agendamento|reservar)\b", t):
+                mdate = re.search(r"(\d{1,2}/\d{1,2})", t); mtime = re.search(r"(\d{1,2}:\d{2})", t)
+                return {"intent":"agendar","serviceName":None,"dateText": mdate.group(1) if mdate else None,"timeText": mtime.group(1) if mtime else None}
+            if re.search(r"\b(reagendar|remarcar|mudar\s+hor[aó]rio|trocar\s+hor[aó]rio)\b", t): return {"intent":"reagendar","serviceName":None,"dateText":None,"timeText":None}
+            if re.search(r"\b(endereç|localiza|maps?)\b", t): return {"intent":"localizacao","serviceName":None,"dateText":None,"timeText":None}
+            if re.search(r"\b(hor[aá]rio|funciona)\b", t): return {"intent":"horarios","serviceName":None,"dateText":None,"timeText":None}
+            if re.search(r"\b(telefone|whats|contato)\b", t): return {"intent":"telefone","serviceName":None,"dateText":None,"timeText":None}
+            if re.search(r"\b(pix|pagamento|pagar)\b", t): return {"intent":"pagamento","serviceName":None,"dateText":None,"timeText":None}
+            return {"intent":"fallback","serviceName":None,"dateText":None,"timeText":None}
+
+# ========== Budget Guard (imports tolerantes) ==========
+try:
+    from services.budget_guard import budget_fingerprint, charge, can_use_audio, can_use_gpt4o  # abs
+except Exception as e_abs:
+    try:
+        from .budget_guard import budget_fingerprint, charge, can_use_audio, can_use_gpt4o  # rel
+    except Exception as e_rel:
+        logging.exception("[wa_bot] budget_guard indisponível: abs=%s | rel=%s", e_abs, e_rel)
+        def budget_fingerprint(): return {"can_audio": True, "can_gpt4o": False}
+        def charge(*args, **kwargs): pass
+        def can_use_audio(): return True
+        def can_use_gpt4o(): return False
+
+# ========== Cache de respostas (imports tolerantes) ==========
+try:
+    from services.answers_cache import is_price_question, get as cache_get, put as cache_put  # abs
+except Exception as e_abs:
+    try:
+        from .answers_cache import is_price_question, get as cache_get, put as cache_put  # rel
+    except Exception as e_rel:
+        logging.exception("[wa_bot] answers_cache indisponível: abs=%s | rel=%s", e_abs, e_rel)
+        def is_price_question(text: str) -> bool:
+            return bool(re.search(r"\b(quanto|preço|valor|custa|tá|ta)\b", text or "", re.I))
+        def cache_get(_k): return None
+        def cache_put(_k, _v): pass
+
+# ========== Schedule (imports tolerantes) ==========
+try:
+    from services.schedule import can_book, save_booking, validar_agendamento_v1, salvar_agendamento, atualizar_estado_agendamento  # abs
+except Exception as e_abs:
+    try:
+        from .schedule import can_book, save_booking, validar_agendamento_v1, salvar_agendamento, atualizar_estado_agendamento  # rel
+    except Exception as e_rel:
+        logging.exception("[wa_bot] schedule indisponível: abs=%s | rel=%s", e_abs, e_rel)
+        def can_book(date_str, time_str, tz="America/Sao_Paulo"):
+            try:
+                dd, mm = [int(x) for x in re.findall(r"\d{1,2}", date_str)[:2]]
+                hh, mi = [int(x) for x in re.findall(r"\d{1,2}", time_str)[:2]]
+                tzinfo = timezone(timedelta(hours=-3))
+                now = datetime.now(tzinfo)
+                year = now.year
+                dt = datetime(year, mm, dd, hh, mi, tzinfo=tzinfo)
+                if (dt.date() - now.date()).days < 2:
+                    return (False, "Preciso de pelo menos 2 dias de antecedência.")
+                if dt.weekday() >= 5:
+                    return (False, "Não atendemos em fins de semana.")
+                return (True, None)
+            except Exception:
+                return (False, "Data/hora inválida.")
+        def save_booking(uid, serviceName, dateText, timeText):
+            return {"servico": serviceName or "serviço", "data": dateText, "hora": timeText}
+        def validar_agendamento_v1(uid, ag): return (True, None, None)
+        def salvar_agendamento(uid, ag): return {"id":"fake"}
+        def atualizar_estado_agendamento(uid, ag_id, body): return True
+
+# ========== Constantes / TZ ==========
 SP_TZ = timezone(timedelta(hours=-3))  # America/Sao_Paulo (sem DST)
 GRAPH_VERSION_DEFAULT = os.getenv("GRAPH_VERSION", "v23.0")
 
@@ -139,13 +240,12 @@ def _pick_phone(value: Dict) -> str:
 # ========== Profissão & especializações ==========
 def _load_prof_context(uid: str) -> Dict[str, Any]:
     """Lê profissionais/{uid} e retorna {profissao, especializacoes[], aliases(Optional map)}."""
-    prof = get_doc(f"profissionais/{uid}") or {}
+    prof = _get_doc_safe(f"profissionais/{uid}") or {}
     prof_context = {
         "profissao": (prof.get("profissao") or "").strip().lower(),
         "especializacoes": [],
         "aliases": {},
     }
-    # especializações podem vir em lista ou campos separados
     if isinstance(prof.get("especializacoes"), list):
         prof_context["especializacoes"] = [str(x).strip().lower() for x in prof["especializacoes"] if x]
     else:
@@ -153,27 +253,21 @@ def _load_prof_context(uid: str) -> Dict[str, Any]:
             v = prof.get(key)
             if v: prof_context["especializacoes"].append(str(v).strip().lower())
 
-    # aliases custom (opcional): profissionais/{uid}/aliases (doc) ou campo 'aliases' no doc raiz
     custom_aliases = {}
-    doc_aliases = get_doc(f"profissionais/{uid}/aliases")
+    doc_aliases = _get_doc_safe(f"profissionais/{uid}/aliases")
     if isinstance(doc_aliases, dict) and doc_aliases:
-        custom_aliases = doc_aliases  # { "baixar a melena": "Corte Masculino", ... }
+        custom_aliases = doc_aliases
     elif isinstance(prof.get("aliases"), dict):
         custom_aliases = prof["aliases"]
     prof_context["aliases"] = custom_aliases
     return prof_context
 
 def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str, List[str]]:
-    """
-    Mapa de sinônimos por profissão → serviço(s) alvo.
-    Pode ser expandido; também é complementado por aliases custom do Firestore.
-    """
     p = (profissao or "").lower()
     espec = set((especializacoes or []))
-
     base: Dict[str, List[str]] = {}
 
-    # Barbeiro / cabelereiro
+    # Barbeiro / cabeleireiro
     if "barbeiro" in p or "cabele" in p:
         base.update({
             "corte": ["corte masculino","corte feminino","corte"],
@@ -220,12 +314,8 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
             "reparo": ["conserto","reparo"],
         })
 
-    # Especializações podem reforçar termos (exemplo simples)
-    if "barba" in espec:
-        base.setdefault("barba", ["barba"])
-    if "clareamento" in espec:
-        base.setdefault("clareamento", ["clareamento"])
-
+    if "barba" in espec: base.setdefault("barba", ["barba"])
+    if "clareamento" in espec: base.setdefault("clareamento", ["clareamento"])
     return base
 
 # ========== Preços (agregador 3 fontes) ==========
@@ -247,7 +337,7 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
 
     # (A) Doc principal → campo 'precos'
-    prof = get_doc(f"profissionais/{uid}") or {}
+    prof = _get_doc_safe(f"profissionais/{uid}") or {}
     precos = prof.get("precos")
     if isinstance(precos, dict):
         if "itens" in precos and isinstance(precos["itens"], list):
@@ -256,14 +346,12 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
                 if it.get("ativo", True):
                     items.append(_normalize_item(it))
         else:
-            # mapa simples: { "Corte masculino": 50, ... }
             for nome, valor in precos.items():
                 items.append(_normalize_item({"nome": nome, "preco": valor, "ativo": True}))
 
     # (B) Coleção /precos
     try:
-        col = list_collection(f"profissionais/{uid}/precos", limit=500)
-        for it in col:
+        for it in _list_collection_safe(f"profissionais/{uid}/precos", limit=500):
             if (it.get("ativo", True)):
                 items.append(_normalize_item(it))
     except Exception as e:
@@ -271,8 +359,7 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
 
     # (C) Coleção /produtosEServicos
     try:
-        col2 = list_collection(f"profissionais/{uid}/produtosEServicos", limit=500)
-        for it in col2:
+        for it in _list_collection_safe(f"profissionais/{uid}/produtosEServicos", limit=500):
             if (it.get("ativo", True)):
                 items.append(_normalize_item(it))
     except Exception as e:
@@ -285,7 +372,7 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
         key = it.get("nomeLower","").strip()
         if not key or it.get("ativo") is False:
             continue
-        if key in seen: 
+        if key in seen:
             continue
         seen.add(key)
         uniq.append(it)
@@ -305,7 +392,7 @@ def _render_price_table(items: List[Dict[str, Any]], uid: str, debug_counts: Dic
 
 def _count_sources(uid: str) -> Dict[str,int]:
     c = {"map":0,"precos":0,"ps":0}
-    prof = get_doc(f"profissionais/{uid}") or {}
+    prof = _get_doc_safe(f"profissionais/{uid}") or {}
     precos = prof.get("precos")
     if isinstance(precos, dict):
         if "itens" in precos and isinstance(precos["itens"], list):
@@ -313,33 +400,28 @@ def _count_sources(uid: str) -> Dict[str,int]:
         else:
             c["map"] = len(precos)
     try:
-        c["precos"] = len(list_collection(f"profissionais/{uid}/precos", limit=500))
+        c["precos"] = len(_list_collection_safe(f"profissionais/{uid}/precos", limit=500))
     except Exception:
         pass
     try:
-        c["ps"] = len(list_collection(f"profissionais/{uid}/produtosEServicos", limit=500))
+        c["ps"] = len(_list_collection_safe(f"profissionais/{uid}/produtosEServicos", limit=500))
     except Exception:
         pass
     return c
 
 def _match_by_synonyms(text: str, items: List[Dict[str, Any]], prof_ctx: Dict[str,Any]) -> Optional[Tuple[str, Any]]:
-    """Tenta casar por sinônimos (profissão/especializações + aliases custom)."""
     t = _strip_accents_lower(text)
-    # aliases custom do Firestore têm prioridade
     aliases_map: Dict[str,str] = prof_ctx.get("aliases") or {}
     for alias, target in aliases_map.items():
         if _strip_accents_lower(alias) in t:
-            # busca item cujo nome contém target
             target_norm = _strip_accents_lower(str(target))
             for it in items:
                 if target_norm and target_norm in it.get("nomeLower",""):
                     return it.get("nome"), it.get("preco")
 
-    # sinônimos padrão por profissão
     syn = _profession_synonyms(prof_ctx.get("profissao",""), prof_ctx.get("especializacoes") or [])
     for alias, candidates in syn.items():
         if _strip_accents_lower(alias) in t:
-            # encontra o primeiro candidato presente
             for cand in candidates:
                 cand_norm = _strip_accents_lower(cand)
                 for it in items:
@@ -348,21 +430,17 @@ def _match_by_synonyms(text: str, items: List[Dict[str, Any]], prof_ctx: Dict[st
     return None
 
 def _find_price(items: List[Dict[str, Any]], text: str, prof_ctx: Dict[str,Any]) -> Optional[Tuple[str, Any]]:
-    # 1) sinônimos por profissão/aliases custom
     hit = _match_by_synonyms(text, items, prof_ctx)
     if hit: return hit
 
-    # 2) heurística simples por tokens do nome
     t = _strip_accents_lower(text)
     for it in items:
         nome = it.get("nomeLower","")
         if not nome: continue
-        # casa por palavra significativa (>=4 chars) do nome
         for tok in re.findall(r"[a-z0-9]{4,}", nome):
             if tok in t:
                 return it.get("nome"), it.get("preco")
 
-    # 3) fallback por termos comuns
     for key in ("corte","barba","banho","tosa","limpeza","clareamento","consulta","contrato"):
         if key in t:
             for it in items:
@@ -372,18 +450,15 @@ def _find_price(items: List[Dict[str, Any]], text: str, prof_ctx: Dict[str,Any])
 
 # ========== FAQ ==========
 def _load_faq(uid: str, key: str) -> Optional[str]:
-    doc = get_doc(f"profissionais/{uid}/faq/{key}")
+    doc = _get_doc_safe(f"profissionais/{uid}/faq/{key}")
     if not doc: return None
-    # suporta variações: { variacoes: ["...", "..."] } ou { texto: "..." }
     if isinstance(doc.get("variacoes"), list) and doc["variacoes"]:
-        # pick determinístico por dia-do-ano (parecer humano)
         idx = (datetime.now(SP_TZ).timetuple().tm_yday) % len(doc["variacoes"])
         return str(doc["variacoes"][idx])
     return doc.get("texto")
 
 # ========== STT ==========
 def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: str = "pt-BR") -> str:
-    # 1) Tentar um backend interno, se existir
     try:
         import inspect
         import services.audio_processing as ap
@@ -413,7 +488,6 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     except Exception as e:
         print(f"[STT] módulo services.audio_processing indisponível: {e}", flush=True)
 
-    # 2) Whisper (OpenAI), se habilitado
     try:
         if os.getenv("ENABLE_STT_OPENAI","true").lower() in ("1","true","yes"):
             api_key = os.getenv("OPENAI_API_KEY")
@@ -516,7 +590,7 @@ def _normalize_datetime_pt(t: str) -> str:
     if dd is None:
         for w in sorted(_WEEKDAYS.keys(), key=len, reverse=True):
             if re.search(rf"\b{re.escape(w)}\b", t):
-                d = _weekday_to_date(t, w); 
+                d = _weekday_to_date(t, w)
                 if d: dd, mm = d.day, d.month; break
     dm = _extract_day_month_from_words(t)
     if dd is None and dm: dd, mm = dm
@@ -603,14 +677,13 @@ def _find_target_agendamento(uid: str, cliente_id: str, wa_id: str, telefone: st
         except Exception as e:
             print(f"[WA_BOT][AGENDA] query por telefone falhou: {e}", flush=True)
     if not candidatos: return None
-    def _iso_or_none(s): 
+    def _iso_or_none(s):
         try: return datetime.fromisoformat(s.replace("Z","+00:00"))
         except Exception: return None
     candidatos.sort(key=lambda x: _iso_or_none(x.get("createdAt") or x.get("inicio")) or datetime.min.replace(tzinfo=SP_TZ), reverse=True)
     return candidatos[0]
 
 def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, svc: dict, dt: datetime, body_text: str):
-    # dados do contato
     wa_id = ""; nome_contato = ""
     try:
         contacts = value.get("contacts") or []
@@ -699,7 +772,6 @@ def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str
     ok, reason = can_book(dateText, timeText)
     if not ok:
         return send_text(to, f"Não consegui agendar: {reason}")
-    # tentar casar serviceName com a lista
     items = _load_prices(uid)
     svc = None
     if serviceName:
@@ -707,8 +779,7 @@ def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str
         for it in items:
             if s_norm in it.get("nomeLower",""):
                 svc = it; break
-    if not svc and items: svc = items[0]  # fallback educado
-    # construir data/hora
+    if not svc and items: svc = items[0]
     dt = None
     try:
         dd, mm = [int(x) for x in re.findall(r"\d{1,2}", dateText)[:2]]
@@ -722,24 +793,20 @@ def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str
     return send_text(to, msg if ok2 else f"Não consegui agendar: {msg}")
 
 def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items, sess: dict, wa_id: str):
-    # serviço
     svc = None
     if sess.get("servicoId") or sess.get("servicoNome"):
         for it in items:
             if it.get("id") == sess.get("servicoId") or it.get("nomeLower") == (sess.get("servicoNome") or "").lower():
                 svc = it; break
     if not svc:
-        # procurar pelo texto
         prof_ctx = _load_prof_context(uid_default)
         hit = _find_price(items, text_norm, prof_ctx)
         if hit:
-            # reconstruir it pelo nome
             name = _strip_accents_lower(hit[0])
             for it in items:
                 if it.get("nomeLower") == name:
                     svc = it; break
 
-    # data/hora
     text_norm2 = _normalize_datetime_pt(text_norm)
     dt = _parse_datetime_br(text_norm2)
     if not dt and sess.get("dataHora"):
@@ -828,7 +895,6 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
                 send_text_fn(to, "🎧 Para economizar, estou respondendo por texto no momento. Pode me mandar em texto?")
                 continue
             charge("stt_per_15s", float(os.getenv("STT_SECONDS_AVG", "15"))/15.0)
-            # download + STT
             token = os.getenv("WHATSAPP_TOKEN")
             gv = GRAPH_VERSION_DEFAULT
             audio = m.get("audio") or {}
