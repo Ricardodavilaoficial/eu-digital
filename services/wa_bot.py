@@ -8,6 +8,7 @@ import re
 import json
 import requests
 import unicodedata
+from services.openai import nlu_intent as nlu
 from datetime import datetime, timedelta, timezone
 from services import db as dbsvc
 
