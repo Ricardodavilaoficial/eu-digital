@@ -1,76 +1,214 @@
-from flask import Blueprint, request, send_file, jsonify
-from services.audio_processing import transcrever_audio_google
-from services.openai.openai_handler import obter_resposta_openai
-from services.text_to_speech import gerar_audio_elevenlabs
-from interfaces.web_interface import html_index
-import uuid
-from pydub import AudioSegment
-import traceback
+# routes/routes.py
 import os
+import io
+import uuid
+import logging
+import traceback
+from typing import Optional
+
+from flask import Blueprint, request, send_file, jsonify
+
+# === Imports tolerantes (evitam quebrar o boot do app) =======================
+try:
+    import services.audio_processing as audio_processing  # expõe: transcrever_audio_google, transcribe_audio_bytes, ...
+except Exception:
+    audio_processing = None
+
+# Preferimos a API unificada (speak_bytes); mantemos fallback p/ função antiga
+try:
+    import services.text_to_speech as tts  # expõe: speak_bytes(...) -> (bytes, mime) | None
+except Exception:
+    tts = None
+
+try:
+    # Se existir, usamos para gerar texto-resposta
+    from services.openai.openai_handler import obter_resposta_openai
+except Exception:
+    obter_resposta_openai = None
+
+try:
+    # Página HTML simples (debug/local). Se não existir, devolvemos texto plain.
+    from interfaces.web_interface import html_index
+except Exception:
+    html_index = None
+
+# ============================================================================
 
 routes = Blueprint("routes", __name__)
+log = logging.getLogger(__name__)
 
-# Página inicial renderizada pela interface HTML (usada em testes locais ou debug)
+
+def _guess_mime(filename: str, fallback: str = "application/octet-stream") -> str:
+    """Heurística simples de MIME por extensão + cabeçalho do Flask."""
+    name = (filename or "").lower()
+    if name.endswith(".webm"):
+        return "audio/webm"
+    if name.endswith(".ogg") or name.endswith(".oga"):
+        return "audio/ogg"
+    if name.endswith(".mp3"):
+        return "audio/mpeg"
+    if name.endswith(".wav"):
+        return "audio/wav"
+    return fallback
+
+
+def _transcrever(audio_bytes: bytes, mime: str, idioma: str = "pt-BR") -> str:
+    """Encapsula a transcrição com a camada de compatibilidade."""
+    if not audio_processing or not audio_bytes:
+        return ""
+    # Preferimos a função por bytes (faz conversão p/ WAV 16k quando possível)
+    for fname in ("transcribe_audio_bytes", "stt_transcribe", "speech_to_text"):
+        f = getattr(audio_processing, fname, None)
+        if callable(f):
+            try:
+                return (f(audio_bytes, mime_type=mime, language=idioma) or "").strip()
+            except TypeError:
+                # Assinatura diferente — tenta com menos args
+                try:
+                    return (f(audio_bytes) or "").strip()
+                except Exception:
+                    pass
+            except Exception:
+                log.info("[STT] %s falhou; tentando próximo", fname, exc_info=True)
+
+    # Compatibilidade com a função esperada originalmente por alguns trechos
+    f_compat = getattr(audio_processing, "transcrever_audio_google", None)
+    if callable(f_compat):
+        try:
+            # Essa função aceita bytes OU caminho de arquivo. Aqui passamos bytes.
+            return (f_compat(audio_bytes, idioma=idioma) or "").strip()
+        except Exception:
+            log.info("[STT] transcrever_audio_google falhou", exc_info=True)
+
+    return ""
+
+
+def _responder_texto(texto_do_cliente: str) -> str:
+    """Gera resposta textual (padrão) a partir da entrada do usuário."""
+    if obter_resposta_openai:
+        try:
+            return (obter_resposta_openai(texto_do_cliente) or "").strip()
+        except Exception:
+            log.info("[NLU] obter_resposta_openai falhou; usando fallback", exc_info=True)
+    # Fallback simples e barato
+    texto = (texto_do_cliente or "").strip()
+    if not texto:
+        return "Oi! Recebi seu áudio. Como posso te ajudar hoje?"
+    return f"Você disse: “{texto}”. Posso te passar preços, endereço/horários ou já marcar um horário."
+
+
+def _tts(texto: str, prefer_ogg: bool = True) -> Optional[tuple]:
+    """
+    TTS unificado: tenta services.text_to_speech.speak_bytes(); se não houver, tenta
+    função legada gerar_audio_elevenlabs() quando presente.
+    Retorna (bytes, mime) ou None.
+    """
+    if not texto:
+        return None
+
+    # 1) API unificada (preferida)
+    if tts:
+        speak = getattr(tts, "speak_bytes", None)
+        if callable(speak):
+            try:
+                fmt = "audio/ogg" if prefer_ogg else "audio/mpeg"
+                out = speak(texto, format=fmt)
+                if isinstance(out, tuple) and len(out) == 2 and isinstance(out[0], (bytes, bytearray)):
+                    return (bytes(out[0]), str(out[1]))
+            except Exception:
+                log.info("[TTS] speak_bytes falhou; tentando fallback", exc_info=True)
+
+        # 2) Fallback Eleven labs legado (gera arquivo em disco)
+        gerar = getattr(tts, "gerar_audio_elevenlabs", None)
+        if callable(gerar):
+            try:
+                path = gerar(texto)
+                if path and os.path.exists(path):
+                    # vamos ler os bytes para devolver via streaming (e apagar o arquivo temporário)
+                    with open(path, "rb") as f:
+                        data = f.read()
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+                    return (data, "audio/mpeg")
+            except Exception:
+                log.info("[TTS] gerar_audio_elevenlabs falhou", exc_info=True)
+
+    return None
+
+
+# -----------------------------------------------------------------------------
+# Rotas
+# -----------------------------------------------------------------------------
 @routes.route("/", methods=["GET"])
 def index():
-    return html_index()
+    if callable(html_index):
+        return html_index()
+    return "<h1>MEI Robô — API</h1><p>Use POST /audio para enviar um áudio (form-data: audio).</p>", 200
 
-# Rota para processar um áudio recebido (ex: do WhatsApp ou formulário)
+
 @routes.route("/audio", methods=["POST"])
 def processar_audio():
+    """
+    Recebe um arquivo de áudio via form-data (campo 'audio'), transcreve (Google STT),
+    gera uma resposta textual e (se possível) devolve TTS da resposta.
+    """
     try:
-        print("📥 POST /audio recebido")
-        print("🔍 request.files:", request.files)
-        print("🔍 request.form:", request.form)
-        print("🔍 request.content_type:", request.content_type)
-        print("🔍 request.mimetype:", request.mimetype)
-        print("🔍 request.headers:", request.headers)
+        log.info("📥 POST /audio recebido | ct=%s | mimetype=%s", request.content_type, request.mimetype)
 
-        # Verifica se veio algum arquivo chamado 'audio' no form-data
-        if 'audio' not in request.files:
-            print("🚫 Campo 'audio' não encontrado em request.files")
-            return jsonify({"error": "Campo 'audio' não encontrado no form-data"}), 400
+        if "audio" not in request.files:
+            return jsonify({"ok": False, "error": "Campo 'audio' não encontrado (form-data)."}), 400
 
-        audio_file = request.files['audio']
+        fs = request.files["audio"]
+        if not fs or not fs.filename:
+            return jsonify({"ok": False, "error": "Arquivo de áudio inválido."}), 400
 
-        if audio_file.filename == "":
-            print("🚫 Nome de arquivo vazio")
-            return jsonify({"error": "Arquivo de áudio inválido"}), 400
+        # Lê bytes e determina MIME
+        audio_bytes = fs.read() or b""
+        if not audio_bytes:
+            return jsonify({"ok": False, "error": "Arquivo de áudio vazio."}), 400
 
-        # Gera caminho único e temporário para salvar o áudio
-        unique_id = str(uuid.uuid4())
-        caminho_original = f"/tmp/{unique_id}.webm"
-        caminho_wav = f"/tmp/{unique_id}.wav"
-        audio_file.save(caminho_original)
-        print(f"💾 Áudio salvo em: {caminho_original}")
+        mime = fs.mimetype or _guess_mime(fs.filename, "audio/ogg")
+        log.info("🔎 arquivo=%s | size=%d | mime=%s", fs.filename, len(audio_bytes), mime)
 
-        # Converte para WAV com padrão ideal para STT
-        print("🔄 Convertendo .webm para .wav")
-        audio = AudioSegment.from_file(caminho_original)
-        audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-        audio.export(caminho_wav, format="wav")
-        print(f"✅ Conversão concluída: {caminho_wav}")
+        # STT (Google)
+        texto = _transcrever(audio_bytes, mime)
+        log.info("📝 Transcrição: %r", texto[:240] if texto else "")
 
-        # Transcreve o áudio com Google STT
-        print("📝 Transcrevendo áudio...")
-        texto = transcrever_audio_google(caminho_wav)
-        print(f"📄 Texto transcrito: '{texto}'")
+        if not texto:
+            return jsonify({"ok": False, "error": "Não foi possível transcrever o áudio."}), 400
 
-        if not texto or len(texto.strip()) == 0:
-            print("⚠️ Transcrição vazia ou falhou.")
-            return jsonify({"error": "Não foi possível transcrever o áudio"}), 400
+        # Gera resposta textual
+        resposta_txt = _responder_texto(texto)
+        log.info("🤖 Resposta: %r", resposta_txt[:240] if resposta_txt else "")
 
-        # Gera resposta via OpenAI
-        resposta = obter_resposta_openai(texto)
-        print(f"🤖 Resposta da IA: '{resposta}'")
+        # Tenta TTS; se indisponível, devolvemos JSON com o texto
+        tts_out = _tts(resposta_txt, prefer_ogg=True)
+        if tts_out:
+            audio_resp, mime_resp = tts_out
+            # streama os bytes (sem salvar em disco)
+            ext = ".ogg" if (mime_resp or "").lower().startswith("audio/ogg") else ".mp3"
+            filename = f"resposta-{uuid.uuid4().hex}{ext}"
+            return send_file(
+                io.BytesIO(audio_resp),
+                mimetype=mime_resp or "audio/mpeg",
+                as_attachment=False,
+                download_name=filename,
+                max_age=0,
+                conditional=False,
+                etag=False,
+                last_modified=None,
+            )
 
-        # Converte a resposta em áudio (voz clonada do cliente)
-        caminho_audio_resposta = gerar_audio_elevenlabs(resposta)
-        print(f"🔊 Caminho do áudio gerado: {caminho_audio_resposta}")
-
-        # Retorna o áudio para o frontend
-        return send_file(caminho_audio_resposta, mimetype="audio/mpeg")
+        # Fallback: sem TTS disponível — devolve JSON
+        return jsonify({"ok": True, "transcricao": texto, "resposta": resposta_txt, "audio": None}), 200
 
     except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": f"Erro interno: {str(e)}"}), 500
+        log.exception("[/audio] erro: %s", e)
+        return jsonify({"ok": False, "error": f"Erro interno: {str(e)}"}), 500
+
+
+@routes.route("/ping", methods=["GET"])
+def ping():
+    return jsonify(ok=True, service="routes", version="v1"), 200
