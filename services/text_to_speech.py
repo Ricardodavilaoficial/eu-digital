@@ -1,30 +1,37 @@
 # services/text_to_speech.py
 # Wrapper de TTS usado pelo wa_bot.py
-# - Prioriza ElevenLabs (voz clonada), cai para Google Cloud TTS se precisar
-# - Compatível com providers/tts.py (se existir) para arquitetura modular
+# - Prioriza providers/tts (engine modular)
+# - Fallback: ElevenLabs (voz clonada) → Google Cloud TTS (OGG/MP3)
 # - Retorna (audio_bytes, mime_type)
+
 from __future__ import annotations
 
 import os
+import json
 import logging
 from typing import Optional, Tuple
 
+log = logging.getLogger(__name__)
+
+# =========================
 # Envs / defaults
+# =========================
 ELEVEN_API_KEY = os.getenv("ELEVEN_API_KEY")
 ELEVEN_VOICE_ID = os.getenv("ELEVEN_VOICE_ID")
+
 GOOGLE_TTS_VOICE = os.getenv("GOOGLE_TTS_VOICE")          # ex.: pt-BR-Wavenet-A
 TTS_LANGUAGE_CODE = os.getenv("TTS_LANGUAGE_CODE", "pt-BR")
 TTS_SPEAKING_RATE = float(os.getenv("TTS_SPEAKING_RATE", "1.0"))
 TTS_PITCH_SEMITONES = float(os.getenv("TTS_PITCH_SEMITONES", "0.0"))
-FORCE_TTS_PROVIDER = (os.getenv("FORCE_TTS_PROVIDER") or "").strip().lower()  # "elevenlabs" | "google" | ""
 
-# ---------------------------------------------------------------------------
-# 1) Caminho preferencial: usar providers/tts.py, se existir
-# ---------------------------------------------------------------------------
+# força um provedor específico (opcional): "elevenlabs" | "google"
+FORCE_TTS_PROVIDER = (os.getenv("FORCE_TTS_PROVIDER") or "").strip().lower()
+
+# =========================
+# 1) providers/tts.py (se existir)
+# =========================
 try:
-    # Nossa engine modular (se o arquivo existir)
     from providers.tts import default_tts  # type: ignore
-
     _PROVIDERS_TTS_OK = True
 except Exception:
     _PROVIDERS_TTS_OK = False
@@ -35,9 +42,7 @@ def _via_providers_tts(
     voice: Optional[str],
     prefer_mime: str,
 ) -> Optional[Tuple[bytes, str]]:
-    """
-    Usa providers/tts.TTSEngine (se disponível) para sintetizar.
-    """
+    """Usa providers/tts.TTSEngine (se disponível) para sintetizar."""
     if not _PROVIDERS_TTS_OK:
         return None
     try:
@@ -46,30 +51,26 @@ def _via_providers_tts(
         if out and isinstance(out, tuple) and isinstance(out[0], (bytes, bytearray)):
             return (bytes(out[0]), str(out[1]))
     except Exception as e:
-        logging.info("[TTS/providers] falhou: %s", e)
+        log.info("[TTS/providers] falhou: %s", e)
     return None
 
 
-# ---------------------------------------------------------------------------
-# 2) Fallback interno direto (ElevenLabs → Google TTS)
-# ---------------------------------------------------------------------------
-# ElevenLabs (opcional)
+# =========================
+# 2) Fallback interno: ElevenLabs → Google TTS
+# =========================
+# --- ElevenLabs (opcional) ---
 _eleven_client = None
 try:
     if ELEVEN_API_KEY:
         from elevenlabs.client import ElevenLabs  # type: ignore
         from elevenlabs import Voice, VoiceSettings  # type: ignore
-
         _eleven_client = ElevenLabs(api_key=ELEVEN_API_KEY)
 except Exception as e:
-    logging.info("[TTS] ElevenLabs indisponível: %s", e)
+    log.info("[TTS] ElevenLabs indisponível: %s", e)
     _eleven_client = None
 
 
-def _tts_eleven_bytes(
-    text: str,
-    voice_id: Optional[str] = None,
-) -> Optional[Tuple[bytes, str]]:
+def _tts_eleven_bytes(text: str, voice_id: Optional[str] = None) -> Optional[Tuple[bytes, str]]:
     """Gera MP3 via ElevenLabs e retorna (bytes, 'audio/mpeg')."""
     if not _eleven_client:
         return None
@@ -92,18 +93,29 @@ def _tts_eleven_bytes(
         for chunk in audio_iter:
             if chunk:
                 buf.extend(chunk)
-        if buf:
-            return (bytes(buf), "audio/mpeg")
+        return (bytes(buf), "audio/mpeg") if buf else None
     except Exception as e:
-        logging.info("[TTS/Eleven] falhou: %s", e)
-    return None
+        log.info("[TTS/Eleven] falhou: %s", e)
+        return None
 
 
-# Google Cloud TTS (opcional) — com suporte a credencial JSON embutida
+# --- Google Cloud TTS (opcional) ---
 _google_tts_client = None
-try:
-    from google.cloud import texttospeech  # type: ignore
-    from google.oauth2 import service_account  # type: ignore
+_google_tts_cred_used = None  # "inline_json" | "adc" | None
+
+
+def _get_google_tts_client():
+    """Cria cliente do Google TTS preferindo JSON inline (GOOGLE_APPLICATION_CREDENTIALS_JSON/FIREBASE_*)."""
+    global _google_tts_client, _google_tts_cred_used
+    if _google_tts_client is not None:
+        return _google_tts_client
+    try:
+        from google.cloud import texttospeech  # type: ignore
+        from google.oauth2 import service_account  # type: ignore
+    except Exception as e:
+        log.info("[TTS] Google Cloud TTS indisponível (libs): %s", e)
+        _google_tts_client = None
+        return None
 
     # tenta credencial via JSON embutido (compatível com audio_processing)
     creds_json = (
@@ -112,16 +124,26 @@ try:
         or os.getenv("FIREBASE_CREDENTIALS_JSON")
     )
     if creds_json:
-        import json
+        try:
+            info = json.loads(creds_json)
+            creds = service_account.Credentials.from_service_account_info(info)
+            _google_tts_client = texttospeech.TextToSpeechClient(credentials=creds)
+            _google_tts_cred_used = "inline_json"
+            return _google_tts_client
+        except Exception as e:
+            log.info("[TTS] credenciais inline JSON falharam: %s", e)
 
-        info = json.loads(creds_json)
-        credentials = service_account.Credentials.from_service_account_info(info)
-        _google_tts_client = texttospeech.TextToSpeechClient(credentials=credentials)
-    else:
+    # fallback: ADC (Application Default Credentials)
+    try:
+        from google.cloud import texttospeech  # reimport safe
         _google_tts_client = texttospeech.TextToSpeechClient()
-except Exception as e:
-    logging.info("[TTS] Google Cloud TTS indisponível: %s", e)
-    _google_tts_client = None
+        _google_tts_cred_used = "adc"
+        return _google_tts_client
+    except Exception as e:
+        log.info("[TTS] Google TTS ADC indisponível: %s", e)
+        _google_tts_client = None
+        _google_tts_cred_used = None
+        return None
 
 
 def _tts_google_bytes(
@@ -133,17 +155,18 @@ def _tts_google_bytes(
     pitch_semitones: float = TTS_PITCH_SEMITONES,
 ) -> Optional[Tuple[bytes, str]]:
     """Gera OGG Opus (ou MP3) via Google TTS e retorna (bytes, mime)."""
-    if not _google_tts_client:
+    client = _get_google_tts_client()
+    if not client:
         return None
     try:
-        synthesis_input = texttospeech.SynthesisInput(text=text)
-        if voice_name:
-            voice_params = texttospeech.VoiceSelectionParams(
-                language_code=language_code, name=voice_name
-            )
-        else:
-            voice_params = texttospeech.VoiceSelectionParams(language_code=language_code)
+        from google.cloud import texttospeech  # type: ignore
 
+        synthesis_input = texttospeech.SynthesisInput(text=text)
+        voice_params = (
+            texttospeech.VoiceSelectionParams(language_code=language_code, name=voice_name)
+            if voice_name else
+            texttospeech.VoiceSelectionParams(language_code=language_code)
+        )
         if want_ogg:
             audio_config = texttospeech.AudioConfig(
                 audio_encoding=texttospeech.AudioEncoding.OGG_OPUS,
@@ -159,26 +182,24 @@ def _tts_google_bytes(
             )
             mime = "audio/mpeg"
 
-        resp = _google_tts_client.synthesize_speech(
-            input=synthesis_input,
-            voice=voice_params,
-            audio_config=audio_config,
+        resp = client.synthesize_speech(
+            input=synthesis_input, voice=voice_params, audio_config=audio_config
         )
-        content = getattr(resp, "audio_content", None)
-        if content:
-            return (bytes(content), mime)
+        data = getattr(resp, "audio_content", None)
+        if data:
+            return (bytes(data), mime)
     except Exception as e:
-        logging.info("[TTS/Google] falhou: %s", e)
+        log.info("[TTS/Google] falhou: %s", e)
     return None
 
 
-# ---------------------------------------------------------------------------
+# =========================
 # API pública (usada pelo wa_bot.py)
-# ---------------------------------------------------------------------------
+# =========================
 def speak_bytes(
     text: str,
-    uid: Optional[str] = None,   # compat; não é usado aqui
-    voice: Optional[str] = None, # para ElevenLabs: voice_id
+    uid: Optional[str] = None,   # compat (não usado)
+    voice: Optional[str] = None, # ElevenLabs: voice_id
     format: str = "audio/ogg",   # "audio/ogg" ou "audio/mpeg"
 ) -> Optional[Tuple[bytes, str]]:
     """
@@ -186,9 +207,8 @@ def speak_bytes(
     Ordem de preferência:
       A) providers/tts (se existir)
       B) ElevenLabs (voz clonada) — MP3
-      C) Google TTS (OGG ou MP3, conforme 'format')
-    Observação: mesmo que o 'format' peça OGG, se o backend for ElevenLabs,
-    mandaremos MP3 (WhatsApp aceita). Não convertemos para evitar custo/latência.
+      C) Google TTS (OGG/MP3, conforme 'format')
+    Observação: mesmo se 'format' pedir OGG, ElevenLabs entrega MP3 (WhatsApp aceita).
     """
     if not text:
         return None
@@ -196,44 +216,37 @@ def speak_bytes(
     prefer_mime = (format or "audio/ogg").lower()
 
     # A) providers/tts
-    if _PROVIDERS_TTS_OK:
-        out = _via_providers_tts(text, voice, prefer_mime)
+    out = _via_providers_tts(text, voice, prefer_mime)
+    if out:
+        return out
+
+    # B/C) Fallback direto com opção de forçar provedor
+    if FORCE_TTS_PROVIDER == "elevenlabs":
+        out = _tts_eleven_bytes(text, voice_id=voice)
         if out:
             return out
+        # se falhar, cai para google
+        want_ogg = prefer_mime.startswith("audio/ogg")
+        return _tts_google_bytes(text, want_ogg=want_ogg)
 
-    # B/C) Fallback direto
-    if FORCE_TTS_PROVIDER in ("elevenlabs", "google"):
-        if FORCE_TTS_PROVIDER == "elevenlabs":
-            eleven = _tts_eleven_bytes(text, voice_id=voice)
-            if eleven:
-                return eleven
-            # se falhar, cai para google
-            want_ogg = prefer_mime.startswith("audio/ogg")
-        else:
-            want_ogg = prefer_mime.startswith("audio/ogg")
-            google = _tts_google_bytes(text, want_ogg=want_ogg)
-            if google:
-                return google
-            # se falhar, cai para eleven
-            eleven = _tts_eleven_bytes(text, voice_id=voice)
-            if eleven:
-                return eleven
-        return None
+    if FORCE_TTS_PROVIDER == "google":
+        want_ogg = prefer_mime.startswith("audio/ogg")
+        out = _tts_google_bytes(text, want_ogg=want_ogg)
+        if out:
+            return out
+        # se falhar, tenta eleven
+        return _tts_eleven_bytes(text, voice_id=voice)
 
     # padrão: Eleven → Google
-    eleven = _tts_eleven_bytes(text, voice_id=voice)
-    if eleven:
-        return eleven
+    out = _tts_eleven_bytes(text, voice_id=voice)
+    if out:
+        return out
 
     want_ogg = prefer_mime.startswith("audio/ogg")
-    google = _tts_google_bytes(text, want_ogg=want_ogg)
-    if google:
-        return google
-
-    return None
+    return _tts_google_bytes(text, want_ogg=want_ogg)
 
 
-# Aliases compatíveis com wa_bot
+# Aliases compatíveis
 def synthesize_bytes(*args, **kwargs):
     return speak_bytes(*args, **kwargs)
 
@@ -258,6 +271,6 @@ if __name__ == "__main__":
         path = f"./tts_test{ext}"
         with open(path, "wb") as f:
             f.write(audio)
-        print(f"✅ Gerado: {path} ({mime}, {len(audio)} bytes)")
+        print(f"✅ Gerado: {path} ({mime}, {len(audio)} bytes) via {('ElevenLabs' if mime=='audio/mpeg' else 'Google TTS')} cred={_google_tts_cred_used or '-'}")
     else:
         print("⚠️ Nenhum backend TTS disponível.")
