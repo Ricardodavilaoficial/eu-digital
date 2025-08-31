@@ -1,0 +1,116 @@
+Listagem de caminhos de pasta para o volume OS
+O n£mero de s‚rie do volume ‚ 52CF-BED4
+C:.
+|   .env.mei-robo-prod.txt
+|   .gitignore
+|   55
+|   app.py
+|   app.py.bak
+|   app.py.before-audio.bak
+|   app.py.before-precos.bak
+|   debug.json
+|   Dockerfile
+|   empresa
+|   init_skeleton.bat
+|   main.py
+|   payload.json
+|   requirements.txt
+|   routes.json
+|   server.py
+|   str
+|   tree.txt
+|   
++---cache
+|   |   kv.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           kv.cpython-313.pyc
+|           __init__.cpython-313.pyc
+|           
++---domain
+|   |   faq.py
+|   |   pricing.py
+|   |   scheduling.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           scheduling.cpython-313.pyc
+|           __init__.cpython-313.pyc
+|           
++---frontend
+|   |   .firebaserc
+|   |   firebase.json
+|   |   
+|   +---.firebase
+|   |       hosting..cache
+|   |       
+|   \---pages
+|           agenda.html
+|           ativar.html
+|           dashboard.html
+|           
++---interfaces
+|       web_interface.py
+|       
++---mei-robo-whatsapp-webhook
+|       app.py
+|       requirements.txt
+|       
++---nlu
+|   |   entities.py
+|   |   intent.py
+|   |   normalizer.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           intent.cpython-313.pyc
+|           __init__.cpython-313.pyc
+|           
++---providers
+|       firestore.py
+|       tts.py
+|       ycloud.py
+|       __init__.py
+|       
++---routes
+|       configuracao.py
+|       core_api.py
+|       cupons.py
+|       importar_precos.py
+|       routes.py
+|       seed.py
+|       teste_eleven_route.py
+|       webhook.py
+|       __init__.py
+|       
++---services
+|   |   audio_processing.py
+|   |   auth.py
+|   |   coupons.py
+|   |   crm.py
+|   |   db.py
+|   |   gcs_handler.py
+|   |   professions.py
+|   |   schedule.py
+|   |   storage_mgr.py
+|   |   text_to_speech.py
+|   |   wa_bot.py
+|   |   
+|   +---openai
+|   |   |   history_manager.py
+|   |   |   nlu_intent.py
+|   |   |   openai_handler.py
+|   |   |   prompt_builder.py
+|   |   |   
+|   |   \---__pycache__
+|   |           nlu_intent.cpython-313.pyc
+|   |           
+|   \---__pycache__
+|           db.cpython-313.pyc
+|           gcs_handler.cpython-313.pyc
+|           openai_handler.cpython-313.pyc
+|           schedule.cpython-313.pyc
+|           wa_bot.cpython-313.pyc
+|           
+\---templates

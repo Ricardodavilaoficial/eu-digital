@@ -1,11 +1,11 @@
 # app.py — entrypoint para runtime Python do Render (produção)
-# Webhook Meta + delegação para services/wa_bot (texto+áudio) + endpoints de debug seguros
+# Mantém: health, debug, firestore-utils, /api/send-text, estáticos
+# Webhook agora é servido via routes/webhook (blueprint)
 
 import os
 import json
 import logging
 import traceback
-import requests
 import re
 import hashlib
 import importlib, types
@@ -51,44 +51,11 @@ def _normalize_br_msisdn(wa_id: str) -> str:
 APP_TAG = os.getenv("APP_TAG", "2025-08-27")
 UID_DEFAULT = os.getenv("UID_DEFAULT", "ricardo-prod-uid")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
+GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v23.0")
+PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID")
 
 def fallback_text(context: str) -> str:
     return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
-
-# -------------------------
-# WhatsApp send helper
-# -------------------------
-def _send_text(to: str, body: str):
-    to_digits = _only_digits(to)
-    token = os.getenv("WHATSAPP_TOKEN")
-    pnid = os.getenv("PHONE_NUMBER_ID")
-    gv = os.getenv("GRAPH_VERSION", "v23.0")
-    if not token or not pnid:
-        print("[ERROR] CONFIG: Missing WHATSAPP_TOKEN or PHONE_NUMBER_ID", flush=True)
-        return False, {"error": "missing_whatsapp_config"}
-
-    url = f"https://graph.facebook.com/{gv}/{pnid}/messages"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to_digits,
-        "type": "text",
-        "text": {"body": (body or "")[:4096]},
-    }
-    try:
-        r = requests.post(url, headers=headers, json=payload, timeout=15)
-        try:
-            resp_json = r.json()
-        except Exception:
-            resp_json = {"raw": r.text}
-        print(
-            f"[WHATSAPP][OUTBOUND] to={to_digits} status={r.status_code} resp={json.dumps(resp_json, ensure_ascii=False)[:800]}",
-            flush=True,
-        )
-        return r.ok, resp_json
-    except Exception as e:
-        print("[ERROR][SEND]", repr(e), flush=True)
-        return False, {"error": repr(e)}
 
 # -------------------------
 # Blueprints
@@ -150,6 +117,14 @@ except Exception as e:
     print(f"[bp][warn] seed_bp não registrado: {e}")
     traceback.print_exc()
 
+# >>> Webhook por blueprint dedicado
+try:
+    from routes.webhook import bp_webhook
+    _register_bp(bp_webhook, "bp_webhook (/webhook)")
+except Exception as e:
+    print(f"[bp][erro] import bp_webhook: {e}")
+    traceback.print_exc()
+
 # -------------------------
 # Health / routes list
 # -------------------------
@@ -159,8 +134,8 @@ def health():
         ok=True,
         service="mei-robo-prod",
         has_whatsapp_token=bool(os.getenv("WHATSAPP_TOKEN")),
-        has_phone_number_id=bool(os.getenv("PHONE_NUMBER_ID")),
-        graph_version=os.getenv("GRAPH_VERSION", "v23.0"),
+        has_phone_number_id=bool(PHONE_NUMBER_ID),
+        graph_version=GRAPH_VERSION,
         app_tag=APP_TAG,
         uid_default=UID_DEFAULT,
     )
@@ -180,8 +155,8 @@ def list_routes():
 def __wa_debug():
     fp = _token_fingerprint(os.getenv("WHATSAPP_TOKEN", ""))
     out = {
-        "graph_version": os.getenv("GRAPH_VERSION", "v23.0"),
-        "phone_number_id": os.getenv("PHONE_NUMBER_ID"),
+        "graph_version": GRAPH_VERSION,
+        "phone_number_id": PHONE_NUMBER_ID,
         "token_fingerprint": fp,
         "pid": os.getpid(),
         "app_tag": APP_TAG,
@@ -210,8 +185,8 @@ def env_safe():
 
     safe = {
         "VERIFY_TOKEN": bool(os.getenv("VERIFY_TOKEN")),
-        "GRAPH_VERSION": os.getenv("GRAPH_VERSION"),
-        "PHONE_NUMBER_ID": os.getenv("PHONE_NUMBER_ID"),
+        "GRAPH_VERSION": GRAPH_VERSION,
+        "PHONE_NUMBER_ID": PHONE_NUMBER_ID,
         "OPENAI_NLU_MODEL": os.getenv("OPENAI_NLU_MODEL"),
         "USE_LLM_FOR_ALL": os.getenv("USE_LLM_FOR_ALL"),
         "BUDGET_MONTHLY_USD": os.getenv("BUDGET_MONTHLY_USD"),
@@ -300,20 +275,6 @@ def debug_list():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 # -------------------------
-# Webhook verification
-# -------------------------
-@app.get("/webhook")
-def verify_webhook():
-    mode = request.args.get("hub.mode")
-    token = request.args.get("hub.verify_token")
-    challenge = request.args.get("hub.challenge")
-    if mode == "subscribe" and token == VERIFY_TOKEN:
-        print("[WEBHOOK][VERIFY] success", flush=True)
-        return str(challenge or "OK"), 200
-    print(f"[WEBHOOK][VERIFY] fail mode={mode} token={token}", flush=True)
-    return "Forbidden", 403
-
-# -------------------------
 # Lazy import do wa_bot + status
 # -------------------------
 _WA_BOT_MOD = None
@@ -349,96 +310,10 @@ def wa_bot_status():
     }), 200
 
 # -------------------------
-# Webhook receiver
+# API utilitária de envio (texto)
 # -------------------------
-@app.post("/webhook")
-def receive_webhook():
-    # 0) Headers para debug
-    try:
-        ct = request.content_type or "<none>"
-        clen = request.content_length
-        sig = request.headers.get("X-Hub-Signature-256")
-        print(f"[WEBHOOK][CT] {ct} | len={clen} | has_sig256={bool(sig)}", flush=True)
-    except Exception:
-        pass
+from services.wa_send import send_text as wa_send_text
 
-    # 1) RAW
-    try:
-        raw = request.get_data(cache=True, as_text=True) or ""
-        if raw:
-            print(f"[WEBHOOK][RAW] {raw[:800]}", flush=True)
-        raw_clean = raw.lstrip("\ufeff").strip()
-    except Exception as e:
-        raw, raw_clean = "", ""
-        print("[WEBHOOK][RAW][ERROR]", repr(e), flush=True)
-
-    data = {}
-
-    # 2) Parse JSON
-    if raw_clean:
-        try:
-            data = json.loads(raw_clean)
-        except Exception as e:
-            print("[WEBHOOK][PARSE][raw][ERROR]", repr(e), flush=True)
-
-    if not data:
-        try:
-            data = request.get_json(force=True, silent=True) or {}
-        except Exception as e:
-            print("[WEBHOOK][PARSE][flask][ERROR]", repr(e), flush=True)
-
-    if not data and request.form:
-        entry = request.form.get("entry")
-        if entry:
-            try:
-                data = {"entry": json.loads(entry)}
-            except Exception as e:
-                print("[WEBHOOK][PARSE][form][ERROR]", repr(e), flush=True)
-
-    # 5) Fallback regex (self-test)
-    if not data and raw_clean:
-        m = re.search(r'"from"\s*:\s*"([^"]+)"', raw_clean)
-        if m:
-            from_number = m.group(1)
-            to_msisdn = _normalize_br_msisdn(from_number)
-            print(f"[WEBHOOK][FALLBACK][regex] from={from_number} -> {to_msisdn}", flush=True)
-            _send_text(to_msisdn, fallback_text("path=app.py:regex"))
-            return "EVENT_RECEIVED", 200
-
-    # 6) Log do payload interpretado
-    try:
-        print("[WEBHOOK][INCOMING]", json.dumps(data, ensure_ascii=False)[:1200], flush=True)
-        logging.getLogger().info("[WEBHOOK][INCOMING] %s", json.dumps(data, ensure_ascii=False)[:1200])
-    except Exception:
-        print("[WEBHOOK][INCOMING] (non-json-printable)", flush=True)
-
-    # 7) Lazy load + delegação
-    wa_mod = _load_wa_bot()
-
-    try:
-        for entry in data.get("entry", []):
-            for change in entry.get("changes", []):
-                value = change.get("value", {})
-                if not wa_mod or not hasattr(wa_mod, "process_change"):
-                    try:
-                        msgs = value.get("messages") or []
-                        if msgs and isinstance(msgs, list):
-                            to_msisdn = _normalize_br_msisdn(msgs[0].get("from") or "")
-                            if to_msisdn:
-                                _send_text(to_msisdn, fallback_text("handler-indisponivel"))
-                    except Exception:
-                        pass
-                    print("[ERROR] HANDLER: services.wa_bot indisponível; last_error=", _WA_BOT_LAST_ERR, flush=True)
-                    continue
-                wa_mod.process_change(value, _send_text, UID_DEFAULT, APP_TAG)
-    except Exception as e:
-        print("[ERROR] HANDLER:", repr(e), flush=True)
-
-    return "EVENT_RECEIVED", 200
-
-# -------------------------
-# API utilitária de envio
-# -------------------------
 @app.route("/api/send-text", methods=["GET", "POST"])
 def api_send_text():
     if request.method == "GET":
@@ -454,7 +329,7 @@ def api_send_text():
 
     to_norm = _normalize_br_msisdn(to)
     print(f"[API][SEND_TEXT] to={to} normalized={to_norm} body_preview={body[:80]}", flush=True)
-    ok, resp = _send_text(to_norm, body)
+    ok, resp = wa_send_text(to_norm, body)
     return ({"ok": True, "resp": resp}, 200) if ok else ({"ok": False, "resp": resp}, 500)
 
 # -------------------------

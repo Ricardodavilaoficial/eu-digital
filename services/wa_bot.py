@@ -3,16 +3,100 @@
 # - NLU leve "sempre on"
 # - Preços: consolida de 3 fontes (doc.precos [map/lista], coleção /precos, coleção /produtosEServicos)
 # - Profissão + até 2 especializações: sinônimos e matching por contexto
-# - Cache de respostas de preço (quanto custa X?)
+# - Cache de respostas de preço (quanto custa X?) via cache.kv (TTL)
 # - FAQ fixos via profissionais/{uid}/faq/{endereco|horarios|telefone|pix}
 # - Agendar/Reagendar com regras (sem fim de semana; +2 dias) e integração schedule se existir
-# - Budget Guard: gate de áudio e LLM, contagem de custos
-# - Mensagens de fallback diagnosticadas
+# - Budget Guard: gate de custos (sem falar de economia ao usuário)
+# - Microcopy humana + overrides opcionais por Firestore (l10n/persona)
+# - Se o cliente falar por áudio, responder por áudio (se o app injetar send_audio_fn)
 
+# === NLU bridge (rollout seguro) ============================================
 import os
-import re
 import json
 import logging
+
+NLU_MODE = os.getenv("NLU_MODE", "legacy").strip().lower()
+PRICING_MODE = os.getenv("PRICING_MODE", "legacy").strip().lower()  # legacy | domain
+REPLY_AUDIO_WHEN_AUDIO = os.getenv("REPLY_AUDIO_WHEN_AUDIO", "true").strip().lower() in ("1", "true", "yes")
+
+try:
+    from nlu.intent import detect_intent as detect_intent_v1
+except Exception:
+    detect_intent_v1 = None
+
+try:
+    # Legacy já existente no projeto
+    from services.openai.nlu_intent import detect_intent as detect_intent_legacy
+except Exception:
+    detect_intent_legacy = None
+
+
+def parse_intent(text: str):
+    """
+    Fachada estável de intenção.
+    Padrão: legacy. Quando NLU_MODE=v1 e houver módulo, usa nlu.intent.
+    Em erro, faz fallback.
+    """
+    mode = NLU_MODE or "legacy"
+
+    if mode == "v1" and detect_intent_v1:
+        try:
+            return detect_intent_v1(text)
+        except Exception:
+            pass
+
+    if detect_intent_legacy:
+        try:
+            return detect_intent_legacy(text)
+        except Exception:
+            pass
+
+    return {"intent": "desconhecida", "confidence": 0.0, "version": mode}
+
+
+def _nlu_probe(uid: str, text: str):
+    """
+    Apenas LOGA a intenção quando NLU_MODE=v1.
+    Não altera a resposta/fluxo. Serve pra validar v1 com usuário canário.
+    """
+    if (NLU_MODE == "v1") and detect_intent_v1:
+        try:
+            intent = detect_intent_v1(text or "")
+            logging.info("[NLU_PROBE][uid=%s] %s", uid or "-", json.dumps(intent, ensure_ascii=False))
+        except Exception as e:
+            logging.warning("[NLU_PROBE][uid=%s][error]=%s", uid or "-", repr(e))
+
+
+def _merge_intents_legacy_with_v1(nlu_legacy: dict, text: str) -> dict:
+    """
+    Se NLU_MODE=v1, consulta o v1 e (apenas) ajusta o campo intent para buckets
+    simples do legacy, mantendo os demais campos (dateText, timeText etc.) do legacy.
+    """
+    if NLU_MODE != "v1" or not detect_intent_v1:
+        return nlu_legacy
+    try:
+        v1 = detect_intent_v1(text or "") or {}
+    except Exception:
+        return nlu_legacy
+
+    intent_v1 = (v1.get("intent") or "").lower()
+    mapper = {
+        "preco": "precos",
+        "agendar": "agendar",
+        "faq": "fallback",
+        "saudacao": "fallback",
+        "desconhecida": "fallback",
+    }
+    if intent_v1 in mapper:
+        out = dict(nlu_legacy or {})
+        out["intent"] = mapper[intent_v1]
+        out["_v1"] = v1
+        out["_src"] = "merged_v1"
+        return out
+    return nlu_legacy
+# ============================================================================
+
+import re
 import requests
 import unicodedata
 from datetime import datetime, timedelta, timezone
@@ -57,38 +141,42 @@ try:
 except NameError:
     _GET_DOC_FN = None  # type: ignore
 
+
+def _db_ready() -> bool:
+    # Só usa Firestore se existir client E FIREBASE_PROJECT_ID
+    return (_DB_CLIENT is not None) and bool(os.getenv("FIREBASE_PROJECT_ID"))
+
+
 def _get_firestore_doc_ref(path: str):
     """Navega até um documento Firestore a partir de 'col/doc[/col/doc...]'."""
-    if _DB_CLIENT is None:
+    if not _db_ready():
         return None
     parts = [p for p in (path or "").split("/") if p]
     if not parts or len(parts) % 2 != 0:
         return None  # precisa ser doc (número PAR de segmentos)
     ref = _DB_CLIENT
     for i, part in enumerate(parts):
-        if i % 2 == 0:
-            ref = ref.collection(part)
-        else:
-            ref = ref.document(part)
+        ref = ref.collection(part) if i % 2 == 0 else ref.document(part)
     return ref
+
 
 def _get_firestore_col_ref(path: str):
     """Navega até uma coleção Firestore a partir de 'col[/doc/col...]' (número ÍMPAR de segmentos)."""
-    if _DB_CLIENT is None:
+    if not _db_ready():
         return None
     parts = [p for p in (path or "").split("/") if p]
     if not parts or len(parts) % 2 != 1:
         return None
     ref = _DB_CLIENT
     for i, part in enumerate(parts):
-        if i % 2 == 0:
-            ref = ref.collection(part)
-        else:
-            ref = ref.document(part)
+        ref = ref.collection(part) if i % 2 == 0 else ref.document(part)
     return ref  # CollectionReference
+
 
 def _get_doc_safe(path: str) -> Optional[Dict[str, Any]]:
     """Usa get_doc do services.db se existir; caso contrário, lê via client."""
+    if not _db_ready():
+        return None
     if callable(_GET_DOC_FN):
         try:
             return _GET_DOC_FN(path)  # type: ignore
@@ -105,8 +193,11 @@ def _get_doc_safe(path: str) -> Optional[Dict[str, Any]]:
         logging.info("[wa_bot] get via client falhou: %s", e)
         return None
 
+
 def _list_collection_safe(path: str, limit: int = 500) -> List[Dict[str, Any]]:
     """Lista documentos de uma coleção por caminho textual (sem depender de list_collection externa)."""
+    if not _db_ready():
+        return []
     col_ref = _get_firestore_col_ref(path)
     out: List[Dict[str, Any]] = []
     if col_ref is None:
@@ -121,29 +212,44 @@ def _list_collection_safe(path: str, limit: int = 500) -> List[Dict[str, Any]]:
         logging.info("[wa_bot] stream collection falhou: %s", e)
     return out
 
+
 # Alias curto para o client (para writes/sessions)
 DB = _DB_CLIENT
 
 # ========== NLU leve (imports tolerantes) ==========
 try:
-    from services.openai.nlu_intent import extract_intent  # abs
+    # ⚠️ Alias para evitar o erro "cannot import name 'extract_intent'":
+    from services.openai.nlu_intent import detect_intent as extract_intent  # abs
 except Exception as e_abs:
     try:
-        from .openai.nlu_intent import extract_intent  # rel
+        from .openai.nlu_intent import detect_intent as extract_intent  # rel
     except Exception as e_rel:
         logging.exception("[wa_bot] nlu_intent indisponível: abs=%s | rel=%s", e_abs, e_rel)
+
         def extract_intent(text: str) -> Dict[str, Optional[str]]:
             t = (text or "").lower()
-            if re.search(r"\b(preço|preços|tabela|valor|valores|serviço|serviços)\b", t): return {"intent":"precos","serviceName":None,"dateText":None,"timeText":None}
+            if re.search(r"\b(preço|preços|tabela|valor|valores|serviço|serviços)\b", t):
+                return {"intent": "precos", "serviceName": None, "dateText": None, "timeText": None}
             if re.search(r"\b(agendar|agenda|marcar|agendamento|reservar)\b", t):
-                mdate = re.search(r"(\d{1,2}/\d{1,2})", t); mtime = re.search(r"(\d{1,2}:\d{2})", t)
-                return {"intent":"agendar","serviceName":None,"dateText": mdate.group(1) if mdate else None,"timeText": mtime.group(1) if mtime else None}
-            if re.search(r"\b(reagendar|remarcar|mudar\s+hor[aó]rio|trocar\s+hor[aó]rio)\b", t): return {"intent":"reagendar","serviceName":None,"dateText":None,"timeText":None}
-            if re.search(r"\b(endereç|localiza|maps?)\b", t): return {"intent":"localizacao","serviceName":None,"dateText":None,"timeText":None}
-            if re.search(r"\b(hor[aá]rio|funciona)\b", t): return {"intent":"horarios","serviceName":None,"dateText":None,"timeText":None}
-            if re.search(r"\b(telefone|whats|contato)\b", t): return {"intent":"telefone","serviceName":None,"dateText":None,"timeText":None}
-            if re.search(r"\b(pix|pagamento|pagar)\b", t): return {"intent":"pagamento","serviceName":None,"dateText":None,"timeText":None}
-            return {"intent":"fallback","serviceName":None,"dateText":None,"timeText":None}
+                mdate = re.search(r"(\d{1,2}/\d{1,2})", t)
+                mtime = re.search(r"(\d{1,2}:\d{2})", t)
+                return {
+                    "intent": "agendar",
+                    "serviceName": None,
+                    "dateText": mdate.group(1) if mdate else None,
+                    "timeText": mtime.group(1) if mtime else None,
+                }
+            if re.search(r"\b(reagendar|remarcar|mudar\s+hor[aó]rio|trocar\s+hor[aó]rio)\b", t):
+                return {"intent": "reagendar", "serviceName": None, "dateText": None, "timeText": None}
+            if re.search(r"\b(endereç|localiza|maps?)\b", t):
+                return {"intent": "localizacao", "serviceName": None, "dateText": None, "timeText": None}
+            if re.search(r"\b(hor[aá]rio|funciona)\b", t):
+                return {"intent": "horarios", "serviceName": None, "dateText": None, "timeText": None}
+            if re.search(r"\b(telefone|whats|contato)\b", t):
+                return {"intent": "telefone", "serviceName": None, "dateText": None, "timeText": None}
+            if re.search(r"\b(pix|pagamento|pagar)\b", t):
+                return {"intent": "pagamento", "serviceName": None, "dateText": None, "timeText": None}
+            return {"intent": "fallback", "serviceName": None, "dateText": None, "timeText": None}
 
 # ========== Budget Guard (imports tolerantes) ==========
 try:
@@ -153,32 +259,85 @@ except Exception as e_abs:
         from .budget_guard import budget_fingerprint, charge, can_use_audio, can_use_gpt4o  # rel
     except Exception as e_rel:
         logging.exception("[wa_bot] budget_guard indisponível: abs=%s | rel=%s", e_abs, e_rel)
-        def budget_fingerprint(): return {"can_audio": True, "can_gpt4o": False}
-        def charge(*args, **kwargs): pass
-        def can_use_audio(): return True
-        def can_use_gpt4o(): return False
 
-# ========== Cache de respostas (imports tolerantes) ==========
+        def budget_fingerprint():
+            return {"can_audio": True, "can_gpt4o": False}
+
+        def charge(*args, **kwargs):
+            pass
+
+        def can_use_audio():
+            return True
+
+        def can_use_gpt4o():
+            return False
+
+# ========== Cache KV (novo) ==========
+# - Usamos cache.kv quando disponível; caso contrário, fallback em memória local.
 try:
-    from services.answers_cache import is_price_question, get as cache_get, put as cache_put  # abs
-except Exception as e_abs:
-    try:
-        from .answers_cache import is_price_question, get as cache_get, put as cache_put  # rel
-    except Exception as e_rel:
-        logging.exception("[wa_bot] answers_cache indisponível: abs=%s | rel=%s", e_abs, e_rel)
-        def is_price_question(text: str) -> bool:
-            return bool(re.search(r"\b(quanto|preço|valor|custa|tá|ta)\b", text or "", re.I))
-        def cache_get(_k): return None
-        def cache_put(_k, _v): pass
+    from cache.kv import make_key as kv_make_key, get as kv_get, put as kv_put  # type: ignore
+
+    _KV_OK = True
+except Exception as e_kv:
+    logging.warning("[wa_bot] cache.kv indisponível: %s", e_kv)
+    _KV_OK = False
+    # Fallback simples em memória com TTL
+    _kv_mem: Dict[str, Tuple[Any, float]] = {}
+
+    def kv_make_key(uid: str, intent: str, slug: str) -> str:
+        uid = (uid or "").strip().lower()
+        intent = (intent or "").strip().lower()
+        slug = re.sub(r"\s+", "-", (slug or "").strip().lower())
+        return f"{uid}::{intent}::{slug}"[:512]
+
+    def kv_put(uid: str, key: str, value: Any, ttl_sec: int = 1800) -> bool:
+        exp = datetime.utcnow().timestamp() + max(1, int(ttl_sec))
+        _kv_mem[key] = (value, exp)
+        return True
+
+    def kv_get(uid: str, key: str):
+        row = _kv_mem.get(key)
+        if not row:
+            return None
+        value, exp = row
+        if exp <= datetime.utcnow().timestamp():
+            _kv_mem.pop(key, None)
+            return None
+        return value
+
+
+# Heurística de pergunta de preço (mantida local)
+def is_price_question(text: str) -> bool:
+    return bool(re.search(r"\b(quanto|preço|precos|valor|custa|tá|ta)\b", text or "", re.I))
+
+
+# ========== Domain pricing (opcional) ==========
+try:
+    from domain.pricing import get_price as domain_get_price  # type: ignore
+except Exception:
+    domain_get_price = None  # type: ignore
 
 # ========== Schedule (imports tolerantes) ==========
 try:
-    from services.schedule import can_book, save_booking, validar_agendamento_v1, salvar_agendamento, atualizar_estado_agendamento  # abs
+    from services.schedule import (
+        can_book,
+        save_booking,
+        validar_agendamento_v1,
+        salvar_agendamento,
+        atualizar_estado_agendamento,
+    )  # abs
 except Exception as e_abs:
     try:
-        from .schedule import can_book, save_booking, validar_agendamento_v1, salvar_agendamento, atualizar_estado_agendamento  # rel
+        from .schedule import (
+            can_book,
+            save_booking,
+            validar_agendamento_v1,
+            salvar_agendamento,
+            atualizar_estado_agendamento,
+        )  # rel
     except Exception as e_rel:
         logging.exception("[wa_bot] schedule indisponível: abs=%s | rel=%s", e_abs, e_rel)
+
         def can_book(date_str, time_str, tz="America/Sao_Paulo"):
             try:
                 dd, mm = [int(x) for x in re.findall(r"\d{1,2}", date_str)[:2]]
@@ -194,19 +353,73 @@ except Exception as e_abs:
                 return (True, None)
             except Exception:
                 return (False, "Data/hora inválida.")
+
         def save_booking(uid, serviceName, dateText, timeText):
             return {"servico": serviceName or "serviço", "data": dateText, "hora": timeText}
-        def validar_agendamento_v1(uid, ag): return (True, None, None)
-        def salvar_agendamento(uid, ag): return {"id":"fake"}
-        def atualizar_estado_agendamento(uid, ag_id, body): return True
+
+        def validar_agendamento_v1(uid, ag):
+            return (True, None, None)
+
+        def salvar_agendamento(uid, ag):
+            return {"id": "fake"}
+
+        def atualizar_estado_agendamento(uid, ag_id, body):
+            return True
+
 
 # ========== Constantes / TZ ==========
 SP_TZ = timezone(timedelta(hours=-3))  # America/Sao_Paulo (sem DST)
 GRAPH_VERSION_DEFAULT = os.getenv("GRAPH_VERSION", "v23.0")
+PRICE_CACHE_TTL = int(os.getenv("PRICE_CACHE_TTL", "1800"))  # 30 min
+
+# ===== L10N / Microcopy humana (templates simples) ===========================
+_L10N_DEFAULTS = {
+    "help": "Posso te passar preços, endereço/horários ou já marcar um horário. Como posso te ajudar?",
+    "price_table_header": "Alguns valores:",
+    "faq_default": "Posso te ajudar com endereço, horários, telefone e Pix. O que você precisa?",
+    "ask_service": "Qual serviço você quer? Exemplos: {exemplos}.",
+    "ask_datetime": "Qual dia e horário ficam bons? Ex.: ‘terça 10h’ ou ‘01/09 14:00’.",
+    "schedule_confirm": "Fechado: {servico} em {dia} às {hora}{preco}. Se precisar mudar, é só me falar.",
+    "reschedule_ask": "Qual nova data e horário? Ex.: 02/09 10:00, ou 'quarta 15h'.",
+    "session_cleared": "Pronto, zerei nossa conversa. Quer recomeçar com ‘preços’ ou ‘agendar’?",
+    "audio_error": "Poxa, tive um probleminha aqui com seu áudio. Pode tentar de novo? Se preferir, me manda por texto também."
+}
+
+def _load_l10n_overrides(uid: str) -> dict:
+    """Lê profissionais/{uid}/l10n (se existir) para sobrescrever textos."""
+    try:
+        doc = _get_doc_safe(f"profissionais/{uid}/l10n")
+        return doc if isinstance(doc, dict) else {}
+    except Exception:
+        return {}
+
+def _apply_persona(uid: str, text: str) -> str:
+    """Aplica detalhes leves de persona se existirem (não obrigatório)."""
+    try:
+        prof = _get_doc_safe(f"profissionais/{uid}") or {}
+        persona = prof.get("persona") or {}
+        assinatura = persona.get("assinatura")
+        if assinatura:
+            return f"{text}\n{assinatura}"
+        return text
+    except Exception:
+        return text
+
+def say(uid: str, key: str, **kwargs) -> str:
+    """Busca texto em overrides -> defaults e formata com kwargs."""
+    store = _load_l10n_overrides(uid)
+    tmpl = (store.get(key) if isinstance(store, dict) else None) or _L10N_DEFAULTS.get(key) or ""
+    try:
+        msg = tmpl.format(**kwargs)
+    except Exception:
+        msg = tmpl
+    return _apply_persona(uid, msg)
+# ===========================================================================
 
 # ========== Utils ==========
 def _only_digits(s: str) -> str:
     return "".join(ch for ch in str(s or "") if ch.isdigit())
+
 
 def _normalize_br_msisdn(wa_id: str) -> str:
     if not wa_id:
@@ -216,11 +429,13 @@ def _normalize_br_msisdn(wa_id: str) -> str:
         digits = digits[:4] + "9" + digits[4:]
     return digits
 
+
 def _strip_accents_lower(s: str) -> str:
     s = s or ""
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     return s.lower().strip()
+
 
 def _format_brl(v: Any) -> str:
     if isinstance(v, (int, float)):
@@ -230,8 +445,11 @@ def _format_brl(v: Any) -> str:
         return f"R$ {v}"
     return str(v)
 
+
 def fallback_text(app_tag: str, context: str) -> str:
-    return f"[FALLBACK] MEI Robo PROD :: {app_tag} :: {context}\nDigite 'precos' para ver a lista."
+    # Microcopy humana (sem debug técnico para o cliente); usada principalmente em erros de áudio
+    return _L10N_DEFAULTS["audio_error"]
+
 
 def _pick_phone(value: Dict) -> str:
     try:
@@ -239,13 +457,15 @@ def _pick_phone(value: Dict) -> str:
     except Exception:
         return ""
 
-# ---- Helper para chave de cache (evita backslash em f-string) ----
+
+# ---- Helper para chave de cache de preço (usa cache.kv) ----
 def _mk_price_cache_key(uid: str, user_text: str) -> str:
     try:
         norm = re.sub(r"\s+", " ", (user_text or "").strip().lower())[:120]
     except Exception:
         norm = ""
-    return f"{uid}:price:{norm}"
+    return kv_make_key(uid, "price_q", norm)
+
 
 # ========== Profissão & especializações ==========
 def _load_prof_context(uid: str) -> Dict[str, Any]:
@@ -259,9 +479,10 @@ def _load_prof_context(uid: str) -> Dict[str, Any]:
     if isinstance(prof.get("especializacoes"), list):
         prof_context["especializacoes"] = [str(x).strip().lower() for x in prof["especializacoes"] if x]
     else:
-        for key in ("especializacao1","especializacao2"):
+        for key in ("especializacao1", "especializacao2"):
             v = prof.get(key)
-            if v: prof_context["especializacoes"].append(str(v).strip().lower())
+            if v:
+                prof_context["especializacoes"].append(str(v).strip().lower())
 
     custom_aliases = {}
     doc_aliases = _get_doc_safe(f"profissionais/{uid}/aliases")
@@ -272,6 +493,7 @@ def _load_prof_context(uid: str) -> Dict[str, Any]:
     prof_context["aliases"] = custom_aliases
     return prof_context
 
+
 def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str, List[str]]:
     p = (profissao or "").lower()
     espec = set((especializacoes or []))
@@ -279,54 +501,67 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
 
     # Barbeiro / cabeleireiro
     if "barbeiro" in p or "cabele" in p:
-        base.update({
-            "corte": ["corte masculino","corte feminino","corte"],
-            "barba": ["barba"],
-            "sombra": ["sobrancelha","design de sobrancelha","sobrancelha masculina"],
-            "baixar a melena": ["corte masculino"],
-            "pezinho": ["acabamento","pezinho"],
-            "tintura": ["coloração","tintura"],
-        })
+        base.update(
+            {
+                "corte": ["corte masculino", "corte feminino", "corte"],
+                "barba": ["barba"],
+                "sombra": ["sobrancelha", "design de sobrancelha", "sobrancelha masculina"],
+                "baixar a melena": ["corte masculino"],
+                "pezinho": ["acabamento", "pezinho"],
+                "tintura": ["coloração", "tintura"],
+            }
+        )
 
     # Dentista
     if "dent" in p:
-        base.update({
-            "limpeza": ["profilaxia","limpeza"],
-            "clareamento": ["clareamento dental","clareamento"],
-            "canal": ["tratamento de canal","endodontia"],
-            "aparelho": ["ortodontia","avaliação ortodôntica"],
-            "restauração": ["restauração","resina"],
-        })
+        base.update(
+            {
+                "limpeza": ["profilaxia", "limpeza"],
+                "clareamento": ["clareamento dental", "clareamento"],
+                "canal": ["tratamento de canal", "endodontia"],
+                "aparelho": ["ortodontia", "avaliação ortodôntica"],
+                "restauração": ["restauração", "resina"],
+            }
+        )
 
     # Pet (banho e tosa)
     if "pet" in p or "tosa" in p or "banho" in p:
-        base.update({
-            "banho": ["banho"],
-            "tosa": ["tosa","tosa higiênica","tosa completa"],
-            "unha": ["corte de unha","unha"],
-            "higiene": ["higienização","limpeza"],
-        })
+        base.update(
+            {
+                "banho": ["banho"],
+                "tosa": ["tosa", "tosa higiênica", "tosa completa"],
+                "unha": ["corte de unha", "unha"],
+                "higiene": ["higienização", "limpeza"],
+            }
+        )
 
     # Advogado
     if "advog" in p or "direito" in p:
-        base.update({
-            "consulta": ["consulta","consulta jurídica"],
-            "contrato": ["revisão de contrato","elaboração de contrato"],
-            "trabalhista": ["consulta trabalhista"],
-            "civil": ["consulta cível"],
-        })
+        base.update(
+            {
+                "consulta": ["consulta", "consulta jurídica"],
+                "contrato": ["revisão de contrato", "elaboração de contrato"],
+                "trabalhista": ["consulta trabalhista"],
+                "civil": ["consulta cível"],
+            }
+        )
 
     # Artesão / designer
     if "artes" in p or "artesã" in p or "designer" in p:
-        base.update({
-            "personalizado": ["produto personalizado","sob medida"],
-            "aula": ["aula","mentoria criativa"],
-            "reparo": ["conserto","reparo"],
-        })
+        base.update(
+            {
+                "personalizado": ["produto personalizado", "sob medida"],
+                "aula": ["aula", "mentoria criativa"],
+                "reparo": ["conserto", "reparo"],
+            }
+        )
 
-    if "barba" in espec: base.setdefault("barba", ["barba"])
-    if "clareamento" in espec: base.setdefault("clareamento", ["clareamento"])
+    if "barba" in espec:
+        base.setdefault("barba", ["barba"])
+    if "clareamento" in espec:
+        base.setdefault("clareamento", ["clareamento"])
     return base
+
 
 # ========== Preços (agregador 3 fontes) ==========
 def _normalize_item(it: Dict[str, Any]) -> Dict[str, Any]:
@@ -338,10 +573,15 @@ def _normalize_item(it: Dict[str, Any]) -> Dict[str, Any]:
     out = {**it}
     out["nome"] = str(nome)
     out["preco"] = preco
-    if dur is not None: out["duracaoMin"] = dur
+    if dur is not None:
+        out["duracaoMin"] = dur
     out["ativo"] = ativo
     out["nomeLower"] = _strip_accents_lower(out["nome"])
+    # Mantém slug se vier de produtosEServicos
+    if "slug" in it and isinstance(it["slug"], str):
+        out["slug"] = it["slug"].strip().lower()
     return out
+
 
 def _load_prices(uid: str) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
@@ -352,7 +592,8 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
     if isinstance(precos, dict):
         if "itens" in precos and isinstance(precos["itens"], list):
             for it in precos["itens"]:
-                if not isinstance(it, dict): continue
+                if not isinstance(it, dict):
+                    continue
                 if it.get("ativo", True):
                     items.append(_normalize_item(it))
         else:
@@ -362,7 +603,7 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
     # (B) Coleção /precos
     try:
         for it in _list_collection_safe(f"profissionais/{uid}/precos", limit=500):
-            if (it.get("ativo", True)):
+            if it.get("ativo", True):
                 items.append(_normalize_item(it))
     except Exception as e:
         logging.info("[PRICES] erro lendo /precos: %s", e)
@@ -370,7 +611,7 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
     # (C) Coleção /produtosEServicos
     try:
         for it in _list_collection_safe(f"profissionais/{uid}/produtosEServicos", limit=500):
-            if (it.get("ativo", True)):
+            if it.get("ativo", True):
                 items.append(_normalize_item(it))
     except Exception as e:
         logging.info("[PRICES] erro lendo /produtosEServicos: %s", e)
@@ -379,7 +620,7 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
     seen = set()
     uniq: List[Dict[str, Any]] = []
     for it in items:
-        key = it.get("nomeLower","").strip()
+        key = it.get("nomeLower", "").strip()
         if not key or it.get("ativo") is False:
             continue
         if key in seen:
@@ -389,19 +630,21 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
 
     return uniq
 
-def _render_price_table(items: List[Dict[str, Any]], uid: str, debug_counts: Dict[str,int]) -> str:
+
+def _render_price_table(items: List[Dict[str, Any]], uid: str, debug_counts: Dict[str, int]) -> str:
     if not items:
         return "Ainda não tenho uma tabela de preços publicada. 🙏"
-    lines = [f"[DEBUG] uid={uid} map={(debug_counts.get('map') or 0)} precos={(debug_counts.get('precos') or 0)} prodServ={(debug_counts.get('ps') or 0)} total={len(items)}"]
+    lines = [ say(uid, "price_table_header") ]
     for it in items[:20]:
-        nome = it.get("nome","serviço")
+        nome = it.get("nome", "serviço")
         dur = it.get("duracaoMin") or "?"
-        val = it.get("preco") if it.get("preco") not in (None,"") else "?"
+        val = it.get("preco") if it.get("preco") not in (None, "") else "?"
         lines.append(f"• {nome} — {dur}min — {_format_brl(val)}")
     return "\n".join(lines)
 
-def _count_sources(uid: str) -> Dict[str,int]:
-    c = {"map":0,"precos":0,"ps":0}
+
+def _count_sources(uid: str) -> Dict[str, int]:
+    c = {"map": 0, "precos": 0, "ps": 0}
     prof = _get_doc_safe(f"profissionais/{uid}") or {}
     precos = prof.get("precos")
     if isinstance(precos, dict):
@@ -419,62 +662,79 @@ def _count_sources(uid: str) -> Dict[str,int]:
         pass
     return c
 
-def _match_by_synonyms(text: str, items: List[Dict[str, Any]], prof_ctx: Dict[str,Any]) -> Optional[Tuple[str, Any]]:
+
+def _match_by_synonyms(text: str, items: List[Dict[str, Any]], prof_ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     t = _strip_accents_lower(text)
-    aliases_map: Dict[str,str] = prof_ctx.get("aliases") or {}
+    aliases_map: Dict[str, str] = prof_ctx.get("aliases") or {}
     for alias, target in aliases_map.items():
         if _strip_accents_lower(alias) in t:
             target_norm = _strip_accents_lower(str(target))
             for it in items:
-                if target_norm and target_norm in it.get("nomeLower",""):
-                    return it.get("nome"), it.get("preco")
+                if target_norm and target_norm in it.get("nomeLower", ""):
+                    return it
 
-    syn = _profession_synonyms(prof_ctx.get("profissao",""), prof_ctx.get("especializacoes") or [])
+    syn = _profession_synonyms(prof_ctx.get("profissao", ""), prof_ctx.get("especializacoes") or [])
     for alias, candidates in syn.items():
         if _strip_accents_lower(alias) in t:
             for cand in candidates:
                 cand_norm = _strip_accents_lower(cand)
                 for it in items:
-                    if cand_norm in it.get("nomeLower",""):
-                        return it.get("nome"), it.get("preco")
+                    if cand_norm in it.get("nomeLower", ""):
+                        return it
     return None
 
-def _find_price(items: List[Dict[str, Any]], text: str, prof_ctx: Dict[str,Any]) -> Optional[Tuple[str, Any]]:
+
+def _find_price_item(items: List[Dict[str, Any]], text: str, prof_ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     hit = _match_by_synonyms(text, items, prof_ctx)
-    if hit: return hit
+    if hit:
+        return hit
 
     t = _strip_accents_lower(text)
     for it in items:
-        nome = it.get("nomeLower","")
-        if not nome: continue
+        nome = it.get("nomeLower", "")
+        if not nome:
+            continue
         for tok in re.findall(r"[a-z0-9]{4,}", nome):
             if tok in t:
-                return it.get("nome"), it.get("preco")
+                return it
 
-    for key in ("corte","barba","banho","tosa","limpeza","clareamento","consulta","contrato"):
+    for key in ("corte", "barba", "banho", "tosa", "limpeza", "clareamento", "consulta", "contrato"):
         if key in t:
             for it in items:
-                if key in it.get("nomeLower",""):
-                    return it.get("nome"), it.get("preco")
+                if key in it.get("nomeLower", ""):
+                    return it
     return None
+
 
 # ========== FAQ ==========
 def _load_faq(uid: str, key: str) -> Optional[str]:
     doc = _get_doc_safe(f"profissionais/{uid}/faq/{key}")
-    if not doc: return None
+    if not doc:
+        return None
     if isinstance(doc.get("variacoes"), list) and doc["variacoes"]:
         idx = (datetime.now(SP_TZ).timetuple().tm_yday) % len(doc["variacoes"])
         return str(doc["variacoes"][idx])
     return doc.get("texto")
+
 
 # ========== STT ==========
 def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: str = "pt-BR") -> str:
     try:
         import inspect
         import services.audio_processing as ap
-        for name in ["transcribe_audio_bytes","transcribe_audio","stt_transcribe","speech_to_text","stt_bytes","transcrever_audio_bytes","transcrever_audio"]:
+
+        for name in [
+            "transcribe_audio_bytes",
+            "transcribe_audio",
+            "stt_transcribe",
+            "speech_to_text",
+            "stt_bytes",
+            "transcrever_audio_bytes",
+            "transcrever_audio",
+        ]:
             f = getattr(ap, name, None)
-            if not callable(f): continue
+            if not callable(f):
+                continue
             try:
                 try:
                     text = f(audio_bytes, mime_type=mime_type, language=language)
@@ -485,9 +745,12 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
                         try:
                             text = f(audio_bytes)
                         except TypeError:
-                            sig = inspect.signature(f); kwargs={}
-                            if "mime_type" in sig.parameters: kwargs["mime_type"] = mime_type
-                            if "language" in sig.parameters: kwargs["language"] = language
+                            sig = inspect.signature(f)
+                            kwargs = {}
+                            if "mime_type" in sig.parameters:
+                                kwargs["mime_type"] = mime_type
+                            if "language" in sig.parameters:
+                                kwargs["language"] = language
                             text = f(audio_bytes, **kwargs)
                 text = (text or "").strip()
                 if text:
@@ -498,18 +761,23 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     except Exception as e:
         print(f"[STT] módulo services.audio_processing indisponível: {e}", flush=True)
 
+    # Fallback opcional (desligado por padrão) para Whisper/OpenAI
     try:
-        if os.getenv("ENABLE_STT_OPENAI","true").lower() in ("1","true","yes"):
+        if os.getenv("ENABLE_STT_OPENAI", "false").lower() in ("1", "true", "yes"):
             api_key = os.getenv("OPENAI_API_KEY")
             if api_key and audio_bytes:
                 lang = "pt" if language.lower().startswith("pt") else language.split("-")[0]
                 files = {"file": ("audio.ogg", audio_bytes, mime_type or "audio/ogg")}
                 data = {"model": "whisper-1", "language": lang}
                 headers = {"Authorization": f"Bearer {api_key}"}
-                resp = requests.post("https://api.openai.com/v1/audio/transcriptions", headers=headers, files=files, data=data, timeout=60)
+                resp = requests.post(
+                    "https://api.openai.com/v1/audio/transcriptions", headers=headers, files=files, data=data, timeout=60
+                )
                 js = {}
-                try: js = resp.json()
-                except Exception: pass
+                try:
+                    js = resp.json()
+                except Exception:
+                    pass
                 text = (js.get("text") if isinstance(js, dict) else "") or ""
                 text = text.strip()
                 print(f"[STT] openai whisper status={resp.status_code} text='{text[:120]}'", flush=True)
@@ -520,23 +788,200 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     print("[STT] nenhum backend retornou transcrição", flush=True)
     return ""
 
+
+# ========== TTS helper (responder em áudio quando fizer sentido) ==========
+def tts_speak(uid: str, text: str, voice_hint: Optional[str] = None) -> Optional[Tuple[bytes, str]]:
+    """
+    Tenta sintetizar áudio a partir do texto.
+    Retorna (audio_bytes, mime_type) ou None se indisponível.
+    Preferência: providers.tts (ex.: ElevenLabs), depois services.text_to_speech (ex.: Google).
+    """
+    if not text:
+        return None
+
+    # 1) providers.tts (caminho usual p/ ElevenLabs clonado)
+    try:
+        import inspect
+        import providers.tts as ptts  # type: ignore
+        for name in ["speak_bytes", "synthesize_bytes", "tts_bytes", "tts", "speak"]:
+            f = getattr(ptts, name, None)
+            if not callable(f):
+                continue
+            try:
+                try:
+                    out = f(text=text, voice_id=voice_hint, mime_type="audio/ogg")
+                except TypeError:
+                    try:
+                        out = f(text, voice_id=voice_hint)
+                    except TypeError:
+                        try:
+                            out = f(text)
+                        except TypeError:
+                            sig = inspect.signature(f)
+                            kwargs = {}
+                            if "voice_id" in sig.parameters and voice_hint:
+                                kwargs["voice_id"] = voice_hint
+                            if "mime_type" in sig.parameters:
+                                kwargs["mime_type"] = "audio/ogg"
+                            out = f(text, **kwargs)
+                if isinstance(out, tuple) and len(out) == 2 and isinstance(out[0], (bytes, bytearray)):
+                    return (bytes(out[0]), str(out[1] or "audio/ogg"))
+                if isinstance(out, (bytes, bytearray)):
+                    return (bytes(out), "audio/ogg")
+            except Exception as e:
+                logging.info("[TTS/providers] %s falhou: %s", name, e)
+    except Exception as e:
+        logging.info("[TTS] providers.tts indisponível: %s", e)
+
+    # 2) services.text_to_speech (ex.: Google TTS)
+    try:
+        import inspect
+        import services.text_to_speech as tts  # type: ignore
+
+        candidates = [
+            "speak_bytes", "synthesize_bytes", "tts_bytes",
+            "speak", "synthesize", "text_to_speech"
+        ]
+        for name in candidates:
+            f = getattr(tts, name, None)
+            if not callable(f):
+                continue
+            try:
+                try:
+                    out = f(text, uid=uid, voice=voice_hint, format="audio/ogg")
+                except TypeError:
+                    try:
+                        out = f(text, voice=voice_hint)
+                    except TypeError:
+                        try:
+                            out = f(text)
+                        except TypeError:
+                            sig = inspect.signature(f)
+                            kwargs = {}
+                            if "uid" in sig.parameters:
+                                kwargs["uid"] = uid
+                            if "voice" in sig.parameters and voice_hint:
+                                kwargs["voice"] = voice_hint
+                            if "format" in sig.parameters:
+                                kwargs["format"] = "audio/ogg"
+                            out = f(text, **kwargs)
+
+                if isinstance(out, tuple) and len(out) == 2 and isinstance(out[0], (bytes, bytearray)):
+                    return (bytes(out[0]), str(out[1] or "audio/ogg"))
+                if isinstance(out, (bytes, bytearray)):
+                    return (bytes(out), "audio/ogg")
+            except Exception as e:
+                logging.info("[TTS/services] %s falhou: %s", name, e)
+    except Exception as e:
+        logging.info("[TTS] services.text_to_speech indisponível: %s", e)
+
+    return None
+
+
+def send_reply(uid: str, to: str, text: str, inbound_type: str, send_text_fn, send_audio_fn=None, voice_hint: Optional[str]=None):
+    """
+    Se o cliente mandou ÁUDIO e houver send_audio_fn + TTS ok -> responde em áudio.
+    Caso contrário, texto.
+    """
+    # tenta usar a voz configurada do MEI (env) se não vier dica explícita
+    voice_hint = voice_hint or os.getenv("ELEVEN_VOICE_ID") or None
+    prefer_audio = (inbound_type == "audio") and REPLY_AUDIO_WHEN_AUDIO and callable(send_audio_fn)
+    if prefer_audio:
+        tts_out = tts_speak(uid, text, voice_hint=voice_hint)
+        if tts_out:
+            audio_bytes, mime_type = tts_out
+            try:
+                return send_audio_fn(to, audio_bytes, mime_type)
+            except Exception as e:
+                logging.info("[OUTBOUND][AUDIO] falhou, caindo para texto: %s", e)
+    return send_text_fn(to, text)
+
+
 # ========== Normalizador PT-BR (datas/horas) ==========
 _MONTHS = {
-    "jan":1,"janeiro":1,"fev":2,"fevereiro":2,"mar":3,"marco":3,"março":3,"abr":4,"abril":4,"mai":5,"maio":5,
-    "jun":6,"junho":6,"jul":7,"julho":7,"ago":8,"agosto":8,"set":9,"setembro":9,"out":10,"outubro":10,"nov":11,"novembro":11,"dez":12,"dezembro":12,
+    "jan": 1,
+    "janeiro": 1,
+    "fev": 2,
+    "fevereiro": 2,
+    "mar": 3,
+    "marco": 3,
+    "março": 3,
+    "abr": 4,
+    "abril": 4,
+    "mai": 5,
+    "maio": 5,
+    "jun": 6,
+    "junho": 6,
+    "jul": 7,
+    "julho": 7,
+    "ago": 8,
+    "agosto": 8,
+    "set": 9,
+    "setembro": 9,
+    "out": 10,
+    "outubro": 10,
+    "nov": 11,
+    "novembro": 11,
+    "dez": 12,
+    "dezembro": 12,
 }
 _UNITS = {
-    "zero":0,"um":1,"uma":1,"primeiro":1,"dois":2,"duas":2,"tres":3,"três":3,"quatro":4,"cinco":5,"seis":6,"sete":7,"oito":8,"nove":9,"dez":10,
-    "onze":11,"doze":12,"treze":13,"catorze":14,"quatorze":14,"quinze":15,"dezesseis":16,"desesseis":16,"dezessete":17,"desessete":17,"dezoito":18,"dezenove":19,
+    "zero": 0,
+    "um": 1,
+    "uma": 1,
+    "primeiro": 1,
+    "dois": 2,
+    "duas": 2,
+    "tres": 3,
+    "três": 3,
+    "quatro": 4,
+    "cinco": 5,
+    "seis": 6,
+    "sete": 7,
+    "oito": 8,
+    "nove": 9,
+    "dez": 10,
+    "onze": 11,
+    "doze": 12,
+    "treze": 13,
+    "catorze": 14,
+    "quatorze": 14,
+    "quinze": 15,
+    "dezesseis": 16,
+    "desesseis": 16,
+    "dezessete": 17,
+    "desessete": 17,
+    "dezoito": 18,
+    "dezenove": 19,
 }
-_TENS = {"vinte":20,"trinta":30,"quarenta":40,"cinquenta":50}
-_WEEKDAYS = {"segunda":0,"segunda-feira":0,"terca":1,"terça":1,"terça-feira":1,"terca-feira":1,"quarta":2,"quarta-feira":2,"quinta":3,"quinta-feira":3,"sexta":4,"sexta-feira":4,"sabado":5,"sábado":5,"domingo":6}
+_TENS = {"vinte": 20, "trinta": 30, "quarenta": 40, "cinquenta": 50}
+_WEEKDAYS = {
+    "segunda": 0,
+    "segunda-feira": 0,
+    "terca": 1,
+    "terça": 1,
+    "terça-feira": 1,
+    "terca-feira": 1,
+    "quarta": 2,
+    "quarta-feira": 2,
+    "quinta": 3,
+    "quinta-feira": 3,
+    "sexta": 4,
+    "sexta-feira": 4,
+    "sabado": 5,
+    "sábado": 5,
+    "domingo": 6,
+}
+
 
 def _words_to_int_pt(s: str):
-    if not s: return None
+    if not s:
+        return None
     s = s.strip()
-    if s in _UNITS: return _UNITS[s]
-    if s in _TENS: return _TENS[s]
+    if s in _UNITS:
+        return _UNITS[s]
+    if s in _TENS:
+        return _TENS[s]
     m = re.match(r"(vinte|trinta|quarenta|cinquenta)\s+e\s+([a-z]+)$", s)
     if m:
         tens = _TENS.get(m.group(1), 0)
@@ -544,16 +989,24 @@ def _words_to_int_pt(s: str):
         return tens + (unit or 0)
     return None
 
+
 def _extract_day_month_from_words(t: str):
     m = re.search(r"(?:\bdia\s+)?(?P<d>(\d{1,2}|[a-z]+))\s+de\s+(?P<m>[a-z]{3,12})", t)
-    if not m: return None
-    d_raw = m.group("d"); month_raw = m.group("m")
+    if not m:
+        return None
+    d_raw = m.group("d")
+    month_raw = m.group("m")
     mm = _MONTHS.get(month_raw)
-    if not mm: return None
-    if d_raw.isdigit(): dd = int(d_raw)
-    else: dd = _words_to_int_pt(d_raw)
-    if not dd: return None
+    if not mm:
+        return None
+    if d_raw.isdigit():
+        dd = int(d_raw)
+    else:
+        dd = _words_to_int_pt(d_raw)
+    if not dd:
+        return None
     return dd, mm
+
 
 def _extract_time_from_words(t: str):
     if re.search(r"\bmeio\s+dia\b", t):
@@ -563,138 +1016,225 @@ def _extract_time_from_words(t: str):
         mi = 30 if re.search(r"\bmeia\s+noite\s+e\s+meia\b", t) else 0
         return 0, mi
     period = None
-    if re.search(r"\bda\s+manha\b|\bde\s+manha\b|\bmanh[ãa]\b", t): period = "manha"
-    elif re.search(r"\bda\s+tarde\b|\bde\s+tarde\b|\btarde\b", t): period = "tarde"
-    elif re.search(r"\bda\s+noite\b|\bde\s+noite\b|\bnoite\b", t): period = "noite"
+    if re.search(r"\bda\s+manha\b|\bde\s+manha\b|\bmanh[ãa]\b", t):
+        period = "manha"
+    elif re.search(r"\bda\s+tarde\b|\bde\s+tarde\b|\btarde\b", t):
+        period = "tarde"
+    elif re.search(r"\bda\s+noite\b|\bde\s+noite\b|\bnoite\b", t):
+        period = "noite"
     m = re.search(r"\b(?:as|às)?\s*(?P<h>\d{1,2})(?:[:h](?P<m>\d{2}))?\s*(?:horas?)?", t)
     if m:
-        hh = int(m.group("h")); mi = int(m.group("m")) if m.group("m") else 0
-        if re.search(rf"\b{hh}\s+e\s+meia\b", t): mi = 30
-        if period in ("tarde","noite") and 1 <= hh <= 11: hh += 12
+        hh = int(m.group("h"))
+        mi = int(m.group("m")) if m.group("m") else 0
+        if re.search(rf"\b{hh}\s+e\s+meia\b", t):
+            mi = 30
+        if period in ("tarde", "noite") and 1 <= hh <= 11:
+            hh += 12
         return hh, mi
     m2 = re.search(r"\b(?:as|às)?\s*([a-z]+)(?:\s*e\s*meia)?\s*(?:horas?)?", t)
     if m2:
         word = m2.group(1)
         hh = _words_to_int_pt(word)
         if hh is not None:
-            mi = 30 if re.search(r"\b"+re.escape(word)+r"\s*e\s*meia\b", t) else 0
-            if period in ("tarde","noite") and 1 <= hh <= 11: hh += 12
+            mi = 30 if re.search(r"\b" + re.escape(word) + r"\s*e\s*meia\b", t) else 0
+            if period in ("tarde", "noite") and 1 <= hh <= 11:
+                hh += 12
             return hh, mi
     return None
 
+
 def _weekday_to_date(next_text: str, weekday_word: str):
-    if weekday_word not in _WEEKDAYS: return None
+    if weekday_word not in _WEEKDAYS:
+        return None
     today = datetime.now(SP_TZ).date()
-    wd_target = _WEEKDAYS[weekday_word]; wd_today = today.weekday()
+    wd_target = _WEEKDAYS[weekday_word]
+    wd_today = today.weekday()
     delta = (wd_target - wd_today) % 7
-    if delta == 0: delta = 7
-    if re.search(r"\bproxim[aoa]|\bsemana\s+que\s+vem", next_text): delta += 7
+    if delta == 0:
+        delta = 7
+    if re.search(r"\bproxim[aoa]|\bsemana\s+que\s+vem", next_text):
+        delta += 7
     return today + timedelta(days=delta)
+
 
 def _normalize_datetime_pt(t: str) -> str:
     if re.search(r"\b\d{1,2}[\/\.]\d{1,2}\b", t) and re.search(r"\b\d{1,2}[:h]\d{2}\b", t):
         return t
-    base_now = datetime.now(SP_TZ); dd = mm = None
-    if "depois de amanha" in t: base = base_now + timedelta(days=2); dd, mm = base.day, base.month
-    elif "amanha" in t: base = base_now + timedelta(days=1); dd, mm = base.day, base.month
+    base_now = datetime.now(SP_TZ)
+    dd = mm = None
+    if "depois de amanha" in t:
+        base = base_now + timedelta(days=2)
+        dd, mm = base.day, base.month
+    elif "amanha" in t:
+        base = base_now + timedelta(days=1)
+        dd, mm = base.day, base.month
     if dd is None:
         for w in sorted(_WEEKDAYS.keys(), key=len, reverse=True):
             if re.search(rf"\b{re.escape(w)}\b", t):
                 d = _weekday_to_date(t, w)
-                if d: dd, mm = d.day, d.month; break
+                if d:
+                    dd, mm = d.day, d.month
+                    break
     dm = _extract_day_month_from_words(t)
-    if dd is None and dm: dd, mm = dm
+    if dd is None and dm:
+        dd, mm = dm
     ht = _extract_time_from_words(t)
     if dd and mm and ht:
         hh, mi = ht
         return f"{t} {dd:02d}/{mm:02d} {hh:02d}:{mi:02d}"
     return t
 
+
 def _parse_datetime_br(text_norm: str):
     d = re.search(r"(\b\d{1,2})[\/\.-](\d{1,2})(?:[\/\.-](\d{2,4}))?", text_norm)
     h = re.search(r"(\b\d{1,2})[:h](\d{2})", text_norm)
-    if not d or not h: return None
-    day = int(d.group(1)); month = int(d.group(2)); year_g = d.group(3)
+    if not d or not h:
+        return None
+    day = int(d.group(1))
+    month = int(d.group(2))
+    year_g = d.group(3)
     year = int(year_g) + (2000 if year_g and len(year_g) == 2 else 0) if year_g else datetime.now(SP_TZ).year
-    hour = int(h.group(1)); minute = int(h.group(2))
+    hour = int(h.group(1))
+    minute = int(h.group(2))
     try:
         return datetime(year, month, day, hour, minute, tzinfo=SP_TZ)
     except Exception:
         return None
 
+
 # ========== Sessão (Firestore) ==========
 def _sess_ref(uid: str, wa_id: str):
     return DB.collection(f"profissionais/{uid}/sessions").document(wa_id)
 
+
 def _get_session(uid: str, wa_id: str) -> dict:
+    if not _db_ready():
+        return {}
     try:
         snap = _sess_ref(uid, wa_id).get()
         sess = snap.to_dict() if snap.exists else {}
     except Exception as e:
-        print(f"[WA_BOT][SESS] get erro: {e}", flush=True); sess = {}
+        print(f"[WA_BOT][SESS] get erro: {e}", flush=True)
+        sess = {}
     try:
         ts_str = sess.get("updatedAt") or sess.get("createdAt")
         if ts_str:
-            ts = datetime.fromisoformat(ts_str.replace("Z","+00:00"))
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
             if datetime.now(SP_TZ) - ts > timedelta(minutes=30):
-                _clear_session(uid, wa_id); return {}
+                _clear_session(uid, wa_id)
+                return {}
     except Exception:
         pass
     return sess or {}
 
+
 def _save_session(uid: str, wa_id: str, sess: dict):
+    if not _db_ready():
+        return
     now = datetime.now(SP_TZ).isoformat()
     sess = {**(sess or {}), "updatedAt": now}
-    if "createdAt" not in sess: sess["createdAt"] = now
+    if "createdAt" not in sess:
+        sess["createdAt"] = now
     try:
         _sess_ref(uid, wa_id).set(sess)
     except Exception as e:
         print(f"[WA_BOT][SESS] save erro: {e}", flush=True)
 
+
 def _clear_session(uid: str, wa_id: str):
+    if not _db_ready():
+        return
     try:
         _sess_ref(uid, wa_id).delete()
     except Exception as e:
         print(f"[WA_BOT][SESS] clear erro: {e}", flush=True)
 
+
 # ========== Agendamento ==========
 def _resolve_cliente_id(uid_default: str, wa_id: str, to_msisdn: str) -> str:
     try:
-        if wa_id:
-            q = (DB.collection(f"profissionais/{uid_default}/clientes").where("waId","==",wa_id).limit(1).stream())
-            for d in q: return d.id
+        if _db_ready() and wa_id:
+            q = (
+                DB.collection(f"profissionais/{uid_default}/clientes")
+                .where("waId", "==", wa_id)
+                .limit(1)
+                .stream()
+            )
+            for d in q:
+                return d.id
     except Exception as e:
         print(f"[WA_BOT][AGENDA] lookup cliente por waId falhou: {e}", flush=True)
     return wa_id or to_msisdn or "anon"
 
+
 def _find_target_agendamento(uid: str, cliente_id: str, wa_id: str, telefone: str):
-    estados = ["solicitado","confirmado"]; candidatos = []
+    if not _db_ready():
+        return None
+    estados = ["solicitado", "confirmado"]
+    candidatos = []
     try:
-        q = (DB.collection(f"profissionais/{uid}/agendamentos").where("clienteId","==",cliente_id).where("estado","in",estados).limit(10).stream())
-        for d in q: obj = d.to_dict() or {}; obj["_id"] = d.id; candidatos.append(obj)
+        q = (
+            DB.collection(f"profissionais/{uid}/agendamentos")
+            .where("clienteId", "==", cliente_id)
+            .where("estado", "in", estados)
+            .limit(10)
+            .stream()
+        )
+        for d in q:
+            obj = d.to_dict() or {}
+            obj["_id"] = d.id
+            candidatos.append(obj)
     except Exception as e:
         print(f"[WA_BOT][AGENDA] query por clienteId falhou: {e}", flush=True)
     if not candidatos and wa_id:
         try:
-            q = (DB.collection(f"profissionais/{uid}/agendamentos").where("clienteWaId","==",wa_id).where("estado","in",estados).limit(10).stream())
-            for d in q: obj = d.to_dict() or {}; obj["_id"] = d.id; candidatos.append(obj)
+            q = (
+                DB.collection(f"profissionais/{uid}/agendamentos")
+                .where("clienteWaId", "==", wa_id)
+                .where("estado", "in", estados)
+                .limit(10)
+                .stream()
+            )
+            for d in q:
+                obj = d.to_dict() or {}
+                obj["_id"] = d.id
+                candidatos.append(obj)
         except Exception as e:
             print(f"[WA_BOT][AGENDA] query por clienteWaId falhou: {e}", flush=True)
     if not candidatos and telefone:
         try:
-            q = (DB.collection(f"profissionais/{uid}/agendamentos").where("telefone","==",telefone).where("estado","in",estados).limit(10).stream())
-            for d in q: obj = d.to_dict() or {}; obj["_id"] = d.id; candidatos.append(obj)
+            q = (
+                DB.collection(f"profissionais/{uid}/agendamentos")
+                .where("telefone", "==", telefone)
+                .where("estado", "in", estados)
+                .limit(10)
+                .stream()
+            )
+            for d in q:
+                obj = d.to_dict() or {}
+                obj["_id"] = d.id
+                candidatos.append(obj)
         except Exception as e:
             print(f"[WA_BOT][AGENDA] query por telefone falhou: {e}", flush=True)
-    if not candidatos: return None
+    if not candidatos:
+        return None
+
     def _iso_or_none(s):
-        try: return datetime.fromisoformat(s.replace("Z","+00:00"))
-        except Exception: return None
-    candidatos.sort(key=lambda x: _iso_or_none(x.get("createdAt") or x.get("inicio")) or datetime.min.replace(tzinfo=SP_TZ), reverse=True)
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    candidatos.sort(
+        key=lambda x: _iso_or_none(x.get("createdAt") or x.get("inicio")) or datetime.min.replace(tzinfo=SP_TZ),
+        reverse=True,
+    )
     return candidatos[0]
 
+
 def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, svc: dict, dt: datetime, body_text: str):
-    wa_id = ""; nome_contato = ""
+    wa_id = ""
+    nome_contato = ""
     try:
         contacts = value.get("contacts") or []
         if contacts and isinstance(contacts, list):
@@ -733,50 +1273,86 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
         if not ok:
             return False, f"Não foi possível agendar: {motivo}"
         saved_id = salvar_agendamento(uid_default, ag)
-        if isinstance(saved_id, dict): saved_id = saved_id.get("id") or saved_id.get("ag_id")
+        if isinstance(saved_id, dict):
+            saved_id = saved_id.get("id") or saved_id.get("ag_id")
     except Exception as e:
         print(f"[WA_BOT][AGENDA] salvar via schedule falhou: {e}", flush=True)
         try:
+            if not _db_ready():
+                raise RuntimeError("DB indisponível")
             ref = DB.collection(f"profissionais/{uid_default}/agendamentos").document()
-            ref.set(ag); saved_id = ref.id
+            ref.set(ag)
+            saved_id = ref.id
         except Exception as e2:
             print(f"[WA_BOT][AGENDA][FALLBACK_SAVE] erro: {e2}", flush=True)
             return False, "Tive um problema ao salvar seu agendamento. Pode tentar novamente em instantes?"
 
-    dia = dt.strftime("%d/%m"); hora = dt.strftime("%H:%M")
-    preco = ag.get("preco"); preco_txt = f" — {_format_brl(preco)}" if preco not in (None, "", "?") else ""
+    dia = dt.strftime("%d/%m")
+    hora = dt.strftime("%H:%M")
+    preco = ag.get("preco")
+    preco_txt = f" — {_format_brl(preco)}" if preco not in (None, "", "?") else ""
     sid = f" (id {saved_id})" if saved_id else ""
     return True, f"✅ Agendamento solicitado: {ag['servicoNome']} em {dia} às {hora}{preco_txt}.{sid}\nSe precisar alterar, responda: reagendar <dd/mm> <hh:mm>"
+
 
 # ========== Fluxos de alto nível ==========
 def _reply_prices(uid: str, to: str, send_text):
     counts = _count_sources(uid)
     items = _load_prices(uid)
     msg = _render_price_table(items, uid, counts)
-    logging.info(f"[WHATSAPP][OUTBOUND] prices count={len(items)} map={counts.get('map')} precos={counts.get('precos')} ps={counts.get('ps')}")
+    logging.info(
+        f"[WHATSAPP][OUTBOUND] prices count={len(items)} map={counts.get('map')} precos={counts.get('precos')} ps={counts.get('ps')}"
+    )
     return send_text(to, msg)
+
 
 def _reply_price_from_cache_or_data(uid: str, to: str, user_text: str, send_text):
     key = _mk_price_cache_key(uid, user_text)
-    cached = cache_get(key)
+    cached = kv_get(uid, key)
     if cached:
         logging.info("[CACHE] price hit")
         return send_text(to, cached)
+
     items = _load_prices(uid)
     prof_ctx = _load_prof_context(uid)
-    found = _find_price(items, user_text or "", prof_ctx)
-    if not found:
+    it = _find_price_item(items, user_text or "", prof_ctx)
+
+    if not it:
         return _reply_prices(uid, to, send_text)
-    nome, valor = found
-    resp = f"{nome}: {_format_brl(valor)} 😉"
-    cache_put(key, resp)
+
+    nome = it.get("nome") or "serviço"
+    valor_legacy = it.get("preco")
+    slug = (it.get("slug") or "").strip().lower()
+
+    valor_final = valor_legacy
+    origem_txt = None
+
+    # Se habilitado, tenta calcular via domain.pricing.get_price(slug)
+    if PRICING_MODE == "domain" and domain_get_price and slug:
+        try:
+            res = domain_get_price(slug)  # contrato: {valor, origem}
+            if isinstance(res, dict) and ("valor" in res):
+                valor_final = res.get("valor", valor_legacy)
+                origem_txt = res.get("origem")
+        except Exception as e:
+            logging.info("[PRICING][domain] falhou (%s). Usando legacy.", e)
+
+    if valor_final in (None, "", "?"):
+        # fallback para tabela completa se não houver valor
+        return _reply_prices(uid, to, send_text)
+
+    extra = f" 〔{origem_txt}〕" if origem_txt else ""
+    resp = f"{nome}: {_format_brl(valor_final)} 😉{extra}"
+    kv_put(uid, key, resp, ttl_sec=PRICE_CACHE_TTL)
     return send_text(to, resp)
+
 
 def _reply_faq(uid: str, to: str, faq_key: str, send_text):
     ans = _load_faq(uid, faq_key)
     if not ans:
-        return send_text(to, "Posso te ajudar com endereço, horários, telefone e Pix. O que você precisa?")
+        return send_text(to, say(uid, "faq_default"))
     return send_text(to, ans)
+
 
 def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str, timeText: str, send_text, value: dict, body_text: str):
     ok, reason = can_book(dateText, timeText)
@@ -787,9 +1363,11 @@ def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str
     if serviceName:
         s_norm = _strip_accents_lower(serviceName)
         for it in items:
-            if s_norm in it.get("nomeLower",""):
-                svc = it; break
-    if not svc and items: svc = items[0]
+            if s_norm in it.get("nomeLower", ""):
+                svc = it
+                break
+    if not svc and items:
+        svc = items[0]
     dt = None
     try:
         dd, mm = [int(x) for x in re.findall(r"\d{1,2}", dateText)[:2]]
@@ -799,36 +1377,42 @@ def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str
         pass
     if not dt:
         return send_text(to, "Não entendi a data/hora. Pode enviar no formato 01/09 14:00?")
-    ok2, msg = _build_and_save_agendamento(uid, value, to, svc or {"nome":"serviço"}, dt, body_text)
+    ok2, msg = _build_and_save_agendamento(uid, value, to, svc or {"nome": "serviço"}, dt, body_text)
     return send_text(to, msg if ok2 else f"Não consegui agendar: {msg}")
+
 
 def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items, sess: dict, wa_id: str):
     svc = None
     if sess.get("servicoId") or sess.get("servicoNome"):
         for it in items:
             if it.get("id") == sess.get("servicoId") or it.get("nomeLower") == (sess.get("servicoNome") or "").lower():
-                svc = it; break
+                svc = it
+                break
     if not svc:
         prof_ctx = _load_prof_context(uid_default)
-        hit = _find_price(items, text_norm, prof_ctx)
+        hit = _find_price_item(items, text_norm, prof_ctx)
         if hit:
-            name = _strip_accents_lower(hit[0])
+            name = _strip_accents_lower(hit.get("nome", ""))
             for it in items:
                 if it.get("nomeLower") == name:
-                    svc = it; break
+                    svc = it
+                    break
 
     text_norm2 = _normalize_datetime_pt(text_norm)
     dt = _parse_datetime_br(text_norm2)
     if not dt and sess.get("dataHora"):
-        try: dt = datetime.fromisoformat(sess["dataHora"])
-        except Exception: dt = None
+        try:
+            dt = datetime.fromisoformat(sess["dataHora"])
+        except Exception:
+            dt = None
 
     have_svc = svc is not None
     have_dt = dt is not None
 
     if have_svc and have_dt:
         ok, msg = _build_and_save_agendamento(uid_default, value, to_msisdn, svc, dt, body_text)
-        if ok: _clear_session(uid_default, wa_id)
+        if ok:
+            _clear_session(uid_default, wa_id)
         return msg
 
     new_sess = {
@@ -847,15 +1431,18 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
         return f"Certo. Para qual serviço? Tenho: {nomes}."
     return "Perfeito. Qual data e horário? Ex.: 01/09 14:00, ou 'terça 10h', ou 'semana que vem sexta 9:30'."
 
+
 def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, sess: dict, wa_id: str):
     text_norm2 = _normalize_datetime_pt(text_norm)
     dt = _parse_datetime_br(text_norm2)
     if not dt and sess.get("dataHora"):
-        try: dt = datetime.fromisoformat(sess["dataHora"])
-        except Exception: dt = None
+        try:
+            dt = datetime.fromisoformat(sess["dataHora"])
+        except Exception:
+            dt = None
     if not dt:
-        _save_session(uid_default, wa_id, {"intent":"reagendar"})
-        return "Qual nova data e horário? Ex.: 02/09 10:00, ou 'quarta 15h'."
+        _save_session(uid_default, wa_id, {"intent": "reagendar"})
+        return say(uid_default, "reschedule_ask")
 
     wa = ""
     try:
@@ -867,27 +1454,32 @@ def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str
     cliente_id = _resolve_cliente_id(uid_default, wa, to_msisdn)
     alvo = _find_target_agendamento(uid_default, cliente_id, wa, to_msisdn)
     if not alvo:
-        return ("Não encontrei um agendamento ativo seu.\n"
-                "Você pode enviar: reagendar <ID> <dd/mm> <hh:mm> (ID aparece na confirmação)")
+        return (
+            "Não encontrei um agendamento ativo seu.\n"
+            "Você pode enviar: reagendar <ID> <dd/mm> <hh:mm> (ID aparece na confirmação)"
+        )
 
     ag_id = alvo.get("_id")
     try:
-        body = {"acao":"reagendar","dataHora": dt.isoformat()}
+        body = {"acao": "reagendar", "dataHora": dt.isoformat()}
         atualizar_estado_agendamento(uid_default, ag_id, body)
     except Exception as e:
         print(f"[WA_BOT][AGENDA][REAGENDAR] erro: {e}", flush=True)
         return "Não consegui reagendar agora. Pode tentar novamente em instantes?"
 
     _clear_session(uid_default, wa_id)
-    dia = dt.strftime("%d/%m"); hora = dt.strftime("%H:%M")
+    dia = dt.strftime("%d/%m")
+    hora = dt.strftime("%H:%M")
     nome = alvo.get("servicoNome") or "serviço"
     return f"✅ Reagendamento solicitado: {nome} para {dia} às {hora} (id {ag_id})"
 
+
 # ========== Entrada principal ==========
-def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_tag: str):
+def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_tag: str, send_audio_fn=None):
     """
     value: payload 'change.value' da Meta
     send_text_fn: função injetada por app.py para enviar texto
+    send_audio_fn: (opcional) função para enviar áudio (to, audio_bytes, mime_type)
     """
     messages = value.get("messages", [])
     if not messages:
@@ -898,47 +1490,72 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         msg_type = m.get("type")
         text_in = ""
 
-        # -------- Budget gate (áudio) ----------
+        # -------- Áudio de entrada (SEM falar de economia) ----------
         if msg_type == "audio":
-            if not can_use_audio():
-                logging.info("[BUDGET] audio blocked")
-                send_text_fn(to, "🎧 Para economizar, estou respondendo por texto no momento. Pode me mandar em texto?")
-                continue
-            charge("stt_per_15s", float(os.getenv("STT_SECONDS_AVG", "15"))/15.0)
-            token = os.getenv("WHATSAPP_TOKEN")
-            gv = GRAPH_VERSION_DEFAULT
+            # Contabiliza custo, mas sem expor nada ao usuário
+            try:
+                charge("stt_per_15s", float(os.getenv("STT_SECONDS_AVG", "15")) / 15.0)
+            except Exception:
+                pass
             audio = m.get("audio") or {}
             media_id = audio.get("id")
             try:
                 if not media_id:
-                    send_text_fn(to, fallback_text(app_tag, "audio:sem-media_id")); continue
-                info = requests.get(
-                    f"https://graph.facebook.com/{gv}/{media_id}",
-                    headers={"Authorization": f"Bearer {token}"}, timeout=15
-                ).json()
-                media_url = info.get("url")
-                if not media_url:
-                    send_text_fn(to, fallback_text(app_tag, "audio:sem-url")); continue
-                r = requests.get(media_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
-                audio_bytes = r.content or b""
+                    send_reply(uid_default, to, fallback_text(app_tag, "audio:sem-media_id"), msg_type, send_text_fn, send_audio_fn)
+                    continue
+
+                # Preferir fetch centralizado (services.wa_send.fetch_media). Fallback para Graph direto.
+                audio_bytes, content_type = None, None
+                try:
+                    from services.wa_send import fetch_media  # lazy
+                    audio_bytes, content_type = fetch_media(media_id)
+                except Exception:
+                    # fallback direto no Graph
+                    token = os.getenv("WHATSAPP_TOKEN")
+                    gv = GRAPH_VERSION_DEFAULT
+                    info = requests.get(
+                        f"https://graph.facebook.com/{gv}/{media_id}",
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=15,
+                    ).json()
+                    media_url = info.get("url")
+                    if not media_url:
+                        send_reply(uid_default, to, fallback_text(app_tag, "audio:sem-url"), msg_type, send_text_fn, send_audio_fn)
+                        continue
+                    r = requests.get(media_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+                    audio_bytes = r.content or b""
+                    content_type = r.headers.get("Content-Type")
+
                 if not audio_bytes:
-                    send_text_fn(to, fallback_text(app_tag, "audio:bytes=0")); continue
-                mt = (audio.get("mime_type") or "audio/ogg").split(";")[0].strip()
+                    send_reply(uid_default, to, fallback_text(app_tag, "audio:bytes=0"), msg_type, send_text_fn, send_audio_fn)
+                    continue
+
+                mt = (audio.get("mime_type") or content_type or "audio/ogg").split(";")[0].strip()
                 text_in = stt_transcribe(audio_bytes, mime_type=mt, language="pt-BR")
             except Exception as e:
                 print("[WA_BOT][AUDIO][ERROR]", repr(e), flush=True)
-                send_text_fn(to, fallback_text(app_tag, "audio:error"))
+                send_reply(uid_default, to, fallback_text(app_tag, "audio:error"), msg_type, send_text_fn, send_audio_fn)
                 continue
 
         elif msg_type == "text":
             text_in = (m.get("text") or {}).get("body", "")
         else:
-            send_text_fn(to, "Recebi sua mensagem. Posso te enviar preços, horários, endereço ou agendar um horário.")
+            send_reply(uid_default, to, say(uid_default, "help"), msg_type, send_text_fn, send_audio_fn)
             continue
 
-        # -------- NLU leve sempre-on ----------
-        charge("nlp_mini", 1.0)
+        # -------- NLU probe (somente loga quando NLU_MODE=v1) ----------
+        try:
+            _nlu_probe(uid_default, text_in)
+        except Exception:
+            pass
+
+        # -------- NLU leve sempre-on (LEGACY + merge v1 seguro) ----------
+        try:
+            charge("nlp_mini", 1.0)
+        except Exception:
+            pass
         nlu = extract_intent(text_in or "")
+        nlu = _merge_intents_legacy_with_v1(nlu, text_in)  # <-- só ajusta intent se NLU_MODE=v1
         intent = (nlu.get("intent") or "fallback").lower()
         serviceName = nlu.get("serviceName")
         dateText = nlu.get("dateText")
@@ -950,57 +1567,70 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             try:
                 wa_id = m.get("from") or to
                 _clear_session(uid_default, wa_id)
-            except Exception: pass
-            send_text_fn(to, "Ok, limpei nossa conversa. Se quiser recomeçar, diga 'agendar' ou 'precos'.")
+            except Exception:
+                pass
+            send_reply(uid_default, to, say(uid_default, "session_cleared"), msg_type, send_text_fn, send_audio_fn)
             continue
 
         # -------- Roteamento de intents baratas ----------
         if intent == "precos":
-            _reply_prices(uid_default, to, send_text_fn)
+            send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
+            _reply_prices(uid_default, to, send)
             continue
 
         if is_price_question(text_in):
-            _reply_price_from_cache_or_data(uid_default, to, text_in, send_text_fn)
+            send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
+            _reply_price_from_cache_or_data(uid_default, to, text_in, send)
             continue
 
-        if intent in ("localizacao","horarios","telefone","pagamento"):
-            faq_map = {"localizacao":"endereco","horarios":"horarios","telefone":"telefone","pagamento":"pix"}
-            _reply_faq(uid_default, to, faq_map[intent], send_text_fn)
+        if intent in ("localizacao", "horarios", "telefone", "pagamento"):
+            faq_map = {"localizacao": "endereco", "horarios": "horarios", "telefone": "telefone", "pagamento": "pix"}
+            send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
+            _reply_faq(uid_default, to, faq_map[intent], send)
             continue
 
         if intent == "agendar" and dateText and timeText:
-            _reply_schedule(uid_default, to, serviceName, dateText, timeText, send_text_fn, value, text_in)
+            send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
+            _reply_schedule(uid_default, to, serviceName, dateText, timeText, send, value, text_in)
+            continue
+
+        # Quando NLU_MODE=v1 disser "agendar" mas sem data/hora → inicia slot-filling
+        if NLU_MODE == "v1" and intent == "agendar" and not (dateText and timeText):
+            wa_id = m.get("from") or to
+            sess = _get_session(uid_default, wa_id)
+            items = _load_prices(uid_default)
+            reply = _agendar_fluxo(value, to, uid_default, app_tag, text_in, text_norm, items, sess, wa_id)
+            send_reply(uid_default, to, reply, msg_type, send_text_fn, send_audio_fn)
             continue
 
         if intent == "reagendar":
             wa_id = m.get("from") or to
             sess = _get_session(uid_default, wa_id)
             reply = _reagendar_fluxo(value, to, uid_default, app_tag, text_in, text_norm, sess, wa_id)
-            send_text_fn(to, reply)
+            send_reply(uid_default, to, reply, msg_type, send_text_fn, send_audio_fn)
             continue
 
         # -------- Slot-filling de agendamento (sem palavras mágicas) ----------
         wa_id = m.get("from") or to
         sess = _get_session(uid_default, wa_id)
-        if sess.get("intent") in ("agendar","reagendar"):
+        if sess.get("intent") in ("agendar", "reagendar"):
             if sess["intent"] == "agendar":
                 items = _load_prices(uid_default)
                 reply = _agendar_fluxo(value, to, uid_default, app_tag, text_in, text_norm, items, sess, wa_id)
-                send_text_fn(to, reply)
+                send_reply(uid_default, to, reply, msg_type, send_text_fn, send_audio_fn)
                 continue
             else:
                 reply = _reagendar_fluxo(value, to, uid_default, app_tag, text_in, text_norm, sess, wa_id)
-                send_text_fn(to, reply)
+                send_reply(uid_default, to, reply, msg_type, send_text_fn, send_audio_fn)
                 continue
 
-        # -------- Complexo? usar GPT-4o se permitido (degradável) ----------
-        if can_use_gpt4o() and (os.getenv("USE_LLM_FOR_ALL","true").lower() == "true"):
-            charge("gpt4o_msg", 1.0)
-            send_text_fn(to, "Resposta detalhada (IA) 🤖 — (modo completo).")
-        else:
-            logging.info("[BUDGET] degraded to mini-only")
-            send_text_fn(to, "Posso te ajudar com preços, agendamentos e informações rápidas. O que você precisa?")
+        # -------- Fallback humano (sem falar de "modo completo" / economia) ----------
+        logging.info("[NLU] fallback -> help")
+        send_reply(uid_default, to, say(uid_default, "help"), msg_type, send_text_fn, send_audio_fn)
 
     # statuses
     for st in value.get("statuses", []):
-        print(f"[WA_BOT][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}", flush=True)
+        print(
+            f"[WA_BOT][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}",
+            flush=True,
+        )

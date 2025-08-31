@@ -1,0 +1,35 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "1275525710908902",
+      "changes": [
+        {
+          "field": "messages",
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "15551410293",
+              "phone_number_id": "754471144415286"
+            },
+            "contacts": [
+              {
+                "profile": { "name": "Ricardo d'Avila" },
+                "wa_id": "555185648608"
+              }
+            ],
+            "messages": [
+              {
+                "from": "555185648608",
+                "id": "test-precos-003",
+                "timestamp": "1756299000",
+                "type": "text",
+                "text": { "body": "precos" }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
