@@ -9,8 +9,8 @@
 # - Budget Guard: gate de custos (sem falar de economia ao usuário)
 # - Microcopy humana + overrides opcionais por Firestore (l10n/persona)
 # - Se o cliente falar por áudio, responder por áudio (se o app injetar send_audio_fn)
+# - *** Harmonização MSISDN BR com/sem 9 (equivalence key + candidatos) ***
 
-# === NLU bridge (rollout seguro) ============================================
 import os
 import json
 import logging
@@ -101,6 +101,82 @@ import requests
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
+
+# ========== Helpers de telefone (equivalence key + candidatos) ==========
+# Preferimos services.phone_utils; se não houver, fallback local
+try:
+    from services.phone_utils import (
+        br_equivalence_key as _br_equivalence_key_ext,
+        br_candidates as _br_candidates_ext,
+        digits_only as _digits_only_ext,
+    )  # type: ignore
+
+    def br_equivalence_key(msisdn: str) -> str:
+        return _br_equivalence_key_ext(msisdn)
+
+    def br_candidates(msisdn: str) -> List[str]:
+        return _br_candidates_ext(msisdn)
+
+    def _only_digits(s: str) -> str:
+        return _digits_only_ext(s)
+
+    logging.info("[wa_bot][phone] usando services.phone_utils")
+except Exception:
+    logging.info("[wa_bot][phone] services.phone_utils indisponível; usando fallback local")
+    _DIGITS_RE = re.compile(r"\D+")
+
+    def _only_digits(s: str) -> str:
+        return _DIGITS_RE.sub("", s or "")
+
+    def _ensure_cc_55(d: str) -> str:
+        d = _only_digits(d)
+        if d.startswith("00"):
+            d = d[2:]
+        if not d.startswith("55"):
+            d = "55" + d
+        return d
+
+    def _br_split(msisdn: str) -> Tuple[str, str, str]:
+        d = _ensure_cc_55(msisdn)
+        cc = d[:2]
+        rest = d[2:]
+        ddd = rest[:2] if len(rest) >= 10 else rest[:2]
+        local = rest[2:]
+        return cc, ddd, local
+
+    def br_equivalence_key(msisdn: str) -> str:
+        cc, ddd, local = _br_split(msisdn)
+        local8 = _only_digits(local)[-8:]
+        return f"{cc}{ddd}{local8}"
+
+    def br_candidates(msisdn: str) -> List[str]:
+        cc, ddd, local = _br_split(msisdn)
+        local_digits = _only_digits(local)
+        cands = set()
+        if len(local_digits) >= 9 and local_digits[0] == "9":
+            with9 = f"{cc}{ddd}{local_digits}"
+            without9 = f"{cc}{ddd}{local_digits[1:]}"
+            cands.add(with9)
+            cands.add(without9)
+        elif len(local_digits) == 8:
+            without9 = f"{cc}{ddd}{local_digits}"
+            with9 = f"{cc}{ddd}9{local_digits}"
+            cands.add(without9)
+            cands.add(with9)
+        else:
+            cands.add(f"{cc}{ddd}{local_digits}")
+        return [c for c in cands if len(c) in (12, 13)]
+
+
+def _normalize_br_msisdn(wa_id: str) -> str:
+    """Compatibilidade: insere 9 quando detectar 55 + DDD + local(8)."""
+    if not wa_id:
+        return ""
+    digits = _only_digits(wa_id)
+    if digits.startswith("55") and len(digits) == 12:
+        digits = digits[:4] + "9" + digits[4:]
+    return digits
+
 
 # ========== DB helpers (imports tolerantes + helpers internos) ==========
 _DB_LAST_ERR = None
@@ -417,19 +493,6 @@ def say(uid: str, key: str, **kwargs) -> str:
 # ===========================================================================
 
 # ========== Utils ==========
-def _only_digits(s: str) -> str:
-    return "".join(ch for ch in str(s or "") if ch.isdigit())
-
-
-def _normalize_br_msisdn(wa_id: str) -> str:
-    if not wa_id:
-        return ""
-    digits = _only_digits(wa_id)
-    if digits.startswith("55") and len(digits) == 12:
-        digits = digits[:4] + "9" + digits[4:]
-    return digits
-
-
 def _strip_accents_lower(s: str) -> str:
     s = s or ""
     s = unicodedata.normalize("NFKD", s)
@@ -525,7 +588,7 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
         )
 
     # Pet (banho e tosa)
-    if "pet" in p or "tosa" in p or "banho" in p:
+    if "pet" in p ou "tosa" in p ou "banho" in p:
         base.update(
             {
                 "banho": ["banho"],
@@ -536,13 +599,10 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
         )
 
     # Advogado
-    if "advog" in p or "direito" in p:
+    if "advog" in p ou "direito" in p:
         base.update(
             {
                 "consulta": ["consulta", "consulta jurídica"],
-                "contrato": ["revisão de contrato", "elaboração de contrato"],
-                "trabalhista": ["consulta trabalhista"],
-                "civil": ["consulta cível"],
             }
         )
 
@@ -899,77 +959,34 @@ def send_reply(uid: str, to: str, text: str, inbound_type: str, send_text_fn, se
 
 # ========== Normalizador PT-BR (datas/horas) ==========
 _MONTHS = {
-    "jan": 1,
-    "janeiro": 1,
-    "fev": 2,
-    "fevereiro": 2,
-    "mar": 3,
-    "marco": 3,
-    "março": 3,
-    "abr": 4,
-    "abril": 4,
-    "mai": 5,
-    "maio": 5,
-    "jun": 6,
-    "junho": 6,
-    "jul": 7,
-    "julho": 7,
-    "ago": 8,
-    "agosto": 8,
-    "set": 9,
-    "setembro": 9,
-    "out": 10,
-    "outubro": 10,
-    "nov": 11,
-    "novembro": 11,
-    "dez": 12,
-    "dezembro": 12,
+    "jan": 1, "janeiro": 1,
+    "fev": 2, "fevereiro": 2,
+    "mar": 3, "marco": 3, "março": 3,
+    "abr": 4, "abril": 4,
+    "mai": 5, "maio": 5,
+    "jun": 6, "junho": 6,
+    "jul": 7, "julho": 7,
+    "ago": 8, "agosto": 8,
+    "set": 9, "setembro": 9,
+    "out": 10, "outubro": 10,
+    "nov": 11, "novembro": 11,
+    "dez": 12, "dezembro": 12,
 }
 _UNITS = {
-    "zero": 0,
-    "um": 1,
-    "uma": 1,
-    "primeiro": 1,
-    "dois": 2,
-    "duas": 2,
-    "tres": 3,
-    "três": 3,
-    "quatro": 4,
-    "cinco": 5,
-    "seis": 6,
-    "sete": 7,
-    "oito": 8,
-    "nove": 9,
-    "dez": 10,
-    "onze": 11,
-    "doze": 12,
-    "treze": 13,
-    "catorze": 14,
-    "quatorze": 14,
-    "quinze": 15,
-    "dezesseis": 16,
-    "desesseis": 16,
-    "dezessete": 17,
-    "desessete": 17,
-    "dezoito": 18,
-    "dezenove": 19,
+    "zero": 0, "um": 1, "uma": 1, "primeiro": 1,
+    "dois": 2, "duas": 2, "tres": 3, "três": 3, "quatro": 4, "cinco": 5,
+    "seis": 6, "sete": 7, "oito": 8, "nove": 9, "dez": 10, "onze": 11, "doze": 12,
+    "treze": 13, "catorze": 14, "quatorze": 14, "quinze": 15, "dezesseis": 16, "desesseis": 16,
+    "dezessete": 17, "desessete": 17, "dezoito": 18, "dezenove": 19,
 }
 _TENS = {"vinte": 20, "trinta": 30, "quarenta": 40, "cinquenta": 50}
 _WEEKDAYS = {
-    "segunda": 0,
-    "segunda-feira": 0,
-    "terca": 1,
-    "terça": 1,
-    "terça-feira": 1,
-    "terca-feira": 1,
-    "quarta": 2,
-    "quarta-feira": 2,
-    "quinta": 3,
-    "quinta-feira": 3,
-    "sexta": 4,
-    "sexta-feira": 4,
-    "sabado": 5,
-    "sábado": 5,
+    "segunda": 0, "segunda-feira": 0,
+    "terca": 1, "terça": 1, "terça-feira": 1, "terca-feira": 1,
+    "quarta": 2, "quarta-feira": 2,
+    "quinta": 3, "quinta-feira": 3,
+    "sexta": 4, "sexta-feira": 4,
+    "sabado": 5, "sábado": 5,
     "domingo": 6,
 }
 
@@ -1103,15 +1120,21 @@ def _parse_datetime_br(text_norm: str):
 
 
 # ========== Sessão (Firestore) ==========
-def _sess_ref(uid: str, wa_id: str):
-    return DB.collection(f"profissionais/{uid}/sessions").document(wa_id)
+
+def _sess_ref(uid: str, wa_id_or_phone: str):
+    """Armazena sessão por CHAVE DE EQUIVALÊNCIA (robusto com/sem 9)."""
+    key = br_equivalence_key(wa_id_or_phone or "")
+    return DB.collection(f"profissionais/{uid}/sessions").document(key) if _db_ready() else None
 
 
-def _get_session(uid: str, wa_id: str) -> dict:
+def _get_session(uid: str, wa_id_or_phone: str) -> dict:
     if not _db_ready():
         return {}
     try:
-        snap = _sess_ref(uid, wa_id).get()
+        ref = _sess_ref(uid, wa_id_or_phone)
+        if ref is None:
+            return {}
+        snap = ref.get()
         sess = snap.to_dict() if snap.exists else {}
     except Exception as e:
         print(f"[WA_BOT][SESS] get erro: {e}", flush=True)
@@ -1121,42 +1144,80 @@ def _get_session(uid: str, wa_id: str) -> dict:
         if ts_str:
             ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
             if datetime.now(SP_TZ) - ts > timedelta(minutes=30):
-                _clear_session(uid, wa_id)
+                _clear_session(uid, wa_id_or_phone)
                 return {}
     except Exception:
         pass
     return sess or {}
 
 
-def _save_session(uid: str, wa_id: str, sess: dict):
+def _save_session(uid: str, wa_id_or_phone: str, sess: dict):
     if not _db_ready():
         return
     now = datetime.now(SP_TZ).isoformat()
     sess = {**(sess or {}), "updatedAt": now}
     if "createdAt" not in sess:
         sess["createdAt"] = now
+    sess["waKey"] = br_equivalence_key(wa_id_or_phone or "")
     try:
-        _sess_ref(uid, wa_id).set(sess)
+        ref = _sess_ref(uid, wa_id_or_phone)
+        if ref is not None:
+            ref.set(sess)
     except Exception as e:
         print(f"[WA_BOT][SESS] save erro: {e}", flush=True)
 
 
-def _clear_session(uid: str, wa_id: str):
+def _clear_session(uid: str, wa_id_or_phone: str):
     if not _db_ready():
         return
     try:
-        _sess_ref(uid, wa_id).delete()
+        ref = _sess_ref(uid, wa_id_or_phone)
+        if ref is not None:
+            ref.delete()
     except Exception as e:
         print(f"[WA_BOT][SESS] clear erro: {e}", flush=True)
 
 
 # ========== Agendamento ==========
-def _resolve_cliente_id(uid_default: str, wa_id: str, to_msisdn: str) -> str:
+
+def _resolve_cliente_id(uid_default: str, wa_id_raw: str, to_msisdn: str) -> str:
+    """
+    Resolve clienteId tentando em ordem:
+      1) profissionais/{uid}/clientes where waKey == eq_key
+      2) where waId == wa_id_raw
+      3) where telefone == each candidate (com/sem 9)
+    """
+    eq_key = br_equivalence_key(wa_id_raw or to_msisdn or "")
+    cands = []
     try:
-        if _db_ready() and wa_id:
+        cands = br_candidates(to_msisdn or wa_id_raw or "")
+    except Exception:
+        pass
+    if not cands:
+        norm = _normalize_br_msisdn(to_msisdn or wa_id_raw or "")
+        if norm:
+            cands = [norm]
+
+    try:
+        if _db_ready():
+            # 1) waKey
             q = (
                 DB.collection(f"profissionais/{uid_default}/clientes")
-                .where("waId", "==", wa_id)
+                .where("waKey", "==", eq_key)
+                .limit(1)
+                .stream()
+            )
+            for d in q:
+                return d.id
+    except Exception as e:
+        print(f"[WA_BOT][AGENDA] lookup cliente por waKey falhou: {e}", flush=True)
+
+    try:
+        if _db_ready() and wa_id_raw:
+            # 2) waId exato
+            q = (
+                DB.collection(f"profissionais/{uid_default}/clientes")
+                .where("waId", "==", wa_id_raw)
                 .limit(1)
                 .stream()
             )
@@ -1164,14 +1225,44 @@ def _resolve_cliente_id(uid_default: str, wa_id: str, to_msisdn: str) -> str:
                 return d.id
     except Exception as e:
         print(f"[WA_BOT][AGENDA] lookup cliente por waId falhou: {e}", flush=True)
-    return wa_id or to_msisdn or "anon"
+
+    # 3) telefone (tentando cada candidato)
+    try:
+        if _db_ready():
+            for cand in cands:
+                q = (
+                    DB.collection(f"profissionais/{uid_default}/clientes")
+                    .where("telefone", "==", cand)
+                    .limit(1)
+                    .stream()
+                )
+                for d in q:
+                    return d.id
+    except Exception as e:
+        print(f"[WA_BOT][AGENDA] lookup cliente por telefone falhou: {e}", flush=True)
+
+    return wa_id_raw or to_msisdn or "anon"
 
 
-def _find_target_agendamento(uid: str, cliente_id: str, wa_id: str, telefone: str):
+def _find_target_agendamento(uid: str, cliente_id: str, wa_id_raw: str, telefone: str):
+    """
+    Procura agendamento ativo do cliente tentando:
+      - clienteId
+      - clienteWaKey (eq_key)
+      - clienteWaId
+      - telefone (para cada candidato)
+    """
     if not _db_ready():
         return None
     estados = ["solicitado", "confirmado"]
     candidatos = []
+
+    def _iso_or_none(s):
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
     try:
         q = (
             DB.collection(f"profissionais/{uid}/agendamentos")
@@ -1186,11 +1277,29 @@ def _find_target_agendamento(uid: str, cliente_id: str, wa_id: str, telefone: st
             candidatos.append(obj)
     except Exception as e:
         print(f"[WA_BOT][AGENDA] query por clienteId falhou: {e}", flush=True)
-    if not candidatos and wa_id:
+
+    if not candidatos:
+        try:
+            eq_key = br_equivalence_key(wa_id_raw or telefone or "")
+            q = (
+                DB.collection(f"profissionais/{uid}/agendamentos")
+                .where("clienteWaKey", "==", eq_key)
+                .where("estado", "in", estados)
+                .limit(10)
+                .stream()
+            )
+            for d in q:
+                obj = d.to_dict() or {}
+                obj["_id"] = d.id
+                candidatos.append(obj)
+        except Exception as e:
+            print(f"[WA_BOT][AGENDA] query por clienteWaKey falhou: {e}", flush=True)
+
+    if not candidatos and wa_id_raw:
         try:
             q = (
                 DB.collection(f"profissionais/{uid}/agendamentos")
-                .where("clienteWaId", "==", wa_id)
+                .where("clienteWaId", "==", wa_id_raw)
                 .where("estado", "in", estados)
                 .limit(10)
                 .stream()
@@ -1201,29 +1310,35 @@ def _find_target_agendamento(uid: str, cliente_id: str, wa_id: str, telefone: st
                 candidatos.append(obj)
         except Exception as e:
             print(f"[WA_BOT][AGENDA] query por clienteWaId falhou: {e}", flush=True)
+
     if not candidatos and telefone:
         try:
-            q = (
-                DB.collection(f"profissionais/{uid}/agendamentos")
-                .where("telefone", "==", telefone)
-                .where("estado", "in", estados)
-                .limit(10)
-                .stream()
-            )
-            for d in q:
-                obj = d.to_dict() or {}
-                obj["_id"] = d.id
-                candidatos.append(obj)
+            cands = []
+            try:
+                cands = br_candidates(telefone)
+            except Exception:
+                pass
+            if not cands:
+                cands = [_normalize_br_msisdn(telefone)]
+            for cand in cands:
+                q = (
+                    DB.collection(f"profissionais/{uid}/agendamentos")
+                    .where("telefone", "==", cand)
+                    .where("estado", "in", estados)
+                    .limit(10)
+                    .stream()
+                )
+                for d in q:
+                    obj = d.to_dict() or {}
+                    obj["_id"] = d.id
+                    candidatos.append(obj)
+                if candidatos:
+                    break
         except Exception as e:
             print(f"[WA_BOT][AGENDA] query por telefone falhou: {e}", flush=True)
+
     if not candidatos:
         return None
-
-    def _iso_or_none(s):
-        try:
-            return datetime.fromisoformat(s.replace("Z", "+00:00"))
-        except Exception:
-            return None
 
     candidatos.sort(
         key=lambda x: _iso_or_none(x.get("createdAt") or x.get("inicio")) or datetime.min.replace(tzinfo=SP_TZ),
@@ -1244,18 +1359,22 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
     except Exception:
         pass
 
+    eq_key = br_equivalence_key(wa_id or to_msisdn or "")
+    telefone_norm = _normalize_br_msisdn(to_msisdn)
+
     dur = int(svc.get("duracaoMin") or 60)
     fim = dt + timedelta(minutes=dur)
     servico_id = svc.get("id") or f"map:{(svc.get('nomeLower') or svc.get('nome') or 'servico').strip().lower()}"
-    cliente_id = _resolve_cliente_id(uid_default, wa_id, to_msisdn)
+    cliente_id = _resolve_cliente_id(uid_default, wa_id, telefone_norm)
 
     ag = {
         "estado": "solicitado",
         "canal": "whatsapp",
         "clienteId": cliente_id,
         "clienteWaId": wa_id,
+        "clienteWaKey": eq_key,
         "clienteNome": nome_contato,
-        "telefone": to_msisdn,
+        "telefone": telefone_norm,
         "servicoId": servico_id,
         "servicoNome": svc.get("nome") or svc.get("nomeLower"),
         "duracaoMin": dur,
@@ -1381,7 +1500,7 @@ def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str
     return send_text(to, msg if ok2 else f"Não consegui agendar: {msg}")
 
 
-def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items, sess: dict, wa_id: str):
+def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items, sess: dict, wa_id_raw: str):
     svc = None
     if sess.get("servicoId") or sess.get("servicoNome"):
         for it in items:
@@ -1412,7 +1531,7 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
     if have_svc and have_dt:
         ok, msg = _build_and_save_agendamento(uid_default, value, to_msisdn, svc, dt, body_text)
         if ok:
-            _clear_session(uid_default, wa_id)
+            _clear_session(uid_default, wa_id_raw)
         return msg
 
     new_sess = {
@@ -1420,8 +1539,9 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
         "servicoId": svc.get("id") if svc else None,
         "servicoNome": (svc.get("nomeLower") or svc.get("nome")) if svc else None,
         "dataHora": dt.isoformat() if dt else None,
+        "waKey": br_equivalence_key(wa_id_raw or to_msisdn or ""),
     }
-    _save_session(uid_default, wa_id, new_sess)
+    _save_session(uid_default, wa_id_raw, new_sess)
 
     if not have_svc and not have_dt:
         nomes = ", ".join([it.get("nome") for it in items[:5]]) or "o serviço"
@@ -1432,7 +1552,7 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
     return "Perfeito. Qual data e horário? Ex.: 01/09 14:00, ou 'terça 10h', ou 'semana que vem sexta 9:30'."
 
 
-def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, sess: dict, wa_id: str):
+def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, sess: dict, wa_id_raw: str):
     text_norm2 = _normalize_datetime_pt(text_norm)
     dt = _parse_datetime_br(text_norm2)
     if not dt and sess.get("dataHora"):
@@ -1441,7 +1561,7 @@ def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str
         except Exception:
             dt = None
     if not dt:
-        _save_session(uid_default, wa_id, {"intent": "reagendar"})
+        _save_session(uid_default, wa_id_raw, {"intent": "reagendar", "waKey": br_equivalence_key(wa_id_raw or to_msisdn or "")})
         return say(uid_default, "reschedule_ask")
 
     wa = ""
@@ -1467,7 +1587,7 @@ def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str
         print(f"[WA_BOT][AGENDA][REAGENDAR] erro: {e}", flush=True)
         return "Não consegui reagendar agora. Pode tentar novamente em instantes?"
 
-    _clear_session(uid_default, wa_id)
+    _clear_session(uid_default, wa_id_raw)
     dia = dt.strftime("%d/%m")
     hora = dt.strftime("%H:%M")
     nome = alvo.get("servicoNome") or "serviço"
@@ -1486,13 +1606,15 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         return
 
     for m in messages:
-        to = m.get("from") or _pick_phone(value) or ""
+        to_raw = m.get("from") or _pick_phone(value) or ""   # wa_id da Meta (pode vir sem 9)
+        eq_key = br_equivalence_key(to_raw)
+        print(f"[INBOUND] from_raw={to_raw} eq_key={eq_key}", flush=True)
+
         msg_type = m.get("type")
         text_in = ""
 
-        # -------- Áudio de entrada (SEM falar de economia) ----------
+        # -------- ÁUDIO de entrada ----------
         if msg_type == "audio":
-            # Contabiliza custo, mas sem expor nada ao usuário
             try:
                 charge("stt_per_15s", float(os.getenv("STT_SECONDS_AVG", "15")) / 15.0)
             except Exception:
@@ -1501,7 +1623,7 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             media_id = audio.get("id")
             try:
                 if not media_id:
-                    send_reply(uid_default, to, fallback_text(app_tag, "audio:sem-media_id"), msg_type, send_text_fn, send_audio_fn)
+                    send_reply(uid_default, to_raw, fallback_text(app_tag, "audio:sem-media_id"), msg_type, send_text_fn, send_audio_fn)
                     continue
 
                 # Preferir fetch centralizado (services.wa_send.fetch_media). Fallback para Graph direto.
@@ -1510,7 +1632,6 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
                     from services.wa_send import fetch_media  # lazy
                     audio_bytes, content_type = fetch_media(media_id)
                 except Exception:
-                    # fallback direto no Graph
                     token = os.getenv("WHATSAPP_TOKEN")
                     gv = GRAPH_VERSION_DEFAULT
                     info = requests.get(
@@ -1520,42 +1641,42 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
                     ).json()
                     media_url = info.get("url")
                     if not media_url:
-                        send_reply(uid_default, to, fallback_text(app_tag, "audio:sem-url"), msg_type, send_text_fn, send_audio_fn)
+                        send_reply(uid_default, to_raw, fallback_text(app_tag, "audio:sem-url"), msg_type, send_text_fn, send_audio_fn)
                         continue
                     r = requests.get(media_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
                     audio_bytes = r.content or b""
                     content_type = r.headers.get("Content-Type")
 
                 if not audio_bytes:
-                    send_reply(uid_default, to, fallback_text(app_tag, "audio:bytes=0"), msg_type, send_text_fn, send_audio_fn)
+                    send_reply(uid_default, to_raw, fallback_text(app_tag, "audio:bytes=0"), msg_type, send_text_fn, send_audio_fn)
                     continue
 
                 mt = (audio.get("mime_type") or content_type or "audio/ogg").split(";")[0].strip()
                 text_in = stt_transcribe(audio_bytes, mime_type=mt, language="pt-BR")
             except Exception as e:
                 print("[WA_BOT][AUDIO][ERROR]", repr(e), flush=True)
-                send_reply(uid_default, to, fallback_text(app_tag, "audio:error"), msg_type, send_text_fn, send_audio_fn)
+                send_reply(uid_default, to_raw, fallback_text(app_tag, "audio:error"), msg_type, send_text_fn, send_audio_fn)
                 continue
 
         elif msg_type == "text":
             text_in = (m.get("text") or {}).get("body", "")
         else:
-            send_reply(uid_default, to, say(uid_default, "help"), msg_type, send_text_fn, send_audio_fn)
+            send_reply(uid_default, to_raw, say(uid_default, "help"), msg_type, send_text_fn, send_audio_fn)
             continue
 
-        # -------- NLU probe (somente loga quando NLU_MODE=v1) ----------
+        # -------- NLU probe ----------
         try:
             _nlu_probe(uid_default, text_in)
         except Exception:
             pass
 
-        # -------- NLU leve sempre-on (LEGACY + merge v1 seguro) ----------
+        # -------- NLU leve ----------
         try:
             charge("nlp_mini", 1.0)
         except Exception:
             pass
         nlu = extract_intent(text_in or "")
-        nlu = _merge_intents_legacy_with_v1(nlu, text_in)  # <-- só ajusta intent se NLU_MODE=v1
+        nlu = _merge_intents_legacy_with_v1(nlu, text_in)
         intent = (nlu.get("intent") or "fallback").lower()
         serviceName = nlu.get("serviceName")
         dateText = nlu.get("dateText")
@@ -1565,68 +1686,64 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         # comandos rápidos de sessão
         if re.search(r"\b(cancelar|limpar|resetar|apagar\s+(conversa|sess[aã]o))\b", text_norm):
             try:
-                wa_id = m.get("from") or to
-                _clear_session(uid_default, wa_id)
+                _clear_session(uid_default, to_raw)
             except Exception:
                 pass
-            send_reply(uid_default, to, say(uid_default, "session_cleared"), msg_type, send_text_fn, send_audio_fn)
+            send_reply(uid_default, to_raw, say(uid_default, "session_cleared"), msg_type, send_text_fn, send_audio_fn)
             continue
 
-        # -------- Roteamento de intents baratas ----------
+        # -------- Roteamento ----------
         if intent == "precos":
             send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
-            _reply_prices(uid_default, to, send)
+            _reply_prices(uid_default, to_raw, send)
             continue
 
         if is_price_question(text_in):
             send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
-            _reply_price_from_cache_or_data(uid_default, to, text_in, send)
+            _reply_price_from_cache_or_data(uid_default, to_raw, text_in, send)
             continue
 
         if intent in ("localizacao", "horarios", "telefone", "pagamento"):
             faq_map = {"localizacao": "endereco", "horarios": "horarios", "telefone": "telefone", "pagamento": "pix"}
             send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
-            _reply_faq(uid_default, to, faq_map[intent], send)
+            _reply_faq(uid_default, to_raw, faq_map[intent], send)
             continue
 
         if intent == "agendar" and dateText and timeText:
             send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
-            _reply_schedule(uid_default, to, serviceName, dateText, timeText, send, value, text_in)
+            _reply_schedule(uid_default, to_raw, serviceName, dateText, timeText, send, value, text_in)
             continue
 
-        # Quando NLU_MODE=v1 disser "agendar" mas sem data/hora → inicia slot-filling
+        # Slot-filling quando v1 sinaliza "agendar" sem data/hora
         if NLU_MODE == "v1" and intent == "agendar" and not (dateText and timeText):
-            wa_id = m.get("from") or to
-            sess = _get_session(uid_default, wa_id)
+            sess = _get_session(uid_default, to_raw)
             items = _load_prices(uid_default)
-            reply = _agendar_fluxo(value, to, uid_default, app_tag, text_in, text_norm, items, sess, wa_id)
-            send_reply(uid_default, to, reply, msg_type, send_text_fn, send_audio_fn)
+            reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw)
+            send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
             continue
 
         if intent == "reagendar":
-            wa_id = m.get("from") or to
-            sess = _get_session(uid_default, wa_id)
-            reply = _reagendar_fluxo(value, to, uid_default, app_tag, text_in, text_norm, sess, wa_id)
-            send_reply(uid_default, to, reply, msg_type, send_text_fn, send_audio_fn)
+            sess = _get_session(uid_default, to_raw)
+            reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw)
+            send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
             continue
 
-        # -------- Slot-filling de agendamento (sem palavras mágicas) ----------
-        wa_id = m.get("from") or to
-        sess = _get_session(uid_default, wa_id)
+        # Slot-filling de agendamento genérico
+        sess = _get_session(uid_default, to_raw)
         if sess.get("intent") in ("agendar", "reagendar"):
             if sess["intent"] == "agendar":
                 items = _load_prices(uid_default)
-                reply = _agendar_fluxo(value, to, uid_default, app_tag, text_in, text_norm, items, sess, wa_id)
-                send_reply(uid_default, to, reply, msg_type, send_text_fn, send_audio_fn)
+                reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw)
+                send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
                 continue
             else:
-                reply = _reagendar_fluxo(value, to, uid_default, app_tag, text_in, text_norm, sess, wa_id)
-                send_reply(uid_default, to, reply, msg_type, send_text_fn, send_audio_fn)
+                reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw)
+                send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
                 continue
 
-        # -------- Fallback humano (sem falar de "modo completo" / economia) ----------
+        # Fallback
         logging.info("[NLU] fallback -> help")
-        send_reply(uid_default, to, say(uid_default, "help"), msg_type, send_text_fn, send_audio_fn)
+        send_reply(uid_default, to_raw, say(uid_default, "help"), msg_type, send_text_fn, send_audio_fn)
 
     # statuses
     for st in value.get("statuses", []):

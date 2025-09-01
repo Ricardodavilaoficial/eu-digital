@@ -9,6 +9,7 @@ import traceback
 import re
 import hashlib
 import importlib, types
+from typing import List, Tuple
 from flask import Flask, jsonify, request, send_from_directory
 
 print("[boot] app.py raiz carregado ✅", flush=True)
@@ -28,7 +29,7 @@ except Exception as e:
     print(f"[warn] flask-cors indisponível: {e}")
 
 # -------------------------
-# Helpers
+# Helpers de telefone (com fallback)
 # -------------------------
 def _token_fingerprint(tok: str):
     if not tok:
@@ -39,7 +40,96 @@ def _token_fingerprint(tok: str):
 def _only_digits(s: str) -> str:
     return "".join(ch for ch in str(s or "") if ch.isdigit())
 
+# Tentamos usar helpers centralizados, se existirem
+_br_candidates = None
+_br_equivalence_key = None
+_digits_only_external = None
+
+try:
+    from services.phone_utils import br_candidates as _br_candidates, br_equivalence_key as _br_equivalence_key, digits_only as _digits_only_external  # type: ignore
+    print("[phone] usando services.phone_utils (externo)")
+except Exception:
+    print("[phone] services.phone_utils não encontrado; usando fallback local")
+
+    _DIGITS_RE = re.compile(r"\D+")
+
+    def _digits_only_local(s: str) -> str:
+        return _DIGITS_RE.sub("", s or "")
+
+    def _ensure_cc_55(d: str) -> str:
+        d = _digits_only_local(d)
+        # Remove zeros internacionais tipo 0055
+        if d.startswith("00"):
+            d = d[2:]
+        if not d.startswith("55"):
+            d = "55" + d
+        return d
+
+    def _br_split(msisdn: str) -> Tuple[str, str, str]:
+        d = _ensure_cc_55(msisdn)
+        cc = d[:2]
+        rest = d[2:]
+        ddd = rest[:2] if len(rest) >= 10 else rest[:2]
+        local = rest[2:]
+        return cc, ddd, local
+
+    def _br_equivalence_key_local(msisdn: str) -> str:
+        cc, ddd, local = _br_split(msisdn)
+        local8 = _digits_only_local(local)[-8:]  # últimos 8
+        return f"{cc}{ddd}{local8}"
+
+    def _br_candidates_local(msisdn: str) -> List[str]:
+        cc, ddd, local = _br_split(msisdn)
+        local_digits = _digits_only_local(local)
+        cands = set()
+        if len(local_digits) >= 9 and local_digits[0] == "9":
+            # Já tem 9 -> gera com e sem 9
+            with9 = f"{cc}{ddd}{local_digits}"
+            without9 = f"{cc}{ddd}{local_digits[1:]}"
+            cands.add(with9)
+            cands.add(without9)
+        elif len(local_digits) == 8:
+            # 8 dígitos -> gera sem e com 9
+            without9 = f"{cc}{ddd}{local_digits}"
+            with9 = f"{cc}{ddd}9{local_digits}"
+            cands.add(without9)
+            cands.add(with9)
+        else:
+            cands.add(f"{cc}{ddd}{local_digits}")
+        # Mantemos apenas 55 + DDD(2) + 8/9
+        return [c for c in cands if len(c) in (12, 13)]
+
+    _br_candidates = _br_candidates_local
+    _br_equivalence_key = _br_equivalence_key_local
+    _digits_only_external = _digits_only_local
+
+def br_candidates(msisdn: str) -> List[str]:
+    try:
+        return _br_candidates(msisdn)  # type: ignore
+    except Exception:
+        # fallback conservador
+        d = _only_digits(msisdn)
+        if d.startswith("55") and len(d) == 12:
+            return [d[:4] + "9" + d[4:], d]
+        return [d]
+
+def br_equivalence_key(msisdn: str) -> str:
+    try:
+        return _br_equivalence_key(msisdn)  # type: ignore
+    except Exception:
+        d = _only_digits(msisdn)
+        if d.startswith("55"):
+            cc = d[:2]
+            ddd = d[2:4] if len(d) >= 4 else ""
+            local8 = d[-8:]
+            return f"{cc}{ddd}{local8}"
+        local8 = d[-8:]
+        return local8
+
 def _normalize_br_msisdn(wa_id: str) -> str:
+    """
+    Mantida por compatibilidade: retorna 55 + DDD(2) + local(9) quando detectar celular sem o '9'.
+    """
     if not wa_id:
         return ""
     digits = _only_digits(wa_id)
@@ -48,6 +138,9 @@ def _normalize_br_msisdn(wa_id: str) -> str:
         digits = digits[:4] + "9" + digits[4:]
     return digits
 
+# -------------------------
+# Config
+# -------------------------
 APP_TAG = os.getenv("APP_TAG", "2025-08-27")
 UID_DEFAULT = os.getenv("UID_DEFAULT", "ricardo-prod-uid")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
@@ -310,7 +403,7 @@ def wa_bot_status():
     }), 200
 
 # -------------------------
-# API utilitária de envio (texto)
+# API utilitária de envio (texto) — agora com candidatos com/sem 9
 # -------------------------
 from services.wa_send import send_text as wa_send_text
 
@@ -327,10 +420,61 @@ def api_send_text():
     if not to or not body:
         return {"ok": False, "error": "missing_to_or_body"}, 400
 
-    to_norm = _normalize_br_msisdn(to)
-    print(f"[API][SEND_TEXT] to={to} normalized={to_norm} body_preview={body[:80]}", flush=True)
-    ok, resp = wa_send_text(to_norm, body)
-    return ({"ok": True, "resp": resp}, 200) if ok else ({"ok": False, "resp": resp}, 500)
+    # Gera candidatos robustos (com/sem 9) + fallback de normalização
+    cands = []
+    try:
+        cands = br_candidates(to)
+    except Exception:
+        cands = []
+    if not cands:
+        cands = [_normalize_br_msisdn(to)]
+
+    # De-dup
+    seen = set()
+    cands = [c for c in cands if not (c in seen or seen.add(c))]
+
+    eq_key = br_equivalence_key(to)
+    print(f"[API][SEND_TEXT] to={to} eq_key={eq_key} cands={cands} body_preview={body[:80]}", flush=True)
+
+    last_resp = None
+    for cand in cands:
+        ok, resp = wa_send_text(cand, body)
+        print(f"[API][SEND_TEXT][try] cand={cand} ok={ok}", flush=True)
+        if ok:
+            return {"ok": True, "used": cand, "eq_key": eq_key, "resp": resp}, 200
+        last_resp = resp
+
+    return {"ok": False, "eq_key": eq_key, "tried": cands, "resp": last_resp}, 500
+
+# -------------------------
+# MSISDN debug helper
+# -------------------------
+@app.route("/__msisdn_debug", methods=["GET"])
+def msisdn_debug():
+    num = request.args.get("num", "")
+    if not num:
+        return jsonify({"ok": False, "error": "missing ?num="}), 400
+
+    digits = _only_digits(num)
+    norm = _normalize_br_msisdn(num)
+    try:
+        cands = br_candidates(num)
+    except Exception:
+        cands = [norm]
+    try:
+        key = br_equivalence_key(num)
+    except Exception:
+        key = None
+
+    out = {
+        "ok": True,
+        "input": num,
+        "digits_only": digits,
+        "normalized": norm,
+        "candidates": cands,
+        "equivalence_key": key,
+    }
+    return jsonify(out), 200
 
 # -------------------------
 # Static
