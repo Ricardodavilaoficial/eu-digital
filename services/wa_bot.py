@@ -588,7 +588,7 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
         )
 
     # Pet (banho e tosa)
-    if "pet" in p ou "tosa" in p ou "banho" in p:
+    if "pet" in p or "tosa" in p or "banho" in p:
         base.update(
             {
                 "banho": ["banho"],
@@ -599,10 +599,13 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
         )
 
     # Advogado
-    if "advog" in p ou "direito" in p:
+    if "advog" in p or "direito" in p:
         base.update(
             {
                 "consulta": ["consulta", "consulta jurídica"],
+                "contrato": ["revisão de contrato", "elaboração de contrato"],
+                "trabalhista": ["consulta trabalhista"],
+                "civil": ["consulta cível"],
             }
         )
 
@@ -621,8 +624,6 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
     if "clareamento" in espec:
         base.setdefault("clareamento", ["clareamento"])
     return base
-
-
 # ========== Preços (agregador 3 fontes) ==========
 def _normalize_item(it: Dict[str, Any]) -> Dict[str, Any]:
     """Padroniza campos nome, preco, duracaoMin e mantém extras."""
