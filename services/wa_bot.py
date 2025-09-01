@@ -1197,6 +1197,20 @@ def _clear_session(uid: str, wa_id_or_phone: str):
         print(f"[WA_BOT][SESS] clear erro: {e}", flush=True)
 
 
+# ---- NOVO: lembrar o último serviço citado (para agendar depois só com data/hora)
+def _remember_last_service(uid: str, wa_id_or_phone: str, it: dict):
+    """Guarda na sessão o último serviço citado (ex.: após pergunta de preço)."""
+    if not it or not wa_id_or_phone:
+        return
+    try:
+        sess = _get_session(uid, wa_id_or_phone) or {}
+        sess["lastServiceId"] = it.get("id")
+        sess["lastServiceName"] = (it.get("nomeLower") or it.get("nome") or "").lower()
+        _save_session(uid, wa_id_or_phone, sess)
+    except Exception as e:
+        print(f"[SESS][remember_last_service] erro: {e}", flush=True)
+
+
 # ========== Agendamento ==========
 
 def _resolve_cliente_id(uid_default: str, wa_id_raw: str, to_msisdn: str) -> str:
@@ -1478,6 +1492,12 @@ def _reply_price_from_cache_or_data(uid: str, to: str, user_text: str, send_text
     if not it:
         return _reply_prices(uid, to, send_text, channel_mode=channel_mode)
 
+    # >>> Memoriza o serviço identificado (para agendar depois)
+    try:
+        _remember_last_service(uid, to, it)
+    except Exception:
+        pass
+
     nome = it.get("nome") or "serviço"
     valor_legacy = it.get("preco")
     slug = (it.get("slug") or "").strip().lower()
@@ -1499,11 +1519,10 @@ def _reply_price_from_cache_or_data(uid: str, to: str, user_text: str, send_text
         # fallback para tabela completa se não houver valor
         return _reply_prices(uid, to, send_text, channel_mode=channel_mode)
 
-    if humanize_on():
-        msg = H("price_single", {"nome": nome, "preco": valor_final, "duracaoMin": it.get("duracaoMin")}, mode=("audio" if channel_mode=="audio" else "text"))
-    else:
-        extra = f" 〔{origem_txt}〕" if origem_txt else ""
-        msg = f"{nome}: {_format_brl(valor_final)} 😉{extra}"
+    extra = f" 〔{origem_txt}〕" if origem_txt else ""
+    base_msg = f"{nome}: {_format_brl(valor_final)} 😉{extra}"
+    # Se humanizer estiver ativo, ao menos sanitizamos a saída
+    msg = H_sanitize(base_msg)
 
     # Cacheia apenas versão texto
     if channel_mode != "audio":
@@ -1565,6 +1584,14 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
                     svc = it
                     break
 
+    # >>> Tenta usar o último serviço lembrado na sessão
+    if not svc and sess.get("lastServiceName"):
+        last_name = (sess.get("lastServiceName") or "").lower()
+        for it in items:
+            if it.get("nomeLower") == last_name or (last_name and last_name in it.get("nomeLower", "")):
+                svc = it
+                break
+
     text_norm2 = _normalize_datetime_pt(text_norm)
     dt = _parse_datetime_br(text_norm2)
     if not dt and sess.get("dataHora"):
@@ -1576,7 +1603,16 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
     have_svc = svc is not None
     have_dt = dt is not None
 
+    # >>> Se já temos data/hora mas não serviço, aplica um default seguro
+    if have_dt and not have_svc and items:
+        svc = items[0]
+        have_svc = True
+
     if have_svc and have_dt:
+        # >>> Regras de agenda antes de salvar
+        ok_book, reason = can_book(dt.strftime("%d/%m"), dt.strftime("%H:%M"))
+        if not ok_book:
+            return f"Não consegui agendar: {reason}"
         ok, msg = _build_and_save_agendamento(uid_default, value, to_msisdn, svc, dt, body_text, channel_mode=channel_mode)
         if ok:
             _clear_session(uid_default, wa_id_raw)
@@ -1587,7 +1623,7 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
         "servicoId": svc.get("id") if svc else None,
         "servicoNome": (svc.get("nomeLower") or svc.get("nome")) if svc else None,
         "dataHora": dt.isoformat() if dt else None,
-        "waKey": br_equivalence_key(wa_id_raw or to_msisdn or ""),
+        "waKey": br_equivalence_key(wa_id_or_phone=wa_id_raw or to_msisdn or ""),
     }
     _save_session(uid_default, wa_id_raw, new_sess)
 
@@ -1609,7 +1645,7 @@ def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str
         except Exception:
             dt = None
     if not dt:
-        _save_session(uid_default, wa_id_raw, {"intent": "reagendar", "waKey": br_equivalence_key(wa_id_raw or to_msisdn or "")})
+        _save_session(uid_default, wa_id_raw, {"intent": "reagendar", "waKey": br_equivalence_key(wa_id_or_phone=wa_id_raw or to_msisdn or "")})
         return say(uid_default, "reschedule_ask")
 
     wa = ""
@@ -1776,6 +1812,14 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
 
         # Slot-filling quando v1 sinaliza "agendar" sem data/hora
         if NLU_MODE == "v1" and intent == "agendar" and not (dateText and timeText):
+            sess = _get_session(uid_default, to_raw)
+            items = _load_prices(uid_default)
+            reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw, channel_mode=channel_mode)
+            send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
+            continue
+
+        # >>> NOVO: também faz slot-filling no modo legacy (sem v1)
+        if intent == "agendar" and not (dateText and timeText):
             sess = _get_session(uid_default, to_raw)
             items = _load_prices(uid_default)
             reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw, channel_mode=channel_mode)
