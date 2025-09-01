@@ -1360,22 +1360,18 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
     except Exception:
         pass
 
-    eq_key = br_equivalence_key(wa_id or to_msisdn or "")
-    telefone_norm = _normalize_br_msisdn(to_msisdn)
-
     dur = int(svc.get("duracaoMin") or 60)
     fim = dt + timedelta(minutes=dur)
     servico_id = svc.get("id") or f"map:{(svc.get('nomeLower') or svc.get('nome') or 'servico').strip().lower()}"
-    cliente_id = _resolve_cliente_id(uid_default, wa_id, telefone_norm)
+    cliente_id = _resolve_cliente_id(uid_default, wa_id, to_msisdn)
 
     ag = {
         "estado": "solicitado",
         "canal": "whatsapp",
         "clienteId": cliente_id,
         "clienteWaId": wa_id,
-        "clienteWaKey": eq_key,
         "clienteNome": nome_contato,
-        "telefone": telefone_norm,
+        "telefone": to_msisdn,
         "servicoId": servico_id,
         "servicoNome": svc.get("nome") or svc.get("nomeLower"),
         "duracaoMin": dur,
@@ -1388,6 +1384,8 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
     }
 
     saved_id = None
+
+    # 1) Valida e tenta salvar via scheduler externo (se existir)
     try:
         ok, motivo, _ = validar_agendamento_v1(uid_default, ag)
         if not ok:
@@ -1397,24 +1395,30 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
             saved_id = saved_id.get("id") or saved_id.get("ag_id")
     except Exception as e:
         print(f"[WA_BOT][AGENDA] salvar via schedule falhou: {e}", flush=True)
-        try:
+        saved_id = None  # força fallback de persistência
+
+    # 2) Fallback/garantia de persistência no Firestore quando id vier faltando ou "fake"
+    try:
+        need_fallback = (not saved_id) or (str(saved_id).strip().lower() in ("fake", "dummy", "test"))
+        if need_fallback:
             if not _db_ready():
                 raise RuntimeError("DB indisponível")
             ref = DB.collection(f"profissionais/{uid_default}/agendamentos").document()
+            # garanta createdAt atualizado ao persistir diretamente
+            ag["createdAt"] = datetime.now(SP_TZ).isoformat()
             ref.set(ag)
             saved_id = ref.id
-        except Exception as e2:
-            print(f"[WA_BOT][AGENDA][FALLBACK_SAVE] erro: {e2}", flush=True)
-            return False, "Tive um problema ao salvar seu agendamento. Pode tentar novamente em instantes?"
+    except Exception as e2:
+        print(f"[WA_BOT][AGENDA][FALLBACK_SAVE] erro: {e2}", flush=True)
+        return False, "Tive um problema ao salvar seu agendamento. Pode tentar novamente em instantes?"
 
+    # 3) Mensagem de confirmação
     dia = dt.strftime("%d/%m")
     hora = dt.strftime("%H:%M")
     preco = ag.get("preco")
     preco_txt = f" — {_format_brl(preco)}" if preco not in (None, "", "?") else ""
     sid = f" (id {saved_id})" if saved_id else ""
     return True, f"✅ Agendamento solicitado: {ag['servicoNome']} em {dia} às {hora}{preco_txt}.{sid}\nSe precisar alterar, responda: reagendar <dd/mm> <hh:mm>"
-
-
 # ========== Fluxos de alto nível ==========
 def _reply_prices(uid: str, to: str, send_text):
     counts = _count_sources(uid)
