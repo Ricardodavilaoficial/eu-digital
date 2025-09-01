@@ -1688,6 +1688,11 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         timeText = nlu.get("timeText")
 
         text_norm = _strip_accents_lower(text_in)
+        # --- hard override para reagendamento por palavras-chave ---
+        if re.search(r"\b(reagendar|remarcar|trocar\s+(?:o|de)?\s*horario|mudar\s+(?:o|de)?\s*horario)\b", text_norm):
+            intent = "reagendar"
+    
+      
         # comandos rápidos de sessão
         if re.search(r"\b(cancelar|limpar|resetar|apagar\s+(conversa|sess[aã]o))\b", text_norm):
             try:
