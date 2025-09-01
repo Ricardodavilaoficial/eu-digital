@@ -10,6 +10,7 @@
 # - Microcopy humana + overrides opcionais por Firestore (l10n/persona)
 # - Se o cliente falar por áudio, responder por áudio (se o app injetar send_audio_fn)
 # - *** Harmonização MSISDN BR com/sem 9 (equivalence key + candidatos) ***
+# - *** Humanização plugável via services.humanizer (sanitização e microcopy) ***
 
 import os
 import json
@@ -18,6 +19,14 @@ import logging
 NLU_MODE = os.getenv("NLU_MODE", "legacy").strip().lower()
 PRICING_MODE = os.getenv("PRICING_MODE", "legacy").strip().lower()  # legacy | domain
 REPLY_AUDIO_WHEN_AUDIO = os.getenv("REPLY_AUDIO_WHEN_AUDIO", "true").strip().lower() in ("1", "true", "yes")
+
+# ---- Humanizer (feature-flag) ----
+try:
+    from services.humanizer import humanize as H, sanitize_text as H_sanitize, humanize_on
+except Exception:
+    def H(intent, payload, mode="text"): return (payload.get("raw","") or "").strip()
+    def H_sanitize(s): return (s or "").strip()
+    def humanize_on(): return False
 
 try:
     from nlu.intent import detect_intent as detect_intent_v1
@@ -511,6 +520,8 @@ def _format_brl(v: Any) -> str:
 
 def fallback_text(app_tag: str, context: str) -> str:
     # Microcopy humana (sem debug técnico para o cliente); usada principalmente em erros de áudio
+    if humanize_on():
+        return H("audio_error", {"raw": _L10N_DEFAULTS.get("audio_error","")}, mode="audio")
     return _L10N_DEFAULTS["audio_error"]
 
 
@@ -624,6 +635,7 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
     if "clareamento" in espec:
         base.setdefault("clareamento", ["clareamento"])
     return base
+
 # ========== Preços (agregador 3 fontes) ==========
 def _normalize_item(it: Dict[str, Any]) -> Dict[str, Any]:
     """Padroniza campos nome, preco, duracaoMin e mantém extras."""
@@ -944,6 +956,12 @@ def send_reply(uid: str, to: str, text: str, inbound_type: str, send_text_fn, se
     Se o cliente mandou ÁUDIO e houver send_audio_fn + TTS ok -> responde em áudio.
     Caso contrário, texto.
     """
+    # Sanitiza sempre ANTES de enviar (tira ids/hashes) usando humanizer
+    try:
+        text = H_sanitize(text or "")
+    except Exception:
+        text = (text or "").strip()
+
     # tenta usar a voz configurada do MEI (env) se não vier dica explícita
     voice_hint = voice_hint or os.getenv("ELEVEN_VOICE_ID") or None
     prefer_audio = (inbound_type == "audio") and REPLY_AUDIO_WHEN_AUDIO and callable(send_audio_fn)
@@ -1348,7 +1366,7 @@ def _find_target_agendamento(uid: str, cliente_id: str, wa_id_raw: str, telefone
     return candidatos[0]
 
 
-def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, svc: dict, dt: datetime, body_text: str):
+def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, svc: dict, dt: datetime, body_text: str, channel_mode: str = "text"):
     wa_id = ""
     nome_contato = ""
     try:
@@ -1404,7 +1422,6 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
             if not _db_ready():
                 raise RuntimeError("DB indisponível")
             ref = DB.collection(f"profissionais/{uid_default}/agendamentos").document()
-            # garanta createdAt atualizado ao persistir diretamente
             ag["createdAt"] = datetime.now(SP_TZ).isoformat()
             ref.set(ag)
             saved_id = ref.id
@@ -1412,37 +1429,54 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
         print(f"[WA_BOT][AGENDA][FALLBACK_SAVE] erro: {e2}", flush=True)
         return False, "Tive um problema ao salvar seu agendamento. Pode tentar novamente em instantes?"
 
-    # 3) Mensagem de confirmação
+    # 3) Mensagem de confirmação (humanizada; sem ID)
     dia = dt.strftime("%d/%m")
     hora = dt.strftime("%H:%M")
-    preco = ag.get("preco")
-    preco_txt = f" — {_format_brl(preco)}" if preco not in (None, "", "?") else ""
-    sid = f" (id {saved_id})" if saved_id else ""
-    return True, f"✅ Agendamento solicitado: {ag['servicoNome']} em {dia} às {hora}{preco_txt}.{sid}\nSe precisar alterar, responda: reagendar <dd/mm> <hh:mm>"
+
+    if humanize_on():
+        payload = {
+            "servico": ag.get("servicoNome") or "serviço",
+            "data": dt.strftime("%Y-%m-%d"),
+            "data_str": dia,
+            "hora": hora,
+        }
+        msg = H("confirm_agenda", payload, mode=("audio" if channel_mode == "audio" else "text"))
+    else:
+        preco = ag.get("preco")
+        preco_txt = f" — {_format_brl(preco)}" if preco not in (None, "", "?") else ""
+        msg = f"Prontinho! Agendei {ag['servicoNome']} para {dia} às {hora}{preco_txt}. Se precisar alterar, é só me chamar. 😉"
+
+    return True, msg
+
 # ========== Fluxos de alto nível ==========
-def _reply_prices(uid: str, to: str, send_text):
+def _reply_prices(uid: str, to: str, send_text, channel_mode: str = "text"):
     counts = _count_sources(uid)
     items = _load_prices(uid)
-    msg = _render_price_table(items, uid, counts)
+    if humanize_on():
+        itens = [{"nome": it.get("nome","serviço"), "duracaoMin": it.get("duracaoMin"), "preco": it.get("preco")} for it in items]
+        msg = H("prices", {"itens": itens, "raw": _render_price_table(items, uid, counts)}, mode=("audio" if channel_mode=="audio" else "text"))
+    else:
+        msg = _render_price_table(items, uid, counts)
     logging.info(
         f"[WHATSAPP][OUTBOUND] prices count={len(items)} map={counts.get('map')} precos={counts.get('precos')} ps={counts.get('ps')}"
     )
     return send_text(to, msg)
 
 
-def _reply_price_from_cache_or_data(uid: str, to: str, user_text: str, send_text):
+def _reply_price_from_cache_or_data(uid: str, to: str, user_text: str, send_text, channel_mode: str = "text"):
     key = _mk_price_cache_key(uid, user_text)
-    cached = kv_get(uid, key)
-    if cached:
-        logging.info("[CACHE] price hit")
-        return send_text(to, cached)
+    if channel_mode != "audio":
+        cached = kv_get(uid, key)
+        if cached:
+            logging.info("[CACHE] price hit")
+            return send_text(to, cached)
 
     items = _load_prices(uid)
     prof_ctx = _load_prof_context(uid)
     it = _find_price_item(items, user_text or "", prof_ctx)
 
     if not it:
-        return _reply_prices(uid, to, send_text)
+        return _reply_prices(uid, to, send_text, channel_mode=channel_mode)
 
     nome = it.get("nome") or "serviço"
     valor_legacy = it.get("preco")
@@ -1463,22 +1497,31 @@ def _reply_price_from_cache_or_data(uid: str, to: str, user_text: str, send_text
 
     if valor_final in (None, "", "?"):
         # fallback para tabela completa se não houver valor
-        return _reply_prices(uid, to, send_text)
+        return _reply_prices(uid, to, send_text, channel_mode=channel_mode)
 
-    extra = f" 〔{origem_txt}〕" if origem_txt else ""
-    resp = f"{nome}: {_format_brl(valor_final)} 😉{extra}"
-    kv_put(uid, key, resp, ttl_sec=PRICE_CACHE_TTL)
-    return send_text(to, resp)
+    if humanize_on():
+        msg = H("price_single", {"nome": nome, "preco": valor_final, "duracaoMin": it.get("duracaoMin")}, mode=("audio" if channel_mode=="audio" else "text"))
+    else:
+        extra = f" 〔{origem_txt}〕" if origem_txt else ""
+        msg = f"{nome}: {_format_brl(valor_final)} 😉{extra}"
+
+    # Cacheia apenas versão texto
+    if channel_mode != "audio":
+        kv_put(uid, key, msg, ttl_sec=PRICE_CACHE_TTL)
+
+    return send_text(to, msg)
 
 
-def _reply_faq(uid: str, to: str, faq_key: str, send_text):
+def _reply_faq(uid: str, to: str, faq_key: str, send_text, channel_mode: str = "text"):
     ans = _load_faq(uid, faq_key)
-    if not ans:
-        return send_text(to, say(uid, "faq_default"))
-    return send_text(to, ans)
+    msg = ans if ans else say(uid, "faq_default")
+    if humanize_on() and faq_key in ("endereco","horarios","telefone","pix"):
+        # por ora, só sanitiza; variações de FAQ podem vir depois
+        msg = H("help", {"raw": msg}, mode=("audio" if channel_mode=="audio" else "text"))
+    return send_text(to, msg)
 
 
-def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str, timeText: str, send_text, value: dict, body_text: str):
+def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str, timeText: str, send_text, value: dict, body_text: str, channel_mode: str = "text"):
     ok, reason = can_book(dateText, timeText)
     if not ok:
         return send_text(to, f"Não consegui agendar: {reason}")
@@ -1501,11 +1544,11 @@ def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str
         pass
     if not dt:
         return send_text(to, "Não entendi a data/hora. Pode enviar no formato 01/09 14:00?")
-    ok2, msg = _build_and_save_agendamento(uid, value, to, svc or {"nome": "serviço"}, dt, body_text)
+    ok2, msg = _build_and_save_agendamento(uid, value, to, svc or {"nome": "serviço"}, dt, body_text, channel_mode=channel_mode)
     return send_text(to, msg if ok2 else f"Não consegui agendar: {msg}")
 
 
-def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items, sess: dict, wa_id_raw: str):
+def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items, sess: dict, wa_id_raw: str, channel_mode: str = "text"):
     svc = None
     if sess.get("servicoId") or sess.get("servicoNome"):
         for it in items:
@@ -1534,7 +1577,7 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
     have_dt = dt is not None
 
     if have_svc and have_dt:
-        ok, msg = _build_and_save_agendamento(uid_default, value, to_msisdn, svc, dt, body_text)
+        ok, msg = _build_and_save_agendamento(uid_default, value, to_msisdn, svc, dt, body_text, channel_mode=channel_mode)
         if ok:
             _clear_session(uid_default, wa_id_raw)
         return msg
@@ -1557,7 +1600,7 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
     return "Perfeito. Qual data e horário? Ex.: 01/09 14:00, ou 'terça 10h', ou 'semana que vem sexta 9:30'."
 
 
-def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, sess: dict, wa_id_raw: str):
+def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, sess: dict, wa_id_raw: str, channel_mode: str = "text"):
     text_norm2 = _normalize_datetime_pt(text_norm)
     dt = _parse_datetime_br(text_norm2)
     if not dt and sess.get("dataHora"):
@@ -1596,7 +1639,12 @@ def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str
     dia = dt.strftime("%d/%m")
     hora = dt.strftime("%H:%M")
     nome = alvo.get("servicoNome") or "serviço"
-    return f"✅ Reagendamento solicitado: {nome} para {dia} às {hora} (id {ag_id})"
+
+    if humanize_on():
+        payload = {"servico": nome, "data": dt.strftime("%Y-%m-%d"), "data_str": dia, "hora": hora}
+        return H("confirm_reagenda", payload, mode=("audio" if channel_mode == "audio" else "text"))
+
+    return f"Tudo certo! Reagendei {nome} para {dia} às {hora}. Se precisar, eu mudo de novo. 😉"
 
 
 # ========== Entrada principal ==========
@@ -1616,6 +1664,7 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         print(f"[INBOUND] from_raw={to_raw} eq_key={eq_key}", flush=True)
 
         msg_type = m.get("type")
+        channel_mode = "audio" if msg_type == "audio" else "text"
         text_in = ""
 
         # -------- ÁUDIO de entrada ----------
@@ -1666,7 +1715,9 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         elif msg_type == "text":
             text_in = (m.get("text") or {}).get("body", "")
         else:
-            send_reply(uid_default, to_raw, say(uid_default, "help"), msg_type, send_text_fn, send_audio_fn)
+            # Tipos não suportados: responde ajuda humanizada
+            help_msg = H("help", {"raw": say(uid_default, "help")}, mode=("audio" if channel_mode=="audio" else "text"))
+            send_reply(uid_default, to_raw, help_msg, msg_type, send_text_fn, send_audio_fn)
             continue
 
         # -------- NLU probe ----------
@@ -1692,7 +1743,6 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         if re.search(r"\b(reagendar|remarcar|trocar\s+(?:o|de)?\s*horario|mudar\s+(?:o|de)?\s*horario)\b", text_norm):
             intent = "reagendar"
     
-      
         # comandos rápidos de sessão
         if re.search(r"\b(cancelar|limpar|resetar|apagar\s+(conversa|sess[aã]o))\b", text_norm):
             try:
@@ -1705,36 +1755,36 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         # -------- Roteamento ----------
         if intent == "precos":
             send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
-            _reply_prices(uid_default, to_raw, send)
+            _reply_prices(uid_default, to_raw, send, channel_mode=channel_mode)
             continue
 
         if is_price_question(text_in):
             send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
-            _reply_price_from_cache_or_data(uid_default, to_raw, text_in, send)
+            _reply_price_from_cache_or_data(uid_default, to_raw, text_in, send, channel_mode=channel_mode)
             continue
 
         if intent in ("localizacao", "horarios", "telefone", "pagamento"):
             faq_map = {"localizacao": "endereco", "horarios": "horarios", "telefone": "telefone", "pagamento": "pix"}
             send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
-            _reply_faq(uid_default, to_raw, faq_map[intent], send)
+            _reply_faq(uid_default, to_raw, faq_map[intent], send, channel_mode=channel_mode)
             continue
 
         if intent == "agendar" and dateText and timeText:
             send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
-            _reply_schedule(uid_default, to_raw, serviceName, dateText, timeText, send, value, text_in)
+            _reply_schedule(uid_default, to_raw, serviceName, dateText, timeText, send, value, text_in, channel_mode=channel_mode)
             continue
 
         # Slot-filling quando v1 sinaliza "agendar" sem data/hora
         if NLU_MODE == "v1" and intent == "agendar" and not (dateText and timeText):
             sess = _get_session(uid_default, to_raw)
             items = _load_prices(uid_default)
-            reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw)
+            reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw, channel_mode=channel_mode)
             send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
             continue
 
         if intent == "reagendar":
             sess = _get_session(uid_default, to_raw)
-            reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw)
+            reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw, channel_mode=channel_mode)
             send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
             continue
 
@@ -1743,17 +1793,18 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         if sess.get("intent") in ("agendar", "reagendar"):
             if sess["intent"] == "agendar":
                 items = _load_prices(uid_default)
-                reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw)
+                reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw, channel_mode=channel_mode)
                 send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
                 continue
             else:
-                reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw)
+                reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw, channel_mode=channel_mode)
                 send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
                 continue
 
-        # Fallback
+        # Fallback -> ajuda humanizada
         logging.info("[NLU] fallback -> help")
-        send_reply(uid_default, to_raw, say(uid_default, "help"), msg_type, send_text_fn, send_audio_fn)
+        help_msg = H("help", {"raw": say(uid_default, "help")}, mode=("audio" if channel_mode=="audio" else "text"))
+        send_reply(uid_default, to_raw, help_msg, msg_type, send_text_fn, send_audio_fn)
 
     # statuses
     for st in value.get("statuses", []):
