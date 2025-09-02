@@ -11,16 +11,15 @@ import hashlib
 import importlib, types
 from typing import List, Tuple
 from flask import Flask, jsonify, request, send_from_directory
-from routes.auth_bp import auth_bp
-app.register_blueprint(auth_bp)
 
 print("[boot] app.py raiz carregado ✅", flush=True)
 logging.basicConfig(level=logging.INFO)
 
+# --------------------------------------------------------------------
+# 1) Cria a app primeiro e configura CORS-base controlado por ENV
+# --------------------------------------------------------------------
 app = Flask(__name__, static_folder="public", static_url_path="/")
-# app.py (trecho a adicionar após app = Flask(__name__))
-import os
-from flask_cors import CORS
+from flask_cors import CORS  # importa depois de criar app
 
 _ALLOWED = os.environ.get("ALLOWED_ORIGINS", "")
 if _ALLOWED:
@@ -29,23 +28,45 @@ else:
     # fallback seguro para dev/local se a ENV não estiver definida
     origins = ["http://127.0.0.1:5501", "http://localhost:5501"]
 
+# CORS-base: libera origens definidas (todas as rotas)
 CORS(app, resources={r"/*": {"origins": origins}})
 
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
 
-# -------------------------
-# CORS
-# -------------------------
+# --------------------------------------------------------------------
+# 2) (Opcional) CORS adicional para /api/* como você já tinha
+#    Mantido para compatibilidade, pode coexistir com o CORS-base.
+# --------------------------------------------------------------------
 try:
-    from flask_cors import CORS
-    CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
+    from flask_cors import CORS as _CORS2
+    _CORS2(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
     print("[init] CORS habilitado para /api/*")
 except Exception as e:
     print(f"[warn] flask-cors indisponível: {e}")
 
-# -------------------------
+# --------------------------------------------------------------------
+# 3) Agora que o app existe, importe e registre blueprints
+#    (evita NameError e import circular)
+# --------------------------------------------------------------------
+def _register_bp(bp, name: str):
+    try:
+        app.register_blueprint(bp)
+        print(f"[bp] Registrado: {name}")
+    except Exception as e:
+        print(f"[bp][erro] Falhou ao registrar {name}: {e}")
+        traceback.print_exc()
+
+# Blueprint de autenticação (novo)
+try:
+    from routes.auth_bp import auth_bp
+    _register_bp(auth_bp, "auth_bp (/auth/whoami)")
+except Exception as e:
+    print(f"[bp][warn] auth_bp não registrado: {e}")
+    traceback.print_exc()
+
+# --------------------------------------------------------------------
 # Helpers de telefone (com fallback)
-# -------------------------
+# --------------------------------------------------------------------
 def _token_fingerprint(tok: str):
     if not tok:
         return {"present": False, "length": 0, "sha256_12": None}
@@ -166,16 +187,8 @@ def fallback_text(context: str) -> str:
     return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
 
 # -------------------------
-# Blueprints
+# Blueprints existentes (mantidos)
 # -------------------------
-def _register_bp(bp, name: str):
-    try:
-        app.register_blueprint(bp)
-        print(f"[bp] Registrado: {name}")
-    except Exception as e:
-        print(f"[bp][erro] Falhou ao registrar {name}: {e}")
-        traceback.print_exc()
-
 try:
     from routes.routes import routes
     _register_bp(routes, "routes")
