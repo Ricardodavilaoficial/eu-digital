@@ -11,11 +11,26 @@ import hashlib
 import importlib, types
 from typing import List, Tuple
 from flask import Flask, jsonify, request, send_from_directory
+from routes.auth_bp import auth_bp
+app.register_blueprint(auth_bp)
 
 print("[boot] app.py raiz carregado ✅", flush=True)
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__, static_folder="public", static_url_path="/")
+# app.py (trecho a adicionar após app = Flask(__name__))
+import os
+from flask_cors import CORS
+
+_ALLOWED = os.environ.get("ALLOWED_ORIGINS", "")
+if _ALLOWED:
+    origins = [o.strip() for o in _ALLOWED.split(",") if o.strip()]
+else:
+    # fallback seguro para dev/local se a ENV não estiver definida
+    origins = ["http://127.0.0.1:5501", "http://localhost:5501"]
+
+CORS(app, resources={r"/*": {"origins": origins}})
+
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
 
 # -------------------------
