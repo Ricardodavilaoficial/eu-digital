@@ -1,5 +1,6 @@
 # services/firebase_admin_init.py
-import os, json
+import os
+import json
 import firebase_admin
 from firebase_admin import credentials
 
