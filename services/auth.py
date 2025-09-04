@@ -1,70 +1,79 @@
-import os
-import functools
-from flask import request, g, jsonify
-from firebase_admin import auth
-from .db import get_doc, set_doc, now_ts
+# services/auth.py — auth + decorator admin_required (produção)
+from __future__ import annotations
 
-ADMIN_CLAIM_KEY = "role"
-ADMIN_CLAIM_VALUE = "admin"
+import os, json
+from functools import wraps
+from types import SimpleNamespace
+from flask import request, jsonify, g
 
-def _verify_token_from_header():
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None
-    token = auth_header.split(" ", 1)[1]
-    decoded = auth.verify_id_token(token)
-    return {
-        "uid": decoded.get("uid"),
-        "email": decoded.get("email"),
-        "claims": decoded,
-    }
+# Firebase Admin
+import firebase_admin
+from firebase_admin import auth as fb_auth, credentials
 
-def _dev_user():
-    dev_uid = os.getenv("DEV_FAKE_UID", "").strip()
-    if not dev_uid:
-        return None
-    return {
-        "uid": dev_uid,
-        "email": "dev@local",
-        # para poder chamar /admin/cupons nos testes:
-        "claims": {ADMIN_CLAIM_KEY: os.getenv("DEV_FAKE_ROLE", ADMIN_CLAIM_VALUE)}
-    }
+# --- Inicialização do Firebase Admin ---
+if not firebase_admin._apps:
+    cred_json = (
+        os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+        or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    )
+    try:
+        if cred_json:
+            cred = credentials.Certificate(json.loads(cred_json))
+            firebase_admin.initialize_app(cred)
+        else:
+            # Tenta credencial padrão (por exemplo, variável GOOGLE_APPLICATION_CREDENTIALS apontando para arquivo)
+            firebase_admin.initialize_app()
+    except Exception:
+        # Fallback silencioso, mas o verify_id_token vai falhar se não houver credencial válida
+        firebase_admin.initialize_app()
 
-def auth_required(fn):
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        user = None
-        try:
-            user = _verify_token_from_header()
-        except Exception:
-            user = None
-        if not user:
-            # fallback DEV
-            user = _dev_user()
-        if not user:
-            return jsonify({"erro":"auth/missing-or-invalid-token"}), 401
+def _get_bearer() -> str | None:
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+    return None
 
-        g.user = type("User", (), user)
+def _allowlist() -> set[str]:
+    allow = os.getenv("ADMIN_UID_ALLOWLIST") or os.getenv("ADMIN_UID") or ""
+    return {x.strip() for x in allow.split(",") if x.strip()}
 
-        # bootstrap do documento do profissional, se não existir
-        prof_path = f"profissionais/{g.user.uid}"
-        if get_doc(prof_path) is None:
-            set_doc(prof_path, {
-                "perfil": {"segmento": None, "especializacao": None},
-                "plano": {"status":"bloqueado", "origem": None, "expiraEm": None, "quotaMensal": 0},
-                "createdAt": now_ts()
-            })
-        return fn(*args, **kwargs)
-    return wrapper
+def _decode_token(token: str) -> dict:
+    # check_revoked=True dá mais segurança (requer RTDB/Firestore rules para revogação, se em uso)
+    return fb_auth.verify_id_token(token, check_revoked=True)
 
 def admin_required(fn):
-    @functools.wraps(fn)
+    """
+    Exige:
+      - Authorization: Bearer <ID_TOKEN Firebase>
+      - UID presente em ADMIN_UID_ALLOWLIST
+
+    Bypass de dev só é permitido se DEV_FORCE_ADMIN == "1" E DEV_FAKE_UID definido.
+    """
+    @wraps(fn)
     def wrapper(*args, **kwargs):
-        resp = auth_required(lambda: None)()
-        if resp is not None:
-            return resp
-        claims = getattr(g.user, "claims", {}) or {}
-        if claims.get(ADMIN_CLAIM_KEY) != ADMIN_CLAIM_VALUE:
-            return jsonify({"erro":"auth/not-admin"}), 403
+        token = _get_bearer()
+        allow = _allowlist()
+
+        if not token:
+            # Bypass só se explicitamente forçado (nunca em produção)
+            if os.getenv("DEV_FORCE_ADMIN", "0") == "1" and os.getenv("DEV_FAKE_UID"):
+                g.user = SimpleNamespace(uid=os.getenv("DEV_FAKE_UID"), email="dev@local")
+            else:
+                return jsonify({"erro": "Auth obrigatório"}), 401
+        else:
+            try:
+                decoded = _decode_token(token)
+                uid = decoded.get("uid")
+                email = decoded.get("email")
+                if not uid:
+                    return jsonify({"erro": "Token inválido (sem UID)"}), 401
+                g.user = SimpleNamespace(uid=uid, email=email)
+            except Exception as e:
+                return jsonify({"erro": f"Token inválido: {e}"}), 401
+
+        # Checagem de allowlist
+        if allow and getattr(g.user, "uid", None) not in allow:
+            return jsonify({"erro": "Acesso restrito a administradores"}), 403
+
         return fn(*args, **kwargs)
     return wrapper
