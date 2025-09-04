@@ -1,6 +1,7 @@
-from flask import Blueprint, request, jsonify
+# routes/cupons.py
+from flask import Blueprint, request, jsonify 
 from google.cloud import firestore
-from datetime import datetime
+from datetime import datetime, timedelta  # <-- ADICIONE timedelta
 
 cupons_bp = Blueprint("cupons_bp", __name__)
 
