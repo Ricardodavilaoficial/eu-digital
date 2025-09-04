@@ -1,68 +1,56 @@
 # routes/cupons.py
-from flask import Blueprint, request, jsonify 
-from google.cloud import firestore
-from datetime import datetime, timedelta  # <-- ADICIONE timedelta
+from flask import Blueprint, request, jsonify
+from datetime import datetime, timedelta  # pode ser útil em respostas/validações
+# usamos os serviços centralizados, que já lidam com credenciais/env
+from services.db import db
+from services.coupons import criar_cupom, find_cupom_by_codigo, validar_consumir_cupom
 
 cupons_bp = Blueprint("cupons_bp", __name__)
 
 @cupons_bp.route("/ativar-cupom", methods=["POST"])
 def ativar_cupom():
-    dados = request.json
-    codigo = dados.get("codigo")  # ex: TESTE-MEIROBO-25
-    uid = dados.get("uid")        # UID do profissional (usuário autenticado)
+    dados = request.get_json(silent=True) or {}
+    codigo = (dados.get("codigo") or "").strip()
+    uid = (dados.get("uid") or "").strip()
 
     if not codigo or not uid:
         return jsonify({"erro": "Código do cupom e UID são obrigatórios"}), 400
 
-    db = firestore.Client()
-    
-    # 1. Buscar o cupom no Firestore
-    cupom_ref = db.collection("cuponsAtivacao").document(codigo)
-    cupom_doc = cupom_ref.get()
+    try:
+        # Usa helpers centralizados
+        cupom = find_cupom_by_codigo(codigo)
+        ok, msg, plano = validar_consumir_cupom(cupom, uid)
+        if not ok:
+            return jsonify({"erro": msg}), 400
 
-    if not cupom_doc.exists:
-        return jsonify({"erro": "Cupom não encontrado"}), 404
+        # Atualiza plano do profissional via services.db
+        prof_ref = db.collection("profissionais").document(uid)
+        try:
+            prof_ref.update({"plan": plano or "start"})
+        except Exception:
+            # fallback: cria doc se não existir
+            prof_ref.set({"plan": plano or "start"}, merge=True)
 
-    cupom = cupom_doc.to_dict()
+        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!"}), 200
+    except Exception as e:
+        return jsonify({"erro": "falha_ativar_cupom", "detalhe": str(e)[:300]}), 500
 
-    if cupom.get("used"):
-        return jsonify({"erro": "Cupom já foi usado"}), 400
-
-    # 2. Atualizar o plano do profissional
-    prof_ref = db.collection("profissionais").document(uid)
-    prof_ref.update({
-        "plan": cupom.get("planActivated", "start")
-    })
-
-    # 3. Atualizar o status do cupom como usado
-    cupom_ref.update({
-        "used": True,
-        "redeemedBy": uid,
-        "redeemedAt": datetime.utcnow()
-    })
-
-    return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!"})
-import random
-import string
 
 @cupons_bp.route("/gerar-cupom", methods=["POST"])
 def gerar_cupom():
-    dados = request.json
-    dias_validade = dados.get("validadeDias", 3)
-    plano = dados.get("plano", "start")
+    dados = request.get_json(silent=True) or {}
 
-    codigo = "MEIROBO-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    # normaliza nomes vindos do front
+    dias_validade = int(dados.get("diasValidade") or dados.get("validadeDias") or 3)
+    prefixo = (dados.get("prefixo") or "").strip() or None
 
-    db = firestore.Client()
-    cupom_ref = db.collection("cuponsAtivacao").document(codigo)
+    body = {"diasValidade": dias_validade}
+    if prefixo:
+        body["prefixo"] = prefixo
 
-    cupom_ref.set({
-        "used": False,
-        "redeemedBy": None,
-        "redeemedAt": None,
-        "createdAt": datetime.utcnow(),
-        "validUntil": datetime.utcnow() + timedelta(days=dias_validade),
-        "planActivated": plano
-    })
-
-    return jsonify({"codigo": codigo, "validade": dias_validade, "plano": plano})
+    try:
+        # Usa o serviço central — mesmo formato do /admin/cupons
+        cupom = criar_cupom(body, criado_por="admin-cupons-public")
+        return jsonify(cupom), 201
+    except Exception as e:
+        return jsonify({"erro": "falha_gerar_cupom", "detalhe": str(e)[:300]}), 500
