@@ -20,6 +20,7 @@ from services.db import db
 
 cupons_bp = Blueprint("cupons_bp", __name__)
 
+
 # --------------------------------------------------------------------
 # GERAR CUPOM — SOMENTE ADMIN
 # Mantém rota legado "/gerar-cupom" porém protegida por admin_required.
@@ -30,10 +31,13 @@ cupons_bp = Blueprint("cupons_bp", __name__)
 def gerar_cupom_admin():
     """
     Gera um cupom. Apenas administradores.
-    Aceita body com campos flexíveis:
-      - diasValidade | validadeDias -> soma N dias (gera expiraEm ISO)
+
+    Body aceito (campos flexíveis):
+      - diasValidade | validadeDias : soma N dias (gera expiraEm ISO)
       - prefixo (opcional)
       - tipo, valor, usosMax, escopo, uidDestino, expiraEm (ISO) etc.
+
+    Retorna: 201 + JSON do cupom criado.
     """
     body = request.get_json(silent=True) or {}
 
@@ -42,7 +46,7 @@ def gerar_cupom_admin():
     if dias > 0 and not body.get("expiraEm"):
         body["expiraEm"] = (datetime.now(timezone.utc) + timedelta(days=dias)).isoformat()
 
-    # Identidade do admin criador
+    # Identidade do admin criador (g.user setado pelo admin_required)
     criado_por = getattr(getattr(g, "user", None), "uid", None) or os.getenv("DEV_FAKE_UID") or "admin-cupons"
 
     cupom = criar_cupom(body, criado_por=criado_por)
@@ -57,8 +61,8 @@ def gerar_cupom_admin():
 @cupons_bp.route("/ativar-cupom", methods=["POST"])
 def ativar_cupom_legacy():
     """
-    Ativa o plano do profissional a partir de um cupom.
-    Body esperado (legado): { "codigo": "ABC-123", "uid": "<uid_profissional>" }
+    Ativa o plano do profissional a partir de um cupom (legado).
+    Body: { "codigo": "ABC-123", "uid": "<uid_profissional>" }
     """
     data = request.get_json(silent=True) or {}
     codigo = (data.get("codigo") or "").strip()
@@ -67,13 +71,15 @@ def ativar_cupom_legacy():
     if not codigo or not uid:
         return jsonify({"erro": "Código do cupom e UID são obrigatórios"}), 400
 
+    # Busca e valida/consome cupom via camada de domínio
     cupom = find_cupom_by_codigo(codigo)
     ok, msg, plano = validar_consumir_cupom(cupom, uid)
     if not ok:
-        # msg vem padronizada da camada de domínio
+        # msg vem padronizada da camada de domínio (ex.: "Cupom expirado", "Cupom já utilizado", etc.)
         return jsonify({"erro": msg}), 400
 
-    # Atualiza/define plano do profissional com merge seguro
+    # Atualiza plano do profissional com merge seguro
+    now_iso = datetime.now(timezone.utc).isoformat()
     try:
         prof_ref = db.collection("profissionais").document(uid)
         prof_ref.set(
@@ -82,9 +88,9 @@ def ativar_cupom_legacy():
                 "licenca": {
                     "origem": "cupom",
                     "codigo": codigo,
-                    "activatedAt": datetime.now(timezone.utc).isoformat(),
+                    "activatedAt": now_iso,
                 },
-                "updatedAt": datetime.now(timezone.utc).isoformat(),
+                "updatedAt": now_iso,
             },
             merge=True,
         )
