@@ -1,56 +1,94 @@
-# routes/cupons.py
-from flask import Blueprint, request, jsonify
-from datetime import datetime, timedelta  # pode ser útil em respostas/validações
-# usamos os serviços centralizados, que já lidam com credenciais/env
+# routes/cupons.py — geração (somente admin) e ativação de cupom (legado)
+from __future__ import annotations
+
+import os
+from datetime import datetime, timedelta, timezone
+from flask import Blueprint, request, jsonify, g
+
+# Regras de segurança / auth
+from services.auth import admin_required
+
+# Camada de domínio p/ cupons
+from services.coupons import (
+    criar_cupom,
+    find_cupom_by_codigo,
+    validar_consumir_cupom,
+)
+
+# Firestore lazy via wrapper do projeto
 from services.db import db
-from services.coupons import criar_cupom, find_cupom_by_codigo, validar_consumir_cupom
 
 cupons_bp = Blueprint("cupons_bp", __name__)
 
+# --------------------------------------------------------------------
+# GERAR CUPOM — SOMENTE ADMIN
+# Mantém rota legado "/gerar-cupom" porém protegida por admin_required.
+# /admin/cupons também existe em routes/core_api.py e é admin_required.
+# --------------------------------------------------------------------
+@cupons_bp.route("/gerar-cupom", methods=["POST"])
+@admin_required
+def gerar_cupom_admin():
+    """
+    Gera um cupom. Apenas administradores.
+    Aceita body com campos flexíveis:
+      - diasValidade | validadeDias -> soma N dias (gera expiraEm ISO)
+      - prefixo (opcional)
+      - tipo, valor, usosMax, escopo, uidDestino, expiraEm (ISO) etc.
+    """
+    body = request.get_json(silent=True) or {}
+
+    # Normalizações leves de entrada
+    dias = int(body.get("diasValidade") or body.get("validadeDias") or 0)
+    if dias > 0 and not body.get("expiraEm"):
+        body["expiraEm"] = (datetime.now(timezone.utc) + timedelta(days=dias)).isoformat()
+
+    # Identidade do admin criador
+    criado_por = getattr(getattr(g, "user", None), "uid", None) or os.getenv("DEV_FAKE_UID") or "admin-cupons"
+
+    cupom = criar_cupom(body, criado_por=criado_por)
+    return jsonify(cupom), 201
+
+
+# --------------------------------------------------------------------
+# ATIVAR CUPOM — LEGADO
+# Mantém compat com clientes que ainda chamam "/ativar-cupom".
+# Obs: fluxo novo também existe em /licencas/ativar-cupom (core_api).
+# --------------------------------------------------------------------
 @cupons_bp.route("/ativar-cupom", methods=["POST"])
-def ativar_cupom():
-    dados = request.get_json(silent=True) or {}
-    codigo = (dados.get("codigo") or "").strip()
-    uid = (dados.get("uid") or "").strip()
+def ativar_cupom_legacy():
+    """
+    Ativa o plano do profissional a partir de um cupom.
+    Body esperado (legado): { "codigo": "ABC-123", "uid": "<uid_profissional>" }
+    """
+    data = request.get_json(silent=True) or {}
+    codigo = (data.get("codigo") or "").strip()
+    uid = (data.get("uid") or "").strip()
 
     if not codigo or not uid:
         return jsonify({"erro": "Código do cupom e UID são obrigatórios"}), 400
 
-    try:
-        # Usa helpers centralizados
-        cupom = find_cupom_by_codigo(codigo)
-        ok, msg, plano = validar_consumir_cupom(cupom, uid)
-        if not ok:
-            return jsonify({"erro": msg}), 400
+    cupom = find_cupom_by_codigo(codigo)
+    ok, msg, plano = validar_consumir_cupom(cupom, uid)
+    if not ok:
+        # msg vem padronizada da camada de domínio
+        return jsonify({"erro": msg}), 400
 
-        # Atualiza plano do profissional via services.db
+    # Atualiza/define plano do profissional com merge seguro
+    try:
         prof_ref = db.collection("profissionais").document(uid)
-        try:
-            prof_ref.update({"plan": plano or "start"})
-        except Exception:
-            # fallback: cria doc se não existir
-            prof_ref.set({"plan": plano or "start"}, merge=True)
-
-        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!"}), 200
+        prof_ref.set(
+            {
+                "plan": plano or "start",
+                "licenca": {
+                    "origem": "cupom",
+                    "codigo": codigo,
+                    "activatedAt": datetime.now(timezone.utc).isoformat(),
+                },
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            },
+            merge=True,
+        )
     except Exception as e:
-        return jsonify({"erro": "falha_ativar_cupom", "detalhe": str(e)[:300]}), 500
+        return jsonify({"erro": f"Falha ao aplicar plano: {e}"}), 500
 
-
-@cupons_bp.route("/gerar-cupom", methods=["POST"])
-def gerar_cupom():
-    dados = request.get_json(silent=True) or {}
-
-    # normaliza nomes vindos do front
-    dias_validade = int(dados.get("diasValidade") or dados.get("validadeDias") or 3)
-    prefixo = (dados.get("prefixo") or "").strip() or None
-
-    body = {"diasValidade": dias_validade}
-    if prefixo:
-        body["prefixo"] = prefixo
-
-    try:
-        # Usa o serviço central — mesmo formato do /admin/cupons
-        cupom = criar_cupom(body, criado_por="admin-cupons-public")
-        return jsonify(cupom), 201
-    except Exception as e:
-        return jsonify({"erro": "falha_gerar_cupom", "detalhe": str(e)[:300]}), 500
+    return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
