@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Lembrete: seu horário é hoje às {{ hora }}</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;background:#f8f9fb;color:#222}
+    .card{background:#fff;border:1px solid #e6e8ee;border-radius:12px;padding:20px;max-width:640px;margin:0 auto}
+    h1{font-size:18px;margin:0 0 10px}
+    p{margin:8px 0}
+    a.btn{display:inline-block;margin-top:10px;padding:10px 14px;border-radius:10px;border:1px solid #e0e3ea;text-decoration:none}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Lembrete de agendamento</h1>
+    <p>Olá {{ nome }}! Seu horário é hoje, <strong>{{ data }}</strong>, às <strong>{{ hora }}</strong>.</p>
+    <p>Se precisar ajustar, toque abaixo:</p>
+    <a class="btn" href="{{ link }}">Reagendar/Cancelar</a>
+    <p>Até já, e bom trabalho!</p>
+    <p style="font-size:12px;color:#666;margin-top:10px">MEI Robô — Remetente: {{ sender }}</p>
+  </div>
+</body>
+</html>
