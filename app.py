@@ -64,9 +64,9 @@ except Exception as e:
     print(f"[bp][warn] auth_bp não registrado: {e}")
     traceback.print_exc()
 
-# --------------------------------------------------------------------
-# Helpers de telefone (com fallback)
-# --------------------------------------------------------------------
+# -------------------------
+# Config
+# -------------------------
 def _token_fingerprint(tok: str):
     if not tok:
         return {"present": False, "length": 0, "sha256_12": None}
@@ -184,7 +184,7 @@ GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v23.0")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID")
 
 def fallback_text(context: str) -> str:
-    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
+    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\\nDigite 'precos' para ver a lista."
 
 # -------------------------
 # Blueprints existentes (mantidos)
@@ -208,6 +208,14 @@ try:
     _register_bp(cupons_bp, "cupons_bp")
 except Exception as e:
     print(f"[bp][erro] import cupons_bp: {e}")
+    traceback.print_exc()
+
+# >>> NOVO: Blueprint de compatibilidade de licenças/cupom (aceita POST /licencas/ativar-cupom)
+try:
+    from routes.compat_licencas import bp as licencas_bp
+    _register_bp(licencas_bp, "licencas_bp (/licencas/ativar-cupom compat)")
+except Exception as e:
+    print(f"[bp][warn] licencas_bp não registrado: {e}")
     traceback.print_exc()
 
 try:
@@ -521,3 +529,4 @@ def static_proxy(path):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
