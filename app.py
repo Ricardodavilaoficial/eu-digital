@@ -65,7 +65,7 @@ except Exception as e:
     traceback.print_exc()
 
 # -------------------------
-# Config
+# Helpers de telefone (com fallback)
 # -------------------------
 def _token_fingerprint(tok: str):
     if not tok:
@@ -76,7 +76,6 @@ def _token_fingerprint(tok: str):
 def _only_digits(s: str) -> str:
     return "".join(ch for ch in str(s or "") if ch.isdigit())
 
-# Tentamos usar helpers centralizados, se existirem
 _br_candidates = None
 _br_equivalence_key = None
 _digits_only_external = None
@@ -121,7 +120,7 @@ except Exception:
         if len(local_digits) >= 9 and local_digits[0] == "9":
             # Já tem 9 -> gera com e sem 9
             with9 = f"{cc}{ddd}{local_digits}"
-            without9 = f"{cc}{ddd}{local_digits[1:]}"
+            without9 = f"{cc}{ddd}{local_digits[1:]}" if len(local_digits) >= 1 else f"{cc}{ddd}{local_digits}"
             cands.add(with9)
             cands.add(without9)
         elif len(local_digits) == 8:
@@ -143,7 +142,6 @@ def br_candidates(msisdn: str) -> List[str]:
     try:
         return _br_candidates(msisdn)  # type: ignore
     except Exception:
-        # fallback conservador
         d = _only_digits(msisdn)
         if d.startswith("55") and len(d) == 12:
             return [d[:4] + "9" + d[4:], d]
@@ -163,13 +161,12 @@ def br_equivalence_key(msisdn: str) -> str:
         return local8
 
 def _normalize_br_msisdn(wa_id: str) -> str:
-    \"""
+    """
     Mantida por compatibilidade: retorna 55 + DDD(2) + local(9) quando detectar celular sem o '9'.
-    \"""
+    """
     if not wa_id:
         return ""
     digits = _only_digits(wa_id)
-    # normaliza celulares BR (inserindo o 9 quando vier sem)
     if digits.startswith("55") and len(digits) == 12:
         digits = digits[:4] + "9" + digits[4:]
     return digits
@@ -184,10 +181,10 @@ GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v23.0")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID")
 
 def fallback_text(context: str) -> str:
-    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\\nDigite 'precos' para ver a lista."
+    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
 
 # -------------------------
-# Blueprints existentes (mantidos)
+# Blueprints existentes (mantidos + novos)
 # -------------------------
 try:
     from routes.routes import routes
@@ -210,7 +207,7 @@ except Exception as e:
     print(f"[bp][erro] import cupons_bp: {e}")
     traceback.print_exc()
 
-# >>> NOVO: Blueprint de compatibilidade de licenças/cupom (aceita POST /licencas/ativar-cupom)
+# >>> Compat de licenças/cupom (aceita POST /licencas/ativar-cupom)
 try:
     from routes.compat_licencas import bp as licencas_bp
     _register_bp(licencas_bp, "licencas_bp (/licencas/ativar-cupom compat)")
@@ -342,6 +339,9 @@ def env_safe():
         "ELEVEN_VOICE_ID": os.getenv("ELEVEN_VOICE_ID"),
         "DEV_FORCE_ADMIN": os.getenv("DEV_FORCE_ADMIN"),
         "DEV_FAKE_UID": os.getenv("DEV_FAKE_UID"),
+        # >>> Incluímos as chaves do Turnstile no relatório seguro (mascarado)
+        "TURNSTILE_SECRET_KEY": _mask_secret(os.getenv("TURNSTILE_SECRET_KEY", "")),
+        "HUMAN_COOKIE_SIGNING_KEY": _mask_secret(os.getenv("HUMAN_COOKIE_SIGNING_KEY", "")),
     }
     return jsonify({"ok": True, "env": safe})
 
@@ -362,7 +362,6 @@ def ping_firestore():
         return jsonify({"ok": False, "error": "services.db not available"}), 500
     try:
         client = get_db()
-        # tocar no cliente para validar credenciais
         _ = next(client.collections(), None)
         return jsonify({"ok": True})
     except Exception as e:
@@ -383,7 +382,6 @@ def debug_doc():
     parts = [p for p in path.split("/") if p]
     try:
         if len(parts) % 2 == 0:
-            # documento
             doc = get_doc(path)
             if doc is None:
                 return jsonify({"ok": True, "kind": "doc", "path": path, "data": None})
@@ -391,7 +389,6 @@ def debug_doc():
                 return jsonify({"ok": True, "kind": "doc", "path": path, "field": field, "data": doc.get(field)})
             return jsonify({"ok": True, "kind": "doc", "path": path, "data": doc})
         else:
-            # coleção
             items = list_collection(path, limit=limit)
             return jsonify({"ok": True, "kind": "collection", "collection": path, "count": len(items), "items": items})
     except Exception as e:
@@ -537,4 +534,3 @@ def static_proxy(path):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
