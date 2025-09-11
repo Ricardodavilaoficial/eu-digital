@@ -163,9 +163,9 @@ def br_equivalence_key(msisdn: str) -> str:
         return local8
 
 def _normalize_br_msisdn(wa_id: str) -> str:
-    """
+    \"""
     Mantida por compatibilidade: retorna 55 + DDD(2) + local(9) quando detectar celular sem o '9'.
-    """
+    \"""
     if not wa_id:
         return ""
     digits = _only_digits(wa_id)
@@ -216,6 +216,14 @@ try:
     _register_bp(licencas_bp, "licencas_bp (/licencas/ativar-cupom compat)")
 except Exception as e:
     print(f"[bp][warn] licencas_bp não registrado: {e}")
+    traceback.print_exc()
+
+# >>> Novo: CAPTCHA (Turnstile) — valida token e seta cookie curto
+try:
+    from routes.captcha_bp import captcha_bp
+    _register_bp(captcha_bp, "captcha_bp (/captcha/verify)")
+except Exception as e:
+    print(f"[bp][warn] captcha_bp não registrado: {e}")
     traceback.print_exc()
 
 try:
