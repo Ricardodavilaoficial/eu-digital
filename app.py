@@ -181,7 +181,7 @@ GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v23.0")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID")
 
 def fallback_text(context: str) -> str:
-    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
+    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\\nDigite 'precos' para ver a lista."
 
 # -------------------------
 # Blueprints existentes (mantidos + novos)
@@ -425,7 +425,7 @@ def _load_wa_bot():
         return _WA_BOT_MOD
     except Exception as e:
         _WA_BOT_MOD = None
-        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\n" + (traceback.format_exc(limit=3) or "")
+        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\\n" + (traceback.format_exc(limit=3) or "")
         print(f"[init][erro] não consegui importar services.wa_bot: {e}", flush=True)
         return None
 
@@ -546,6 +546,72 @@ def _uid_from_authorization() -> str | None:
     except Exception:
         return None
 
+# ---------- Validação Pública (sem login) ----------
+@app.route("/api/cupons/validar-publico", methods=["OPTIONS"])
+def _preflight_api_cupons_validar_publico():
+    return ("", 204)
+
+def _parse_iso_maybe_z(s: str):
+    if not s:
+        return None
+    try:
+        # Python 3.11 aceita offset, mas nem sempre 'Z'; normaliza Z->+00:00
+        if isinstance(s, str) and s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+@app.route("/api/cupons/validar-publico", methods=["POST"])
+def api_cupons_validar_publico():
+    """
+    Verifica se o cupom *pode* ser usado (não consome). Sem exigir autenticação.
+    Entrada: { "codigo": "ABC-123" }
+    Saída: 200 {"ok": true, "cupom": {...}}  |  400 {"ok": false, "reason": "..."}
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        codigo = (data.get("codigo") or "").strip()
+        if not codigo:
+            return jsonify({"ok": False, "reason": "codigo_obrigatorio"}), 400
+
+        cupom = find_cupom_by_codigo(codigo)
+        if not cupom:
+            return jsonify({"ok": False, "reason": "nao_encontrado"}), 400
+
+        # checks básicos
+        status = (cupom.get("status") or "").lower()
+        if status in {"used", "revogado", "invalido"}:
+            return jsonify({"ok": False, "reason": status}), 400
+
+        if cupom.get("ativo") is False:
+            return jsonify({"ok": False, "reason": "inativo"}), 400
+
+        usos = int(cupom.get("usos") or 0)
+        usos_max = int(cupom.get("usosMax") or 1)
+        if usos_max > 0 and usos >= usos_max:
+            return jsonify({"ok": False, "reason": "sem_usos_restantes"}), 400
+
+        exp = cupom.get("expiraEm")
+        if exp:
+            dt = _parse_iso_maybe_z(exp if isinstance(exp, str) else str(exp))
+            if dt and dt < datetime.now(timezone.utc):
+                return jsonify({"ok": False, "reason": "expirado"}), 400
+
+        # sucesso
+        public = {
+            "codigo": cupom.get("codigo"),
+            "tipo": cupom.get("tipo"),
+            "escopo": cupom.get("escopo"),
+            "expiraEm": cupom.get("expiraEm"),
+            "usos": usos,
+            "usosMax": usos_max,
+        }
+        return jsonify({"ok": True, "cupom": public}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "reason": "erro_interno", "detail": str(e)}), 500
+
+# ---------- Ativar (com token OU uid) ----------
 @app.route("/api/cupons/ativar", methods=["OPTIONS"])
 def _preflight_api_cupons_ativar():
     return ("", 204)
@@ -587,7 +653,7 @@ def api_cupons_ativar():
     except Exception as e:
         return jsonify({"erro": f"ativar_cupom[app]: {str(e)}"}), 500
 
-# Legado absoluto: aceita codigo+uid no body (sem exigir token)
+# ---------- Legado absoluto (codigo+uid no body; sem token) ----------
 @app.route("/api/cupons/ativar-cupom", methods=["OPTIONS"])
 def _preflight_api_cupons_ativar_legado():
     return ("", 204)
