@@ -1,4 +1,4 @@
-# routes/cupons.py — geração (somente admin) e ativação de cupom (legado + alias moderno)
+# routes/cupons.py — geração (somente admin) e ativação de cupom (legado + alias moderno + aliases absolutos)
 from __future__ import annotations
 
 import os
@@ -37,6 +37,17 @@ def _preflight_ativar_cupom():
 # Alias moderno usado pela UI atual (/api/cupons/ativar)
 @cupons_bp.route("/ativar", methods=["OPTIONS"])
 def _preflight_ativar_alias():
+    return ("", 204)
+
+
+# Aliases ABSOLUTOS para quando o blueprint não tem url_prefix
+@cupons_bp.route("/api/cupons/ativar", methods=["OPTIONS"])
+def _preflight_ativar_alias_abs():
+    return ("", 204)
+
+
+@cupons_bp.route("/api/cupons/ativar-cupom", methods=["OPTIONS"])
+def _preflight_ativar_cupom_abs():
     return ("", 204)
 
 
@@ -103,7 +114,7 @@ def ativar_cupom_legacy():
 
 
 # --------------------------------------------------------------------
-# ATIVAR CUPOM — ALIAS MODERNO (/api/cupons/ativar)
+# ATIVAR CUPOM — ALIAS MODERNO (/ativar) e ALIAS ABSOLUTO (/api/cupons/ativar)
 # Usa o UID do token (g.user.uid). Body: { "codigo": "ABC-123" }
 # --------------------------------------------------------------------
 @cupons_bp.route("/ativar", methods=["POST"])
@@ -118,6 +129,37 @@ def ativar_cupom_alias_moderno():
     uid = getattr(getattr(g, "user", None), "uid", "") or ""
     if not uid:
         return jsonify({"erro": "Não autenticado"}), 401
+
+    return _ativar_cupom_impl(codigo=codigo, uid=uid)
+
+
+@cupons_bp.route("/api/cupons/ativar", methods=["POST"])
+@auth_required
+def ativar_cupom_alias_moderno_abs():
+    data = request.get_json(silent=True) or {}
+    codigo = (data.get("codigo") or "").strip()
+
+    if not codigo:
+        return jsonify({"erro": "Código do cupom é obrigatório"}), 400
+
+    uid = getattr(getattr(g, "user", None), "uid", "") or ""
+    if not uid:
+        return jsonify({"erro": "Não autenticado"}), 401
+
+    return _ativar_cupom_impl(codigo=codigo, uid=uid)
+
+
+# --------------------------------------------------------------------
+# ALIAS ABSOLUTO LEGADO (/api/cupons/ativar-cupom) — exige codigo + uid
+# --------------------------------------------------------------------
+@cupons_bp.route("/api/cupons/ativar-cupom", methods=["POST"])
+def ativar_cupom_legacy_abs():
+    data = request.get_json(silent=True) or {}
+    codigo = (data.get("codigo") or "").strip()
+    uid = (data.get("uid") or "").strip()
+
+    if not codigo or not uid:
+        return jsonify({"erro": "Código do cupom e UID são obrigatórios"}), 400
 
     return _ativar_cupom_impl(codigo=codigo, uid=uid)
 
