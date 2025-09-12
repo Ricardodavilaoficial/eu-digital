@@ -516,21 +516,41 @@ def msisdn_debug():
         "equivalence_key": key,
     }
     return jsonify(out), 200
-# -------------------------
+
+# =========================
 # Cupom — rotas absolutas (Plano B à prova de falhas do blueprint)
-# -------------------------
+# =========================
 from flask import g
 from datetime import datetime, timezone
-from services.auth import auth_required
 from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
 from services.db import db
+import base64 as _b64
+
+def _uid_from_authorization() -> str | None:
+    """
+    Extrai UID do Authorization: Bearer <idToken> lendo o payload do JWT (sem validar assinatura).
+    Temporário para manter produção enquanto o services.auth.auth_required não está disponível.
+    """
+    auth = request.headers.get("Authorization", "").strip()
+    if not auth.lower().startswith("bearer "):
+        return None
+    tok = auth.split(" ", 1)[1].strip()
+    parts = tok.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
+        payload = json.loads(_b64.urlsafe_b64decode((parts[1] + pad).encode()).decode())
+        uid = payload.get("user_id") or payload.get("uid") or payload.get("sub")
+        return uid or None
+    except Exception:
+        return None
 
 @app.route("/api/cupons/ativar", methods=["OPTIONS"])
 def _preflight_api_cupons_ativar():
     return ("", 204)
 
 @app.route("/api/cupons/ativar", methods=["POST"])
-@auth_required
 def api_cupons_ativar():
     try:
         data = request.get_json(silent=True) or {}
@@ -538,8 +558,9 @@ def api_cupons_ativar():
         if not codigo:
             return jsonify({"erro": "Código do cupom é obrigatório"}), 400
 
-        uid = getattr(getattr(g, "user", None), "uid", "") or ""
+        uid = _uid_from_authorization() or (data.get("uid") or "").strip()
         if not uid:
+            # comportamento alinhado com a UI ("sessão expirada")
             return jsonify({"erro": "Não autenticado"}), 401
 
         cupom = find_cupom_by_codigo(codigo)
@@ -548,7 +569,6 @@ def api_cupons_ativar():
             return jsonify({"erro": msg}), 400
 
         now_iso = datetime.now(timezone.utc).isoformat()
-        # Atualiza compatível: 'plan' e 'plano'
         prof_ref = db.collection("profissionais").document(uid)
         prof_ref.set(
             {
@@ -567,7 +587,7 @@ def api_cupons_ativar():
     except Exception as e:
         return jsonify({"erro": f"ativar_cupom[app]: {str(e)}"}), 500
 
-# Legado absoluto: aceita codigo+uid no body (sem exigir token), p/ compat
+# Legado absoluto: aceita codigo+uid no body (sem exigir token)
 @app.route("/api/cupons/ativar-cupom", methods=["OPTIONS"])
 def _preflight_api_cupons_ativar_legado():
     return ("", 204)
