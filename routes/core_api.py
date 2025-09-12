@@ -26,6 +26,12 @@ def licenca_status():
     except Exception as e:
         return _err("licenca_status", e)
 
+# Preflight para POST /licencas/ativar-cupom (CORS)
+@core_api.route("/licencas/ativar-cupom", methods=["OPTIONS"])
+def licenca_ativar_cupom_preflight():
+    # 204 sem corpo — CORS headers globais são aplicados pelo middleware/config do app
+    return ("", 204)
+
 @core_api.post("/licencas/ativar-cupom")
 @auth_required
 def ativar_cupom():
