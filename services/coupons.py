@@ -1,5 +1,4 @@
-
-# services/coupons.py — v1.0-hardening (transacional + idempotência + fair-use + auditoria)
+# services/coupons.py — v1.0-hardening (fix) — transacional + idempotência + fair-use + auditoria
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any
 from .db import db
@@ -38,6 +37,39 @@ def _ua_short(ua: Optional[str]) -> str:
     # Reduz para algo curto
     ua = ua.replace("Mozilla/", "").replace("AppleWebKit/", "").replace("Gecko/", "")
     return ua[:80]
+
+# ==============
+# Helpers internos
+# ==============
+def _mk_plano_from_cupom(cupom: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "status": "ativo",
+        "origem": "cupom",
+        "expiraEm": cupom.get("expiraEm"),
+        "quotaMensal": 10000
+    }
+
+def _audit(ok: bool, uid: Optional[str], codigo: Optional[str], reason: str, ctx: Optional[Dict[str, Any]]):
+    try:
+        client = db()
+        doc = {
+            "ts": _now_iso_utc(),
+            "ok": bool(ok),
+            "uid": uid or None,
+            "codigo": (codigo or "").upper() or None,
+            "reason": reason,
+        }
+        if ctx:
+            ip = ctx.get("ip")
+            ua = ctx.get("ua")
+            if ip:
+                doc["ipMasked"] = _mask_ip(ip)
+            if ua:
+                doc["uaShort"] = _ua_short(ua)
+        client.collection(COL_ATTEMPTS).document().set(doc)
+    except Exception:
+        # Auditoria não deve quebrar o fluxo
+        pass
 
 # =====================
 # CRUD util (existente)
@@ -109,8 +141,6 @@ def validar_consumir_cupom(cupom: dict, uid: str, ctx: Optional[Dict[str, Any]] 
     redeem_ref = client.collection(COL_REDEEMS).document(redeem_id)
     prof_ref = client.collection(COL_PROFISSIONAIS).document(uid)
 
-    # ---------- Função que roda DENTRO da transação ----------
-    @transactional_call(transaction)
     def _tx():
         snap = transaction.get(cupom_ref)
         if not snap.exists:
@@ -177,14 +207,19 @@ def validar_consumir_cupom(cupom: dict, uid: str, ctx: Optional[Dict[str, Any]] 
         plano = _mk_plano_from_cupom(doc)
         return True, "ok", plano, doc
 
-    ok, reason, plano, doc_used = _tx
+    try:
+        ok, reason, plano, doc_used = transaction.call(_tx)
+    except Exception as e:
+        # Auditoria de exceção
+        _audit(False, uid, codigo, "exception", ctx)
+        # Mensagem genérica para o chamador
+        return False, "Falha ao validar cupom (transação).", None
 
     # Auditoria fora da transação (não bloqueante)
     _audit(ok, uid, codigo, reason, ctx)
 
     # Mensagens de UX consistentes com legado/atual
     if ok:
-        # idempotente_ok mantemos como sucesso 'ok' no texto
         return True, "ok", plano
 
     # mapear razões para mensagem humana
@@ -196,51 +231,6 @@ def validar_consumir_cupom(cupom: dict, uid: str, ctx: Optional[Dict[str, Any]] 
         "escopo_invalido": "Este cupom não é destinado a este usuário.",
         "sem_usos_restantes": "Limite de usos atingido.",
         "trial_ja_usado": "Você já utilizou um cupom de teste (trial) neste usuário.",
+        "exception": "Falha ao validar cupom (transação).",
     }
     return False, msg_map.get(reason, "Não foi possível aplicar este cupom."), None
-
-# -----------------------
-# Helpers internos (priv)
-# -----------------------
-def _mk_plano_from_cupom(cupom: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "status": "ativo",
-        "origem": "cupom",
-        "expiraEm": cupom.get("expiraEm"),
-        "quotaMensal": 10000
-    }
-
-def _audit(ok: bool, uid: Optional[str], codigo: Optional[str], reason: str, ctx: Optional[Dict[str, Any]]):
-    try:
-        client = db()
-        doc = {
-            "ts": _now_iso_utc(),
-            "ok": bool(ok),
-            "uid": uid or None,
-            "codigo": (codigo or "").upper() or None,
-            "reason": reason,
-        }
-        if ctx:
-            ip = ctx.get("ip")
-            ua = ctx.get("ua")
-            if ip:
-                doc["ipMasked"] = _mask_ip(ip)
-            if ua:
-                doc["uaShort"] = _ua_short(ua)
-        client.collection(COL_ATTEMPTS).document().set(doc)
-    except Exception:
-        # Auditoria não deve quebrar o fluxo
-        pass
-
-# ==============
-# Decorator util
-# ==============
-def transactional_call(transaction):
-    """Decorator para executar função e retornar seu resultado imediato.
-    Usado só para isolar a lógica da transação sem poluir escopo externo.
-    """
-    def _runner(fn):
-        def _inner():
-            return fn()
-        return transaction.call(_inner)
-    return _runner
