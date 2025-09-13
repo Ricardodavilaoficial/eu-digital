@@ -1,4 +1,4 @@
-# app.py — entrypoint para runtime Python do Render (produção)
+# app.py — entrypoint para runtime Python do Render (produção) 
 # Mantém: health, debug, firestore-utils, /api/send-text, estáticos
 # Webhook agora é servido via routes/webhook (blueprint)
 
@@ -10,7 +10,8 @@ import re
 import hashlib
 import importlib, types
 from typing import List, Tuple
-from flask import Flask, jsonify, request, send_from_directory
+from urllib.parse import urlparse
+from flask import Flask, jsonify, request, send_from_directory, redirect
 
 print("[boot] app.py raiz carregado ✅", flush=True)
 logging.basicConfig(level=logging.INFO)
@@ -179,9 +180,10 @@ UID_DEFAULT = os.getenv("UID_DEFAULT", "ricardo-prod-uid")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
 GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v23.0")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID")
+FRONTEND_BASE = os.getenv("FRONTEND_BASE", "")  # ex.: https://mei-robo-prod.web.app
 
 def fallback_text(context: str) -> str:
-    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\\nDigite 'precos' para ver a lista."
+    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
 
 # -------------------------
 # Blueprints existentes (mantidos + novos)
@@ -329,6 +331,7 @@ def env_safe():
         "STT_SECONDS_AVG": os.getenv("STT_SECONDS_AVG"),
         "UID_DEFAULT": os.getenv("UID_DEFAULT"),
         "APP_TAG": os.getenv("APP_TAG"),
+        "FRONTEND_BASE": os.getenv("FRONTEND_BASE"),
         "WHATSAPP_TOKEN": _mask_secret(os.getenv("WHATSAPP_TOKEN")),
         "OPENAI_API_KEY": _mask_secret(os.getenv("OPENAI_API_KEY")),
         "FIREBASE_PROJECT_ID": os.getenv("FIREBASE_PROJECT_ID"),
@@ -425,7 +428,7 @@ def _load_wa_bot():
         return _WA_BOT_MOD
     except Exception as e:
         _WA_BOT_MOD = None
-        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\\n" + (traceback.format_exc(limit=3) or "")
+        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\n" + (traceback.format_exc(limit=3) or "")
         print(f"[init][erro] não consegui importar services.wa_bot: {e}", flush=True)
         return None
 
@@ -558,7 +561,10 @@ def _parse_iso_maybe_z(s: str):
         # Python 3.11 aceita offset, mas nem sempre 'Z'; normaliza Z->+00:00
         if isinstance(s, str) and s.endswith("Z"):
             s = s[:-1] + "+00:00"
-        return datetime.fromisoformat(s)
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except Exception:
         return None
 
@@ -595,7 +601,8 @@ def api_cupons_validar_publico():
         exp = cupom.get("expiraEm")
         if exp:
             dt = _parse_iso_maybe_z(exp if isinstance(exp, str) else str(exp))
-            if dt and dt < datetime.now(timezone.utc):
+            now_utc = datetime.now(timezone.utc)
+            if dt and dt < now_utc:
                 return jsonify({"ok": False, "reason": "expirado"}), 400
 
         # sucesso
@@ -690,6 +697,25 @@ def api_cupons_ativar_legado():
         return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
     except Exception as e:
         return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"}), 500
+
+# -------------------------
+# Rotas de conveniência — /ativar → página de ativação
+# -------------------------
+@app.get("/ativar")
+def goto_ativar():
+    """
+    Redireciona para a tela de ativação do frontend (se FRONTEND_BASE estiver setado),
+    ou tenta servir /pages/ativar.html localmente. Fallback para index.html.
+    """
+    try:
+        if FRONTEND_BASE:
+            dest = FRONTEND_BASE.rstrip("/") + "/pages/ativar.html"
+            if urlparse(dest).scheme:
+                return redirect(dest, code=302)
+        # se não houver FRONTEND_BASE, tenta servir local
+        return app.send_static_file("pages/ativar.html")
+    except Exception:
+        return app.send_static_file("index.html")
 
 # -------------------------
 # Static
