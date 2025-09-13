@@ -1,3 +1,4 @@
+# (Arquivo enviado conforme recebido — sem alterações)
 # services/db.py
 # Cliente Firestore via Firebase Admin — inicialização robusta e helpers
 # Compatível com:
