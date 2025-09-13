@@ -188,7 +188,7 @@ FRONTEND_BASE = os.getenv("FRONTEND_BASE", "")  # ex.: https://mei-robo-prod.web
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 def fallback_text(context: str) -> str:
-    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\\nDigite 'precos' para ver a lista."
+    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
 
 # -------------------------
 # Blueprints existentes (mantidos + novos)
@@ -433,7 +433,7 @@ def _load_wa_bot():
         return _WA_BOT_MOD
     except Exception as e:
         _WA_BOT_MOD = None
-        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\\n" + (traceback.format_exc(limit=3) or "")
+        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\n" + (traceback.format_exc(limit=3) or "")
         print(f"[init][erro] não consegui importar services.wa_bot: {e}", flush=True)
         return None
 
@@ -707,7 +707,16 @@ def api_cupons_ativar():
             return jsonify({"erro": "Não autenticado"}), 401
 
         cupom = find_cupom_by_codigo(codigo)
-        ok, msg, plano = validar_consumir_cupom(cupom, uid)
+
+        # >>> envia ip/ua para auditoria (blindagem)
+        ctx = {
+            "ip": request.headers.get("CF-Connecting-IP")
+                  or (request.headers.get("X-Forwarded-For", "").split(",")[0].strip() if request.headers.get("X-Forwarded-For") else "")
+                  or request.remote_addr
+                  or "",
+            "ua": request.headers.get("User-Agent") or "",
+        }
+        ok, msg, plano = validar_consumir_cupom(cupom, uid, ctx=ctx)
         if not ok:
             return jsonify({"erro": msg}), 400
 
@@ -749,7 +758,16 @@ def api_cupons_ativar_legado():
             return jsonify({"erro": "Código do cupom e UID são obrigatórios"}), 400
 
         cupom = find_cupom_by_codigo(codigo)
-        ok, msg, plano = validar_consumir_cupom(cupom, uid)
+
+        # >>> envia ip/ua para auditoria (blindagem)
+        ctx = {
+            "ip": request.headers.get("CF-Connecting-IP")
+                  or (request.headers.get("X-Forwarded-For", "").split(",")[0].strip() if request.headers.get("X-Forwarded-For") else "")
+                  or request.remote_addr
+                  or "",
+            "ua": request.headers.get("User-Agent") or "",
+        }
+        ok, msg, plano = validar_consumir_cupom(cupom, uid, ctx=ctx)
         if not ok:
             return jsonify({"erro": msg}), 400
 
@@ -808,4 +826,3 @@ def static_proxy(path):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
