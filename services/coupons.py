@@ -1,7 +1,10 @@
-# services/coupons.py — v1.0-hardening (compat doc_ref.get + explicit commit)
+# services/coupons.py — v1.0-hardening (estável) — transacional + idempotência + fair-use + auditoria
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any
+
 from .db import db
+# Usamos o decorator oficial do Firestore para transação (sem commit manual)
+from google.cloud import firestore as gcfs  # faz parte do firebase_admin
 
 COL_CUPONS = "cuponsAtivacao"
 COL_REDEEMS = "redeems"
@@ -26,15 +29,15 @@ def _parse_exp(exp: Optional[str]) -> Optional[datetime]:
 def _mask_ip(ip: Optional[str]) -> str:
     if not ip:
         return ""
-    parts = ip.split(".")
+    parts = str(ip).split(".")
     if len(parts) == 4:
         return f"{parts[0]}.{parts[1]}.***.***"
-    return ip[:3] + "***"
+    return str(ip)[:3] + "***"
 
 def _ua_short(ua: Optional[str]) -> str:
     if not ua:
         return ""
-    ua = ua.replace("Mozilla/", "").replace("AppleWebKit/", "").replace("Gecko/", "")
+    ua = str(ua).replace("Mozilla/", "").replace("AppleWebKit/", "").replace("Gecko/", "")
     return ua[:80]
 
 # ==============
@@ -67,7 +70,8 @@ def _audit(ok: bool, uid: Optional[str], codigo: Optional[str], reason: str, ctx
                 doc["uaShort"] = _ua_short(ua)
         client.collection(COL_ATTEMPTS).document().set(doc)
     except Exception:
-        pass  # Auditoria nunca deve quebrar o fluxo
+        # Auditoria nunca deve quebrar o fluxo
+        pass
 
 # =====================
 # CRUD util (existente)
@@ -111,14 +115,13 @@ def find_cupom_by_codigo(codigo: str):
 # ====================================================
 def validar_consumir_cupom(cupom: dict, uid: str, ctx: Optional[Dict[str, Any]] = None) -> Tuple[bool, str, Optional[dict]]:
     """
-    Transação compatível com SDKs mais antigos:
-      - Leituras: doc_ref.get(transaction=tx)
-      - Escritas: tx.set / tx.update
-      - Commit explícito somente quando há escrita.
-      - Idempotência: redeems/{codigo}-{uid}
-      - Fair-use trial: profissionais/{uid}.trialRedeemed=true
+    Transação com decorator oficial (@transactional) — sem commit manual.
+      - Revalida tudo dentro da transação;
+      - Idempotência (redeems/{codigo}-{uid});
+      - Fair-use trial (profissionais/{uid}.trialRedeemed=true).
     """
     client = db()
+
     codigo = (cupom or {}).get("codigo", "").upper()
     cupom_id = (cupom or {}).get("_id")
 
@@ -138,57 +141,49 @@ def validar_consumir_cupom(cupom: dict, uid: str, ctx: Optional[Dict[str, Any]] 
     redeem_ref = client.collection(COL_REDEEMS).document(redeem_id)
     prof_ref   = client.collection(COL_PROFISSIONAIS).document(uid)
 
-    tx = client.transaction()
-    try:
-        # ===== Leituras dentro da transação (compat) =====
+    @gcfs.transactional
+    def _apply(tx: gcfs.Transaction):
+        # Leituras
         cupom_snap = cupom_ref.get(transaction=tx)
         if not cupom_snap.exists:
-            _audit(False, uid, codigo, "nao_encontrado", ctx)
-            return False, "Cupom inválido ou não encontrado.", None
+            return False, "nao_encontrado", None, None
 
         doc = cupom_snap.to_dict() or {}
         doc["_id"] = cupom_id
 
-        # Validações base
+        # Validações
         if not doc.get("ativo"):
-            _audit(False, uid, codigo, "inativo", ctx)
-            return False, "Cupom inválido ou inativo.", None
+            return False, "inativo", None, doc
 
         exp_dt = _parse_exp(doc.get("expiraEm"))
         if doc.get("expiraEm") and not exp_dt:
-            _audit(False, uid, codigo, "expiracao_invalida", ctx)
-            return False, "Formato de expiração inválido.", None
+            return False, "expiracao_invalida", None, doc
         if exp_dt and datetime.now(timezone.utc) > exp_dt:
-            _audit(False, uid, codigo, "expirado", ctx)
-            return False, "Cupom expirado.", None
+            return False, "expirado", None, doc
 
         if doc.get("escopo") == "uid" and doc.get("uidDestino") != uid:
-            _audit(False, uid, codigo, "escopo_invalido", ctx)
-            return False, "Este cupom não é destinado a este usuário.", None
+            return False, "escopo_invalido", None, doc
 
         # Idempotência
         redeem_snap = redeem_ref.get(transaction=tx)
         if redeem_snap.exists:
             plano = _mk_plano_from_cupom(doc)
-            _audit(True, uid, codigo, "idempotente_ok", ctx)
-            return True, "ok", plano
+            return True, "idempotente_ok", plano, doc
 
-        # Fair-use (trial)
-        if (doc.get("tipo") == "trial"):
+        # Fair-use (trial por UID)
+        if doc.get("tipo") == "trial":
             prof_snap = prof_ref.get(transaction=tx)
             prof_doc = prof_snap.to_dict() if prof_snap.exists else {}
             if prof_doc and prof_doc.get("trialRedeemed") is True:
-                _audit(False, uid, codigo, "trial_ja_usado", ctx)
-                return False, "Você já utilizou um cupom de teste (trial) neste usuário.", None
+                return False, "trial_ja_usado", None, doc
 
         # Limite de usos
         usos = int(doc.get("usos", 0))
-        usosMax = int(doc.get("usosMax", 1))
-        if usos >= usosMax:
-            _audit(False, uid, codigo, "sem_usos_restantes", ctx)
-            return False, "Limite de usos atingido.", None
+        usos_max = int(doc.get("usosMax", 1))
+        if usos >= usos_max:
+            return False, "sem_usos_restantes", None, doc
 
-        # ===== Escritas atômicas (mesmo tx) =====
+        # Escritas atômicas
         now_iso = _now_iso_utc()
         tx.set(redeem_ref, {
             "uid": uid,
@@ -202,16 +197,33 @@ def validar_consumir_cupom(cupom: dict, uid: str, ctx: Optional[Dict[str, Any]] 
 
         tx.update(cupom_ref, {"usos": usos + 1})
 
-        if (doc.get("tipo") == "trial"):
+        if doc.get("tipo") == "trial":
+            # merge=True é suportado em transação
             tx.set(prof_ref, {"trialRedeemed": True, "trialRedeemedAt": now_iso}, merge=True)
 
-        # Commit explícito (apenas quando houve escrita)
-        tx.commit()
-
         plano = _mk_plano_from_cupom(doc)
-        _audit(True, uid, codigo, "ok", ctx)
-        return True, "ok", plano
+        return True, "ok", plano, doc
 
+    try:
+        ok, reason, plano, _doc_used = _apply(client.transaction())
     except Exception as e:
         _audit(False, uid, codigo, f"exception:{type(e).__name__}", ctx)
         return False, "Falha ao validar cupom (transação).", None
+
+    # Auditoria fora da transação
+    _audit(ok, uid, codigo, reason, ctx)
+
+    if ok:
+        return True, "ok", plano
+
+    msg_map = {
+        "nao_encontrado": "Cupom inválido ou não encontrado.",
+        "inativo": "Cupom inválido ou inativo.",
+        "expiracao_invalida": "Formato de expiração inválido.",
+        "expirado": "Cupom expirado.",
+        "escopo_invalido": "Este cupom não é destinado a este usuário.",
+        "sem_usos_restantes": "Limite de usos atingido.",
+        "trial_ja_usado": "Você já utilizou um cupom de teste (trial) neste usuário.",
+        "exception": "Falha ao validar cupom (transação).",
+    }
+    return False, msg_map.get(reason, "Não foi possível aplicar este cupom."), None
