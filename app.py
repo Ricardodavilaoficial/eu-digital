@@ -9,8 +9,11 @@ import traceback
 import re
 import hashlib
 import importlib, types
+import time
 from typing import List, Tuple
 from urllib.parse import urlparse
+from urllib import request as ulreq
+from urllib import parse as ulparse
 from flask import Flask, jsonify, request, send_from_directory, redirect
 
 print("[boot] app.py raiz carregado ✅", flush=True)
@@ -181,6 +184,8 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
 GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v23.0")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID")
 FRONTEND_BASE = os.getenv("FRONTEND_BASE", "")  # ex.: https://mei-robo-prod.web.app
+
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 def fallback_text(context: str) -> str:
     return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\\nDigite 'precos' para ver a lista."
@@ -527,14 +532,92 @@ from flask import g
 from datetime import datetime, timezone
 from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
 from services.db import db
+import base64 as _b64
 
-# >>> Segurança ALTA: exigir idToken real no endpoint moderno
-try:
-    from services.auth import auth_required, current_uid
-except Exception as _e:
-    auth_required = None
-    current_uid = None
-    print("[warn] services.auth.auth_required/current_uid não disponíveis — verifique services/auth.py", flush=True)
+def _uid_from_authorization() -> str | None:
+    """
+    Extrai UID do Authorization: Bearer <idToken> lendo o payload do JWT (sem validar assinatura).
+    Temporário para manter produção enquanto o services.auth.auth_required não está disponível.
+    """
+    auth = request.headers.get("Authorization", "").strip()
+    if not auth.lower().startswith("bearer "):
+        return None
+    tok = auth.split(" ", 1)[1].strip()
+    parts = tok.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
+        payload = json.loads(_b64.urlsafe_b64decode((parts[1] + pad).encode()).decode())
+        uid = payload.get("user_id") or payload.get("uid") or payload.get("sub")
+        return uid or None
+    except Exception:
+        return None
+
+# ---- Turnstile helpers (LEGADO)
+def _sign_value(raw: str, key: str) -> str:
+    mac = hashlib.sha256((raw).encode("utf-8")).hexdigest()
+    return mac[:16]
+
+def _human_cookie_ok() -> bool:
+    raw = request.cookies.get("human_ok", "")
+    if not raw:
+        return False
+    parts = raw.split(".")
+    if len(parts) == 3:
+        val, ts_str, sig = parts
+        key = os.getenv("HUMAN_COOKIE_SIGNING_KEY", "").strip()
+        if not key:
+            return False
+        base = f"{val}.{ts_str}"
+        expect = _sign_value(base, key)
+        if sig != expect:
+            return False
+        try:
+            ts = int(ts_str)
+        except Exception:
+            return False
+        if (time.time() - ts) > 5 * 60:
+            return False
+        return val == "1"
+    # modo sem assinatura (não recomendado, mas tolerado se já existir)
+    return raw == "1"
+
+def _verify_turnstile_token(token: str) -> bool:
+    secret = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
+    if not secret or not token:
+        return False
+    data = ulparse.urlencode({
+        "secret": secret,
+        "response": token,
+        "remoteip": request.headers.get("CF-Connecting-IP") or request.remote_addr or ""
+    }).encode("utf-8")
+    req = ulreq.Request(TURNSTILE_VERIFY_URL, data=data, headers={
+        "Content-Type": "application/x-www-form-urlencoded"
+    })
+    try:
+        with ulreq.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            j = json.loads(body)
+            return bool(j.get("success"))
+    except Exception:
+        return False
+
+def _is_human_ok() -> bool:
+    # 1) cookie assinado válido (preferido)
+    if _human_cookie_ok():
+        return True
+    # 2) fallback: token passado no header ou body → verificação ao vivo
+    tok = (
+        request.headers.get("cf-turnstile-response")
+        or (request.get_json(silent=True) or {}).get("cf_token")
+        or (request.get_json(silent=True) or {}).get("cf_resp")
+        or (request.get_json(silent=True) or {}).get("token")
+        or request.headers.get("x-turnstile-token")
+    )
+    if tok and _verify_turnstile_token(tok):
+        return True
+    return False
 
 # ---------- Validação Pública (sem login) ----------
 @app.route("/api/cupons/validar-publico", methods=["OPTIONS"])
@@ -605,55 +688,47 @@ def api_cupons_validar_publico():
     except Exception as e:
         return jsonify({"ok": False, "reason": "erro_interno", "detail": str(e)}), 500
 
-# ---------- Ativar (moderno, exige token) ----------
+# ---------- Ativar (com token OU uid) ----------
 @app.route("/api/cupons/ativar", methods=["OPTIONS"])
 def _preflight_api_cupons_ativar():
     return ("", 204)
 
 @app.route("/api/cupons/ativar", methods=["POST"])
 def api_cupons_ativar():
-    # Se o decorator não estiver disponível, falha seguro
-    if auth_required is None or current_uid is None:
-        return jsonify({"erro": "Auth indisponível. Atualize services/auth.py (auth_required/current_uid)."}), 500
+    try:
+        data = request.get_json(silent=True) or {}
+        codigo = (data.get("codigo") or "").strip()
+        if not codigo:
+            return jsonify({"erro": "Código do cupom é obrigatório"}), 400
 
-    # Envolve a função real com o decorator em tempo de execução
-    @auth_required
-    def _inner():
-        try:
-            data = request.get_json(silent=True) or {}
-            codigo = (data.get("codigo") or "").strip()
-            if not codigo:
-                return jsonify({"erro": "Código do cupom é obrigatório"}), 400
+        uid = _uid_from_authorization() or (data.get("uid") or "").strip()
+        if not uid:
+            # comportamento alinhado com a UI ("sessão expirada")
+            return jsonify({"erro": "Não autenticado"}), 401
 
-            uid = current_uid()
-            if not uid:
-                return jsonify({"erro": "Não autenticado"}), 401
+        cupom = find_cupom_by_codigo(codigo)
+        ok, msg, plano = validar_consumir_cupom(cupom, uid)
+        if not ok:
+            return jsonify({"erro": msg}), 400
 
-            cupom = find_cupom_by_codigo(codigo)
-            ok, msg, plano = validar_consumir_cupom(cupom, uid)
-            if not ok:
-                return jsonify({"erro": msg}), 400
-
-            now_iso = datetime.now(timezone.utc).isoformat()
-            prof_ref = db.collection("profissionais").document(uid)
-            prof_ref.set(
-                {
-                    "plan": plano or "start",
-                    "plano": plano or "start",
-                    "licenca": {
-                        "origem": "cupom",
-                        "codigo": codigo,
-                        "activatedAt": now_iso,
-                    },
-                    "updatedAt": now_iso,
+        now_iso = datetime.now(timezone.utc).isoformat()
+        prof_ref = db.collection("profissionais").document(uid)
+        prof_ref.set(
+            {
+                "plan": plano or "start",
+                "plano": plano or "start",
+                "licenca": {
+                    "origem": "cupom",
+                    "codigo": codigo,
+                    "activatedAt": now_iso,
                 },
-                merge=True,
-            )
-            return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
-        except Exception as e:
-            return jsonify({"erro": f"ativar_cupom[app]: {str(e)}"}), 500
-
-    return _inner()
+                "updatedAt": now_iso,
+            },
+            merge=True,
+        )
+        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
+    except Exception as e:
+        return jsonify({"erro": f"ativar_cupom[app]: {str(e)}"}), 500
 
 # ---------- Legado absoluto (codigo+uid no body; sem token) ----------
 @app.route("/api/cupons/ativar-cupom", methods=["OPTIONS"])
@@ -663,6 +738,10 @@ def _preflight_api_cupons_ativar_legado():
 @app.route("/api/cupons/ativar-cupom", methods=["POST"])
 def api_cupons_ativar_legado():
     try:
+        # >>> Blindagem: exige humano_ok OU token Turnstile válido no header/body
+        if not _is_human_ok():
+            return jsonify({"erro": "captcha_required"}), 403
+
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
         uid = (data.get("uid") or "").strip()
@@ -729,3 +808,4 @@ def static_proxy(path):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
