@@ -1,4 +1,4 @@
-# services/coupons.py — v1.0-hardening (fix compat) — transacional + idempotência + fair-use + auditoria
+# services/coupons.py — v1.0-hardening (compat) — transacional + idempotência + fair-use + auditoria
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any
 from .db import db
@@ -113,14 +113,13 @@ def find_cupom_by_codigo(codigo: str):
 # ====================================================
 def validar_consumir_cupom(cupom: dict, uid: str, ctx: Optional[Dict[str, Any]] = None) -> Tuple[bool, str, Optional[dict]]:
     """
-    Transação Firestore compatível (sem decorators / sem .call):
+    Transação Firestore compatível (context manager):
       - revalida (ativo/expiração/escopo/limite) dentro da transação;
       - idempotência: redeems/{codigo}-{uid} evita duplo clique;
       - fair-use trial: profissionais/{uid}.trialRedeemed=true;
       - incrementa usos apenas uma vez.
     """
     client = db()  # Firestore client (lazy)
-    transaction = client.transaction()
 
     codigo = (cupom or {}).get("codigo", "").upper()
     cupom_id = (cupom or {}).get("_id")
@@ -142,76 +141,76 @@ def validar_consumir_cupom(cupom: dict, uid: str, ctx: Optional[Dict[str, Any]] 
     prof_ref = client.collection(COL_PROFISSIONAIS).document(uid)
 
     try:
-        # ===== início da transação =====
-        snap = transaction.get(cupom_ref)
-        if not snap.exists:
-            _audit(False, uid, codigo, "nao_encontrado", ctx)
-            return False, "Cupom inválido ou não encontrado.", None
+        # ===== transação compatível (context manager) =====
+        with client.transaction() as transaction:
+            snap = transaction.get(cupom_ref)
+            if not snap.exists:
+                _audit(False, uid, codigo, "nao_encontrado", ctx)
+                return False, "Cupom inválido ou não encontrado.", None
 
-        doc = snap.to_dict() or {}
-        doc["_id"] = cupom_id
+            doc = snap.to_dict() or {}
+            doc["_id"] = cupom_id
 
-        # Validações
-        if not doc.get("ativo"):
-            _audit(False, uid, codigo, "inativo", ctx)
-            return False, "Cupom inválido ou inativo.", None
+            # Validações
+            if not doc.get("ativo"):
+                _audit(False, uid, codigo, "inativo", ctx)
+                return False, "Cupom inválido ou inativo.", None
 
-        exp_dt = _parse_exp(doc.get("expiraEm"))
-        if doc.get("expiraEm") and not exp_dt:
-            _audit(False, uid, codigo, "expiracao_invalida", ctx)
-            return False, "Formato de expiração inválido.", None
-        if exp_dt and datetime.now(timezone.utc) > exp_dt:
-            _audit(False, uid, codigo, "expirado", ctx)
-            return False, "Cupom expirado.", None
+            exp_dt = _parse_exp(doc.get("expiraEm"))
+            if doc.get("expiraEm") and not exp_dt:
+                _audit(False, uid, codigo, "expiracao_invalida", ctx)
+                return False, "Formato de expiração inválido.", None
+            if exp_dt and datetime.now(timezone.utc) > exp_dt:
+                _audit(False, uid, codigo, "expirado", ctx)
+                return False, "Cupom expirado.", None
 
-        if doc.get("escopo") == "uid" and doc.get("uidDestino") != uid:
-            _audit(False, uid, codigo, "escopo_invalido", ctx)
-            return False, "Este cupom não é destinado a este usuário.", None
+            if doc.get("escopo") == "uid" and doc.get("uidDestino") != uid:
+                _audit(False, uid, codigo, "escopo_invalido", ctx)
+                return False, "Este cupom não é destinado a este usuário.", None
 
-        # Idempotência (redeem já existe)
-        redeem_snap = transaction.get(redeem_ref)
-        if redeem_snap.exists:
-            plano = _mk_plano_from_cupom(doc)
-            _audit(True, uid, codigo, "idempotente_ok", ctx)
-            return True, "ok", plano
+            # Idempotência (redeem já existe)
+            redeem_snap = transaction.get(redeem_ref)
+            if redeem_snap.exists:
+                plano = _mk_plano_from_cupom(doc)
+                _audit(True, uid, codigo, "idempotente_ok", ctx)
+                return True, "ok", plano
 
-        # Fair-use trial (1 por usuário)
-        if (doc.get("tipo") == "trial"):
-            prof_snap = transaction.get(prof_ref)
-            prof_doc = prof_snap.to_dict() if prof_snap.exists else {}
-            if prof_doc and prof_doc.get("trialRedeemed") is True:
-                _audit(False, uid, codigo, "trial_ja_usado", ctx)
-                return False, "Você já utilizou um cupom de teste (trial) neste usuário.", None
+            # Fair-use trial (1 por usuário)
+            if (doc.get("tipo") == "trial"):
+                prof_snap = transaction.get(prof_ref)
+                prof_doc = prof_snap.to_dict() if prof_snap.exists else {}
+                if prof_doc and prof_doc.get("trialRedeemed") is True:
+                    _audit(False, uid, codigo, "trial_ja_usado", ctx)
+                    return False, "Você já utilizou um cupom de teste (trial) neste usuário.", None
 
-        # Limite de usos
-        usos = int(doc.get("usos", 0))
-        usosMax = int(doc.get("usosMax", 1))
-        if usos >= usosMax:
-            _audit(False, uid, codigo, "sem_usos_restantes", ctx)
-            return False, "Limite de usos atingido.", None
+            # Limite de usos
+            usos = int(doc.get("usos", 0))
+            usosMax = int(doc.get("usosMax", 1))
+            if usos >= usosMax:
+                _audit(False, uid, codigo, "sem_usos_restantes", ctx)
+                return False, "Limite de usos atingido.", None
 
-        # Efetiva: cria redeem + incrementa usos (no mesmo commit)
-        now_iso = _now_iso_utc()
-        transaction.set(redeem_ref, {
-            "uid": uid,
-            "codigo": codigo,
-            "cupomId": cupom_id,
-            "tipo": doc.get("tipo"),
-            "ok": True,
-            "ts": now_iso,
-            "status": "ok",
-        }, merge=False)
+            # Efetiva (mesmo commit)
+            now_iso = _now_iso_utc()
+            transaction.set(redeem_ref, {
+                "uid": uid,
+                "codigo": codigo,
+                "cupomId": cupom_id,
+                "tipo": doc.get("tipo"),
+                "ok": True,
+                "ts": now_iso,
+                "status": "ok",
+            }, merge=False)
 
-        transaction.update(cupom_ref, {"usos": usos + 1})
+            transaction.update(cupom_ref, {"usos": usos + 1})
 
-        if (doc.get("tipo") == "trial"):
-            transaction.set(prof_ref, {
-                "trialRedeemed": True,
-                "trialRedeemedAt": now_iso
-            }, merge=True)
+            if (doc.get("tipo") == "trial"):
+                transaction.set(prof_ref, {
+                    "trialRedeemed": True,
+                    "trialRedeemedAt": now_iso
+                }, merge=True)
 
-        # Commit final
-        transaction.commit()
+        # commit foi feito ao sair do with
         plano = _mk_plano_from_cupom(doc)
         _audit(True, uid, codigo, "ok", ctx)
         return True, "ok", plano
