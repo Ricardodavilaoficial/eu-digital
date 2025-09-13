@@ -183,7 +183,7 @@ PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMB
 FRONTEND_BASE = os.getenv("FRONTEND_BASE", "")  # ex.: https://mei-robo-prod.web.app
 
 def fallback_text(context: str) -> str:
-    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
+    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\\nDigite 'precos' para ver a lista."
 
 # -------------------------
 # Blueprints existentes (mantidos + novos)
@@ -428,7 +428,7 @@ def _load_wa_bot():
         return _WA_BOT_MOD
     except Exception as e:
         _WA_BOT_MOD = None
-        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\n" + (traceback.format_exc(limit=3) or "")
+        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\\n" + (traceback.format_exc(limit=3) or "")
         print(f"[init][erro] não consegui importar services.wa_bot: {e}", flush=True)
         return None
 
@@ -527,27 +527,14 @@ from flask import g
 from datetime import datetime, timezone
 from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
 from services.db import db
-import base64 as _b64
 
-def _uid_from_authorization() -> str | None:
-    """
-    Extrai UID do Authorization: Bearer <idToken> lendo o payload do JWT (sem validar assinatura).
-    Temporário para manter produção enquanto o services.auth.auth_required não está disponível.
-    """
-    auth = request.headers.get("Authorization", "").strip()
-    if not auth.lower().startswith("bearer "):
-        return None
-    tok = auth.split(" ", 1)[1].strip()
-    parts = tok.split(".")
-    if len(parts) < 2:
-        return None
-    try:
-        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
-        payload = json.loads(_b64.urlsafe_b64decode((parts[1] + pad).encode()).decode())
-        uid = payload.get("user_id") or payload.get("uid") or payload.get("sub")
-        return uid or None
-    except Exception:
-        return None
+# >>> Segurança ALTA: exigir idToken real no endpoint moderno
+try:
+    from services.auth import auth_required, current_uid
+except Exception as _e:
+    auth_required = None
+    current_uid = None
+    print("[warn] services.auth.auth_required/current_uid não disponíveis — verifique services/auth.py", flush=True)
 
 # ---------- Validação Pública (sem login) ----------
 @app.route("/api/cupons/validar-publico", methods=["OPTIONS"])
@@ -618,47 +605,55 @@ def api_cupons_validar_publico():
     except Exception as e:
         return jsonify({"ok": False, "reason": "erro_interno", "detail": str(e)}), 500
 
-# ---------- Ativar (com token OU uid) ----------
+# ---------- Ativar (moderno, exige token) ----------
 @app.route("/api/cupons/ativar", methods=["OPTIONS"])
 def _preflight_api_cupons_ativar():
     return ("", 204)
 
 @app.route("/api/cupons/ativar", methods=["POST"])
 def api_cupons_ativar():
-    try:
-        data = request.get_json(silent=True) or {}
-        codigo = (data.get("codigo") or "").strip()
-        if not codigo:
-            return jsonify({"erro": "Código do cupom é obrigatório"}), 400
+    # Se o decorator não estiver disponível, falha seguro
+    if auth_required is None or current_uid is None:
+        return jsonify({"erro": "Auth indisponível. Atualize services/auth.py (auth_required/current_uid)."}), 500
 
-        uid = _uid_from_authorization() or (data.get("uid") or "").strip()
-        if not uid:
-            # comportamento alinhado com a UI ("sessão expirada")
-            return jsonify({"erro": "Não autenticado"}), 401
+    # Envolve a função real com o decorator em tempo de execução
+    @auth_required
+    def _inner():
+        try:
+            data = request.get_json(silent=True) or {}
+            codigo = (data.get("codigo") or "").strip()
+            if not codigo:
+                return jsonify({"erro": "Código do cupom é obrigatório"}), 400
 
-        cupom = find_cupom_by_codigo(codigo)
-        ok, msg, plano = validar_consumir_cupom(cupom, uid)
-        if not ok:
-            return jsonify({"erro": msg}), 400
+            uid = current_uid()
+            if not uid:
+                return jsonify({"erro": "Não autenticado"}), 401
 
-        now_iso = datetime.now(timezone.utc).isoformat()
-        prof_ref = db.collection("profissionais").document(uid)
-        prof_ref.set(
-            {
-                "plan": plano or "start",
-                "plano": plano or "start",
-                "licenca": {
-                    "origem": "cupom",
-                    "codigo": codigo,
-                    "activatedAt": now_iso,
+            cupom = find_cupom_by_codigo(codigo)
+            ok, msg, plano = validar_consumir_cupom(cupom, uid)
+            if not ok:
+                return jsonify({"erro": msg}), 400
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            prof_ref = db.collection("profissionais").document(uid)
+            prof_ref.set(
+                {
+                    "plan": plano or "start",
+                    "plano": plano or "start",
+                    "licenca": {
+                        "origem": "cupom",
+                        "codigo": codigo,
+                        "activatedAt": now_iso,
+                    },
+                    "updatedAt": now_iso,
                 },
-                "updatedAt": now_iso,
-            },
-            merge=True,
-        )
-        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
-    except Exception as e:
-        return jsonify({"erro": f"ativar_cupom[app]: {str(e)}"}), 500
+                merge=True,
+            )
+            return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
+        except Exception as e:
+            return jsonify({"erro": f"ativar_cupom[app]: {str(e)}"}), 500
+
+    return _inner()
 
 # ---------- Legado absoluto (codigo+uid no body; sem token) ----------
 @app.route("/api/cupons/ativar-cupom", methods=["OPTIONS"])
