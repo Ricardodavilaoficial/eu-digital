@@ -1,11 +1,11 @@
 
 # routes/cnpj_publica.py
-# MEI Robô — Integração CNPJ.ws (API Pública) v1
+# MEI Robô — Integração CNPJ.ws (API Pública) v1 (com heurística aprimorada)
 # Rota: GET /integracoes/cnpj/<cnpj>
 # - Sem token (fonte pública), limite 3 req/min/IP na origem
 # - Cache em memória (TTL padrão 24h) — substituível por Redis
 # - Normaliza para o "esquema canônico" do MEI Robô
-# - Heurística opcional por nome (?nome=...): EXATO | PROVAVEL | NAO_ENCONTRADO
+# - Heurística por nome (?nome=...): EXATO | PROVAVEL | NAO_ENCONTRADO
 #
 # Dependências: Flask, requests
 #   pip install Flask requests
@@ -37,35 +37,88 @@ def _valid_cnpj14(s: str) -> bool:
 
 
 def _normalize_text(s: str) -> str:
-    import unicodedata
+    """
+    Normaliza texto para comparação:
+    - NFKD + remove acentos
+    - Remove pontuações comuns (' . , - / \ ( ) [ ] { } " : ;)
+    - Colapsa espaços
+    - Uppercase
+    """
+    import unicodedata, re
     if not s:
         return ""
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    return re.sub(r"\s+", " ", s).strip().upper()
+    # Troca pontuação por espaço e remove caracteres não alfanuméricos (mantém letras/números/espaço)
+    s = re.sub(r"[\'\".,\-_/\(\)\[\]\{\}:;]+", " ", s)
+    s = re.sub(r"[^A-Za-z0-9\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip().upper()
+    return s
 
 
 def _match_nome(nome_busca: str, razao: str, socios: list) -> Tuple[str, Optional[str]]:
-    """Retorna (avaliacao, origem) onde origem in {"RAZAO_SOCIAL","SOCIOS",None}"""
+    """
+    Heurística robusta:
+    - Normaliza (remove acentos/pontuação) e uppercase
+    - Remove stopwords comuns: DA, DE, DO, DAS, DOS, D, E
+    - EXATO: string normalizada de busca == alvo
+    - PROVAVEL:
+        a) busca como substring no alvo
+        b) >=2 tokens da busca aparecem na ORDEM no alvo
+        c) existe token >=4 chars da busca presente no alvo
+    """
     if not nome_busca:
         return ("NAO_INFORMADO", None)
-    nb = _normalize_text(nome_busca)
-    if not nb:
+
+    def tokens(s: str):
+        stops = {"DA", "DE", "DO", "DAS", "DOS", "D", "E"}
+        base = _normalize_text(s)
+        toks = [t for t in base.split() if t and t not in stops]
+        return base, toks
+
+    base_busca, toks_busca = tokens(nome_busca)
+    if not toks_busca and not base_busca:
         return ("NAO_INFORMADO", None)
 
-    raz = _normalize_text(razao)
-    if raz and nb == raz:
+    def eval_alvo(alvo: str) -> Tuple[str, Optional[str]]:
+        base_alvo, toks_alvo = tokens(alvo or "")
+        if not base_alvo:
+            return ("NAO_ENCONTRADO", None)
+        # EXATO
+        if base_busca == base_alvo:
+            return ("EXATO", None)
+        # Substring direta
+        if base_busca and base_busca in base_alvo:
+            return ("PROVAVEL", None)
+        # Tokens em ordem (>=2)
+        if toks_busca:
+            i = 0
+            hits = 0
+            for t in toks_alvo:
+                if i < len(toks_busca) and t == toks_busca[i]:
+                    hits += 1
+                    i += 1
+                    if hits >= 2:
+                        return ("PROVAVEL", None)
+        # Token forte (>=4 chars) presente
+        for tb in toks_busca:
+            if len(tb) >= 4 and tb in base_alvo.split():
+                return ("PROVAVEL", None)
+        return ("NAO_ENCONTRADO", None)
+
+    # Razão Social
+    aval, _ = eval_alvo(razao)
+    if aval == "EXATO":
         return ("EXATO", "RAZAO_SOCIAL")
-    if raz and nb in raz:
+    if aval == "PROVAVEL":
         return ("PROVAVEL", "RAZAO_SOCIAL")
 
+    # Sócios
     for s in socios or []:
-        nome_s = _normalize_text(s.get("nome") or "")
-        if not nome_s:
-            continue
-        if nb == nome_s:
+        aval_s, _ = eval_alvo(s.get("nome") or "")
+        if aval_s == "EXATO":
             return ("EXATO", "SOCIOS")
-        if nb in nome_s or nome_s in nb:
+        if aval_s == "PROVAVEL":
             return ("PROVAVEL", "SOCIOS")
 
     return ("NAO_ENCONTRADO", None)
