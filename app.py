@@ -16,6 +16,16 @@ from urllib import request as ulreq
 from urllib import parse as ulparse
 from flask import Flask, jsonify, request, send_from_directory, redirect
 
+# --- INÍCIO: integração CNPJ.ws pública (blueprint) ---
+# Depende do arquivo: routes/cnpj_publica.py
+# Se ainda não existir o pacote "routes", crie um __init__.py vazio dentro de /routes
+try:
+    from routes.cnpj_publica import bp_cnpj_publica
+except Exception as e:
+    bp_cnpj_publica = None
+    logging.exception("Falha ao importar bp_cnpj_publica (CNPJ.ws pública): %s", e)
+# --- FIM: integração CNPJ.ws pública ---
+
 print("[boot] app.py raiz carregado ✅", flush=True)
 logging.basicConfig(level=logging.INFO)
 
@@ -24,6 +34,12 @@ logging.basicConfig(level=logging.INFO)
 # --------------------------------------------------------------------
 app = Flask(__name__, static_folder="public", static_url_path="/")
 from flask_cors import CORS  # importa depois de criar app
+
+# --- INÍCIO: registro do blueprint CNPJ.ws pública ---
+if bp_cnpj_publica:
+    # Disponibiliza: GET /integracoes/cnpj/<cnpj>?nome=Fulano
+    app.register_blueprint(bp_cnpj_publica)
+# --- FIM: registro do blueprint CNPJ.ws pública ---
 
 _ALLOWED = os.environ.get("ALLOWED_ORIGINS", "")
 if _ALLOWED:
