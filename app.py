@@ -1,4 +1,4 @@
-# app.py — entrypoint para runtime Python do Render (produção) 
+# app.py — entrypoint para runtime Python do Render (produção)
 # Mantém: health, debug, firestore-utils, /api/send-text, estáticos
 # Webhook agora é servido via routes/webhook (blueprint)
 
@@ -15,6 +15,10 @@ from urllib.parse import urlparse
 from urllib import request as ulreq
 from urllib import parse as ulparse
 from flask import Flask, jsonify, request, send_from_directory, redirect
+
+# >>> Verificação de Autoridade (Fase 1)
+from routes.verificacao_autoridade import verificacao_bp
+from middleware.authority_gate import init_authority_gate
 
 # --- INÍCIO: integração CNPJ.ws pública (blueprint) ---
 # Depende do arquivo: routes/cnpj_publica.py
@@ -280,6 +284,26 @@ try:
     _register_bp(bp_webhook, "bp_webhook (/webhook)")
 except Exception as e:
     print(f"[bp][erro] import bp_webhook: {e}")
+    traceback.print_exc()
+
+# >>> Verificação de Autoridade — registra blueprint
+try:
+    _register_bp(verificacao_bp, "verificacao_autoridade (/conta/status, /verificacao/autoridade)")
+except Exception as e:
+    print(f"[bp][warn] verificacao_autoridade não registrado: {e}")
+    traceback.print_exc()
+
+# >>> Authority Gate — protege apenas rotas “oficiais” quando a flag estiver ON
+try:
+    init_authority_gate(app, restricted_patterns=[
+        r"^/api/cupons/.*",
+        r"^/api/importar-precos$",
+        r"^/admin/.*",
+        r"^/webhook/.*"
+    ])
+    print("[gate] Authority Gate registrado (condicional por VERIFICACAO_AUTORIDADE)")
+except Exception as e:
+    print(f"[gate][warn] authority_gate não inicializado: {e}")
     traceback.print_exc()
 
 # -------------------------
@@ -667,6 +691,7 @@ def api_cupons_validar_publico():
         if not codigo:
             return jsonify({"ok": False, "reason": "codigo_obrigatorio"}), 400
 
+        from services.coupons import find_cupom_by_codigo
         cupom = find_cupom_by_codigo(codigo)
         if not cupom:
             return jsonify({"ok": False, "reason": "nao_encontrado"}), 400
@@ -722,6 +747,7 @@ def api_cupons_ativar():
             # comportamento alinhado com a UI ("sessão expirada")
             return jsonify({"erro": "Não autenticado"}), 401
 
+        from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
         cupom = find_cupom_by_codigo(codigo)
 
         # >>> envia ip/ua para auditoria (blindagem)
@@ -736,6 +762,7 @@ def api_cupons_ativar():
         if not ok:
             return jsonify({"erro": msg}), 400
 
+        from services.db import db
         now_iso = datetime.now(timezone.utc).isoformat()
         prof_ref = db.collection("profissionais").document(uid)
         prof_ref.set(
@@ -773,6 +800,7 @@ def api_cupons_ativar_legado():
         if not codigo or not uid:
             return jsonify({"erro": "Código do cupom e UID são obrigatórios"}), 400
 
+        from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
         cupom = find_cupom_by_codigo(codigo)
 
         # >>> envia ip/ua para auditoria (blindagem)
@@ -787,6 +815,7 @@ def api_cupons_ativar_legado():
         if not ok:
             return jsonify({"erro": msg}), 400
 
+        from services.db import db
         now_iso = datetime.now(timezone.utc).isoformat()
         prof_ref = db.collection("profissionais").document(uid)
         prof_ref.set(
@@ -842,3 +871,4 @@ def static_proxy(path):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
