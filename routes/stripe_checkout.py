@@ -33,8 +33,8 @@ def api_stripe_checkout():
         stripe.api_key = _get_secret_key()
 
         # Sucesso/cancelamento (absolutos)
-        success_url = _abs_url("https://mei-robo-prod.onrender.com/")
-        cancel_url  = _abs_url("https://mei-robo-prod.onrender.com/")
+        success_url = "https://mei-robo-prod.onrender.com/"
+        cancel_url  = "https://mei-robo-prod.onrender.com/"
 
         # Produto/Preço da assinatura/ativação:
         # Opção A (rápida p/ teste): define line_items com price_data inline
