@@ -32,6 +32,7 @@ except Exception as e:
 # >>> Stripe Webhook
 from routes.stripe_webhook import stripe_webhook_bp
 from routes.stripe_checkout import stripe_checkout_bp
+from routes.conta_status import bp_conta
 # --- FIM: integração CNPJ.ws pública ---
 
 
@@ -57,7 +58,8 @@ print("[boot] Stripe Webhook blueprint registrado ✅", flush=True)
 # ✅ Stripe Checkout API
 app.register_blueprint(stripe_checkout_bp)
 print("[boot] Stripe Checkout blueprint registrado ✅", flush=True)
-
+# ✅ Gate + Status (contratos do front)
+app.register_blueprint(bp_conta)
 # (se houver middlewares de auth/CSRF, mantenha-os DEPOIS — e isente /webhooks/stripe)
 
 _ALLOWED = os.environ.get("ALLOWED_ORIGINS", "")
