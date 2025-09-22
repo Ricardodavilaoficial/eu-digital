@@ -1,4 +1,5 @@
 # Web
+stripe>=10.0.0
 Flask
 gunicorn
 flask-cors
