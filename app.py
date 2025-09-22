@@ -378,7 +378,7 @@ def env_safe():
         "BUDGET_MONTHLY_USD": os.getenv("BUDGET_MONTHLY_USD"),
         "BUDGET_RESERVE_PCT": os.getenv("BUDGET_RESERVE_PCT"),
         "TZ": os.getenv("TZ"),
-        "STT_SECONDS_AVG": os.getenv("STT_SECONDS_AVG")),
+        "STT_SECONDS_AVG": os.getenv("STT_SECONDS_AVG"),
         "UID_DEFAULT": os.getenv("UID_DEFAULT"),
         "APP_TAG": os.getenv("APP_TAG"),
         "FRONTEND_BASE": os.getenv("FRONTEND_BASE"),
