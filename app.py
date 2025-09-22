@@ -1,6 +1,6 @@
 # app.py — entrypoint para runtime Python do Render (produção)
 # Mantém: health, debug, firestore-utils, /api/send-text, estáticos
-# Webhook agora é servido via routes/webhook (blueprint)
+# Webhook agora é servido via routes/stripe_webhook (blueprint)
 
 import os
 import json
@@ -28,6 +28,9 @@ try:
 except Exception as e:
     bp_cnpj_publica = None
     logging.exception("Falha ao importar bp_cnpj_publica (CNPJ.ws pública): %s", e)
+
+# >>> Stripe Webhook
+from routes.stripe_webhook import stripe_webhook_bp
 # --- FIM: integração CNPJ.ws pública ---
 
 print("[boot] app.py raiz carregado ✅", flush=True)
@@ -38,12 +41,19 @@ logging.basicConfig(level=logging.INFO)
 # --------------------------------------------------------------------
 app = Flask(__name__, static_folder="public", static_url_path="/")
 from flask_cors import CORS  # importa depois de criar app
+CORS(app)  # se você já usa CORS custom, mantenha o seu
 
-# --- INÍCIO: registro do blueprint CNPJ.ws pública ---
+# Blueprints já existentes (registro direto onde necessário)
+# - verificacao_bp e bp_cnpj_publica ficam aqui para garantir disponibilidade
+app.register_blueprint(verificacao_bp)
 if bp_cnpj_publica:
-    # Disponibiliza: GET /integracoes/cnpj/<cnpj>?nome=Fulano
     app.register_blueprint(bp_cnpj_publica)
-# --- FIM: registro do blueprint CNPJ.ws pública ---
+
+# ✅ Stripe Webhook (SEM auth/CSRF; precisa estar acessível publicamente)
+app.register_blueprint(stripe_webhook_bp)
+print("[boot] Stripe Webhook blueprint registrado ✅", flush=True)
+
+# (se houver middlewares de auth/CSRF, mantenha-os DEPOIS — e isente /webhooks/stripe)
 
 _ALLOWED = os.environ.get("ALLOWED_ORIGINS", "")
 if _ALLOWED:
@@ -69,8 +79,8 @@ except Exception as e:
     print(f"[warn] flask-cors indisponível: {e}")
 
 # --------------------------------------------------------------------
-# 3) Agora que o app existe, importe e registre blueprints
-#    (evita NameError e import circular)
+# 3) Agora que o app existe, importe e registre blueprints auxiliares
+#    com helper (evita NameError e import circular)
 # --------------------------------------------------------------------
 def _register_bp(bp, name: str):
     try:
@@ -212,6 +222,7 @@ def fallback_text(context: str) -> str:
 
 # -------------------------
 # Blueprints existentes (mantidos + novos)
+# (OBS: verificacao_bp e bp_cnpj_publica já foram registrados acima)
 # -------------------------
 try:
     from routes.routes import routes
@@ -278,7 +289,7 @@ except Exception as e:
     print(f"[bp][warn] seed_bp não registrado: {e}")
     traceback.print_exc()
 
-# >>> Webhook por blueprint dedicado
+# >>> Webhook legado (se existir)
 try:
     from routes.webhook import bp_webhook
     _register_bp(bp_webhook, "bp_webhook (/webhook)")
@@ -286,14 +297,8 @@ except Exception as e:
     print(f"[bp][erro] import bp_webhook: {e}")
     traceback.print_exc()
 
-# >>> Verificação de Autoridade — registra blueprint
-try:
-    _register_bp(verificacao_bp, "verificacao_autoridade (/conta/status, /verificacao/autoridade)")
-except Exception as e:
-    print(f"[bp][warn] verificacao_autoridade não registrado: {e}")
-    traceback.print_exc()
-
-# >>> Authority Gate — protege apenas rotas “oficiais” quando a flag estiver ON
+# >>> Verificação de Autoridade — (REMOVIDO registro duplicado via helper)
+# já registramos verificacao_bp no topo. Mantemos apenas o init do gate.
 try:
     init_authority_gate(app, restricted_patterns=[
         r"^/api/cupons/.*",
@@ -373,7 +378,7 @@ def env_safe():
         "BUDGET_MONTHLY_USD": os.getenv("BUDGET_MONTHLY_USD"),
         "BUDGET_RESERVE_PCT": os.getenv("BUDGET_RESERVE_PCT"),
         "TZ": os.getenv("TZ"),
-        "STT_SECONDS_AVG": os.getenv("STT_SECONDS_AVG"),
+        "STT_SECONDS_AVG": os.getenv("STT_SECONDS_AVG")),
         "UID_DEFAULT": os.getenv("UID_DEFAULT"),
         "APP_TAG": os.getenv("APP_TAG"),
         "FRONTEND_BASE": os.getenv("FRONTEND_BASE"),
@@ -871,4 +876,3 @@ def static_proxy(path):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
