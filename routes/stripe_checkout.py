@@ -26,15 +26,15 @@ def api_stripe_checkout():
     """
     Cria uma sessão de Checkout e devolve { checkoutUrl: "https://checkout.stripe.com/..." }
     Suporta cupom via ?cupom= (usa PromotionCode da Stripe, se existir).
-    success_url: /pages/ativar-config.html
-    cancel_url:  /pages/ativar-cliente.html
+    success_url: /pages/ativar-config.html (Frontend)
+    cancel_url:  /pages/ativar-cliente.html (Frontend)
     """
     try:
         stripe.api_key = _get_secret_key()
 
-        # Sucesso/cancelamento (absolutos)
-        success_url = "https://mei-robo-prod.onrender.com/"
-        cancel_url  = "https://mei-robo-prod.onrender.com/"
+        # >>>>>> ALTERADO: URLs agora apontam para o FRONTEND usando _abs_url
+        success_url = _abs_url("/pages/ativar-config.html?session_id={CHECKOUT_SESSION_ID}")
+        cancel_url  = _abs_url("/pages/ativar-cliente.html?cancel=1")
 
         # Produto/Preço da assinatura/ativação:
         # Opção A (rápida p/ teste): define line_items com price_data inline
@@ -47,7 +47,8 @@ def api_stripe_checkout():
                     "name": "MEI Robô - Assinatura",
                     "description": "Plano inicial (Cliente Zero)",
                 },
-                "recurring": None,  # para assinatura mensal, use {"interval": "month"}
+                # Para pagamento único, deixe sem 'recurring'.
+                # Para assinatura mensal, use: "recurring": {"interval": "month"}
             },
             "quantity": 1,
         }]

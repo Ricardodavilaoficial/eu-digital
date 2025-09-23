@@ -1,0 +1,13 @@
+
+# Exemplos de teste (substitua ORIGIN pela sua base do backend)
+# 1) MEI ativo (exemplo fictício)
+curl -i "%ORIGIN%/integracoes/cnpj/00000000000000"
+
+# 2) Com heurística por nome (MEI / EI - confere na razão social)
+curl -i "%ORIGIN%/integracoes/cnpj/00000000000000?nome=FULANO%20DE%20TAL"
+
+# 3) CNPJ inválido
+curl -i "%ORIGIN%/integracoes/cnpj/123"
+
+# 4) Estresse leve para ver 429 da origem (3+ req/min do mesmo IP)
+for i in {1..5}; do curl -i "%ORIGIN%/integracoes/cnpj/00000000000000"; done

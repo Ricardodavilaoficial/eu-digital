@@ -1,0 +1,48 @@
+{
+  "info": {
+    "name": "MEI Robô - CNPJ.ws Pública v1",
+    "_postman_id": "c3d6c1c4-12ab-4ee1-92e2-2025-9",
+    "description": "Coleção para testar a rota interna do MEI Robô que integra a CNPJ.ws (pública).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Consultar CNPJ (com heurística de nome opcional)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{ORIGIN}}/integracoes/cnpj/{{CNPJ}}?nome={{NOME}}",
+          "host": [
+            "{{ORIGIN}}"
+          ],
+          "path": [
+            "integracoes",
+            "cnpj",
+            "{{CNPJ}}"
+          ],
+          "query": [
+            {
+              "key": "nome",
+              "value": "{{NOME}}"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "ORIGIN",
+      "value": "http://localhost:5000"
+    },
+    {
+      "key": "CNPJ",
+      "value": "00000000000000"
+    },
+    {
+      "key": "NOME",
+      "value": ""
+    }
+  ]
+}
