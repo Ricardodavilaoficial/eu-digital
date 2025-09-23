@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 from urllib import request as ulreq
 from urllib import parse as ulparse
 from flask import Flask, jsonify, request, send_from_directory, redirect
+from routes.admin import admin_bp
+app.register_blueprint(admin_bp)
 
 # >>> Verificação de Autoridade (Fase 1)
 from routes.verificacao_autoridade import verificacao_bp
