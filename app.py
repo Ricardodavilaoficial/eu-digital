@@ -15,8 +15,6 @@ from urllib.parse import urlparse
 from urllib import request as ulreq
 from urllib import parse as ulparse
 from flask import Flask, jsonify, request, send_from_directory, redirect
-from routes.admin import admin_bp
-app.register_blueprint(admin_bp)
 
 # >>> Verificação de Autoridade (Fase 1)
 from routes.verificacao_autoridade import verificacao_bp
@@ -63,6 +61,11 @@ print("[boot] Stripe Checkout blueprint registrado ✅", flush=True)
 # ✅ Gate + Status (contratos do front)
 app.register_blueprint(bp_conta)
 # (se houver middlewares de auth/CSRF, mantenha-os DEPOIS — e isente /webhooks/stripe)
+
+# ✅ Admin (rota /admin/ping protegida)
+from routes.admin import admin_bp
+app.register_blueprint(admin_bp)
+print("[boot] Admin blueprint registrado ✅", flush=True)
 
 _ALLOWED = os.environ.get("ALLOWED_ORIGINS", "")
 if _ALLOWED:
