@@ -323,6 +323,61 @@ except Exception as e:
     print(f"[gate][warn] authority_gate não inicializado: {e}")
     traceback.print_exc()
 
+# --------------------------------------------------------------------
+# SHIMS de compatibilidade para /api/verificacao/autoridade/*
+# (mantêm a página vinculo.html funcionando sem alterar blueprints atuais)
+# --------------------------------------------------------------------
+from flask import jsonify as _jsonify  # alias local só p/ clareza
+
+@app.get("/api/verificacao/autoridade/status")
+def _verif_status_proxy():
+    # Reutiliza o gate simples do bp_conta
+    from routes.conta_status import _vinculo_dict
+    score = int(os.getenv("SCORE_VINCULO", "82"))
+    out = _vinculo_dict(score)
+    return _jsonify(out), 200
+
+@app.post("/api/verificacao/autoridade/upload")
+def _verif_upload():
+    # Aceita multipart (PDF/JPG/PNG) — stub: grava em temp e marca pendente
+    from werkzeug.utils import secure_filename
+    import tempfile
+
+    if not request.files:
+        return _jsonify({"ok": False, "error": "Nenhum arquivo enviado."}), 400
+
+    ALLOW = {".pdf", ".png", ".jpg", ".jpeg"}
+    saved = []
+    size_total = 0
+    for key in request.files:
+        f = request.files.get(key)
+        if not f or not getattr(f, "filename", ""):
+            continue
+        name = secure_filename(f.filename)
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in ALLOW:
+            return _jsonify({"ok": False, "error": f"Extensão não permitida: {ext}"}), 400
+        f.seek(0, os.SEEK_END); sz = f.tell(); f.seek(0)
+        size_total += sz
+        if size_total > 25 * 1024 * 1024:
+            return _jsonify({"ok": False, "error": "Limite total de 25MB excedido."}), 400
+        fd, tmp_path = tempfile.mkstemp(prefix="verif_", suffix=ext)
+        os.close(fd)
+        f.save(tmp_path)
+        saved.append({"filename": name, "path": tmp_path})
+
+    # Marca “pendente” no modelo em memória (stub v1)
+    from models.user_status import get_user_meta, set_user_meta, log_autorizacao
+    uid = request.headers.get("X-Debug-User", "guest")
+    meta = get_user_meta(uid)
+    pend = meta.get("pendentes", [])
+    for s in saved:
+        pend.append({"arquivo": s["filename"], "situacao": "pendente_review"})
+        log_autorizacao(uid, {"acao": "upload_pendente", "arquivo": s["filename"]})
+    meta["pendentes"] = pend
+    set_user_meta(uid, meta)
+    return _jsonify({"ok": True, "pendentes": len(pend)}), 200
+
 # -------------------------
 # Health / routes list
 # -------------------------
