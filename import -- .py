@@ -1,2 +1,0 @@
-[35mapp.py[m[36m:[m[32m240[m[36m:[m    from routes.routes [1;31mimport routes[m
-[35mapp.py[m[36m:[m[32m243[m[36m:[m    print(f"[bp][erro] [1;31mimport routes[m: {e}")
