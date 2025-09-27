@@ -20,6 +20,18 @@ NLU_MODE = os.getenv("NLU_MODE", "legacy").strip().lower()
 PRICING_MODE = os.getenv("PRICING_MODE", "legacy").strip().lower()  # legacy | domain
 REPLY_AUDIO_WHEN_AUDIO = os.getenv("REPLY_AUDIO_WHEN_AUDIO", "true").strip().lower() in ("1", "true", "yes")
 
+# [MEI_V1] Lista de canários para NLU v1 (csv em env)
+_CANARY_UIDS = set([u.strip() for u in os.getenv("CANARY_UIDS", "").split(",") if u.strip()])
+
+def _nlu_should_use_v1(uid: str) -> bool:
+    """Decide se deve usar NLU v1 para este uid (modo global ou canário por UID)."""
+    mode = (NLU_MODE or "legacy")
+    if mode == "v1":
+        return True
+    if mode == "legacy" and uid in _CANARY_UIDS:
+        return True
+    return False
+
 # ---- Humanizer (feature-flag) ----
 try:
     from services.humanizer import humanize as H, sanitize_text as H_sanitize, humanize_on
@@ -42,7 +54,7 @@ except Exception:
 
 def parse_intent(text: str):
     """
-    Fachada estável de intenção.
+    Fachada estável de intenção (não usada no roteador principal hoje).
     Padrão: legacy. Quando NLU_MODE=v1 e houver módulo, usa nlu.intent.
     Em erro, faz fallback.
     """
@@ -65,10 +77,10 @@ def parse_intent(text: str):
 
 def _nlu_probe(uid: str, text: str):
     """
-    Apenas LOGA a intenção quando NLU_MODE=v1.
+    Apenas LOGA a intenção do v1 quando habilitado (global ou canário).
     Não altera a resposta/fluxo. Serve pra validar v1 com usuário canário.
     """
-    if (NLU_MODE == "v1") and detect_intent_v1:
+    if _nlu_should_use_v1(uid) and detect_intent_v1:
         try:
             intent = detect_intent_v1(text or "")
             logging.info("[NLU_PROBE][uid=%s] %s", uid or "-", json.dumps(intent, ensure_ascii=False))
@@ -76,12 +88,12 @@ def _nlu_probe(uid: str, text: str):
             logging.warning("[NLU_PROBE][uid=%s][error]=%s", uid or "-", repr(e))
 
 
-def _merge_intents_legacy_with_v1(nlu_legacy: dict, text: str) -> dict:
+def _merge_intents_legacy_with_v1(uid: str, nlu_legacy: dict, text: str) -> dict:
     """
-    Se NLU_MODE=v1, consulta o v1 e (apenas) ajusta o campo intent para buckets
-    simples do legacy, mantendo os demais campos (dateText, timeText etc.) do legacy.
+    Quando habilitado para o uid, consulta o v1 e (apenas) ajusta o campo intent
+    para buckets simples do legacy, mantendo os demais campos do legacy.
     """
-    if NLU_MODE != "v1" or not detect_intent_v1:
+    if not _nlu_should_use_v1(uid) or not detect_intent_v1:
         return nlu_legacy
     try:
         v1 = detect_intent_v1(text or "") or {}
@@ -457,17 +469,25 @@ SP_TZ = timezone(timedelta(hours=-3))  # America/Sao_Paulo (sem DST)
 GRAPH_VERSION_DEFAULT = os.getenv("GRAPH_VERSION", "v23.0")
 PRICE_CACHE_TTL = int(os.getenv("PRICE_CACHE_TTL", "1800"))  # 30 min
 
+# [MEI_V1] SCODE default por contato
+_SCODE_DEFAULT = "T=EQ;G=1;H=1;AN=0;PT=1;E=POU;L=M;AR=MT;SR=NM;CP=1"
+
 # ===== L10N / Microcopy humana (templates simples) ===========================
 _L10N_DEFAULTS = {
-    "help": "Posso te passar preços, endereço/horários ou já marcar um horário. Como posso te ajudar?",
-    "price_table_header": "Alguns valores:",
-    "faq_default": "Posso te ajudar com endereço, horários, telefone e Pix. O que você precisa?",
+    # Tom mais simples “estilo MEI”
+    "help": "Posso te ajudar com preço, endereço/horários ou já marcar um horário. O que manda?",
+    "price_table_header": "Olha alguns valores:",
+    "faq_default": "Tenho aqui endereço, horários, telefone e Pix. Qual você quer?",
     "ask_service": "Qual serviço você quer? Exemplos: {exemplos}.",
-    "ask_datetime": "Qual dia e horário ficam bons? Ex.: ‘terça 10h’ ou ‘01/09 14:00’.",
-    "schedule_confirm": "Fechado: {servico} em {dia} às {hora}{preco}. Se precisar mudar, é só me falar.",
-    "reschedule_ask": "Qual nova data e horário? Ex.: 02/09 10:00, ou 'quarta 15h'.",
-    "session_cleared": "Pronto, zerei nossa conversa. Quer recomeçar com ‘preços’ ou ‘agendar’?",
-    "audio_error": "Poxa, tive um probleminha aqui com seu áudio. Pode tentar de novo? Se preferir, me manda por texto também."
+    "ask_datetime": "Que dia e horário ficam bons? Ex.: ‘terça 10h’ ou ‘01/09 14:00’.",
+    "schedule_confirm": "Fechado: {servico} em {dia} às {hora}{preco}. Se precisar mudar, me chama.",
+    "reschedule_ask": "Me diz a nova data e horário (ex.: 02/09 10:00 ou quarta 15h).",
+    "session_cleared": "Pronto, limpei nossa conversa. Quer ir de ‘preços’ ou ‘agendar’?",
+    "audio_error": "Poxa, não consegui ouvir direito seu áudio. Pode mandar de novo? Se quiser, pode ser em texto também.",
+    # Saudações de primeiro contato
+    "greet_new_contact": "Tô te salvando aqui nos meus contatos, blz? Como posso te chamar?",
+    "greet_new_contact_named": "Tô te salvando aqui {nome}, nos meus contatos. Fechou?",
+    "saved_with_name": "Fechado, {nome}! 👍",
 }
 
 def _load_l10n_overrides(uid: str) -> dict:
@@ -1211,6 +1231,61 @@ def _remember_last_service(uid: str, wa_id_or_phone: str, it: dict):
         print(f"[SESS][remember_last_service] erro: {e}", flush=True)
 
 
+# ========== Contato / Cliente (MEI v1) ==========
+
+def _ensure_contact(uid: str, wa_id_raw: str, telefone_e164: str, nome_hint: str = "") -> str:
+    """Garante que exista um cliente com chave waKey. Retorna clienteId.
+    - Se já existir por waKey/waId/telefone: retorna o existente.
+    - Se não existir: cria doc mínimo (rascunho) e salva SCODE default.
+    """
+    if not _db_ready():
+        return wa_id_raw or telefone_e164 or "anon"
+    try:
+        eq_key = br_equivalence_key(wa_id_raw or telefone_e164 or "")
+        # 1) tenta por waKey
+        q = DB.collection(f"profissionais/{uid}/clientes").where("waKey", "==", eq_key).limit(1).stream()
+        for d in q:
+            doc = d.to_dict() or {}
+            # garante SCODE
+            style = doc.get("style") or {}
+            if not style.get("scode"):
+                DB.collection(f"profissionais/{uid}/clientes").document(d.id).update({"style": {"scode": _SCODE_DEFAULT}})
+            return d.id
+        # 2) tenta por waId
+        if wa_id_raw:
+            q2 = DB.collection(f"profissionais/{uid}/clientes").where("waId", "==", wa_id_raw).limit(1).stream()
+            for d in q2:
+                if not (d.to_dict() or {}).get("waKey"):
+                    DB.collection(f"profissionais/{uid}/clientes").document(d.id).update({"waKey": eq_key})
+                return d.id
+        # 3) tenta por telefone
+        if telefone_e164:
+            q3 = DB.collection(f"profissionais/{uid}/clientes").where("telefone", "==", telefone_e164).limit(1).stream()
+            for d in q3:
+                if not (d.to_dict() or {}).get("waKey"):
+                    DB.collection(f"profissionais/{uid}/clientes").document(d.id).update({"waKey": eq_key})
+                return d.id
+        # 4) cria rascunho
+        ref = DB.collection(f"profissionais/{uid}/clientes").document()
+        payload = {
+            "nome": (nome_hint or ""),
+            "telefone": telefone_e164 or "",
+            "waId": wa_id_raw or "",
+            "waKey": eq_key,
+            "tags": ["whatsapp"],
+            "consent": {"status": "pendente"},
+            "style": {"scode": _SCODE_DEFAULT},
+            "ultimaInteracaoAt": datetime.now(SP_TZ).isoformat(),
+            "criadoEm": datetime.now(SP_TZ).isoformat(),
+            "greetedOnce": False,
+        }
+        ref.set(payload)
+        return ref.id
+    except Exception as e:
+        print(f"[WA_BOT][CONTACT] ensure erro: {e}", flush=True)
+        return wa_id_raw or telefone_e164 or "anon"
+
+
 # ========== Agendamento ==========
 
 def _resolve_cliente_id(uid_default: str, wa_id_raw: str, to_msisdn: str) -> str:
@@ -1325,8 +1400,9 @@ def _find_target_agendamento(uid: str, cliente_id: str, wa_id_raw: str, telefone
                 obj = d.to_dict() or {}
                 obj["_id"] = d.id
                 candidatos.append(obj)
-        except Exception as e:
-            print(f"[WA_BOT][AGENDA] query por clienteWaKey falhou: {e}", flush=True)
+            except Exception as e:
+        print(f"[WA_BOT][AGENDA] query por clienteWaKey falhou: {e}", flush=True)
+
 
     if not candidatos and wa_id_raw:
         try:
@@ -1429,7 +1505,7 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
         print(f"[WA_BOT][AGENDA] salvar via schedule falhou: {e}", flush=True)
         saved_id = None  # força fallback de persistência
 
-    # 2) Fallback/garantia de persistência no Firestore quando id vier faltando ou "fake"
+    # 2) Fallback/garantia de persistência no Firestore
     try:
         need_fallback = (not saved_id) or (str(saved_id).strip().lower() in ("fake", "dummy", "test"))
         if need_fallback:
@@ -1443,7 +1519,7 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
         print(f"[WA_BOT][AGENDA][FALLBACK_SAVE] erro: {e2}", flush=True)
         return False, "Tive um problema ao salvar seu agendamento. Pode tentar novamente em instantes?"
 
-    # 3) Mensagem de confirmação (humanizada; sem ID)
+    # 3) Mensagem de confirmação
     dia = dt.strftime("%d/%m")
     hora = dt.strftime("%H:%M")
 
@@ -1516,15 +1592,12 @@ def _reply_price_from_cache_or_data(uid: str, to: str, user_text: str, send_text
             logging.info("[PRICING][domain] falhou (%s). Usando legacy.", e)
 
     if valor_final in (None, "", "?"):
-        # fallback para tabela completa se não houver valor
         return _reply_prices(uid, to, send_text, channel_mode=channel_mode)
 
     extra = f" 〔{origem_txt}〕" if origem_txt else ""
     base_msg = f"{nome}: {_format_brl(valor_final)} 😉{extra}"
-    # Se humanizer estiver ativo, ao menos sanitizamos a saída
     msg = H_sanitize(base_msg)
 
-    # Cacheia apenas versão texto
     if channel_mode != "audio":
         kv_put(uid, key, msg, ttl_sec=PRICE_CACHE_TTL)
 
@@ -1535,7 +1608,6 @@ def _reply_faq(uid: str, to: str, faq_key: str, send_text, channel_mode: str = "
     ans = _load_faq(uid, faq_key)
     msg = ans if ans else say(uid, "faq_default")
     if humanize_on() and faq_key in ("endereco","horarios","telefone","pix"):
-        # por ora, só sanitiza; variações de FAQ podem vir depois
         msg = H("help", {"raw": msg}, mode=("audio" if channel_mode=="audio" else "text"))
     return send_text(to, msg)
 
@@ -1603,13 +1675,11 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
     have_svc = svc is not None
     have_dt = dt is not None
 
-    # >>> Se já temos data/hora mas não serviço, aplica um default seguro
     if have_dt and not have_svc and items:
         svc = items[0]
         have_svc = True
 
     if have_svc and have_dt:
-        # >>> Regras de agenda antes de salvar
         ok_book, reason = can_book(dt.strftime("%d/%m"), dt.strftime("%H:%M"))
         if not ok_book:
             return f"Não consegui agendar: {reason}"
@@ -1856,3 +1926,4 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             f"[WA_BOT][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}",
             flush=True,
         )
+
