@@ -38,6 +38,25 @@ from routes.conta_status import bp_conta
 
 print("[boot] app.py raiz carregado ✅", flush=True)
 logging.basicConfig(level=logging.INFO)
+# --- Filtro para rebaixar ruídos do legacy (sem editar o arquivo gigante) ---
+import logging, re
+
+class _DowngradeLegacyNoise(logging.Filter):
+    _pat = re.compile(
+        r"\[wa_bot\]\s*(nlu_intent indispon[ií]vel|schedule indispon[ií]vel)",
+        re.IGNORECASE,
+    )
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = str(record.getMessage())
+        if self._pat.search(msg):
+            # rebaixa ERROR -> WARNING
+            if record.levelno >= logging.ERROR:
+                record.levelno = logging.WARNING
+                record.levelname = "WARNING"
+        return True  # sempre loga (só muda o nível)
+
+logging.getLogger().addFilter(_DowngradeLegacyNoise())
+# --- fim do filtro ---
 
 # --------------------------------------------------------------------
 # 1) Cria a app primeiro e configura CORS-base controlado por ENV
