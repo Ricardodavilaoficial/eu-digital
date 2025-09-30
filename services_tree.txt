@@ -1,0 +1,75 @@
+Listagem de caminhos de pasta para o volume OS
+O n£mero de s‚rie do volume ‚ 000000C2 52CF:BED4
+C:\USERS\RICARDO D'AVILA\DESKTOP\MEU-PROJETO-EU-DIGITAL-FINAL\SERVICES
+³   audio_processing.py
+³   auth.py
+³   auth_bp.py
+³   budget_guard.py
+³   coupons.py
+³   crm.py
+³   db.py
+³   email_sender.py
+³   firebase_admin_init.py
+³   gcs_handler.py
+³   humanizer.py
+³   professions.py
+³   schedule.py
+³   storage_mgr.py
+³   text_to_speech.py
+³   wa_bot.backup.20250930.py
+³   wa_bot.py
+³   wa_bot.py.bak
+³   wa_bot_legacy.py
+³   wa_send.py
+³   
+ÃÄÄÄbot_core
+³       __init__.py
+³       
+ÃÄÄÄconfig
+³       schedule_schema.py
+³       __init__.py
+³       
+ÃÄÄÄdomain
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄscheduling
+³           __init__.py
+³           
+ÃÄÄÄnlu
+³   ÀÄÄÄ__pycache__
+³           intent.cpython-313.pyc
+³           
+ÃÄÄÄopenai
+³   ³   history_manager.py
+³   ³   nlu_intent.py
+³   ³   openai_handler.py
+³   ³   prompt_builder.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           history_manager.cpython-313.pyc
+³           nlu_intent.cpython-313.pyc
+³           openai_handler.cpython-313.pyc
+³           prompt_builder.cpython-313.pyc
+³           
+ÃÄÄÄproviders
+³       __init__.py
+³       
+ÃÄÄÄutils
+³       __init__.py
+³       
+ÀÄÄÄ__pycache__
+        audio_processing.cpython-313.pyc
+        auth.cpython-313.pyc
+        budget_guard.cpython-313.pyc
+        coupons.cpython-313.pyc
+        db.cpython-313.pyc
+        firebase_admin_init.cpython-313.pyc
+        gcs_handler.cpython-313.pyc
+        humanizer.cpython-313.pyc
+        openai_handler.cpython-313.pyc
+        schedule.cpython-313.pyc
+        text_to_speech.cpython-313.pyc
+        wa_bot.cpython-313.pyc
+        wa_bot_legacy.cpython-313.pyc
+        wa_send.cpython-313.pyc
+        
