@@ -42,20 +42,23 @@ logging.basicConfig(level=logging.INFO)
 import logging, re
 
 class _DowngradeLegacyNoise(logging.Filter):
+    # cobre [wa_bot] + (nlu_intent|schedule) + "indispon" (ignora acentos/mojibake)
     _pat = re.compile(
-        r"\[wa_bot\]\s*(nlu_intent indispon[ií]vel|schedule indispon[ií]vel)",
-        re.IGNORECASE,
+        r"\[wa_bot\].*?(nlu_intent|schedule).*?indispon",  # pega indisponível/indisponivel/indisponÃ­vel
+        re.IGNORECASE | re.DOTALL,
     )
     def filter(self, record: logging.LogRecord) -> bool:
         msg = str(record.getMessage())
         if self._pat.search(msg):
-            # rebaixa ERROR -> WARNING
             if record.levelno >= logging.ERROR:
                 record.levelno = logging.WARNING
                 record.levelname = "WARNING"
-        return True  # sempre loga (só muda o nível)
+        return True
 
-logging.getLogger().addFilter(_DowngradeLegacyNoise())
+root_logger = logging.getLogger()
+# evita filtros duplicados em restarts quentes
+if not any(isinstance(f, _DowngradeLegacyNoise) for f in root_logger.filters):
+    root_logger.addFilter(_DowngradeLegacyNoise())
 # --- fim do filtro ---
 
 # --------------------------------------------------------------------
