@@ -1,0 +1,242 @@
+Listagem de caminhos de pasta para o volume OS
+O n£mero de s‚rie do volume ‚ 52CF-BED4
+C:.
+³   .env.example
+³   .env.mei-robo-prod.txt
+³   .gitignore
+³   55
+³   app.py
+³   app.py.bak
+³   app.py.before-audio.bak
+³   app.py.before-precos.bak
+³   backend_tree.txt
+³   cnpj-lookup.js
+³   cupons.json
+³   cupons.py
+³   curl
+³   curl_cnpj_examples.txt
+³   debug.json
+³   Dockerfile
+³   empresa
+³   git
+³   init_skeleton.bat
+³   main
+³   main.py
+³   MEI-Robo-CNPJWS-v1.postman_collection.json
+³   mei_robo_fachada_v1.zip
+³   payload.json
+³   README-CNPJWS-v1.md
+³   README_backend.txt
+³   README_backend_VERIFICACAO.md
+³   README_fachada.txt
+³   requirements.txt
+³   routes.json
+³   server.py
+³   str
+³   tree.txt
+³   {
+³   
+ÃÄÄÄcache
+³   ³   kv.py
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           kv.cpython-313.pyc
+³           __init__.cpython-313.pyc
+³           
+ÃÄÄÄdomain
+³   ³   faq.py
+³   ³   pricing.py
+³   ³   scheduling.py
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           pricing.cpython-313.pyc
+³           scheduling.cpython-313.pyc
+³           __init__.cpython-313.pyc
+³           
+ÃÄÄÄfrontend
+³   ³   .firebaserc
+³   ³   firebase.json
+³   ³   
+³   ÃÄÄÄ.firebase
+³   ³       hosting..cache
+³   ³       
+³   ÀÄÄÄpages
+³           agenda.html
+³           ativar.html
+³           dashboard.html
+³           
+ÃÄÄÄinterfaces
+³   ³   web_interface.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           web_interface.cpython-313.pyc
+³           
+ÃÄÄÄmei-robo-whatsapp-webhook
+³       app.py
+³       requirements.txt
+³       
+ÃÄÄÄmiddleware
+³   ³   authority_gate.py
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           authority_gate.cpython-313.pyc
+³           __init__.cpython-313.pyc
+³           
+ÃÄÄÄmodels
+³   ³   user_status.py
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           user_status.cpython-313.pyc
+³           __init__.cpython-313.pyc
+³           
+ÃÄÄÄnlu
+³   ³   entities.py
+³   ³   intent.py
+³   ³   normalizer.py
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           intent.cpython-313.pyc
+³           __init__.cpython-313.pyc
+³           
+ÃÄÄÄproviders
+³   ³   firestore.py
+³   ³   tts.py
+³   ³   ycloud.py
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           tts.cpython-313.pyc
+³           __init__.cpython-313.pyc
+³           
+ÃÄÄÄpublic
+³   ÀÄÄÄassets
+ÃÄÄÄroutes
+³   ³   admin.py
+³   ³   auth_bp.py
+³   ³   captcha_bp.py
+³   ³   cnpj_publica.py
+³   ³   compat_licencas.py
+³   ³   configuracao.py
+³   ³   conta_status.py
+³   ³   core_api.py
+³   ³   cupons.py
+³   ³   email.py
+³   ³   importar_precos.py
+³   ³   routes.py
+³   ³   seed.py
+³   ³   stripe_checkout.py
+³   ³   stripe_webhook.py
+³   ³   teste_eleven_route.py
+³   ³   verificacao_autoridade.py
+³   ³   webhook.py
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           admin.cpython-313.pyc
+³           auth_bp.cpython-313.pyc
+³           captcha_bp.cpython-313.pyc
+³           cnpj_publica.cpython-313.pyc
+³           compat_licencas.cpython-313.pyc
+³           configuracao.cpython-313.pyc
+³           conta_status.cpython-313.pyc
+³           core_api.cpython-313.pyc
+³           cupons.cpython-313.pyc
+³           email.cpython-313.pyc
+³           importar_precos.cpython-313.pyc
+³           routes.cpython-313.pyc
+³           seed.cpython-313.pyc
+³           stripe_checkout.cpython-313.pyc
+³           stripe_webhook.cpython-313.pyc
+³           teste_eleven_route.cpython-313.pyc
+³           verificacao_autoridade.cpython-313.pyc
+³           webhook.cpython-313.pyc
+³           __init__.cpython-313.pyc
+³           
+ÃÄÄÄservices
+³   ³   audio_processing.py
+³   ³   auth.py
+³   ³   auth_bp.py
+³   ³   budget_guard.py
+³   ³   coupons.py
+³   ³   crm.py
+³   ³   db.py
+³   ³   email_sender.py
+³   ³   firebase_admin_init.py
+³   ³   gcs_handler.py
+³   ³   humanizer.py
+³   ³   professions.py
+³   ³   schedule.py
+³   ³   storage_mgr.py
+³   ³   text_to_speech.py
+³   ³   wa_bot.backup.20250930.py
+³   ³   wa_bot.py
+³   ³   wa_bot.py.bak
+³   ³   wa_bot_legacy.py
+³   ³   wa_send.py
+³   ³   
+³   ÃÄÄÄbot_core
+³   ³       __init__.py
+³   ³       
+³   ÃÄÄÄconfig
+³   ³       schedule_schema.py
+³   ³       __init__.py
+³   ³       
+³   ÃÄÄÄdomain
+³   ³   ³   __init__.py
+³   ³   ³   
+³   ³   ÀÄÄÄscheduling
+³   ³           __init__.py
+³   ³           
+³   ÃÄÄÄnlu
+³   ³   ÀÄÄÄ__pycache__
+³   ³           intent.cpython-313.pyc
+³   ³           
+³   ÃÄÄÄopenai
+³   ³   ³   history_manager.py
+³   ³   ³   nlu_intent.py
+³   ³   ³   openai_handler.py
+³   ³   ³   prompt_builder.py
+³   ³   ³   
+³   ³   ÀÄÄÄ__pycache__
+³   ³           history_manager.cpython-313.pyc
+³   ³           nlu_intent.cpython-313.pyc
+³   ³           openai_handler.cpython-313.pyc
+³   ³           prompt_builder.cpython-313.pyc
+³   ³           
+³   ÃÄÄÄproviders
+³   ³       __init__.py
+³   ³       
+³   ÃÄÄÄutils
+³   ³       __init__.py
+³   ³       
+³   ÀÄÄÄ__pycache__
+³           audio_processing.cpython-313.pyc
+³           auth.cpython-313.pyc
+³           budget_guard.cpython-313.pyc
+³           coupons.cpython-313.pyc
+³           db.cpython-313.pyc
+³           firebase_admin_init.cpython-313.pyc
+³           gcs_handler.cpython-313.pyc
+³           humanizer.cpython-313.pyc
+³           openai_handler.cpython-313.pyc
+³           schedule.cpython-313.pyc
+³           text_to_speech.cpython-313.pyc
+³           wa_bot.cpython-313.pyc
+³           wa_bot_legacy.cpython-313.pyc
+³           wa_send.cpython-313.pyc
+³           
+ÃÄÄÄtemplates
+³   ÀÄÄÄemails
+³           confirmation.html
+³           daily_summary.html
+³           reminder.html
+³           
+ÀÄÄÄTS Recommended Apps
+        360extremebrowser_setup.exe
+        wps_office_inst.exe
+        

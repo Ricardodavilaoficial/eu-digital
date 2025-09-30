@@ -943,3 +943,16 @@ def static_proxy(path):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
+# --- Rota de health do wa_bot (somente leitura) ---
+from flask import jsonify
+try:
+    from services import wa_bot
+
+    @app.get("/internal/wa-bot/health")
+    def wa_bot_health():
+        return jsonify(wa_bot.healthcheck()), 200
+except Exception as e:
+    # Evita quebrar o app se algo der errado na importação
+    @app.get("/internal/wa-bot/health")
+    def wa_bot_health_fallback():
+        return jsonify({"ok": False, "error": str(e), "stage": "route"}), 200
