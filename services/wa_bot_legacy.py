@@ -1,16 +1,16 @@
-# services/wa_bot.py
-# Bot WhatsApp do MEI Robô
+﻿# services/wa_bot.py
+# Bot WhatsApp do MEI RobÃ´
 # - NLU leve "sempre on"
-# - Preços: consolida de 3 fontes (doc.precos [map/lista], coleção /precos, coleção /produtosEServicos)
-# - Profissão + até 2 especializações: sinônimos e matching por contexto
-# - Cache de respostas de preço (quanto custa X?) via cache.kv (TTL)
+# - PreÃ§os: consolida de 3 fontes (doc.precos [map/lista], coleÃ§Ã£o /precos, coleÃ§Ã£o /produtosEServicos)
+# - ProfissÃ£o + atÃ© 2 especializaÃ§Ãµes: sinÃ´nimos e matching por contexto
+# - Cache de respostas de preÃ§o (quanto custa X?) via cache.kv (TTL)
 # - FAQ fixos via profissionais/{uid}/faq/{endereco|horarios|telefone|pix}
-# - Agendar/Reagendar com regras (sem fim de semana; +2 dias) e integração schedule se existir
-# - Budget Guard: gate de custos (sem falar de economia ao usuário)
+# - Agendar/Reagendar com regras (sem fim de semana; +2 dias) e integraÃ§Ã£o schedule se existir
+# - Budget Guard: gate de custos (sem falar de economia ao usuÃ¡rio)
 # - Microcopy humana + overrides opcionais por Firestore (l10n/persona)
-# - Se o cliente falar por áudio, responder por áudio (se o app injetar send_audio_fn)
-# - *** Harmonização MSISDN BR com/sem 9 (equivalence key + candidatos) ***
-# - *** Humanização plugável via services.humanizer (sanitização e microcopy) ***
+# - Se o cliente falar por Ã¡udio, responder por Ã¡udio (se o app injetar send_audio_fn)
+# - *** HarmonizaÃ§Ã£o MSISDN BR com/sem 9 (equivalence key + candidatos) ***
+# - *** HumanizaÃ§Ã£o plugÃ¡vel via services.humanizer (sanitizaÃ§Ã£o e microcopy) ***
 
 import os
 import json
@@ -34,7 +34,7 @@ except Exception:
     detect_intent_v1 = None
 
 try:
-    # Legacy já existente no projeto
+    # Legacy jÃ¡ existente no projeto
     from services.openai.nlu_intent import detect_intent as detect_intent_legacy
 except Exception:
     detect_intent_legacy = None
@@ -42,8 +42,8 @@ except Exception:
 
 def parse_intent(text: str):
     """
-    Fachada estável de intenção.
-    Padrão: legacy. Quando NLU_MODE=v1 e houver módulo, usa nlu.intent.
+    Fachada estÃ¡vel de intenÃ§Ã£o.
+    PadrÃ£o: legacy. Quando NLU_MODE=v1 e houver mÃ³dulo, usa nlu.intent.
     Em erro, faz fallback.
     """
     mode = NLU_MODE or "legacy"
@@ -65,8 +65,8 @@ def parse_intent(text: str):
 
 def _nlu_probe(uid: str, text: str):
     """
-    Apenas LOGA a intenção quando NLU_MODE=v1.
-    Não altera a resposta/fluxo. Serve pra validar v1 com usuário canário.
+    Apenas LOGA a intenÃ§Ã£o quando NLU_MODE=v1.
+    NÃ£o altera a resposta/fluxo. Serve pra validar v1 com usuÃ¡rio canÃ¡rio.
     """
     if (NLU_MODE == "v1") and detect_intent_v1:
         try:
@@ -112,7 +112,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 # ========== Helpers de telefone (equivalence key + candidatos) ==========
-# Preferimos services.phone_utils; se não houver, fallback local
+# Preferimos services.phone_utils; se nÃ£o houver, fallback local
 try:
     from services.phone_utils import (
         br_equivalence_key as _br_equivalence_key_ext,
@@ -131,7 +131,7 @@ try:
 
     logging.info("[wa_bot][phone] usando services.phone_utils")
 except Exception:
-    logging.info("[wa_bot][phone] services.phone_utils indisponível; usando fallback local")
+    logging.info("[wa_bot][phone] services.phone_utils indisponÃ­vel; usando fallback local")
     _DIGITS_RE = re.compile(r"\D+")
 
     def _only_digits(s: str) -> str:
@@ -195,7 +195,7 @@ try:
     from services import db as _dbsvc_abs
     _DB_CLIENT = getattr(_dbsvc_abs, "db", None)
     try:
-        # get_doc pode não existir no módulo; tratamos abaixo
+        # get_doc pode nÃ£o existir no mÃ³dulo; tratamos abaixo
         from services.db import get_doc as _ext_get_doc_abs  # type: ignore
     except Exception:
         _ext_get_doc_abs = None  # type: ignore
@@ -228,17 +228,17 @@ except NameError:
 
 
 def _db_ready() -> bool:
-    # Só usa Firestore se existir client E FIREBASE_PROJECT_ID
+    # SÃ³ usa Firestore se existir client E FIREBASE_PROJECT_ID
     return (_DB_CLIENT is not None) and bool(os.getenv("FIREBASE_PROJECT_ID"))
 
 
 def _get_firestore_doc_ref(path: str):
-    """Navega até um documento Firestore a partir de 'col/doc[/col/doc...]'."""
+    """Navega atÃ© um documento Firestore a partir de 'col/doc[/col/doc...]'."""
     if not _db_ready():
         return None
     parts = [p for p in (path or "").split("/") if p]
     if not parts or len(parts) % 2 != 0:
-        return None  # precisa ser doc (número PAR de segmentos)
+        return None  # precisa ser doc (nÃºmero PAR de segmentos)
     ref = _DB_CLIENT
     for i, part in enumerate(parts):
         ref = ref.collection(part) if i % 2 == 0 else ref.document(part)
@@ -246,7 +246,7 @@ def _get_firestore_doc_ref(path: str):
 
 
 def _get_firestore_col_ref(path: str):
-    """Navega até uma coleção Firestore a partir de 'col[/doc/col...]' (número ÍMPAR de segmentos)."""
+    """Navega atÃ© uma coleÃ§Ã£o Firestore a partir de 'col[/doc/col...]' (nÃºmero ÃMPAR de segmentos)."""
     if not _db_ready():
         return None
     parts = [p for p in (path or "").split("/") if p]
@@ -259,7 +259,7 @@ def _get_firestore_col_ref(path: str):
 
 
 def _get_doc_safe(path: str) -> Optional[Dict[str, Any]]:
-    """Usa get_doc do services.db se existir; caso contrário, lê via client."""
+    """Usa get_doc do services.db se existir; caso contrÃ¡rio, lÃª via client."""
     if not _db_ready():
         return None
     if callable(_GET_DOC_FN):
@@ -280,7 +280,7 @@ def _get_doc_safe(path: str) -> Optional[Dict[str, Any]]:
 
 
 def _list_collection_safe(path: str, limit: int = 500) -> List[Dict[str, Any]]:
-    """Lista documentos de uma coleção por caminho textual (sem depender de list_collection externa)."""
+    """Lista documentos de uma coleÃ§Ã£o por caminho textual (sem depender de list_collection externa)."""
     if not _db_ready():
         return []
     col_ref = _get_firestore_col_ref(path)
@@ -303,17 +303,17 @@ DB = _DB_CLIENT
 
 # ========== NLU leve (imports tolerantes) ==========
 try:
-    # ⚠️ Alias para evitar o erro "cannot import name 'extract_intent'":
+    # âš ï¸ Alias para evitar o erro "cannot import name 'extract_intent'":
     from services.openai.nlu_intent import detect_intent as extract_intent  # abs
 except Exception as e_abs:
     try:
         from .openai.nlu_intent import detect_intent as extract_intent  # rel
     except Exception as e_rel:
-        logging.exception("[wa_bot] nlu_intent indisponível: abs=%s | rel=%s", e_abs, e_rel)
+        logging.exception("[wa_bot] nlu_intent indisponÃ­vel: abs=%s | rel=%s", e_abs, e_rel)
 
         def extract_intent(text: str) -> Dict[str, Optional[str]]:
             t = (text or "").lower()
-            if re.search(r"\b(preço|preços|tabela|valor|valores|serviço|serviços)\b", t):
+            if re.search(r"\b(preÃ§o|preÃ§os|tabela|valor|valores|serviÃ§o|serviÃ§os)\b", t):
                 return {"intent": "precos", "serviceName": None, "dateText": None, "timeText": None}
             if re.search(r"\b(agendar|agenda|marcar|agendamento|reservar)\b", t):
                 mdate = re.search(r"(\d{1,2}/\d{1,2})", t)
@@ -324,11 +324,11 @@ except Exception as e_abs:
                     "dateText": mdate.group(1) if mdate else None,
                     "timeText": mtime.group(1) if mtime else None,
                 }
-            if re.search(r"\b(reagendar|remarcar|mudar\s+hor[aó]rio|trocar\s+hor[aó]rio)\b", t):
+            if re.search(r"\b(reagendar|remarcar|mudar\s+hor[aÃ³]rio|trocar\s+hor[aÃ³]rio)\b", t):
                 return {"intent": "reagendar", "serviceName": None, "dateText": None, "timeText": None}
-            if re.search(r"\b(endereç|localiza|maps?)\b", t):
+            if re.search(r"\b(endereÃ§|localiza|maps?)\b", t):
                 return {"intent": "localizacao", "serviceName": None, "dateText": None, "timeText": None}
-            if re.search(r"\b(hor[aá]rio|funciona)\b", t):
+            if re.search(r"\b(hor[aÃ¡]rio|funciona)\b", t):
                 return {"intent": "horarios", "serviceName": None, "dateText": None, "timeText": None}
             if re.search(r"\b(telefone|whats|contato)\b", t):
                 return {"intent": "telefone", "serviceName": None, "dateText": None, "timeText": None}
@@ -343,7 +343,7 @@ except Exception as e_abs:
     try:
         from .budget_guard import budget_fingerprint, charge, can_use_audio, can_use_gpt4o  # rel
     except Exception as e_rel:
-        logging.exception("[wa_bot] budget_guard indisponível: abs=%s | rel=%s", e_abs, e_rel)
+        logging.exception("[wa_bot] budget_guard indisponÃ­vel: abs=%s | rel=%s", e_abs, e_rel)
 
         def budget_fingerprint():
             return {"can_audio": True, "can_gpt4o": False}
@@ -358,15 +358,15 @@ except Exception as e_abs:
             return False
 
 # ========== Cache KV (novo) ==========
-# - Usamos cache.kv quando disponível; caso contrário, fallback em memória local.
+# - Usamos cache.kv quando disponÃ­vel; caso contrÃ¡rio, fallback em memÃ³ria local.
 try:
     from cache.kv import make_key as kv_make_key, get as kv_get, put as kv_put  # type: ignore
 
     _KV_OK = True
 except Exception as e_kv:
-    logging.warning("[wa_bot] cache.kv indisponível: %s", e_kv)
+    logging.warning("[wa_bot] cache.kv indisponÃ­vel: %s", e_kv)
     _KV_OK = False
-    # Fallback simples em memória com TTL
+    # Fallback simples em memÃ³ria com TTL
     _kv_mem: Dict[str, Tuple[Any, float]] = {}
 
     def kv_make_key(uid: str, intent: str, slug: str) -> str:
@@ -391,9 +391,9 @@ except Exception as e_kv:
         return value
 
 
-# Heurística de pergunta de preço (mantida local)
+# HeurÃ­stica de pergunta de preÃ§o (mantida local)
 def is_price_question(text: str) -> bool:
-    return bool(re.search(r"\b(quanto|preço|precos|valor|custa|tá|ta)\b", text or "", re.I))
+    return bool(re.search(r"\b(quanto|preÃ§o|precos|valor|custa|tÃ¡|ta)\b", text or "", re.I))
 
 
 # ========== Domain pricing (opcional) ==========
@@ -421,7 +421,7 @@ except Exception as e_abs:
             atualizar_estado_agendamento,
         )  # rel
     except Exception as e_rel:
-        logging.exception("[wa_bot] schedule indisponível: abs=%s | rel=%s", e_abs, e_rel)
+        logging.exception("[wa_bot] schedule indisponÃ­vel: abs=%s | rel=%s", e_abs, e_rel)
 
         def can_book(date_str, time_str, tz="America/Sao_Paulo"):
             try:
@@ -432,15 +432,15 @@ except Exception as e_abs:
                 year = now.year
                 dt = datetime(year, mm, dd, hh, mi, tzinfo=tzinfo)
                 if (dt.date() - now.date()).days < 2:
-                    return (False, "Preciso de pelo menos 2 dias de antecedência.")
+                    return (False, "Preciso de pelo menos 2 dias de antecedÃªncia.")
                 if dt.weekday() >= 5:
-                    return (False, "Não atendemos em fins de semana.")
+                    return (False, "NÃ£o atendemos em fins de semana.")
                 return (True, None)
             except Exception:
-                return (False, "Data/hora inválida.")
+                return (False, "Data/hora invÃ¡lida.")
 
         def save_booking(uid, serviceName, dateText, timeText):
-            return {"servico": serviceName or "serviço", "data": dateText, "hora": timeText}
+            return {"servico": serviceName or "serviÃ§o", "data": dateText, "hora": timeText}
 
         def validar_agendamento_v1(uid, ag):
             return (True, None, None)
@@ -459,19 +459,19 @@ PRICE_CACHE_TTL = int(os.getenv("PRICE_CACHE_TTL", "1800"))  # 30 min
 
 # ===== L10N / Microcopy humana (templates simples) ===========================
 _L10N_DEFAULTS = {
-    "help": "Posso te passar preços, endereço/horários ou já marcar um horário. Como posso te ajudar?",
+    "help": "Posso te passar preÃ§os, endereÃ§o/horÃ¡rios ou jÃ¡ marcar um horÃ¡rio. Como posso te ajudar?",
     "price_table_header": "Alguns valores:",
-    "faq_default": "Posso te ajudar com endereço, horários, telefone e Pix. O que você precisa?",
-    "ask_service": "Qual serviço você quer? Exemplos: {exemplos}.",
-    "ask_datetime": "Qual dia e horário ficam bons? Ex.: ‘terça 10h’ ou ‘01/09 14:00’.",
-    "schedule_confirm": "Fechado: {servico} em {dia} às {hora}{preco}. Se precisar mudar, é só me falar.",
-    "reschedule_ask": "Qual nova data e horário? Ex.: 02/09 10:00, ou 'quarta 15h'.",
-    "session_cleared": "Pronto, zerei nossa conversa. Quer recomeçar com ‘preços’ ou ‘agendar’?",
-    "audio_error": "Poxa, tive um probleminha aqui com seu áudio. Pode tentar de novo? Se preferir, me manda por texto também."
+    "faq_default": "Posso te ajudar com endereÃ§o, horÃ¡rios, telefone e Pix. O que vocÃª precisa?",
+    "ask_service": "Qual serviÃ§o vocÃª quer? Exemplos: {exemplos}.",
+    "ask_datetime": "Qual dia e horÃ¡rio ficam bons? Ex.: â€˜terÃ§a 10hâ€™ ou â€˜01/09 14:00â€™.",
+    "schedule_confirm": "Fechado: {servico} em {dia} Ã s {hora}{preco}. Se precisar mudar, Ã© sÃ³ me falar.",
+    "reschedule_ask": "Qual nova data e horÃ¡rio? Ex.: 02/09 10:00, ou 'quarta 15h'.",
+    "session_cleared": "Pronto, zerei nossa conversa. Quer recomeÃ§ar com â€˜preÃ§osâ€™ ou â€˜agendarâ€™?",
+    "audio_error": "Poxa, tive um probleminha aqui com seu Ã¡udio. Pode tentar de novo? Se preferir, me manda por texto tambÃ©m."
 }
 
 def _load_l10n_overrides(uid: str) -> dict:
-    """Lê profissionais/{uid}/l10n (se existir) para sobrescrever textos."""
+    """LÃª profissionais/{uid}/l10n (se existir) para sobrescrever textos."""
     try:
         doc = _get_doc_safe(f"profissionais/{uid}/l10n")
         return doc if isinstance(doc, dict) else {}
@@ -479,7 +479,7 @@ def _load_l10n_overrides(uid: str) -> dict:
         return {}
 
 def _apply_persona(uid: str, text: str) -> str:
-    """Aplica detalhes leves de persona se existirem (não obrigatório)."""
+    """Aplica detalhes leves de persona se existirem (nÃ£o obrigatÃ³rio)."""
     try:
         prof = _get_doc_safe(f"profissionais/{uid}") or {}
         persona = prof.get("persona") or {}
@@ -519,7 +519,7 @@ def _format_brl(v: Any) -> str:
 
 
 def fallback_text(app_tag: str, context: str) -> str:
-    # Microcopy humana (sem debug técnico para o cliente); usada principalmente em erros de áudio
+    # Microcopy humana (sem debug tÃ©cnico para o cliente); usada principalmente em erros de Ã¡udio
     if humanize_on():
         return H("audio_error", {"raw": _L10N_DEFAULTS.get("audio_error","")}, mode="audio")
     return _L10N_DEFAULTS["audio_error"]
@@ -532,7 +532,7 @@ def _pick_phone(value: Dict) -> str:
         return ""
 
 
-# ---- Helper para chave de cache de preço (usa cache.kv) ----
+# ---- Helper para chave de cache de preÃ§o (usa cache.kv) ----
 def _mk_price_cache_key(uid: str, user_text: str) -> str:
     try:
         norm = re.sub(r"\s+", " ", (user_text or "").strip().lower())[:120]
@@ -541,9 +541,9 @@ def _mk_price_cache_key(uid: str, user_text: str) -> str:
     return kv_make_key(uid, "price_q", norm)
 
 
-# ========== Profissão & especializações ==========
+# ========== ProfissÃ£o & especializaÃ§Ãµes ==========
 def _load_prof_context(uid: str) -> Dict[str, Any]:
-    """Lê profissionais/{uid} e retorna {profissao, especializacoes[], aliases(Optional map)}."""
+    """LÃª profissionais/{uid} e retorna {profissao, especializacoes[], aliases(Optional map)}."""
     prof = _get_doc_safe(f"profissionais/{uid}") or {}
     prof_context = {
         "profissao": (prof.get("profissao") or "").strip().lower(),
@@ -582,7 +582,7 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
                 "sombra": ["sobrancelha", "design de sobrancelha", "sobrancelha masculina"],
                 "baixar a melena": ["corte masculino"],
                 "pezinho": ["acabamento", "pezinho"],
-                "tintura": ["coloração", "tintura"],
+                "tintura": ["coloraÃ§Ã£o", "tintura"],
             }
         )
 
@@ -593,8 +593,8 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
                 "limpeza": ["profilaxia", "limpeza"],
                 "clareamento": ["clareamento dental", "clareamento"],
                 "canal": ["tratamento de canal", "endodontia"],
-                "aparelho": ["ortodontia", "avaliação ortodôntica"],
-                "restauração": ["restauração", "resina"],
+                "aparelho": ["ortodontia", "avaliaÃ§Ã£o ortodÃ´ntica"],
+                "restauraÃ§Ã£o": ["restauraÃ§Ã£o", "resina"],
             }
         )
 
@@ -603,9 +603,9 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
         base.update(
             {
                 "banho": ["banho"],
-                "tosa": ["tosa", "tosa higiênica", "tosa completa"],
+                "tosa": ["tosa", "tosa higiÃªnica", "tosa completa"],
                 "unha": ["corte de unha", "unha"],
-                "higiene": ["higienização", "limpeza"],
+                "higiene": ["higienizaÃ§Ã£o", "limpeza"],
             }
         )
 
@@ -613,15 +613,15 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
     if "advog" in p or "direito" in p:
         base.update(
             {
-                "consulta": ["consulta", "consulta jurídica"],
-                "contrato": ["revisão de contrato", "elaboração de contrato"],
+                "consulta": ["consulta", "consulta jurÃ­dica"],
+                "contrato": ["revisÃ£o de contrato", "elaboraÃ§Ã£o de contrato"],
                 "trabalhista": ["consulta trabalhista"],
-                "civil": ["consulta cível"],
+                "civil": ["consulta cÃ­vel"],
             }
         )
 
-    # Artesão / designer
-    if "artes" in p or "artesã" in p or "designer" in p:
+    # ArtesÃ£o / designer
+    if "artes" in p or "artesÃ£" in p or "designer" in p:
         base.update(
             {
                 "personalizado": ["produto personalizado", "sob medida"],
@@ -636,10 +636,10 @@ def _profession_synonyms(profissao: str, especializacoes: List[str]) -> Dict[str
         base.setdefault("clareamento", ["clareamento"])
     return base
 
-# ========== Preços (agregador 3 fontes) ==========
+# ========== PreÃ§os (agregador 3 fontes) ==========
 def _normalize_item(it: Dict[str, Any]) -> Dict[str, Any]:
-    """Padroniza campos nome, preco, duracaoMin e mantém extras."""
-    nome = it.get("nome") or it.get("nomeLower") or it.get("_id") or "serviço"
+    """Padroniza campos nome, preco, duracaoMin e mantÃ©m extras."""
+    nome = it.get("nome") or it.get("nomeLower") or it.get("_id") or "serviÃ§o"
     preco = it.get("preco", it.get("valor"))
     dur = it.get("duracaoMin", it.get("duracaoPadraoMin", it.get("duracao")))
     ativo = it.get("ativo", True)
@@ -650,7 +650,7 @@ def _normalize_item(it: Dict[str, Any]) -> Dict[str, Any]:
         out["duracaoMin"] = dur
     out["ativo"] = ativo
     out["nomeLower"] = _strip_accents_lower(out["nome"])
-    # Mantém slug se vier de produtosEServicos
+    # MantÃ©m slug se vier de produtosEServicos
     if "slug" in it and isinstance(it["slug"], str):
         out["slug"] = it["slug"].strip().lower()
     return out
@@ -659,7 +659,7 @@ def _normalize_item(it: Dict[str, Any]) -> Dict[str, Any]:
 def _load_prices(uid: str) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
 
-    # (A) Doc principal → campo 'precos'
+    # (A) Doc principal â†’ campo 'precos'
     prof = _get_doc_safe(f"profissionais/{uid}") or {}
     precos = prof.get("precos")
     if isinstance(precos, dict):
@@ -673,7 +673,7 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
             for nome, valor in precos.items():
                 items.append(_normalize_item({"nome": nome, "preco": valor, "ativo": True}))
 
-    # (B) Coleção /precos
+    # (B) ColeÃ§Ã£o /precos
     try:
         for it in _list_collection_safe(f"profissionais/{uid}/precos", limit=500):
             if it.get("ativo", True):
@@ -681,7 +681,7 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logging.info("[PRICES] erro lendo /precos: %s", e)
 
-    # (C) Coleção /produtosEServicos
+    # (C) ColeÃ§Ã£o /produtosEServicos
     try:
         for it in _list_collection_safe(f"profissionais/{uid}/produtosEServicos", limit=500):
             if it.get("ativo", True):
@@ -706,13 +706,13 @@ def _load_prices(uid: str) -> List[Dict[str, Any]]:
 
 def _render_price_table(items: List[Dict[str, Any]], uid: str, debug_counts: Dict[str, int]) -> str:
     if not items:
-        return "Ainda não tenho uma tabela de preços publicada. 🙏"
+        return "Ainda nÃ£o tenho uma tabela de preÃ§os publicada. ðŸ™"
     lines = [ say(uid, "price_table_header") ]
     for it in items[:20]:
-        nome = it.get("nome", "serviço")
+        nome = it.get("nome", "serviÃ§o")
         dur = it.get("duracaoMin") or "?"
         val = it.get("preco") if it.get("preco") not in (None, "") else "?"
-        lines.append(f"• {nome} — {dur}min — {_format_brl(val)}")
+        lines.append(f"â€¢ {nome} â€” {dur}min â€” {_format_brl(val)}")
     return "\n".join(lines)
 
 
@@ -832,9 +832,9 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
             except Exception as e:
                 print(f"[STT] {name} falhou: {e}", flush=True)
     except Exception as e:
-        print(f"[STT] módulo services.audio_processing indisponível: {e}", flush=True)
+        print(f"[STT] mÃ³dulo services.audio_processing indisponÃ­vel: {e}", flush=True)
 
-    # Fallback opcional (desligado por padrão) para Whisper/OpenAI
+    # Fallback opcional (desligado por padrÃ£o) para Whisper/OpenAI
     try:
         if os.getenv("ENABLE_STT_OPENAI", "false").lower() in ("1", "true", "yes"):
             api_key = os.getenv("OPENAI_API_KEY")
@@ -858,16 +858,16 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     except Exception as e:
         print(f"[STT] openai whisper erro: {e}", flush=True)
 
-    print("[STT] nenhum backend retornou transcrição", flush=True)
+    print("[STT] nenhum backend retornou transcriÃ§Ã£o", flush=True)
     return ""
 
 
-# ========== TTS helper (responder em áudio quando fizer sentido) ==========
+# ========== TTS helper (responder em Ã¡udio quando fizer sentido) ==========
 def tts_speak(uid: str, text: str, voice_hint: Optional[str] = None) -> Optional[Tuple[bytes, str]]:
     """
-    Tenta sintetizar áudio a partir do texto.
-    Retorna (audio_bytes, mime_type) ou None se indisponível.
-    Preferência: providers.tts (ex.: ElevenLabs), depois services.text_to_speech (ex.: Google).
+    Tenta sintetizar Ã¡udio a partir do texto.
+    Retorna (audio_bytes, mime_type) ou None se indisponÃ­vel.
+    PreferÃªncia: providers.tts (ex.: ElevenLabs), depois services.text_to_speech (ex.: Google).
     """
     if not text:
         return None
@@ -904,7 +904,7 @@ def tts_speak(uid: str, text: str, voice_hint: Optional[str] = None) -> Optional
             except Exception as e:
                 logging.info("[TTS/providers] %s falhou: %s", name, e)
     except Exception as e:
-        logging.info("[TTS] providers.tts indisponível: %s", e)
+        logging.info("[TTS] providers.tts indisponÃ­vel: %s", e)
 
     # 2) services.text_to_speech (ex.: Google TTS)
     try:
@@ -946,15 +946,15 @@ def tts_speak(uid: str, text: str, voice_hint: Optional[str] = None) -> Optional
             except Exception as e:
                 logging.info("[TTS/services] %s falhou: %s", name, e)
     except Exception as e:
-        logging.info("[TTS] services.text_to_speech indisponível: %s", e)
+        logging.info("[TTS] services.text_to_speech indisponÃ­vel: %s", e)
 
     return None
 
 
 def send_reply(uid: str, to: str, text: str, inbound_type: str, send_text_fn, send_audio_fn=None, voice_hint: Optional[str]=None):
     """
-    Se o cliente mandou ÁUDIO e houver send_audio_fn + TTS ok -> responde em áudio.
-    Caso contrário, texto.
+    Se o cliente mandou ÃUDIO e houver send_audio_fn + TTS ok -> responde em Ã¡udio.
+    Caso contrÃ¡rio, texto.
     """
     # Sanitiza sempre ANTES de enviar (tira ids/hashes) usando humanizer
     try:
@@ -962,7 +962,7 @@ def send_reply(uid: str, to: str, text: str, inbound_type: str, send_text_fn, se
     except Exception:
         text = (text or "").strip()
 
-    # tenta usar a voz configurada do MEI (env) se não vier dica explícita
+    # tenta usar a voz configurada do MEI (env) se nÃ£o vier dica explÃ­cita
     voice_hint = voice_hint or os.getenv("ELEVEN_VOICE_ID") or None
     prefer_audio = (inbound_type == "audio") and REPLY_AUDIO_WHEN_AUDIO and callable(send_audio_fn)
     if prefer_audio:
@@ -980,7 +980,7 @@ def send_reply(uid: str, to: str, text: str, inbound_type: str, send_text_fn, se
 _MONTHS = {
     "jan": 1, "janeiro": 1,
     "fev": 2, "fevereiro": 2,
-    "mar": 3, "marco": 3, "março": 3,
+    "mar": 3, "marco": 3, "marÃ§o": 3,
     "abr": 4, "abril": 4,
     "mai": 5, "maio": 5,
     "jun": 6, "junho": 6,
@@ -993,7 +993,7 @@ _MONTHS = {
 }
 _UNITS = {
     "zero": 0, "um": 1, "uma": 1, "primeiro": 1,
-    "dois": 2, "duas": 2, "tres": 3, "três": 3, "quatro": 4, "cinco": 5,
+    "dois": 2, "duas": 2, "tres": 3, "trÃªs": 3, "quatro": 4, "cinco": 5,
     "seis": 6, "sete": 7, "oito": 8, "nove": 9, "dez": 10, "onze": 11, "doze": 12,
     "treze": 13, "catorze": 14, "quatorze": 14, "quinze": 15, "dezesseis": 16, "desesseis": 16,
     "dezessete": 17, "desessete": 17, "dezoito": 18, "dezenove": 19,
@@ -1001,11 +1001,11 @@ _UNITS = {
 _TENS = {"vinte": 20, "trinta": 30, "quarenta": 40, "cinquenta": 50}
 _WEEKDAYS = {
     "segunda": 0, "segunda-feira": 0,
-    "terca": 1, "terça": 1, "terça-feira": 1, "terca-feira": 1,
+    "terca": 1, "terÃ§a": 1, "terÃ§a-feira": 1, "terca-feira": 1,
     "quarta": 2, "quarta-feira": 2,
     "quinta": 3, "quinta-feira": 3,
     "sexta": 4, "sexta-feira": 4,
-    "sabado": 5, "sábado": 5,
+    "sabado": 5, "sÃ¡bado": 5,
     "domingo": 6,
 }
 
@@ -1052,13 +1052,13 @@ def _extract_time_from_words(t: str):
         mi = 30 if re.search(r"\bmeia\s+noite\s+e\s+meia\b", t) else 0
         return 0, mi
     period = None
-    if re.search(r"\bda\s+manha\b|\bde\s+manha\b|\bmanh[ãa]\b", t):
+    if re.search(r"\bda\s+manha\b|\bde\s+manha\b|\bmanh[Ã£a]\b", t):
         period = "manha"
     elif re.search(r"\bda\s+tarde\b|\bde\s+tarde\b|\btarde\b", t):
         period = "tarde"
     elif re.search(r"\bda\s+noite\b|\bde\s+noite\b|\bnoite\b", t):
         period = "noite"
-    m = re.search(r"\b(?:as|às)?\s*(?P<h>\d{1,2})(?:[:h](?P<m>\d{2}))?\s*(?:horas?)?", t)
+    m = re.search(r"\b(?:as|Ã s)?\s*(?P<h>\d{1,2})(?:[:h](?P<m>\d{2}))?\s*(?:horas?)?", t)
     if m:
         hh = int(m.group("h"))
         mi = int(m.group("m")) if m.group("m") else 0
@@ -1067,7 +1067,7 @@ def _extract_time_from_words(t: str):
         if period in ("tarde", "noite") and 1 <= hh <= 11:
             hh += 12
         return hh, mi
-    m2 = re.search(r"\b(?:as|às)?\s*([a-z]+)(?:\s*e\s*meia)?\s*(?:horas?)?", t)
+    m2 = re.search(r"\b(?:as|Ã s)?\s*([a-z]+)(?:\s*e\s*meia)?\s*(?:horas?)?", t)
     if m2:
         word = m2.group(1)
         hh = _words_to_int_pt(word)
@@ -1138,10 +1138,10 @@ def _parse_datetime_br(text_norm: str):
         return None
 
 
-# ========== Sessão (Firestore) ==========
+# ========== SessÃ£o (Firestore) ==========
 
 def _sess_ref(uid: str, wa_id_or_phone: str):
-    """Armazena sessão por CHAVE DE EQUIVALÊNCIA (robusto com/sem 9)."""
+    """Armazena sessÃ£o por CHAVE DE EQUIVALÃŠNCIA (robusto com/sem 9)."""
     key = br_equivalence_key(wa_id_or_phone or "")
     return DB.collection(f"profissionais/{uid}/sessions").document(key) if _db_ready() else None
 
@@ -1197,9 +1197,9 @@ def _clear_session(uid: str, wa_id_or_phone: str):
         print(f"[WA_BOT][SESS] clear erro: {e}", flush=True)
 
 
-# ---- NOVO: lembrar o último serviço citado (para agendar depois só com data/hora)
+# ---- NOVO: lembrar o Ãºltimo serviÃ§o citado (para agendar depois sÃ³ com data/hora)
 def _remember_last_service(uid: str, wa_id_or_phone: str, it: dict):
-    """Guarda na sessão o último serviço citado (ex.: após pergunta de preço)."""
+    """Guarda na sessÃ£o o Ãºltimo serviÃ§o citado (ex.: apÃ³s pergunta de preÃ§o)."""
     if not it or not wa_id_or_phone:
         return
     try:
@@ -1421,20 +1421,20 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
     try:
         ok, motivo, _ = validar_agendamento_v1(uid_default, ag)
         if not ok:
-            return False, f"Não foi possível agendar: {motivo}"
+            return False, f"NÃ£o foi possÃ­vel agendar: {motivo}"
         saved_id = salvar_agendamento(uid_default, ag)
         if isinstance(saved_id, dict):
             saved_id = saved_id.get("id") or saved_id.get("ag_id")
     except Exception as e:
         print(f"[WA_BOT][AGENDA] salvar via schedule falhou: {e}", flush=True)
-        saved_id = None  # força fallback de persistência
+        saved_id = None  # forÃ§a fallback de persistÃªncia
 
-    # 2) Fallback/garantia de persistência no Firestore quando id vier faltando ou "fake"
+    # 2) Fallback/garantia de persistÃªncia no Firestore quando id vier faltando ou "fake"
     try:
         need_fallback = (not saved_id) or (str(saved_id).strip().lower() in ("fake", "dummy", "test"))
         if need_fallback:
             if not _db_ready():
-                raise RuntimeError("DB indisponível")
+                raise RuntimeError("DB indisponÃ­vel")
             ref = DB.collection(f"profissionais/{uid_default}/agendamentos").document()
             ag["createdAt"] = datetime.now(SP_TZ).isoformat()
             ref.set(ag)
@@ -1443,13 +1443,13 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
         print(f"[WA_BOT][AGENDA][FALLBACK_SAVE] erro: {e2}", flush=True)
         return False, "Tive um problema ao salvar seu agendamento. Pode tentar novamente em instantes?"
 
-    # 3) Mensagem de confirmação (humanizada; sem ID)
+    # 3) Mensagem de confirmaÃ§Ã£o (humanizada; sem ID)
     dia = dt.strftime("%d/%m")
     hora = dt.strftime("%H:%M")
 
     if humanize_on():
         payload = {
-            "servico": ag.get("servicoNome") or "serviço",
+            "servico": ag.get("servicoNome") or "serviÃ§o",
             "data": dt.strftime("%Y-%m-%d"),
             "data_str": dia,
             "hora": hora,
@@ -1457,17 +1457,17 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
         msg = H("confirm_agenda", payload, mode=("audio" if channel_mode == "audio" else "text"))
     else:
         preco = ag.get("preco")
-        preco_txt = f" — {_format_brl(preco)}" if preco not in (None, "", "?") else ""
-        msg = f"Prontinho! Agendei {ag['servicoNome']} para {dia} às {hora}{preco_txt}. Se precisar alterar, é só me chamar. 😉"
+        preco_txt = f" â€” {_format_brl(preco)}" if preco not in (None, "", "?") else ""
+        msg = f"Prontinho! Agendei {ag['servicoNome']} para {dia} Ã s {hora}{preco_txt}. Se precisar alterar, Ã© sÃ³ me chamar. ðŸ˜‰"
 
     return True, msg
 
-# ========== Fluxos de alto nível ==========
+# ========== Fluxos de alto nÃ­vel ==========
 def _reply_prices(uid: str, to: str, send_text, channel_mode: str = "text"):
     counts = _count_sources(uid)
     items = _load_prices(uid)
     if humanize_on():
-        itens = [{"nome": it.get("nome","serviço"), "duracaoMin": it.get("duracaoMin"), "preco": it.get("preco")} for it in items]
+        itens = [{"nome": it.get("nome","serviÃ§o"), "duracaoMin": it.get("duracaoMin"), "preco": it.get("preco")} for it in items]
         msg = H("prices", {"itens": itens, "raw": _render_price_table(items, uid, counts)}, mode=("audio" if channel_mode=="audio" else "text"))
     else:
         msg = _render_price_table(items, uid, counts)
@@ -1492,13 +1492,13 @@ def _reply_price_from_cache_or_data(uid: str, to: str, user_text: str, send_text
     if not it:
         return _reply_prices(uid, to, send_text, channel_mode=channel_mode)
 
-    # >>> Memoriza o serviço identificado (para agendar depois)
+    # >>> Memoriza o serviÃ§o identificado (para agendar depois)
     try:
         _remember_last_service(uid, to, it)
     except Exception:
         pass
 
-    nome = it.get("nome") or "serviço"
+    nome = it.get("nome") or "serviÃ§o"
     valor_legacy = it.get("preco")
     slug = (it.get("slug") or "").strip().lower()
 
@@ -1516,15 +1516,15 @@ def _reply_price_from_cache_or_data(uid: str, to: str, user_text: str, send_text
             logging.info("[PRICING][domain] falhou (%s). Usando legacy.", e)
 
     if valor_final in (None, "", "?"):
-        # fallback para tabela completa se não houver valor
+        # fallback para tabela completa se nÃ£o houver valor
         return _reply_prices(uid, to, send_text, channel_mode=channel_mode)
 
-    extra = f" 〔{origem_txt}〕" if origem_txt else ""
-    base_msg = f"{nome}: {_format_brl(valor_final)} 😉{extra}"
-    # Se humanizer estiver ativo, ao menos sanitizamos a saída
+    extra = f" ã€”{origem_txt}ã€•" if origem_txt else ""
+    base_msg = f"{nome}: {_format_brl(valor_final)} ðŸ˜‰{extra}"
+    # Se humanizer estiver ativo, ao menos sanitizamos a saÃ­da
     msg = H_sanitize(base_msg)
 
-    # Cacheia apenas versão texto
+    # Cacheia apenas versÃ£o texto
     if channel_mode != "audio":
         kv_put(uid, key, msg, ttl_sec=PRICE_CACHE_TTL)
 
@@ -1535,7 +1535,7 @@ def _reply_faq(uid: str, to: str, faq_key: str, send_text, channel_mode: str = "
     ans = _load_faq(uid, faq_key)
     msg = ans if ans else say(uid, "faq_default")
     if humanize_on() and faq_key in ("endereco","horarios","telefone","pix"):
-        # por ora, só sanitiza; variações de FAQ podem vir depois
+        # por ora, sÃ³ sanitiza; variaÃ§Ãµes de FAQ podem vir depois
         msg = H("help", {"raw": msg}, mode=("audio" if channel_mode=="audio" else "text"))
     return send_text(to, msg)
 
@@ -1543,7 +1543,7 @@ def _reply_faq(uid: str, to: str, faq_key: str, send_text, channel_mode: str = "
 def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str, timeText: str, send_text, value: dict, body_text: str, channel_mode: str = "text"):
     ok, reason = can_book(dateText, timeText)
     if not ok:
-        return send_text(to, f"Não consegui agendar: {reason}")
+        return send_text(to, f"NÃ£o consegui agendar: {reason}")
     items = _load_prices(uid)
     svc = None
     if serviceName:
@@ -1562,9 +1562,9 @@ def _reply_schedule(uid: str, to: str, serviceName: Optional[str], dateText: str
     except Exception:
         pass
     if not dt:
-        return send_text(to, "Não entendi a data/hora. Pode enviar no formato 01/09 14:00?")
-    ok2, msg = _build_and_save_agendamento(uid, value, to, svc or {"nome": "serviço"}, dt, body_text, channel_mode=channel_mode)
-    return send_text(to, msg if ok2 else f"Não consegui agendar: {msg}")
+        return send_text(to, "NÃ£o entendi a data/hora. Pode enviar no formato 01/09 14:00?")
+    ok2, msg = _build_and_save_agendamento(uid, value, to, svc or {"nome": "serviÃ§o"}, dt, body_text, channel_mode=channel_mode)
+    return send_text(to, msg if ok2 else f"NÃ£o consegui agendar: {msg}")
 
 
 def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items, sess: dict, wa_id_raw: str, channel_mode: str = "text"):
@@ -1584,7 +1584,7 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
                     svc = it
                     break
 
-    # >>> Tenta usar o último serviço lembrado na sessão
+    # >>> Tenta usar o Ãºltimo serviÃ§o lembrado na sessÃ£o
     if not svc and sess.get("lastServiceName"):
         last_name = (sess.get("lastServiceName") or "").lower()
         for it in items:
@@ -1603,7 +1603,7 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
     have_svc = svc is not None
     have_dt = dt is not None
 
-    # >>> Se já temos data/hora mas não serviço, aplica um default seguro
+    # >>> Se jÃ¡ temos data/hora mas nÃ£o serviÃ§o, aplica um default seguro
     if have_dt and not have_svc and items:
         svc = items[0]
         have_svc = True
@@ -1612,7 +1612,7 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
         # >>> Regras de agenda antes de salvar
         ok_book, reason = can_book(dt.strftime("%d/%m"), dt.strftime("%H:%M"))
         if not ok_book:
-            return f"Não consegui agendar: {reason}"
+            return f"NÃ£o consegui agendar: {reason}"
         ok, msg = _build_and_save_agendamento(uid_default, value, to_msisdn, svc, dt, body_text, channel_mode=channel_mode)
         if ok:
             _clear_session(uid_default, wa_id_raw)
@@ -1628,12 +1628,12 @@ def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, 
     _save_session(uid_default, wa_id_raw, new_sess)
 
     if not have_svc and not have_dt:
-        nomes = ", ".join([it.get("nome") for it in items[:5]]) or "o serviço"
-        return f"Vamos agendar! Qual serviço você quer ({nomes}...) e para quando? Ex.: 01/09 14:00"
+        nomes = ", ".join([it.get("nome") for it in items[:5]]) or "o serviÃ§o"
+        return f"Vamos agendar! Qual serviÃ§o vocÃª quer ({nomes}...) e para quando? Ex.: 01/09 14:00"
     if not have_svc:
-        nomes = ", ".join([it.get("nome") for it in items[:5]]) or "o serviço"
-        return f"Certo. Para qual serviço? Tenho: {nomes}."
-    return "Perfeito. Qual data e horário? Ex.: 01/09 14:00, ou 'terça 10h', ou 'semana que vem sexta 9:30'."
+        nomes = ", ".join([it.get("nome") for it in items[:5]]) or "o serviÃ§o"
+        return f"Certo. Para qual serviÃ§o? Tenho: {nomes}."
+    return "Perfeito. Qual data e horÃ¡rio? Ex.: 01/09 14:00, ou 'terÃ§a 10h', ou 'semana que vem sexta 9:30'."
 
 
 def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, sess: dict, wa_id_raw: str, channel_mode: str = "text"):
@@ -1659,8 +1659,8 @@ def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str
     alvo = _find_target_agendamento(uid_default, cliente_id, wa, to_msisdn)
     if not alvo:
         return (
-            "Não encontrei um agendamento ativo seu.\n"
-            "Você pode enviar: reagendar <ID> <dd/mm> <hh:mm> (ID aparece na confirmação)"
+            "NÃ£o encontrei um agendamento ativo seu.\n"
+            "VocÃª pode enviar: reagendar <ID> <dd/mm> <hh:mm> (ID aparece na confirmaÃ§Ã£o)"
         )
 
     ag_id = alvo.get("_id")
@@ -1669,26 +1669,26 @@ def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str
         atualizar_estado_agendamento(uid_default, ag_id, body)
     except Exception as e:
         print(f"[WA_BOT][AGENDA][REAGENDAR] erro: {e}", flush=True)
-        return "Não consegui reagendar agora. Pode tentar novamente em instantes?"
+        return "NÃ£o consegui reagendar agora. Pode tentar novamente em instantes?"
 
     _clear_session(uid_default, wa_id_raw)
     dia = dt.strftime("%d/%m")
     hora = dt.strftime("%H:%M")
-    nome = alvo.get("servicoNome") or "serviço"
+    nome = alvo.get("servicoNome") or "serviÃ§o"
 
     if humanize_on():
         payload = {"servico": nome, "data": dt.strftime("%Y-%m-%d"), "data_str": dia, "hora": hora}
         return H("confirm_reagenda", payload, mode=("audio" if channel_mode == "audio" else "text"))
 
-    return f"Tudo certo! Reagendei {nome} para {dia} às {hora}. Se precisar, eu mudo de novo. 😉"
+    return f"Tudo certo! Reagendei {nome} para {dia} Ã s {hora}. Se precisar, eu mudo de novo. ðŸ˜‰"
 
 
 # ========== Entrada principal ==========
 def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_tag: str, send_audio_fn=None):
     """
     value: payload 'change.value' da Meta
-    send_text_fn: função injetada por app.py para enviar texto
-    send_audio_fn: (opcional) função para enviar áudio (to, audio_bytes, mime_type)
+    send_text_fn: funÃ§Ã£o injetada por app.py para enviar texto
+    send_audio_fn: (opcional) funÃ§Ã£o para enviar Ã¡udio (to, audio_bytes, mime_type)
     """
     messages = value.get("messages", [])
     if not messages:
@@ -1703,7 +1703,7 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         channel_mode = "audio" if msg_type == "audio" else "text"
         text_in = ""
 
-        # -------- ÁUDIO de entrada ----------
+        # -------- ÃUDIO de entrada ----------
         if msg_type == "audio":
             try:
                 charge("stt_per_15s", float(os.getenv("STT_SECONDS_AVG", "15")) / 15.0)
@@ -1751,7 +1751,7 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         elif msg_type == "text":
             text_in = (m.get("text") or {}).get("body", "")
         else:
-            # Tipos não suportados: responde ajuda humanizada
+            # Tipos nÃ£o suportados: responde ajuda humanizada
             help_msg = H("help", {"raw": say(uid_default, "help")}, mode=("audio" if channel_mode=="audio" else "text"))
             send_reply(uid_default, to_raw, help_msg, msg_type, send_text_fn, send_audio_fn)
             continue
@@ -1779,8 +1779,8 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         if re.search(r"\b(reagendar|remarcar|trocar\s+(?:o|de)?\s*horario|mudar\s+(?:o|de)?\s*horario)\b", text_norm):
             intent = "reagendar"
     
-        # comandos rápidos de sessão
-        if re.search(r"\b(cancelar|limpar|resetar|apagar\s+(conversa|sess[aã]o))\b", text_norm):
+        # comandos rÃ¡pidos de sessÃ£o
+        if re.search(r"\b(cancelar|limpar|resetar|apagar\s+(conversa|sess[aÃ£]o))\b", text_norm):
             try:
                 _clear_session(uid_default, to_raw)
             except Exception:
@@ -1818,7 +1818,7 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
             continue
 
-        # >>> NOVO: também faz slot-filling no modo legacy (sem v1)
+        # >>> NOVO: tambÃ©m faz slot-filling no modo legacy (sem v1)
         if intent == "agendar" and not (dateText and timeText):
             sess = _get_session(uid_default, to_raw)
             items = _load_prices(uid_default)
@@ -1832,7 +1832,7 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
             continue
 
-        # Slot-filling de agendamento genérico
+        # Slot-filling de agendamento genÃ©rico
         sess = _get_session(uid_default, to_raw)
         if sess.get("intent") in ("agendar", "reagendar"):
             if sess["intent"] == "agendar":
@@ -1856,3 +1856,4 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             f"[WA_BOT][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}",
             flush=True,
         )
+
