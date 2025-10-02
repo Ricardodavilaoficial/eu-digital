@@ -1,0 +1,20 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function okContent() {
+      return request.resource.contentType in ['image/jpeg','image/png','application/pdf'];
+    }
+    function okSize() {
+      return request.resource.size < 25 * 1024 * 1024;
+    }
+
+    match /sandbox/demo_uid/{uid}/{all=**} {
+      allow write: if request.auth != null && request.auth.uid == uid && okContent() && okSize();
+      allow read:  if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

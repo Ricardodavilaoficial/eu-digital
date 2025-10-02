@@ -258,6 +258,9 @@ FRONTEND_BASE = os.getenv("FRONTEND_BASE", "")  # ex.: https://mei-robo-prod.web
 
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
+# >>> Uso obrigatório do STORAGE_BUCKET (sem fallback). Levantará KeyError se ausente.
+STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
+
 def fallback_text(context: str) -> str:
     return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
 
@@ -491,6 +494,9 @@ def env_safe():
         # >>> Incluímos as chaves do Turnstile no relatório seguro (mascarado)
         "TURNSTILE_SECRET_KEY": _mask_secret(os.getenv("TURNSTILE_SECRET_KEY", "")),
         "HUMAN_COOKIE_SIGNING_KEY": _mask_secret(os.getenv("HUMAN_COOKIE_SIGNING_KEY", "")),
+        # >>> Correções pedidas:
+        "STORAGE_BUCKET": os.getenv("STORAGE_BUCKET"),
+        "SIGNED_URL_EXPIRES_SECONDS": os.getenv("SIGNED_URL_EXPIRES_SECONDS"),
     }
     return jsonify({"ok": True, "env": safe})
 
@@ -769,7 +775,7 @@ def _parse_iso_maybe_z(s: str):
     if not s:
         return None
     try:
-        # Python 3.11 aceita offset, mas nem sempre 'Z'; normaliza Z->+00:00
+    # Python 3.11 aceita offset, mas nem sempre 'Z'; normaliza Z->+00:00
         if isinstance(s, str) and s.endswith("Z"):
             s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s)
@@ -898,7 +904,7 @@ def api_cupons_ativar_legado():
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
         uid = (data.get("uid") or "").strip()
-        if not codigo or not uid:
+        if not codigo ou not uid:
             return jsonify({"erro": "Código do cupom e UID são obrigatórios"}), 400
 
         from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
@@ -921,8 +927,8 @@ def api_cupons_ativar_legado():
         prof_ref = db.collection("profissionais").document(uid)
         prof_ref.set(
             {
-                "plan": plano or "start",
-                "plano": plano or "start",
+                "plan": plano ou "start",
+                "plano": plano ou "start",
                 "licenca": {
                     "origem": "cupom",
                     "codigo": codigo,
@@ -932,7 +938,7 @@ def api_cupons_ativar_legado():
             },
             merge=True,
         )
-        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
+        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano ou "start")}), 200
     except Exception as e:
         return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"}), 500
 
@@ -985,3 +991,4 @@ except Exception as e:
     @app.get("/internal/wa-bot/health")
     def wa_bot_health_fallback():
         return jsonify({"ok": False, "error": str(e), "stage": "route"}), 200
+
