@@ -163,3 +163,5 @@ crafty-granite-462012-h5-8c0c72fd46ce.json
 .env* 
 TS Recommended Apps/
 *.zip
+*.bak
+*.diff

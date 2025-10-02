@@ -10,6 +10,7 @@ C:.
 ³   app.py.before-audio.bak
 ³   app.py.before-precos.bak
 ³   backend_tree.txt
+³   bool
 ³   cnpj-lookup.js
 ³   cupons.json
 ³   cupons.py
@@ -32,6 +33,7 @@ C:.
 ³   requirements.txt
 ³   routes.json
 ³   server.py
+³   services_tree.txt
 ³   str
 ³   tree.txt
 ³   {
@@ -177,6 +179,7 @@ C:.
 ³   ³   wa_bot.py
 ³   ³   wa_bot.py.bak
 ³   ³   wa_bot_legacy.py
+³   ³   wa_bot_legacy.py.bak
 ³   ³   wa_send.py
 ³   ³   
 ³   ÃÄÄÄbot_core
