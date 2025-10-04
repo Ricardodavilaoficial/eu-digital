@@ -165,3 +165,14 @@ TS Recommended Apps/
 *.zip
 *.bak
 *.diff
+signin*.json
+signup.json
+login.json
+lookup.json
+token.json
+env.json
+change_email.json
+upd.json
+*.log
+__pycache__ /
+.DS_Store
