@@ -2,7 +2,7 @@
 # routes/agenda_digest.py
 # Minimal, safe GET endpoint for the daily agenda digest
 # - URL: /api/agenda/digest?dry_run=true|false&date=YYYY-MM-DD&timezone=America/Sao_Paulo
-# - Auth/Gate: tries to reuse your existing admin guard from middleware.authority_gate
+# - Auth/Gate: uses the SAME decorator that protects /admin/ping
 # - Behavior: returns a JSON preview in dry_run; for real send it checks for a mailer (if present)
 
 import os
@@ -10,30 +10,14 @@ import logging
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify
 
+# Use the same admin decorator used by /admin/ping
+from routes.admin import admin_required as _admin_guard
+
 agenda_digest_bp = Blueprint("agenda_digest_bp", __name__, url_prefix="/api/agenda")
 
-# --- Try to reuse your existing admin guard (non-breaking) ---
-_admin_guard = None
-try:
-    # Common name we saw in your project
-    from middleware.authority_gate import admin_required as _admin_guard
-except Exception:
-    try:
-        from middleware.authority_gate import require_admin as _admin_guard  # fallback name
-    except Exception:
-        _admin_guard = None
-
-def _fallback_admin_guard(fn):
-    def _wrapped(*args, **kwargs):
-        # If your real admin guard isn't available here, block with a clear message.
-        return jsonify({"ok": False, "error": "admin_guard_missing", "detail": "Admin gate not found. Ensure middleware.authority_gate.admin_required is importable and registered."}), 401
-    # Preserve Flask view function attributes
-    _wrapped.__name__ = fn.__name__
-    return _wrapped
-
+# Simple adapter so we keep the same @ decorator usage below
 def _admin_gate():
-    # Returns a decorator (either the real admin guard or a safe fallback that returns 401)
-    return _admin_guard if _admin_guard else _fallback_admin_guard
+    return _admin_guard
 
 # Optional mailer (only used when dry_run=false and available)
 _send_email = None
