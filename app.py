@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from urllib import request as ulreq
 from urllib import parse as ulparse
 from flask import Flask, jsonify, request, send_from_directory, redirect
+from routes.agenda_digest import agenda_digest_bp
 
 # >>> VerificaÃ§Ã£o de Autoridade (Fase 1)
 from routes.verificacao_autoridade import verificacao_bp
@@ -95,7 +96,8 @@ app.register_blueprint(bp_conta)
 from routes.admin import admin_bp
 app.register_blueprint(admin_bp)
 print("[boot] Admin blueprint registrado âœ…", flush=True)
-
+app.register_blueprint(agenda_digest_bp)
+print("[boot] Agenda Digest blueprint registrado ✓", flush=True)
 _ALLOWED = os.environ.get("ALLOWED_ORIGINS", "")
 if _ALLOWED:
     origins = [o.strip() for o in _ALLOWED.split(",") if o.strip()]
