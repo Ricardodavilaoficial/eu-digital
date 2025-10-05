@@ -246,3 +246,54 @@ def admin_required(fn):
         return fn(*args, **kwargs)
 
     return wrapper
+# -----------------------------------------------------------------------------
+# Helpers compatíveis para outras rotas (NÃO alteram nada do fluxo atual)
+# -----------------------------------------------------------------------------
+def _extract_bearer_from(req) -> str | None:
+    """
+    Extrai o token do header Authorization: Bearer <token>
+    usando o objeto de request passado (não depende do flask.request global).
+    """
+    try:
+        auth_header = req.headers.get("Authorization", "") or req.headers.get("authorization", "")
+    except Exception:
+        return None
+    if auth_header.lower().startswith("bearer "):
+        return auth_header.split(" ", 1)[1].strip()
+    return None
+
+
+def get_uid_from_bearer(req) -> str | None:
+    """
+    Compat para rotas que esperam esta função.
+    Verifica o ID token com revogação (mesmo comportamento do resto do módulo)
+    e retorna o UID ou None.
+    """
+    token = _extract_bearer_from(req)
+    if not token:
+        return None
+    try:
+        decoded = verify_id_token_strict(token)
+        uid = decoded.get("uid")
+        return uid or None
+    except Exception as e:
+        logger.warning("get_uid_from_bearer: token inválido (%s)", type(e).__name__)
+        return None
+
+
+def get_user_from_bearer(req) -> SimpleNamespace | None:
+    """
+    Versão que retorna também email e claims, se precisar no futuro.
+    """
+    token = _extract_bearer_from(req)
+    if not token:
+        return None
+    try:
+        decoded = verify_id_token_strict(token)
+        uid = decoded.get("uid")
+        if not uid:
+            return None
+        return SimpleNamespace(uid=uid, email=decoded.get("email"), claims=decoded)
+    except Exception as e:
+        logger.warning("get_user_from_bearer: token inválido (%s)", type(e).__name__)
+        return None
