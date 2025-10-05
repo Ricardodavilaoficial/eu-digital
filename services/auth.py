@@ -48,6 +48,10 @@ def _is_production() -> bool:
 def _init_firebase_admin():
     if firebase_admin._apps:
         return
+
+    # Permite informar explicitamente o projectId (importante p/ verify_id_token)
+    project_id = os.getenv("FIREBASE_PROJECT_ID") or os.getenv("GCLOUD_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+
     cred_json = (
         os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
         or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
@@ -55,24 +59,32 @@ def _init_firebase_admin():
     try:
         if cred_json:
             cred = credentials.Certificate(json.loads(cred_json))
-            firebase_admin.initialize_app(cred)
-            logger.info("Firebase Admin inicializado via JSON embutido.")
+            if project_id:
+                firebase_admin.initialize_app(cred, {"projectId": project_id})
+                logger.info(f"Firebase Admin inicializado (service account) com projectId={project_id}.")
+            else:
+                firebase_admin.initialize_app(cred)
+                logger.info("Firebase Admin inicializado (service account) sem projectId explícito.")
         else:
             # Usa credencial padrão do ambiente
-            firebase_admin.initialize_app()
-            logger.info("Firebase Admin inicializado via credenciais padrão.")
+            if project_id:
+                firebase_admin.initialize_app(options={"projectId": project_id})
+                logger.info(f"Firebase Admin inicializado (default creds) com projectId={project_id}.")
+            else:
+                firebase_admin.initialize_app()
+                logger.info("Firebase Admin inicializado (default creds) sem projectId explícito.")
     except Exception as e:
-        # Não explode a inicialização; verify_id_token falhará se não houver credencial válida
+        # Não explode a inicialização; verify_id_token tentará de novo
         logger.warning(f"Falha ao inicializar Firebase Admin (seguirá tentando no verify): {e}")
         try:
-            firebase_admin.initialize_app()
-            logger.info("Firebase Admin fallback: inicialização padrão.")
+            if project_id:
+                firebase_admin.initialize_app(options={"projectId": project_id})
+                logger.info(f"Firebase Admin fallback: inicialização padrão com projectId={project_id}.")
+            else:
+                firebase_admin.initialize_app()
+                logger.info("Firebase Admin fallback: inicialização padrão sem projectId explícito.")
         except Exception as e2:
             logger.error(f"Falha também no fallback do Firebase Admin: {e2}")
-
-
-_init_firebase_admin()
-
 
 # -----------------------------------------------------------------------------
 # Helpers internos
