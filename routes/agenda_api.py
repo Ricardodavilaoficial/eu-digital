@@ -2,6 +2,8 @@
 # Rotas: /api/agenda/slots/search, /api/agenda/appointments, /api/agenda/events, /api/agenda/week
 # Protegidas por bearer (admin/owner). Mantém padrão do projeto.
 
+import os  # <— garanta que esta linha exista no topo
+
 from flask import Blueprint, request, jsonify
 import logging
 from datetime import datetime, timedelta
@@ -19,16 +21,22 @@ from services.agenda_repo import find_slots, create_event, list_events_for
 
 agenda_api_bp = Blueprint("agenda_api_bp", __name__, url_prefix="/api/agenda")
 
+
 def _require_uid(req):
-    # extrai uid do bearer para vincular ao MEI dono
+    # 1) Produção: tenta extrair via bearer normal
     if uid_from_bearer:
-        return uid_from_bearer(req)
-    # fallback – se seu projeto usa outro helper, ajuste aqui:
-    auth = req.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return None
-    # Se houver decodificador central, use-o. Aqui só sinalizamos ausência.
-    return req.headers.get("X-Debug-UID")  # fallback DEV opcional
+        try:
+            uid = uid_from_bearer(req)
+            if uid:
+                return uid
+        except Exception:
+            pass
+    # 2) DEV: permite header X-Debug-UID quando habilitado por ENV
+    if os.getenv("ALLOW_DEBUG_UID", "0") == "1":
+        dbg = req.headers.get("X-Debug-UID")
+        if dbg:
+            return dbg
+    return None
 
 @agenda_api_bp.route("/slots/search", methods=["POST"])
 def search_slots():

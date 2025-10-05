@@ -1,0 +1,10 @@
+{
+  "projectId": "mei-robo-prod",
+  "appId": "1:161054994911:web:4a57ad4337d8edf0b5146a",
+  "storageBucket": "mei-robo-prod.firebasestorage.app",
+  "apiKey": "AIzaSyCjIbIjLOjAa_NyoB3MMLWOdq_rJs432qg",
+  "authDomain": "mei-robo-prod.firebaseapp.com",
+  "messagingSenderId": "161054994911",
+  "projectNumber": "161054994911",
+  "version": "2"
+}

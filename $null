@@ -1,0 +1,8 @@
+False
+Não é possível indexar em uma matriz nula.
+No linha:1 caractere:66
++ ... dkconfig.txt') -match 'apiKey:\s*"(["]+)"' ; $matches[1] > apikey.txt
++                                                  ~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [], RuntimeException
+    + FullyQualifiedErrorId : NullArray
+ 

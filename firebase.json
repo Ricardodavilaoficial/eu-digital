@@ -7,5 +7,13 @@
   },
   "storage": {
     "rules": "storage.rules"
+  },
+  "hosting": {
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "headers": [
+      { "source": "**/*.@(html|htm)", "headers": [ { "key": "Cache-Control", "value": "no-store" } ] },
+      { "source": "/assets/partials/**", "headers": [ { "key": "Cache-Control", "value": "no-store" } ] }
+    ]
   }
 }
