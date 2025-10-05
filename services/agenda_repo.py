@@ -7,11 +7,8 @@ from typing import Dict, Any, List
 from datetime import datetime, timedelta, time
 import pytz
 
-try:
-    from firebase_admin import firestore  # type: ignore
-except Exception:
-    firestore = None
-
+import firebase_admin
+from firebase_admin import firestore as fb_firestore
 from services.agenda_rules import get_rules_for
 
 # ---- Helpers gerais ----
@@ -30,9 +27,15 @@ def _overlaps(start1: datetime, end1: datetime, start2: datetime, end2: datetime
     return start1 < end2 and start2 < end1
 
 def _get_db():
-    if firestore is None:
-        raise RuntimeError("Firestore não inicializado")
-    return firestore.client()
+    try:
+        # Inicializa o Firebase Admin se ainda não houver app
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app()
+        return fb_firestore.client()
+    except Exception as e:
+        logging.exception("[agenda_repo] Firestore não inicializado")
+        raise RuntimeError("Firestore não inicializado") from e
+
 
 def _get_duration_min_for_service(uid: str, service_id: str) -> int:
     # Tenta produtosEServicos: slug == service_id com campos {duracaoMin|duration_min}
