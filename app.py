@@ -40,6 +40,10 @@ from routes.stripe_checkout import stripe_checkout_bp
 from routes.conta_status import bp_conta
 # --- FIM: integraÃ§Ã£o CNPJ.ws pÃºblica ---
 
+# >>> Agenda (slots, appointments, reminders)
+from routes.agenda_api import agenda_api_bp
+from routes.agenda_reminders import agenda_rem_bp
+
 
 print("[boot] app.py raiz carregado âœ…", flush=True)
 logging.basicConfig(level=logging.INFO)
@@ -81,6 +85,10 @@ if bp_cnpj_publica:
 # âœ… NOVOS BLUEPRINTS (Signed URL + Opt-in)
 app.register_blueprint(media_bp)
 app.register_blueprint(contacts_bp)
+
+# >>> Agenda (slots, appointments, reminders)
+app.register_blueprint(agenda_api_bp)
+app.register_blueprint(agenda_rem_bp)
 
 # âœ… Stripe Webhook (SEM auth/CSRF; precisa estar acessÃ­vel publicamente)
 app.register_blueprint(stripe_webhook_bp)

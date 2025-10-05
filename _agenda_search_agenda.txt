@@ -1,0 +1,1668 @@
+=== SEARCH 2: Agenda/appointments ===
+.venv\Lib\site-packages\aiohttp\abc.py:66:    __slots__ = ()
+.venv\Lib\site-packages\aiohttp\abc.py:255:    __slots__ = ("logger", "log_format")
+.venv\Lib\site-packages\aiohttp\base_protocol.py:10:    __slots__ = (
+.venv\Lib\site-packages\aiohttp\client.py:199:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\client.py:1112:            match = base64.b64encode(hashlib.sha1(sec_key + WS_KEY).digest()).decode()
+.venv\Lib\site-packages\aiohttp\client.py:1466:    __slots__ = ("_coro", "_resp")
+.venv\Lib\site-packages\aiohttp\client.py:1506:    __slots__ = ("_coro", "_resp", "_session")
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:2:Digest authentication middleware for aiohttp client.
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:4:This middleware implements HTTP Digest Authentication according to RFC 7616,
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:35:class DigestAuthChallenge(TypedDict, total=False):
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:45:DigestFunctions: Dict[str, Callable[[bytes], "hashlib._Hash"]] = {
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:99:# Supported digest authentication algorithms
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:101:SUPPORTED_ALGORITHMS: Final[Tuple[str, ...]] = tuple(sorted(DigestFunctions.keys()))
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:103:# RFC 7616: Fields that require quoting in the Digest auth header
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:150:class DigestAuthMiddleware:
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:152:    HTTP digest authentication middleware for aiohttp client.
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:154:    This middleware intercepts 401 Unauthorized responses containing a Digest
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:155:    authentication challenge, calculates the appropriate digest credentials,
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:159:    - Handles all aspects of Digest authentication handshake automatically
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:171:    - RFC 7616: HTTP Digest Access Authentication (primary reference)
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:176:    The core digest calculation is inspired by the implementation in
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:178:    with added support for modern digest auth features and error handling.
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:202:        self._challenge: DigestAuthChallenge = {}
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:211:        Build digest authorization header for the current challenge.
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:219:            A fully formatted Digest authorization header string
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:229:                "Malformed Digest auth challenge: Missing 'realm' parameter"
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:234:                "Malformed Digest auth challenge: Missing 'nonce' parameter"
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:244:                "Security issue: Digest auth challenge contains empty 'nonce' value"
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:267:                    f"Digest auth error: Unsupported Quality of Protection (qop) value(s): {qop_raw}"
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:273:        if algorithm not in DigestFunctions:
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:275:                f"Digest auth error: Unsupported hash algorithm: {algorithm}. "
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:278:        hash_fn: Final = DigestFunctions[algorithm]
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:282:            return hash_fn(x).hexdigest().encode()
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:322:        ).hexdigest()[:16]
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:329:        # Calculate the response digest
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:334:            response_digest = KD(HA1, noncebit)
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:336:            response_digest = KD(HA1, b":".join((nonce_bytes, HA2)))
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:346:            "response": response_digest.decode(),
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:368:        return f"Digest {', '.join(pairs)}"
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:392:        Takes the given response and tries digest-auth, if needed.
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:408:        if method.lower() != "digest":
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:409:            # Not a digest auth challenge (could be Basic, Bearer, etc.)
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:413:            # We have a digest scheme but no parameters
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:414:            return False  # Malformed digest header, missing parameters
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:416:        # We have a digest auth header with content
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:419:            return False  # Malformed digest header, no valid parameters
+.venv\Lib\site-packages\aiohttp\client_middleware_digest_auth.py:452:        """Run the digest auth middleware."""
+.venv\Lib\site-packages\aiohttp\client_reqrep.py:110:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\client_reqrep.py:143:    HASHFUNC_BY_DIGESTLEN = {
+.venv\Lib\site-packages\aiohttp\client_reqrep.py:150:        digestlen = len(fingerprint)
+.venv\Lib\site-packages\aiohttp\client_reqrep.py:151:        hashfunc = self.HASHFUNC_BY_DIGESTLEN.get(digestlen)
+.venv\Lib\site-packages\aiohttp\client_reqrep.py:168:        got = self._hashfunc(cert).digest()
+.venv\Lib\site-packages\aiohttp\client_ws.py:37:@attr.s(frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\connector.py:117:    __slots__ = ("_awaitable", "_awaited")
+.venv\Lib\site-packages\aiohttp\connector.py:255:    __slots__ = ("closed", "transport")
+.venv\Lib\site-packages\aiohttp\connector.py:670:        """Wait for an available connection slot."""
+.venv\Lib\site-packages\aiohttp\connector.py:676:        # slot is still available.
+.venv\Lib\site-packages\aiohttp\connector.py:903:        digest of the expected certificate in DER format to verify
+.venv\Lib\site-packages\aiohttp\hdrs.py:63:DIGEST: Final[istr] = istr("Digest")
+.venv\Lib\site-packages\aiohttp\hdrs.py:104:WANT_DIGEST: Final[istr] = istr("Want-Digest")
+.venv\Lib\site-packages\aiohttp\helpers.py:237:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\helpers.py:312:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\helpers.py:558:    __slots__ = ("_timeout", "_loop", "_ceil_threshold", "_callbacks")
+.venv\Lib\site-packages\aiohttp\helpers.py:609:    __slots__ = ()
+.venv\Lib\site-packages\aiohttp\helpers.py:617:    __slots__ = ()
+.venv\Lib\site-packages\aiohttp\helpers.py:634:    __slots__ = ("_loop", "_tasks", "_cancelled", "_cancelling")
+.venv\Lib\site-packages\aiohttp\helpers.py:800:    __slots__ = ("_name", "_t", "__orig_class__")
+.venv\Lib\site-packages\aiohttp\helpers.py:844:    __slots__ = ("_maps",)
+.venv\Lib\site-packages\aiohttp\helpers.py:916:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\payload.py:102:    __slots__ = ("_first", "_normal", "_last", "_normal_lookup")
+.venv\Lib\site-packages\aiohttp\streams.py:42:    __slots__ = ("read_func",)
+.venv\Lib\site-packages\aiohttp\streams.py:62:    __slots__ = ("_stream",)
+.venv\Lib\site-packages\aiohttp\streams.py:79:    __slots__ = ()
+.venv\Lib\site-packages\aiohttp\streams.py:115:    __slots__ = (
+.venv\Lib\site-packages\aiohttp\streams.py:554:    __slots__ = ("_read_eof_chunk",)
+.venv\Lib\site-packages\aiohttp\tracing.py:201:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:210:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:219:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:228:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:238:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:248:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:258:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:263:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:268:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:273:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:278:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:283:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:290:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:297:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:304:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\tracing.py:311:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\web_protocol.py:94:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\web_protocol.py:144:    __slots__ = (
+.venv\Lib\site-packages\aiohttp\web_request.py:76:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\web_routedef.py:58:@attr.s(auto_attribs=True, frozen=True, repr=False, slots=True)
+.venv\Lib\site-packages\aiohttp\web_routedef.py:83:@attr.s(auto_attribs=True, frozen=True, repr=False, slots=True)
+.venv\Lib\site-packages\aiohttp\web_runner.py:44:    __slots__ = ("_runner", "_ssl_context", "_backlog", "_server")
+.venv\Lib\site-packages\aiohttp\web_runner.py:83:    __slots__ = ("_host", "_port", "_reuse_address", "_reuse_port")
+.venv\Lib\site-packages\aiohttp\web_runner.py:133:    __slots__ = ("_path",)
+.venv\Lib\site-packages\aiohttp\web_runner.py:171:    __slots__ = ("_path",)
+.venv\Lib\site-packages\aiohttp\web_runner.py:202:    __slots__ = ("_sock", "_name")
+.venv\Lib\site-packages\aiohttp\web_runner.py:243:    __slots__ = ("_handle_signals", "_kwargs", "_server", "_sites", "_shutdown_timeout")
+.venv\Lib\site-packages\aiohttp\web_runner.py:348:    __slots__ = ("_web_server",)
+.venv\Lib\site-packages\aiohttp\web_runner.py:369:    __slots__ = ("_app",)
+.venv\Lib\site-packages\aiohttp\web_urldispatcher.py:255:    __slots__ = ("_route", "_apps", "_current_app", "_frozen")
+.venv\Lib\site-packages\aiohttp\web_urldispatcher.py:320:    __slots__ = ("_exception",)
+.venv\Lib\site-packages\aiohttp\web_urldispatcher.py:631:        b64 = base64.urlsafe_b64encode(m.digest())
+.venv\Lib\site-packages\aiohttp\web_ws.py:53:@attr.s(auto_attribs=True, frozen=True, slots=True)
+.venv\Lib\site-packages\aiohttp\web_ws.py:275:            hashlib.sha1(key.encode() + WS_KEY).digest()
+.venv\Lib\site-packages\aiohttp\__init__.py:50:from .client_middleware_digest_auth import DigestAuthMiddleware
+.venv\Lib\site-packages\aiohttp\__init__.py:191:    "DigestAuthMiddleware",
+.venv\Lib\site-packages\aiosignal\__init__.py:33:    __slots__ = ("_owner",)
+.venv\Lib\site-packages\annotated_types\__init__.py:21:    SLOTS = {}
+.venv\Lib\site-packages\annotated_types\__init__.py:26:    SLOTS = {"slots": True}
+.venv\Lib\site-packages\annotated_types\__init__.py:105:    __slots__ = ()
+.venv\Lib\site-packages\annotated_types\__init__.py:108:@dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:119:@dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:130:@dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:141:@dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:192:        __slots__ = ()  # allow subclasses to use slots
+.venv\Lib\site-packages\annotated_types\__init__.py:204:@dataclass(frozen=True, **KW_ONLY, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:229:@dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:243:@dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:253:@dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:263:@dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:282:@dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:299:@dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:322:@dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\annotated_types\__init__.py:412:    @dataclass(frozen=True, **SLOTS)
+.venv\Lib\site-packages\anyio\abc\_resources.py:18:    __slots__ = ()
+.venv\Lib\site-packages\anyio\lowlevel.py:93:    __slots__ = "_var", "_value", "_redeemed"
+.venv\Lib\site-packages\anyio\lowlevel.py:106:    __slots__ = "_name", "_default"
+.venv\Lib\site-packages\anyio\_backends\_asyncio.py:681:    __slots__ = "parent_id", "cancel_scope", "__weakref__"
+.venv\Lib\site-packages\anyio\_core\_fileio.py:294:    __slots__ = "_path", "__weakref__"
+.venv\Lib\site-packages\anyio\_core\_synchronization.py:735:    __slots__ = "action", "_guarded"
+.venv\Lib\site-packages\anyio\_core\_testing.py:20:    __slots__ = "_name", "id", "parent_id", "name", "coro"
+.venv\Lib\site-packages\attr\validators.py:90:@attrs(repr=False, slots=True, unsafe_hash=True)
+.venv\Lib\site-packages\attr\validators.py:128:@attrs(repr=False, frozen=True, slots=True)
+.venv\Lib\site-packages\attr\validators.py:198:@attrs(repr=False, slots=True, unsafe_hash=True)
+.venv\Lib\site-packages\attr\validators.py:233:@attrs(repr=False, slots=True, unsafe_hash=True)
+.venv\Lib\site-packages\attr\validators.py:292:@attrs(repr=False, slots=False, unsafe_hash=True)
+.venv\Lib\site-packages\attr\validators.py:330:@attrs(repr=False, slots=True, unsafe_hash=True)
+.venv\Lib\site-packages\attr\validators.py:379:@attrs(repr=False, slots=True, unsafe_hash=True)
+.venv\Lib\site-packages\attr\validators.py:420:@attrs(repr=False, frozen=True, slots=True)
+.venv\Lib\site-packages\attr\validators.py:498:@attrs(repr=False, frozen=True, slots=True)
+.venv\Lib\site-packages\attr\validators.py:527:@attrs(repr=False, frozen=True, slots=True)
+.venv\Lib\site-packages\attr\validators.py:556:@attrs(repr=False, slots=True, unsafe_hash=True)
+.venv\Lib\site-packages\attr\validators.py:594:@attrs(repr=False, slots=True, unsafe_hash=True)
+.venv\Lib\site-packages\attr\validators.py:667:@attrs(repr=False, slots=True, unsafe_hash=True)
+.venv\Lib\site-packages\attr\_cmp.py:61:        "__slots__": ["value"],
+.venv\Lib\site-packages\attr\_compat.py:41:    __slots__ = ["sig"]
+.venv\Lib\site-packages\attr\_make.py:49:# name mangling when trying to create a slot for the field
+.venv\Lib\site-packages\attr\_make.py:50:# (when slots=True)
+.venv\Lib\site-packages\attr\_make.py:93:    This is used for non-slots classes with ``cache_hash=True``, to avoid
+.venv\Lib\site-packages\attr\_make.py:268:        __slots__ = ()
+.venv\Lib\site-packages\attr\_make.py:626:    __slots__ = (
+.venv\Lib\site-packages\attr\_make.py:645:        "_slots",
+.venv\Lib\site-packages\attr\_make.py:646:        "_weakref_slot",
+.venv\Lib\site-packages\attr\_make.py:654:        slots,
+.venv\Lib\site-packages\attr\_make.py:656:        weakref_slot,
+.venv\Lib\site-packages\attr\_make.py:677:        self._cls_dict = dict(cls.__dict__) if slots else {}
+.venv\Lib\site-packages\attr\_make.py:682:        self._slots = slots
+.venv\Lib\site-packages\attr\_make.py:684:        self._weakref_slot = weakref_slot
+.venv\Lib\site-packages\attr\_make.py:785:        if self._slots is True:
+.venv\Lib\site-packages\attr\_make.py:786:            cls = self._create_slots_class()
+.venv\Lib\site-packages\attr\_make.py:838:    def _create_slots_class(self):
+.venv\Lib\site-packages\attr\_make.py:840:        Build and return a new class with a `__slots__` attribute.
+.venv\Lib\site-packages\attr\_make.py:852:        # XXX: This can be confused by subclassing a slotted attrs class with
+.venv\Lib\site-packages\attr\_make.py:854:        # XXX: class.  See `test_slotted_confused` for details.  For now that's
+.venv\Lib\site-packages\attr\_make.py:865:        # Traverse the MRO to collect existing slots
+.venv\Lib\site-packages\attr\_make.py:867:        existing_slots = {}
+.venv\Lib\site-packages\attr\_make.py:872:            existing_slots.update(
+.venv\Lib\site-packages\attr\_make.py:875:                    for name in getattr(base_cls, "__slots__", [])
+.venv\Lib\site-packages\attr\_make.py:883:            self._weakref_slot
+.venv\Lib\site-packages\attr\_make.py:884:            and "__weakref__" not in getattr(self._cls, "__slots__", ())
+.venv\Lib\site-packages\attr\_make.py:902:                # Add cached properties to names for slotting.
+.venv\Lib\site-packages\attr\_make.py:920:        # Setting __slots__ to inherited attributes wastes memory.
+.venv\Lib\site-packages\attr\_make.py:921:        slot_names = [name for name in names if name not in base_names]
+.venv\Lib\site-packages\attr\_make.py:923:        # There are slots for attributes from current class
+.venv\Lib\site-packages\attr\_make.py:927:        reused_slots = {
+.venv\Lib\site-packages\attr\_make.py:928:            slot: slot_descriptor
+.venv\Lib\site-packages\attr\_make.py:929:            for slot, slot_descriptor in existing_slots.items()
+.venv\Lib\site-packages\attr\_make.py:930:            if slot in slot_names
+.venv\Lib\site-packages\attr\_make.py:932:        slot_names = [name for name in slot_names if name not in reused_slots]
+.venv\Lib\site-packages\attr\_make.py:933:        cd.update(reused_slots)
+.venv\Lib\site-packages\attr\_make.py:935:            slot_names.append(_HASH_CACHE_FIELD)
+.venv\Lib\site-packages\attr\_make.py:937:        cd["__slots__"] = tuple(slot_names)
+.venv\Lib\site-packages\attr\_make.py:1007:        def slots_getstate(self):
+.venv\Lib\site-packages\attr\_make.py:1015:        def slots_setstate(self, state):
+.venv\Lib\site-packages\attr\_make.py:1037:        return slots_getstate, slots_setstate
+.venv\Lib\site-packages\attr\_make.py:1066:            self._slots,
+.venv\Lib\site-packages\attr\_make.py:1104:            self._slots,
+.venv\Lib\site-packages\attr\_make.py:1312:    slots=False,
+.venv\Lib\site-packages\attr\_make.py:1314:    weakref_slot=True,
+.venv\Lib\site-packages\attr\_make.py:1350:    .. versionadded:: 16.0.0 *slots*
+.venv\Lib\site-packages\attr\_make.py:1360:    .. versionadded:: 18.2.0 *weakref_slot*
+.venv\Lib\site-packages\attr\_make.py:1429:            slots,
+.venv\Lib\site-packages\attr\_make.py:1431:            weakref_slot,
+.venv\Lib\site-packages\attr\_make.py:1437:                default=slots,
+.venv\Lib\site-packages\attr\_make.py:1929:def _is_slot_attr(a_name, base_attr_map):
+.venv\Lib\site-packages\attr\_make.py:1931:    Check if the attribute name comes from a slot class.
+.venv\Lib\site-packages\attr\_make.py:1934:    return cls and "__slots__" in cls.__dict__
+.venv\Lib\site-packages\attr\_make.py:1944:    slots,
+.venv\Lib\site-packages\attr\_make.py:1981:        slots,
+.venv\Lib\site-packages\attr\_make.py:2048:    frozen: bool, slots: bool, base_attr_map: dict[str, type]
+.venv\Lib\site-packages\attr\_make.py:2052:    and/or slotted.
+.venv\Lib\site-packages\attr\_make.py:2055:        if slots is True:
+.venv\Lib\site-packages\attr\_make.py:2059:        # But only if the attribute doesn't come from an ancestor slot
+.venv\Lib\site-packages\attr\_make.py:2066:            if _is_slot_attr(attr_name, base_attr_map):
+.venv\Lib\site-packages\attr\_make.py:2077:            if has_on_setattr or _is_slot_attr(attr_name, base_attr_map):
+.venv\Lib\site-packages\attr\_make.py:2097:    is_slotted: bool,
+.venv\Lib\site-packages\attr\_make.py:2125:        is_frozen, is_slotted, base_attr_map
+.venv\Lib\site-packages\attr\_make.py:2309:            if is_slotted:
+.venv\Lib\site-packages\attr\_make.py:2408:    # These slots must NOT be reordered because we use them later for
+.venv\Lib\site-packages\attr\_make.py:2410:    __slots__ = (  # noqa: RUF023
+.venv\Lib\site-packages\attr\_make.py:2542:            for name in self.__slots__
+.venv\Lib\site-packages\attr\_make.py:2549:        self._setattrs(zip(self.__slots__, state))
+.venv\Lib\site-packages\attr\_make.py:2581:    for name in Attribute.__slots__
+.venv\Lib\site-packages\attr\_make.py:2602:    __slots__ = (
+.venv\Lib\site-packages\attr\_make.py:2763:    __slots__ = ("factory", "takes_self")
+.venv\Lib\site-packages\attr\_make.py:2773:        return tuple(getattr(self, name) for name in self.__slots__)
+.venv\Lib\site-packages\attr\_make.py:2779:        for name, value in zip(self.__slots__, state):
+.venv\Lib\site-packages\attr\_make.py:2796:    for name in Factory.__slots__
+.venv\Lib\site-packages\attr\_make.py:2823:    __slots__ = (
+.venv\Lib\site-packages\attr\_make.py:3030:@attrs(slots=True, unsafe_hash=True)
+.venv\Lib\site-packages\attr\_next_gen.py:31:    slots=True,
+.venv\Lib\site-packages\attr\_next_gen.py:33:    weakref_slot=True,
+.venv\Lib\site-packages\attr\_next_gen.py:59:        slots (bool):
+.venv\Lib\site-packages\attr\_next_gen.py:60:            Create a :term:`slotted class <slotted classes>` that's more
+.venv\Lib\site-packages\attr\_next_gen.py:61:            memory-efficient. Slotted classes are generally superior to the
+.venv\Lib\site-packages\attr\_next_gen.py:63:            so we encourage you to read the :term:`glossary entry <slotted
+.venv\Lib\site-packages\attr\_next_gen.py:220:        weakref_slot (bool):
+.venv\Lib\site-packages\attr\_next_gen.py:222:            *slots* is True.
+.venv\Lib\site-packages\attr\_next_gen.py:250:                This is usually only interesting for slotted classes and you
+.venv\Lib\site-packages\attr\_next_gen.py:254:            attached to the class. This is necessary for slotted classes to be
+.venv\Lib\site-packages\attr\_next_gen.py:255:            pickleable. If left None, it's True by default for slotted classes
+.venv\Lib\site-packages\attr\_next_gen.py:331:        - *slots=True*
+.venv\Lib\site-packages\attr\_next_gen.py:335:          please make sure to read :term:`slotted classes`.
+.venv\Lib\site-packages\attr\_next_gen.py:353:            slots=slots,
+.venv\Lib\site-packages\attr\_next_gen.py:355:            weakref_slot=weakref_slot,
+.venv\Lib\site-packages\attr\_version_info.py:11:@attrs(eq=False, order=False, slots=True, frozen=True)
+.venv\Lib\site-packages\cachecontrol\caches\file_cache.py:56:        return hashlib.sha224(x.encode()).hexdigest()
+.venv\Lib\site-packages\cachecontrol\controller.py:79:        # computing the digest. See Section 6.2.2 of Std 66.
+.venv\Lib\site-packages\cachetools\__init__.py:28:    __slots__ = ()
+.venv\Lib\site-packages\cachetools\__init__.py:174:        __slots__ = ("count", "keys", "next", "prev")
+.venv\Lib\site-packages\cachetools\__init__.py:402:        __slots__ = ("key", "expires", "next", "prev")
+.venv\Lib\site-packages\cachetools\__init__.py:538:        __slots__ = ("key", "expires", "removed")
+.venv\Lib\site-packages\cffi\backend_ctypes.py:17:    __slots__ = ['__weakref__']
+.venv\Lib\site-packages\cffi\backend_ctypes.py:147:    __slots__ = []
+.venv\Lib\site-packages\cffi\backend_ctypes.py:157:    __slots__ = []
+.venv\Lib\site-packages\cffi\backend_ctypes.py:172:    __slots__ = ['_address', '_as_ctype_ptr']
+.venv\Lib\site-packages\cffi\backend_ctypes.py:239:    __slots__ = ['_blob']
+.venv\Lib\site-packages\cffi\backend_ctypes.py:329:            __slots__ = []
+.venv\Lib\site-packages\cffi\backend_ctypes.py:376:            __slots__ = ['_value']
+.venv\Lib\site-packages\cffi\backend_ctypes.py:510:            __slots__ = ['_own']
+.venv\Lib\site-packages\cffi\backend_ctypes.py:512:                __slots__ += ['__as_strbuf']
+.venv\Lib\site-packages\cffi\backend_ctypes.py:609:            __slots__ = ['_blob', '_own']
+.venv\Lib\site-packages\cffi\backend_ctypes.py:613:                __slots__.append('_ctype')
+.venv\Lib\site-packages\cffi\backend_ctypes.py:722:            __slots__ = ['_blob']
+.venv\Lib\site-packages\cffi\backend_ctypes.py:855:            __slots__ = ['_own_callback', '_name']
+.venv\Lib\site-packages\cffi\backend_ctypes.py:955:            __slots__ = []
+.venv\Lib\site-packages\charset_normalizer\models.py:242:        return sha256(self.output()).hexdigest()
+.venv\Lib\site-packages\click\exceptions.py:305:    __slots__ = ("exit_code",)
+.venv\Lib\site-packages\click\shell_completion.py:76:    __slots__ = ("value", "type", "help", "_info")
+.venv\Lib\site-packages\cryptography\hazmat\backends\openssl\backend.py:113:        # Dedicated check for hashing algorithm use in message digest for
+.venv\Lib\site-packages\cryptography\hazmat\backends\openssl\backend.py:184:            # FIPS 186-4 only allows salt length == digest length for PSS
+.venv\Lib\site-packages\cryptography\hazmat\backends\openssl\backend.py:186:            # equal to the digest length and this will incorrectly fail, but
+.venv\Lib\site-packages\cryptography\hazmat\backends\openssl\backend.py:191:                and padding._salt_length != PSS.DIGEST_LENGTH
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\ec.py:70:        The digest algorithm used with this signature.
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\padding.py:28:class _DigestLength:
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\padding.py:29:    "Sentinel value for `DIGEST_LENGTH`."
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\padding.py:35:    DIGEST_LENGTH = _DigestLength()
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\padding.py:37:    _salt_length: int | _MaxLength | _Auto | _DigestLength
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\padding.py:42:        salt_length: int | _MaxLength | _Auto | _DigestLength,
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\padding.py:47:            salt_length, (int, _MaxLength, _Auto, _DigestLength)
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\padding.py:51:                "DIGEST_LENGTH, or AUTO"
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\padding.py:109:    salt_length = emlen - hash_algorithm.digest_size - 2
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\utils.py:20:        self._digest_size = algorithm.digest_size
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\utils.py:23:    def digest_size(self) -> int:
+.venv\Lib\site-packages\cryptography\hazmat\primitives\asymmetric\utils.py:24:        return self._digest_size
+.venv\Lib\site-packages\cryptography\hazmat\primitives\constant_time.py:14:    return hmac.compare_digest(a, b)
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:48:    def digest_size(self) -> int:
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:50:        The size of the resulting digest in bytes.
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:79:        Finalizes the hash context and returns the hash digest as bytes.
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:103:    digest_size = 20
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:109:    digest_size = 28
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:115:    digest_size = 32
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:121:    digest_size = 28
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:127:    digest_size = 32
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:133:    digest_size = 48
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:139:    digest_size = 64
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:145:    digest_size = 28
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:151:    digest_size = 32
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:157:    digest_size = 48
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:163:    digest_size = 64
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:171:    def __init__(self, digest_size: int):
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:172:        if not isinstance(digest_size, int):
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:173:            raise TypeError("digest_size must be an integer")
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:175:        if digest_size < 1:
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:176:            raise ValueError("digest_size must be a positive integer")
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:178:        self._digest_size = digest_size
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:181:    def digest_size(self) -> int:
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:182:        return self._digest_size
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:189:    def __init__(self, digest_size: int):
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:190:        if not isinstance(digest_size, int):
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:191:            raise TypeError("digest_size must be an integer")
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:193:        if digest_size < 1:
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:194:            raise ValueError("digest_size must be a positive integer")
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:196:        self._digest_size = digest_size
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:199:    def digest_size(self) -> int:
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:200:        return self._digest_size
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:205:    digest_size = 16
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:211:    _max_digest_size = 64
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:212:    _min_digest_size = 1
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:215:    def __init__(self, digest_size: int):
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:216:        if digest_size != 64:
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:217:            raise ValueError("Digest size must be 64")
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:219:        self._digest_size = digest_size
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:222:    def digest_size(self) -> int:
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:223:        return self._digest_size
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:229:    _max_digest_size = 32
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:230:    _min_digest_size = 1
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:232:    def __init__(self, digest_size: int):
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:233:        if digest_size != 32:
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:234:            raise ValueError("Digest size must be 32")
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:236:        self._digest_size = digest_size
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:239:    def digest_size(self) -> int:
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:240:        return self._digest_size
+.venv\Lib\site-packages\cryptography\hazmat\primitives\hashes.py:245:    digest_size = 32
+.venv\Lib\site-packages\cryptography\hazmat\primitives\kdf\concatkdf.py:25:    max_length = algorithm.digest_size * (2**32 - 1)
+.venv\Lib\site-packages\cryptography\hazmat\primitives\kdf\kbkdf.py:232:        return self._deriver.derive(key_material, self._algorithm.digest_size)
+.venv\Lib\site-packages\cryptography\hazmat\primitives\kdf\x963kdf.py:27:        max_len = algorithm.digest_size * (2**32 - 1)
+.venv\Lib\site-packages\cryptography\x509\extensions.py:72:    return hashlib.sha1(data).digest()
+.venv\Lib\site-packages\cryptography\x509\extensions.py:223:        digest = _key_identifier_from_public_key(public_key)
+.venv\Lib\site-packages\cryptography\x509\extensions.py:225:            key_identifier=digest,
+.venv\Lib\site-packages\cryptography\x509\extensions.py:235:            key_identifier=ski.digest,
+.venv\Lib\site-packages\cryptography\x509\extensions.py:289:    def __init__(self, digest: bytes) -> None:
+.venv\Lib\site-packages\cryptography\x509\extensions.py:290:        self._digest = digest
+.venv\Lib\site-packages\cryptography\x509\extensions.py:299:    def digest(self) -> bytes:
+.venv\Lib\site-packages\cryptography\x509\extensions.py:300:        return self._digest
+.venv\Lib\site-packages\cryptography\x509\extensions.py:304:        return self._digest
+.venv\Lib\site-packages\cryptography\x509\extensions.py:307:        return f"<SubjectKeyIdentifier(digest={self.digest!r})>"
+.venv\Lib\site-packages\cryptography\x509\extensions.py:313:        return constant_time.bytes_eq(self.digest, other.digest)
+.venv\Lib\site-packages\cryptography\x509\extensions.py:316:        return hash(self.digest)
+.venv\Lib\site-packages\cryptography\x509\ocsp.py:168:        if algorithm.digest_size != len(
+.venv\Lib\site-packages\cryptography\x509\ocsp.py:170:        ) or algorithm.digest_size != len(issuer_key_hash):
+.venv\Lib\site-packages\cryptography\x509\ocsp.py:173:                "as the digest size of the algorithm"
+.venv\Lib\site-packages\cryptography\x509\ocsp.py:273:        if algorithm.digest_size != len(
+.venv\Lib\site-packages\cryptography\x509\ocsp.py:275:        ) or algorithm.digest_size != len(issuer_key_hash):
+.venv\Lib\site-packages\cryptography\x509\ocsp.py:278:                "as the digest size of the algorithm"
+.venv\Lib\site-packages\dateutil\parser\_parser.py:222:        for attr in self.__slots__:
+.venv\Lib\site-packages\dateutil\parser\_parser.py:227:        for attr in self.__slots__:
+.venv\Lib\site-packages\dateutil\parser\_parser.py:235:                    for attr in self.__slots__))
+.venv\Lib\site-packages\dateutil\parser\_parser.py:662:        __slots__ = ["year", "month", "day", "weekday",
+.venv\Lib\site-packages\dateutil\parser\_parser.py:1375:        __slots__ = ["stdabbr", "stdoffset", "dstabbr", "dstoffset",
+.venv\Lib\site-packages\dateutil\parser\_parser.py:1379:            __slots__ = ["month", "week", "weekday",
+.venv\Lib\site-packages\dateutil\rrule.py:1113:    __slots__ = ["rrule", "lastyear", "lastmonth",
+.venv\Lib\site-packages\dateutil\rrule.py:1119:        for attr in self.__slots__:
+.venv\Lib\site-packages\dateutil\tz\tz.py:329:    __slots__ = ["offset", "delta", "isdst", "abbr",
+.venv\Lib\site-packages\dateutil\tz\tz.py:333:        for attr in self.__slots__:
+.venv\Lib\site-packages\dateutil\tz\tz.py:338:        for attr in self.__slots__:
+.venv\Lib\site-packages\dateutil\tz\tz.py:363:        for name in self.__slots__:
+.venv\Lib\site-packages\dateutil\tz\tz.py:368:        for name in self.__slots__:
+.venv\Lib\site-packages\dateutil\tz\_common.py:66:        __slots__ = ()
+.venv\Lib\site-packages\dateutil\_common.py:7:    __slots__ = ["weekday", "n"]
+.venv\Lib\site-packages\docx\image\image.py:150:        """SHA1 hash digest of the image blob."""
+.venv\Lib\site-packages\docx\image\image.py:151:        return hashlib.sha1(self._blob).hexdigest()
+.venv\Lib\site-packages\docx\parts\image.py:79:        """SHA1 hash digest of the blob of this image part."""
+.venv\Lib\site-packages\docx\parts\image.py:80:        return hashlib.sha1(self.blob).hexdigest()
+.venv\Lib\site-packages\firebase_admin\remote_config.py:476:        hash64 = hash_object.hexdigest()
+.venv\Lib\site-packages\flask\json\tag.py:29:        __slots__ = ('serializer',)
+.venv\Lib\site-packages\flask\json\tag.py:63:    __slots__ = ("serializer",)
+.venv\Lib\site-packages\flask\json\tag.py:100:    __slots__ = ()
+.venv\Lib\site-packages\flask\json\tag.py:120:    __slots__ = ()
+.venv\Lib\site-packages\flask\json\tag.py:134:    __slots__ = ()
+.venv\Lib\site-packages\flask\json\tag.py:148:    __slots__ = ()
+.venv\Lib\site-packages\flask\json\tag.py:160:    __slots__ = ()
+.venv\Lib\site-packages\flask\json\tag.py:178:    __slots__ = ()
+.venv\Lib\site-packages\flask\json\tag.py:192:    __slots__ = ()
+.venv\Lib\site-packages\flask\json\tag.py:206:    __slots__ = ()
+.venv\Lib\site-packages\flask\json\tag.py:234:    __slots__ = ("tags", "order")
+.venv\Lib\site-packages\flask\sessions.py:307:    digest_method = staticmethod(_lazy_sha1)
+.venv\Lib\site-packages\flask\sessions.py:333:                "digest_method": self.digest_method,
+.venv\Lib\site-packages\frozenlist\__init__.py:16:    __slots__ = ("_frozen", "_items")
+.venv\Lib\site-packages\google\api_core\datetime_helpers.py:188:    __slots__ = ("_nanosecond",)
+.venv\Lib\site-packages\google\auth\aws.py:209:    return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
+.venv\Lib\site-packages\google\auth\aws.py:299:    payload_hash = hashlib.sha256((request_payload or "").encode("utf-8")).hexdigest()
+.venv\Lib\site-packages\google\auth\aws.py:320:        hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+.venv\Lib\site-packages\google\auth\aws.py:329:    ).hexdigest()
+.venv\Lib\site-packages\google\auth\transport\_custom_tls_signer.py:102:    # func SignForPython(configFilePath *C.char, digest *byte, digestLen int,
+.venv\Lib\site-packages\google\auth\transport\_custom_tls_signer.py:134:def _compute_sha256_digest(to_be_signed, to_be_signed_len):
+.venv\Lib\site-packages\google\auth\transport\_custom_tls_signer.py:149:        digest = _compute_sha256_digest(tbs, tbs_len)
+.venv\Lib\site-packages\google\auth\transport\_custom_tls_signer.py:150:        digestArray = ctypes.c_char * len(digest)
+.venv\Lib\site-packages\google\auth\transport\_custom_tls_signer.py:159:            digestArray.from_buffer(bytearray(digest)),  # digest
+.venv\Lib\site-packages\google\auth\transport\_custom_tls_signer.py:160:            len(digest),  # digestLen
+.venv\Lib\site-packages\google\auth\_helpers.py:382:    hex_digest = hash_object.hexdigest()
+.venv\Lib\site-packages\google\auth\_helpers.py:383:    return f"hashed_{field_name}-{hex_digest}"
+.venv\Lib\site-packages\google\cloud\firestore_v1\transforms.py:21:    __slots__ = ("description",)
+.venv\Lib\site-packages\google\cloud\firestore_v1\transforms.py:53:    slots = ("_values",)
+.venv\Lib\site-packages\google\cloud\firestore_v1\types\write.py:464:    r"""A digest of all the documents that match a given target.
+.venv\Lib\site-packages\google\cloud\storage\blob.py:979:            digests = {}
+.venv\Lib\site-packages\google\cloud\storage\blob.py:980:            for encoded_digest in x_goog_hash.split(","):
+.venv\Lib\site-packages\google\cloud\storage\blob.py:981:                match = re.match(r"(crc32c|md5)=([\w\d/\+/]+={0,3})", encoded_digest)
+.venv\Lib\site-packages\google\cloud\storage\blob.py:983:                    method, digest = match.groups()
+.venv\Lib\site-packages\google\cloud\storage\blob.py:984:                    digests[method] = digest
+.venv\Lib\site-packages\google\cloud\storage\blob.py:986:            self._properties["crc32c"] = digests.get("crc32c", None)
+.venv\Lib\site-packages\google\cloud\storage\blob.py:987:            self._properties["md5Hash"] = digests.get("md5", None)
+.venv\Lib\site-packages\google\cloud\storage\blob.py:4854:    key_hash = hashlib.sha256(key).digest()
+.venv\Lib\site-packages\google\cloud\storage\transfer_manager.py:933:        crc_digest = _digest_ordered_checksum_and_size_pairs(results)
+.venv\Lib\site-packages\google\cloud\storage\transfer_manager.py:934:        actual_checksum = base64.b64encode(crc_digest).decode("utf-8")
+.venv\Lib\site-packages\google\cloud\storage\transfer_manager.py:1340:def _digest_ordered_checksum_and_size_pairs(checksum_and_size_pairs):
+.venv\Lib\site-packages\google\cloud\storage\transfer_manager.py:1360:    crc_digest = struct.pack(
+.venv\Lib\site-packages\google\cloud\storage\transfer_manager.py:1363:    return crc_digest
+.venv\Lib\site-packages\google\cloud\storage\_helpers.py:508:def _write_buffer_to_hash(buffer_object, hash_obj, digest_block_size=8192):
+.venv\Lib\site-packages\google\cloud\storage\_helpers.py:517:    :type digest_block_size: int
+.venv\Lib\site-packages\google\cloud\storage\_helpers.py:518:    :param digest_block_size: The block size to write to the hash.
+.venv\Lib\site-packages\google\cloud\storage\_helpers.py:521:    block = buffer_object.read(digest_block_size)
+.venv\Lib\site-packages\google\cloud\storage\_helpers.py:526:        block = buffer_object.read(digest_block_size)
+.venv\Lib\site-packages\google\cloud\storage\_helpers.py:537:    :returns: A base64 encoded digest of the MD5 hash.
+.venv\Lib\site-packages\google\cloud\storage\_helpers.py:541:    digest_bytes = hash_obj.digest()
+.venv\Lib\site-packages\google\cloud\storage\_helpers.py:542:    return base64.b64encode(digest_bytes)
+.venv\Lib\site-packages\google\cloud\storage\_media\requests\download.py:159:            actual_checksum = _helpers.prepare_checksum_digest(checksum_object.digest())
+.venv\Lib\site-packages\google\cloud\storage\_media\requests\download.py:381:            actual_checksum = _helpers.prepare_checksum_digest(checksum_object.digest())
+.venv\Lib\site-packages\google\cloud\storage\_media\requests\upload.py:762:            checksum_digest_in_base64 = _helpers.prepare_checksum_digest(
+.venv\Lib\site-packages\google\cloud\storage\_media\requests\upload.py:763:                self._checksum_object.digest()
+.venv\Lib\site-packages\google\cloud\storage\_media\requests\upload.py:766:                headers["X-Goog-Hash"] = f"crc32c={checksum_digest_in_base64}"
+.venv\Lib\site-packages\google\cloud\storage\_media\requests\upload.py:768:                headers["X-Goog-Hash"] = f"md5={checksum_digest_in_base64}"
+.venv\Lib\site-packages\google\cloud\storage\_media\_helpers.py:122:def prepare_checksum_digest(digest_bytestring):
+.venv\Lib\site-packages\google\cloud\storage\_media\_helpers.py:123:    """Convert a checksum object into a digest encoded for an HTTP header.
+.venv\Lib\site-packages\google\cloud\storage\_media\_helpers.py:126:        bytes: A checksum digest bytestring.
+.venv\Lib\site-packages\google\cloud\storage\_media\_helpers.py:131:    encoded_digest = base64.b64encode(digest_bytestring)
+.venv\Lib\site-packages\google\cloud\storage\_media\_helpers.py:133:    return encoded_digest.decode("utf-8")
+.venv\Lib\site-packages\google\cloud\storage\_media\_upload.py:338:            actual_checksum = _helpers.prepare_checksum_digest(checksum_object.digest())
+.venv\Lib\site-packages\google\cloud\storage\_media\_upload.py:805:        local_checksum = _helpers.prepare_checksum_digest(
+.venv\Lib\site-packages\google\cloud\storage\_media\_upload.py:806:            self._checksum_object.digest()
+.venv\Lib\site-packages\google\cloud\storage\_media\_upload.py:1398:            if error_code in ["InvalidDigest", "BadDigest", "CrcMismatch"]:
+.venv\Lib\site-packages\google\cloud\storage\_media\_upload.py:1473:        local_checksum = _helpers.prepare_checksum_digest(
+.venv\Lib\site-packages\google\cloud\storage\_media\_upload.py:1474:            self._checksum_object.digest()
+.venv\Lib\site-packages\google\cloud\storage\_signing.py:621:    ).hexdigest()
+.venv\Lib\site-packages\google\cloud\_storage_v2\types\storage.py:4246:            If set, the CRC32C digest of the content
+.venv\Lib\site-packages\google\cloud\_storage_v2\types\storage.py:4272:            CRC32C digest of the object data. Computed by
+.venv\Lib\site-packages\google\protobuf\internal\containers.py:48:  __slots__ = ['_message_listener', '_values']
+.venv\Lib\site-packages\google\protobuf\internal\containers.py:107:  __slots__ = ['_type_checker']
+.venv\Lib\site-packages\google\protobuf\internal\containers.py:219:  __slots__ = ['_message_descriptor']
+.venv\Lib\site-packages\google\protobuf\internal\containers.py:337:  __slots__ = ['_key_checker', '_value_checker', '_values', '_message_listener',
+.venv\Lib\site-packages\google\protobuf\internal\containers.py:446:  __slots__ = ['_key_checker', '_values', '_message_listener',
+.venv\Lib\site-packages\google\protobuf\internal\containers.py:573:  __slots__ = ['_field_number', '_wire_type', '_data']
+.venv\Lib\site-packages\google\protobuf\internal\containers.py:631:  __slots__ = ['_values']
+.venv\Lib\site-packages\google\protobuf\internal\field_mask.py:16:  __slots__ = ()
+.venv\Lib\site-packages\google\protobuf\internal\field_mask.py:176:  __slots__ = ('_root',)
+.venv\Lib\site-packages\google\protobuf\internal\python_message.py:65:  message.  Finally, we create slots to prevent users from accidentally
+.venv\Lib\site-packages\google\protobuf\internal\python_message.py:90:    where we can meaningfully set __slots__ on the class we're creating(?).
+.venv\Lib\site-packages\google\protobuf\internal\python_message.py:91:    (The interplay between metaclasses and slots is not very well-documented).
+.venv\Lib\site-packages\google\protobuf\internal\python_message.py:133:    _AddSlots(descriptor, dictionary)
+.venv\Lib\site-packages\google\protobuf\internal\python_message.py:235:def _AddSlots(message_descriptor, dictionary):
+.venv\Lib\site-packages\google\protobuf\internal\python_message.py:236:  """Adds a __slots__ entry to dictionary, containing the names of all valid
+.venv\Lib\site-packages\google\protobuf\internal\python_message.py:241:    dictionary: Class dictionary to which we'll add a '__slots__' entry.
+.venv\Lib\site-packages\google\protobuf\internal\python_message.py:243:  dictionary['__slots__'] = ['_cached_byte_size',
+.venv\Lib\site-packages\google\protobuf\internal\python_message.py:650:  __slots__ = ('DESCRIPTOR',)
+.venv\Lib\site-packages\google\protobuf\internal\well_known_types.py:49:  __slots__ = ()
+.venv\Lib\site-packages\google\protobuf\internal\well_known_types.py:82:  __slots__ = ()
+.venv\Lib\site-packages\google\protobuf\internal\well_known_types.py:330:  __slots__ = ()
+.venv\Lib\site-packages\google\protobuf\internal\well_known_types.py:557:  __slots__ = ()
+.venv\Lib\site-packages\google\protobuf\internal\well_known_types.py:626:  __slots__ = ()
+.venv\Lib\site-packages\google\protobuf\message.py:51:  __slots__ = []
+.venv\Lib\site-packages\google\protobuf\proto_builder.py:72:  proto_file_name = fields_hash.hexdigest() + '.proto'
+.venv\Lib\site-packages\google\protobuf\proto_builder.py:77:                 fields_hash.hexdigest())
+.venv\Lib\site-packages\google\protobuf\unknown_fields.py:31:    __slots__ = ['_field_number', '_wire_type', '_data']
+.venv\Lib\site-packages\google\protobuf\unknown_fields.py:55:    __slots__ = ['_values']
+.venv\Lib\site-packages\google\resumable_media\requests\download.py:141:            actual_checksum = _helpers.prepare_checksum_digest(checksum_object.digest())
+.venv\Lib\site-packages\google\resumable_media\requests\download.py:347:            actual_checksum = _helpers.prepare_checksum_digest(checksum_object.digest())
+.venv\Lib\site-packages\google\resumable_media\_helpers.py:190:def prepare_checksum_digest(digest_bytestring):
+.venv\Lib\site-packages\google\resumable_media\_helpers.py:191:    """Convert a checksum object into a digest encoded for an HTTP header.
+.venv\Lib\site-packages\google\resumable_media\_helpers.py:194:        bytes: A checksum digest bytestring.
+.venv\Lib\site-packages\google\resumable_media\_helpers.py:199:    encoded_digest = base64.b64encode(digest_bytestring)
+.venv\Lib\site-packages\google\resumable_media\_helpers.py:201:    return encoded_digest.decode("utf-8")
+.venv\Lib\site-packages\google\resumable_media\_upload.py:306:            actual_checksum = _helpers.prepare_checksum_digest(checksum_object.digest())
+.venv\Lib\site-packages\google\resumable_media\_upload.py:750:        local_checksum = _helpers.prepare_checksum_digest(
+.venv\Lib\site-packages\google\resumable_media\_upload.py:751:            self._checksum_object.digest()
+.venv\Lib\site-packages\google\resumable_media\_upload.py:1365:        local_checksum = _helpers.prepare_checksum_digest(
+.venv\Lib\site-packages\google\resumable_media\_upload.py:1366:            self._checksum_object.digest()
+.venv\Lib\site-packages\google\_async_resumable_media\requests\download.py:99:            actual_checksum = sync_helpers.prepare_checksum_digest(
+.venv\Lib\site-packages\google\_async_resumable_media\requests\download.py:100:                checksum_object.digest()
+.venv\Lib\site-packages\google\_async_resumable_media\requests\download.py:226:            actual_checksum = sync_helpers.prepare_checksum_digest(
+.venv\Lib\site-packages\google\_async_resumable_media\requests\download.py:227:                checksum_object.digest()
+.venv\Lib\site-packages\google\_async_resumable_media\_upload.py:282:            actual_checksum = sync_helpers.prepare_checksum_digest(
+.venv\Lib\site-packages\google\_async_resumable_media\_upload.py:283:                checksum_object.digest()
+.venv\Lib\site-packages\google\_async_resumable_media\_upload.py:694:        local_checksum = sync_helpers.prepare_checksum_digest(
+.venv\Lib\site-packages\google\_async_resumable_media\_upload.py:695:            self._checksum_object.digest()
+.venv\Lib\site-packages\google_crc32c\cext.py:33:    __slots__ = ("_crc",)
+.venv\Lib\site-packages\google_crc32c\_checksum.py:27:    __slots__ = ()
+.venv\Lib\site-packages\google_crc32c\_checksum.py:43:    def digest(self):
+.venv\Lib\site-packages\google_crc32c\_checksum.py:49:            bytes: An eight-byte digest string.
+.venv\Lib\site-packages\google_crc32c\_checksum.py:53:    def hexdigest(self):
+.venv\Lib\site-packages\google_crc32c\_checksum.py:54:        """Like :meth:`digest` except returns as a bytestring of double length.
+.venv\Lib\site-packages\google_crc32c\_checksum.py:57:            bytes: A sixteen byte digest string, contaiing only hex digits.
+.venv\Lib\site-packages\grpc\_channel.py:1063:    __slots__ = [
+.venv\Lib\site-packages\grpc\_channel.py:1242:    __slots__ = [
+.venv\Lib\site-packages\grpc\_channel.py:1343:    __slots__ = [
+.venv\Lib\site-packages\grpc\_channel.py:1438:    __slots__ = [
+.venv\Lib\site-packages\grpc\_channel.py:1608:    __slots__ = [
+.venv\Lib\site-packages\h11\_events.py:37:    __slots__ = ()
+.venv\Lib\site-packages\h11\_events.py:75:    __slots__ = ("method", "headers", "target", "http_version")
+.venv\Lib\site-packages\h11\_events.py:130:    __slots__ = ("headers", "http_version", "reason", "status_code")
+.venv\Lib\site-packages\h11\_events.py:293:    __slots__ = ("data", "chunk_start", "chunk_end")
+.venv\Lib\site-packages\h11\_events.py:333:    __slots__ = ("headers",)
+.venv\Lib\site-packages\h11\_headers.py:102:    __slots__ = "_full_items"
+.venv\Lib\site-packages\hpack\struct.py:27:    __slots__ = ()
+.venv\Lib\site-packages\hpack\struct.py:41:    __slots__ = ()
+.venv\Lib\site-packages\httpx\_auth.py:19:__all__ = ["Auth", "BasicAuth", "DigestAuth", "NetRCAuth"]
+.venv\Lib\site-packages\httpx\_auth.py:175:class DigestAuth(Auth):
+.venv\Lib\site-packages\httpx\_auth.py:190:        self._last_challenge: _DigestAuthChallenge | None = None
+.venv\Lib\site-packages\httpx\_auth.py:207:            if auth_header.lower().startswith("digest "):
+.venv\Lib\site-packages\httpx\_auth.py:210:            # If the response does not include a 'WWW-Authenticate: Digest ...'
+.venv\Lib\site-packages\httpx\_auth.py:226:    ) -> _DigestAuthChallenge:
+.venv\Lib\site-packages\httpx\_auth.py:228:        Returns a challenge from a Digest WWW-Authenticate header.
+.venv\Lib\site-packages\httpx\_auth.py:230:        `Digest realm="realm@host.com",qop="auth,auth-int",nonce="abc",opaque="xyz"`
+.venv\Lib\site-packages\httpx\_auth.py:234:        # This method should only ever have been called with a Digest auth header.
+.venv\Lib\site-packages\httpx\_auth.py:235:        assert scheme.lower() == "digest"
+.venv\Lib\site-packages\httpx\_auth.py:248:            return _DigestAuthChallenge(
+.venv\Lib\site-packages\httpx\_auth.py:252:            message = "Malformed Digest WWW-Authenticate header"
+.venv\Lib\site-packages\httpx\_auth.py:256:        self, request: Request, challenge: _DigestAuthChallenge
+.venv\Lib\site-packages\httpx\_auth.py:260:        def digest(data: bytes) -> bytes:
+.venv\Lib\site-packages\httpx\_auth.py:261:            return hash_func(data).hexdigest().encode()
+.venv\Lib\site-packages\httpx\_auth.py:268:        HA2 = digest(A2)
+.venv\Lib\site-packages\httpx\_auth.py:274:        HA1 = digest(A1)
+.venv\Lib\site-packages\httpx\_auth.py:276:            HA1 = digest(b":".join((HA1, challenge.nonce, cnonce)))
+.venv\Lib\site-packages\httpx\_auth.py:281:            digest_data = [HA1, challenge.nonce, HA2]
+.venv\Lib\site-packages\httpx\_auth.py:284:            digest_data = [HA1, challenge.nonce, nc_value, cnonce, qop, HA2]
+.venv\Lib\site-packages\httpx\_auth.py:291:            "response": digest(b":".join(digest_data)),
+.venv\Lib\site-packages\httpx\_auth.py:301:        return "Digest " + self._get_header_value(format_args)
+.venv\Lib\site-packages\httpx\_auth.py:309:        return hashlib.sha1(s).hexdigest()[:16].encode()
+.venv\Lib\site-packages\httpx\_auth.py:337:            raise NotImplementedError("Digest auth-int support is not yet implemented")
+.venv\Lib\site-packages\httpx\_auth.py:339:        message = f'Unexpected qop value "{qop!r}" in digest auth'
+.venv\Lib\site-packages\httpx\_auth.py:343:class _DigestAuthChallenge(typing.NamedTuple):
+.venv\Lib\site-packages\httpx\__init__.py:52:    "DigestAuth",
+.venv\Lib\site-packages\itsdangerous\signer.py:28:        return hmac.compare_digest(sig, self.get_signature(key, value))
+.venv\Lib\site-packages\itsdangerous\signer.py:51:    #: The digest method to use with the MAC algorithm. This defaults to
+.venv\Lib\site-packages\itsdangerous\signer.py:54:    default_digest_method: t.Any = staticmethod(_lazy_sha1)
+.venv\Lib\site-packages\itsdangerous\signer.py:56:    def __init__(self, digest_method: t.Any = None):
+.venv\Lib\site-packages\itsdangerous\signer.py:57:        if digest_method is None:
+.venv\Lib\site-packages\itsdangerous\signer.py:58:            digest_method = self.default_digest_method
+.venv\Lib\site-packages\itsdangerous\signer.py:60:        self.digest_method: t.Any = digest_method
+.venv\Lib\site-packages\itsdangerous\signer.py:63:        mac = hmac.new(key, msg=value, digestmod=self.digest_method)
+.venv\Lib\site-packages\itsdangerous\signer.py:64:        return mac.digest()
+.venv\Lib\site-packages\itsdangerous\signer.py:94:    :param digest_method: Hash function to use when generating the HMAC
+.venv\Lib\site-packages\itsdangerous\signer.py:95:        signature. Defaults to :attr:`default_digest_method`, which
+.venv\Lib\site-packages\itsdangerous\signer.py:100:        ``digest_method``.
+.venv\Lib\site-packages\itsdangerous\signer.py:110:        ``key_derivation`` and ``digest_method`` were added as arguments
+.venv\Lib\site-packages\itsdangerous\signer.py:114:    #: The default digest method to use for the signer. The default is
+.venv\Lib\site-packages\itsdangerous\signer.py:120:    default_digest_method: t.Any = staticmethod(_lazy_sha1)
+.venv\Lib\site-packages\itsdangerous\signer.py:135:        digest_method: t.Any | None = None,
+.venv\Lib\site-packages\itsdangerous\signer.py:165:        if digest_method is None:
+.venv\Lib\site-packages\itsdangerous\signer.py:166:            digest_method = self.default_digest_method
+.venv\Lib\site-packages\itsdangerous\signer.py:168:        self.digest_method: t.Any = digest_method
+.venv\Lib\site-packages\itsdangerous\signer.py:171:            algorithm = HMACAlgorithm(self.digest_method)
+.venv\Lib\site-packages\itsdangerous\signer.py:201:            return t.cast(bytes, self.digest_method(self.salt + secret_key).digest())
+.venv\Lib\site-packages\itsdangerous\signer.py:204:                bytes, self.digest_method(self.salt + b"signer" + secret_key).digest()
+.venv\Lib\site-packages\itsdangerous\signer.py:207:            mac = hmac.new(secret_key, digestmod=self.digest_method)
+.venv\Lib\site-packages\itsdangerous\signer.py:209:            return mac.digest()
+.venv\Lib\site-packages\jinja2\bccache.py:161:        return hash.hexdigest()
+.venv\Lib\site-packages\jinja2\bccache.py:165:        return sha1(source.encode("utf-8")).hexdigest()
+.venv\Lib\site-packages\jinja2\lexer.py:457:    __slots__ = ()
+.venv\Lib\site-packages\jinja2\loaders.py:661:        return "tmpl_" + sha1(name.encode("utf-8")).hexdigest()
+.venv\Lib\site-packages\jinja2\runtime.py:811:    __slots__ = (
+.venv\Lib\site-packages\jinja2\runtime.py:944:        __slots__ = ()
+.venv\Lib\site-packages\jinja2\runtime.py:986:    __slots__ = ()
+.venv\Lib\site-packages\jinja2\runtime.py:1021:    __slots__ = ()
+.venv\Lib\site-packages\jinja2\runtime.py:1059:    __slots__ = ()
+.venv\Lib\site-packages\jwt\algorithms.py:144:    def compute_hash_digest(self, bytestr: bytes) -> bytes:
+.venv\Lib\site-packages\jwt\algorithms.py:146:        Compute a hash digest using the specified algorithm's hash algorithm.
+.venv\Lib\site-packages\jwt\algorithms.py:160:            digest = hashes.Hash(hash_alg(), backend=default_backend())
+.venv\Lib\site-packages\jwt\algorithms.py:161:            digest.update(bytestr)
+.venv\Lib\site-packages\jwt\algorithms.py:162:            return bytes(digest.finalize())
+.venv\Lib\site-packages\jwt\algorithms.py:164:            return bytes(hash_alg(bytestr).digest())
+.venv\Lib\site-packages\jwt\algorithms.py:308:        return hmac.new(key, msg, self.hash_alg).digest()
+.venv\Lib\site-packages\jwt\algorithms.py:311:        return hmac.compare_digest(sig, self.sign(msg, key))
+.venv\Lib\site-packages\jwt\algorithms.py:691:                    salt_length=self.hash_alg().digest_size,
+.venv\Lib\site-packages\jwt\algorithms.py:703:                        salt_length=self.hash_alg().digest_size,
+.venv\Lib\site-packages\lxml\html\builder.py:141:SLOT = E.slot  #: placeholder for JS use
+.venv\Lib\site-packages\markupsafe\__init__.py:120:    __slots__ = ()
+.venv\Lib\site-packages\markupsafe\__init__.py:333:    __slots__ = ("escape",)
+.venv\Lib\site-packages\markupsafe\__init__.py:360:    __slots__ = ("obj", "escape")
+.venv\Lib\site-packages\msgpack\ext.py:29:    __slots__ = ["seconds", "nanoseconds"]
+.venv\Lib\site-packages\multidict\_multidict_py.py:53:    __slots__ = ("_size", "_iter")
+.venv\Lib\site-packages\multidict\_multidict_py.py:90:        for slot, idx, e in self._md._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:146:            for slot, idx, e in self._md._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:164:            for slot, idx, e in self._md._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:182:            for slot, idx, e in self._md._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:228:            for slot, idx, e in self._md._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:253:            for slot, idx, e in self._md._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:290:        for slot, idx, e in self._md._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:322:            for slot, idx, e in self._md._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:384:            for slot, idx, e in self._md._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:488:    def nslots(self) -> int:
+.venv\Lib\site-packages\multidict\_multidict_py.py:493:        return self.nslots - 1
+.venv\Lib\site-packages\multidict\_multidict_py.py:555:    def find_empty_slot(self, hash_: int) -> int:
+.venv\Lib\site-packages\multidict\_multidict_py.py:618:    __slots__ = ("_keys", "_used", "_version")
+.venv\Lib\site-packages\multidict\_multidict_py.py:661:        for slot, idx, e in self._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:689:        for slot, idx, e in self._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:757:        for slot, idx, e in self._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:863:        for slot, idx, e in self._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:872:                    self._del_at(slot, idx)
+.venv\Lib\site-packages\multidict\_multidict_py.py:883:        for slot, idx, e in self._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:885:                self._del_at(slot, idx)
+.venv\Lib\site-packages\multidict\_multidict_py.py:902:        for slot, idx, e in self._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:923:        for slot, idx, e in self._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:926:                self._del_at(slot, idx)
+.venv\Lib\site-packages\multidict\_multidict_py.py:956:        for slot, idx, e in self._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:960:                self._del_at(slot, idx)
+.venv\Lib\site-packages\multidict\_multidict_py.py:1010:            for slot, idx, e in self._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:1026:        for slot in range(keys.nslots):
+.venv\Lib\site-packages\multidict\_multidict_py.py:1027:            idx = indices[slot]
+.venv\Lib\site-packages\multidict\_multidict_py.py:1033:                    indices[slot] = -2
+.venv\Lib\site-packages\multidict\_multidict_py.py:1060:            for slot, idx, e in self._keys.iter_hash(hash_):
+.venv\Lib\site-packages\multidict\_multidict_py.py:1088:        slot = keys.find_empty_slot(entry.hash)
+.venv\Lib\site-packages\multidict\_multidict_py.py:1089:        keys.indices[slot] = len(keys.entries)
+.venv\Lib\site-packages\multidict\_multidict_py.py:1099:        slot = keys.find_empty_slot(entry.hash)
+.venv\Lib\site-packages\multidict\_multidict_py.py:1100:        keys.indices[slot] = len(keys.entries)
+.venv\Lib\site-packages\multidict\_multidict_py.py:1107:    def _del_at(self, slot: int, idx: int) -> None:
+.venv\Lib\site-packages\multidict\_multidict_py.py:1109:        self._keys.indices[slot] = -2
+.venv\Lib\site-packages\multidict\_multidict_py.py:1124:    __slots__ = ("_md",)
+.venv\Lib\site-packages\numpy\exceptions.py:174:    __slots__ = ("_msg", "axis", "ndim")
+.venv\Lib\site-packages\numpy\lib\mixins.py:140:    __slots__ = ()
+.venv\Lib\site-packages\numpy\lib\_index_tricks_impl.py:142:    __slots__ = ('sparse',)
+.venv\Lib\site-packages\numpy\lib\_index_tricks_impl.py:265:    __slots__ = ()
+.venv\Lib\site-packages\numpy\lib\_index_tricks_impl.py:317:    __slots__ = ()
+.venv\Lib\site-packages\numpy\lib\_index_tricks_impl.py:332:    __slots__ = ('axis', 'matrix', 'ndmin', 'trans1d')
+.venv\Lib\site-packages\numpy\lib\_index_tricks_impl.py:548:    __slots__ = ()
+.venv\Lib\site-packages\numpy\lib\_index_tricks_impl.py:582:    __slots__ = ()
+.venv\Lib\site-packages\numpy\lib\_index_tricks_impl.py:787:    __slots__ = ('maketuple',)
+.venv\Lib\site-packages\numpy\ma\extras.py:1825:    __slots__ = ()
+.venv\Lib\site-packages\numpy\ma\extras.py:1865:    __slots__ = ()
+.venv\Lib\site-packages\numpy\ma\tests\test_subclassing.py:166:    __slots__ = ('_array', 'attrs')
+.venv\Lib\site-packages\numpy\ma\tests\test_subclassing.py:462:    def test_mixins_have_slots(self):
+.venv\Lib\site-packages\numpy\random\tests\test_generator_mt19937.py:525:            res = hashlib.sha256(val).hexdigest()
+.venv\Lib\site-packages\numpy\random\tests\test_generator_mt19937.py:532:        res = hashlib.sha256(val).hexdigest()
+.venv\Lib\site-packages\numpy\random\tests\test_generator_mt19937.py:940:        res = hashlib.sha256(actual.view(np.int8)).hexdigest()
+.venv\Lib\site-packages\numpy\random\tests\test_generator_mt19937.py:2646:    assert sha256.hexdigest() == config["initial"]["key_sha256"]
+.venv\Lib\site-packages\numpy\random\tests\test_generator_mt19937.py:2654:    assert sha256.hexdigest() == config["jumped"]["key_sha256"]
+.venv\Lib\site-packages\numpy\random\tests\test_random.py:249:            res = hashlib.sha256(val.view(np.int8)).hexdigest()
+.venv\Lib\site-packages\numpy\random\tests\test_random.py:255:        res = hashlib.sha256(val).hexdigest()
+.venv\Lib\site-packages\numpy\random\tests\test_randomstate.py:369:            res = hashlib.sha256(val.view(np.int8)).hexdigest()
+.venv\Lib\site-packages\numpy\random\tests\test_randomstate.py:375:        res = hashlib.sha256(val).hexdigest()
+.venv\Lib\site-packages\numpy\random\tests\test_randomstate.py:2041:    res = hashlib.sha256(val.view(np.int8)).hexdigest()
+.venv\Lib\site-packages\numpy\_core\function_base.py:524:    it into the ``tp_doc`` slot of the type of `obj`, it violates a number of
+.venv\Lib\site-packages\numpy\_core\tests\test_multiarray.py:4235:        # test extension (e.g. cython) calling PyNumber_* slots without
+.venv\Lib\site-packages\numpy\_core\tests\test_multiarray.py:5922:        # `release_buffer` slot should be directly used as a base object.
+.venv\Lib\site-packages\numpy\_core\tests\test_regression.py:1495:            sha256(x).hexdigest(),
+.venv\Lib\site-packages\numpy\_core\_ufunc_config.py:426:    __slots__ = (
+.venv\Lib\site-packages\openai\validators.py:733:        separator_reminder = (
+.venv\Lib\site-packages\openai\validators.py:739:            f'\nWrote modified file{files_string}`\nFeel free to take a look!\n\nNow use that file when fine-tuning:\n> openai api fine_tunes.create -t "{fnames[0]}"{valid_string}{additional_params}\n\n{separator_reminder}{optional_ending_string}\n'
+.venv\Lib\site-packages\openpyxl\cell\cell.py:98:    __slots__ = (
+.venv\Lib\site-packages\openpyxl\cell\cell.py:309:    __slots__ = ('row', 'column')
+.venv\Lib\site-packages\openpyxl\cell\read_only.py:12:    __slots__ =  ('parent', 'row', 'column', '_value', 'data_type', '_style_id')
+.venv\Lib\site-packages\openpyxl\cell\read_only.py:25:        for a in self.__slots__:
+.venv\Lib\site-packages\openpyxl\cell\read_only.py:121:    __slots__ = ()
+.venv\Lib\site-packages\openpyxl\compat\singleton.py:10:    Only one instance of a class can exist. Does not work with __slots__
+.venv\Lib\site-packages\openpyxl\compat\singleton.py:27:    one doesn't already exist. Does not work with __slots__
+.venv\Lib\site-packages\openpyxl\descriptors\slots.py:1:# Metaclass for mixing slots and descriptors
+.venv\Lib\site-packages\openpyxl\descriptors\slots.py:4:class AutoSlotProperties(type):
+.venv\Lib\site-packages\openpyxl\descriptors\slots.py:7:        slots = list(dictionary.get("__slots__", []))
+.venv\Lib\site-packages\openpyxl\descriptors\slots.py:10:            slots.append("__" + name)
+.venv\Lib\site-packages\openpyxl\descriptors\slots.py:17:            dictionary["__slots__"] = tuple(slots)
+.venv\Lib\site-packages\openpyxl\formula\tokenizer.py:338:    __slots__ = ['value', 'type', 'subtype']
+.venv\Lib\site-packages\openpyxl\styles\cell_style.py:38:    __slots__ = ()
+.venv\Lib\site-packages\openpyxl\styles\proxy.py:13:    __slots__ = ('__target')
+.venv\Lib\site-packages\openpyxl\styles\styleable.py:130:    __slots__ = ('parent', '_style')
+.venv\Lib\site-packages\packaging\tags.py:50:    __slots__ = ["_abi", "_hash", "_interpreter", "_platform"]
+.venv\Lib\site-packages\pandas\core\computation\pytables.py:51:    __slots__ = ("queryables",)
+.venv\Lib\site-packages\pandas\core\computation\scope.py:142:    __slots__ = ["level", "scope", "target", "resolvers", "temps"]
+.venv\Lib\site-packages\pandas\core\internals\array_manager.py:118:    __slots__ = [
+.venv\Lib\site-packages\pandas\core\internals\array_manager.py:1069:    __slots__ = [
+.venv\Lib\site-packages\pandas\core\internals\blocks.py:196:    __slots__ = ()
+.venv\Lib\site-packages\pandas\core\internals\blocks.py:2648:    __slots__ = ()
+.venv\Lib\site-packages\pandas\core\internals\blocks.py:2675:    __slots__ = ()
+.venv\Lib\site-packages\pandas\core\internals\blocks.py:2681:    __slots__ = ()
+.venv\Lib\site-packages\pandas\core\internals\blocks.py:2701:    __slots__ = ()
+.venv\Lib\site-packages\pandas\core\internals\blocks.py:2711:    __slots__ = ()
+.venv\Lib\site-packages\pandas\core\internals\managers.py:159:    __slots__ = ()
+.venv\Lib\site-packages\pandas\core\internals\managers.py:1853:    __slots__ = ()
+.venv\Lib\site-packages\pandas\io\formats\excel.py:65:    __slots__ = __fields__
+.venv\Lib\site-packages\pandas\tests\arrays\masked\test_arrow_compat.py:123:    # Since masked Arrow buffer slots are not required to contain a specific
+.venv\Lib\site-packages\pandas\tests\extension\json\array.py:184:        # sized objects like UserDicts into scalar slots of
+.venv\Lib\site-packages\pandas\tests\extension\list\array.py:79:        # sized objects like UserDicts into scalar slots of
+.venv\Lib\site-packages\pandas\tests\io\pytables\test_store.py:66:        return h.digest()
+.venv\Lib\site-packages\pip\_internal\cache.py:28:    return hashlib.sha224(s.encode("ascii")).hexdigest()
+.venv\Lib\site-packages\pip\_internal\cli\cmdoptions.py:971:    """Given a value spelled "algo:digest", append the digest to a list
+.venv\Lib\site-packages\pip\_internal\cli\cmdoptions.py:976:        algo, digest = value.split(":", 1)
+.venv\Lib\site-packages\pip\_internal\cli\cmdoptions.py:989:    parser.values.hashes.setdefault(algo, []).append(digest)
+.venv\Lib\site-packages\pip\_internal\commands\hash.py:54:    """Return the hash digest of a file."""
+.venv\Lib\site-packages\pip\_internal\commands\hash.py:59:    return hash.hexdigest()
+.venv\Lib\site-packages\pip\_internal\exceptions.py:596:            hex digests
+.venv\Lib\site-packages\pip\_internal\exceptions.py:628:                f"             Got        {self.gots[hash_name].hexdigest()}\n"
+.venv\Lib\site-packages\pip\_internal\index\package_finder.py:292:    matches_or_no_digest = []
+.venv\Lib\site-packages\pip\_internal\index\package_finder.py:306:        matches_or_no_digest.append(candidate)
+.venv\Lib\site-packages\pip\_internal\index\package_finder.py:309:        filtered = matches_or_no_digest
+.venv\Lib\site-packages\pip\_internal\index\package_finder.py:324:        "(%s matches, %s no digest): %s",
+.venv\Lib\site-packages\pip\_internal\index\package_finder.py:327:        hashes.digest_count,
+.venv\Lib\site-packages\pip\_internal\index\package_finder.py:329:        len(matches_or_no_digest) - match_count,
+.venv\Lib\site-packages\pip\_internal\models\candidate.py:13:    __slots__ = ["name", "version", "link"]
+.venv\Lib\site-packages\pip\_internal\models\format_control.py:11:    __slots__ = ["no_binary", "only_binary"]
+.venv\Lib\site-packages\pip\_internal\models\format_control.py:30:        if self.__slots__ != other.__slots__:
+.venv\Lib\site-packages\pip\_internal\models\format_control.py:33:        return all(getattr(self, k) == getattr(other, k) for k in self.__slots__)
+.venv\Lib\site-packages\pip\_internal\models\index.py:7:    __slots__ = ["url", "netloc", "simple_url", "pypi_url", "file_storage_domain"]
+.venv\Lib\site-packages\pip\_internal\models\link.py:59:        # digest. Instead, we simply keep that string in this class, and then check it
+.venv\Lib\site-packages\pip\_internal\models\link.py:61:        # proactively discarding an invalid hex digest, as we handle incorrect hashes
+.venv\Lib\site-packages\pip\_internal\models\link.py:94:        return hashes.is_hash_allowed(self.name, hex_digest=self.value)
+.venv\Lib\site-packages\pip\_internal\models\link.py:196:    __slots__ = [
+.venv\Lib\site-packages\pip\_internal\models\link.py:240:        :param hashes: A mapping of hash names to digests to allow us to
+.venv\Lib\site-packages\pip\_internal\models\scheme.py:19:    __slots__ = SCHEME_KEYS
+.venv\Lib\site-packages\pip\_internal\models\search_scope.py:24:    __slots__ = ["find_links", "index_urls", "no_index"]
+.venv\Lib\site-packages\pip\_internal\models\selection_prefs.py:6:# TODO: This needs Python 3.10's improved slots support for dataclasses
+.venv\Lib\site-packages\pip\_internal\models\selection_prefs.py:14:    __slots__ = [
+.venv\Lib\site-packages\pip\_internal\models\target_python.py:16:    __slots__ = [
+.venv\Lib\site-packages\pip\_internal\operations\build\build_tracker.py:84:        hashed = hashlib.sha224(key.encode()).hexdigest()
+.venv\Lib\site-packages\pip\_internal\operations\install\wheel.py:78:    """Return (encoded_digest, length) for path using hashlib.sha256()"""
+.venv\Lib\site-packages\pip\_internal\operations\install\wheel.py:80:    digest = "sha256=" + urlsafe_b64encode(h.digest()).decode("latin1").rstrip("=")
+.venv\Lib\site-packages\pip\_internal\operations\install\wheel.py:81:    return (digest, str(length))
+.venv\Lib\site-packages\pip\_internal\operations\install\wheel.py:256:            digest, length = rehash(_record_to_fs_path(new_record_path, lib_dir))
+.venv\Lib\site-packages\pip\_internal\operations\install\wheel.py:258:            digest = row[1] if len(row) > 1 else ""
+.venv\Lib\site-packages\pip\_internal\operations\install\wheel.py:260:        installed_rows.append((new_record_path, digest, length))
+.venv\Lib\site-packages\pip\_internal\operations\install\wheel.py:263:        digest, length = rehash(f)
+.venv\Lib\site-packages\pip\_internal\operations\install\wheel.py:264:        installed_rows.append((path, digest, length))
+.venv\Lib\site-packages\pip\_internal\operations\prepare.py:637:                hash = hash_file(local_file.path)[0].hexdigest()
+.venv\Lib\site-packages\pip\_internal\req\req_file.py:107:    # TODO: replace this with slots=True when dropping Python 3.9 support.
+.venv\Lib\site-packages\pip\_internal\req\req_file.py:108:    __slots__ = (
+.venv\Lib\site-packages\pip\_internal\req\req_file.py:127:    __slots__ = ("filename", "lineno", "args", "opts", "constraint")
+.venv\Lib\site-packages\pip\_internal\self_outdated_check.py:42:    name = hashlib.sha224(key_bytes).hexdigest()
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:30:            hex digests
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:59:    def digest_count(self) -> int:
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:60:        return sum(len(digests) for digests in self._allowed.values())
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:62:    def is_hash_allowed(self, hash_name: str, hex_digest: str) -> bool:
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:63:        """Return whether the given hex digest is allowed."""
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:64:        return hex_digest in self._allowed.get(hash_name, [])
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:85:            if got.hexdigest() in self._allowed[hash_name]:
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:106:        for hash_name, hex_digest in hashes.items():
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:107:            if self.is_hash_allowed(hash_name, hex_digest):
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:124:                    ":".join((alg, digest))
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:125:                    for alg, digest_list in self._allowed.items()
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:126:                    for digest in digest_list
+.venv\Lib\site-packages\pip\_internal\utils\hashes.py:147:        raise HashMissing(gots[FAVORITE_HASH].hexdigest())
+.venv\Lib\site-packages\pip\_internal\wheel_builder.py:238:                    wheel_hash.hexdigest(),
+.venv\Lib\site-packages\pip\_vendor\cachecontrol\caches\file_cache.py:56:        return hashlib.sha224(x.encode()).hexdigest()
+.venv\Lib\site-packages\pip\_vendor\cachecontrol\controller.py:79:        # computing the digest. See Section 6.2.2 of Std 66.
+.venv\Lib\site-packages\pip\_vendor\distlib\database.py:344:        self.digest = None
+.venv\Lib\site-packages\pip\_vendor\distlib\database.py:348:        self.digests = {}
+.venv\Lib\site-packages\pip\_vendor\distlib\database.py:518:        digest = hasher(data).digest()
+.venv\Lib\site-packages\pip\_vendor\distlib\database.py:519:        digest = base64.urlsafe_b64encode(digest).rstrip(b'=').decode('ascii')
+.venv\Lib\site-packages\pip\_vendor\distlib\database.py:520:        return '%s%s' % (prefix, digest)
+.venv\Lib\site-packages\pip\_vendor\distlib\database.py:1007:            return hashlib.md5(content).hexdigest()
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:269:        md5_digest = hashlib.md5(file_data).hexdigest()
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:270:        sha256_digest = hashlib.sha256(file_data).hexdigest()
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:276:            'md5_digest': md5_digest,
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:277:            'sha256_digest': sha256_digest,
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:365:    def download_file(self, url, destfile, digest=None, reporthook=None):
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:373:        standard library, except that it allows digest computation to be
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:381:        :param digest: If specified, this must be a (hasher, value)
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:387:        if digest is None:
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:388:            digester = None
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:389:            logger.debug('No digest specified')
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:391:            if isinstance(digest, (list, tuple)):
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:392:                hasher, digest = digest
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:395:            digester = getattr(hashlib, hasher)()
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:396:            logger.debug('Digest specified: %s' % digest)
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:399:        # digest of the file as we go.
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:420:                    if digester:
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:421:                        digester.update(block)
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:433:        # if we have a digest, it must match.
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:434:        if digester:
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:435:            actual = digester.hexdigest()
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:436:            if digest != actual:
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:437:                raise DistlibException('%s digest mismatch for %s: expected '
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:439:                                                       digest, actual))
+.venv\Lib\site-packages\pip\_vendor\distlib\index.py:440:            logger.debug('Digest verified: %s', digest)
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:248:            algo, digest = m.groups()
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:250:            algo, digest = None, None
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:297:            result['%s_digest' % algo] = digest
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:300:    def _get_digest(self, info):
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:302:        Get a digest from a dictionary by looking at a "digests" dictionary
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:303:        or keys of the form 'algo_digest'.
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:305:        Returns a 2-tuple (algo, digest) if found, else None. Currently
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:309:        if 'digests' in info:
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:310:            digests = info['digests']
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:312:                if algo in digests:
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:313:                    result = (algo, digests[algo])
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:317:                key = '%s_digest' % algo
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:337:        dist.digest = digest = self._get_digest(info)
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:339:        result['digests'][url] = digest
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:367:        if len(versions) > 2:  # urls and digests keys are present
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:372:                if k in ('urls', 'digests'):
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:394:            sd = versions.get('digests', {})
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:398:            result.digests = d
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:427:        result = {'urls': {}, 'digests': {}}
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:442:                dist.digest = self._get_digest(info)
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:447:                    digest = self._get_digest(info)
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:449:                    result['digests'][url] = digest
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:470:        result = {'urls': {}, 'digests': {}}
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:490:                dist.digests[url] = self._get_digest(info)
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:492:                result['digests'][url] = self._get_digest(info)
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:506:                    odist.digests[url] = self._get_digest(info)
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:508:                    result['digests'][url] = self._get_digest(info)
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:513:#                dist.digest = self._get_digest(info)
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:518:#                    result['digests'][url] = self._get_digest(info)
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:651:        result = {'urls': {}, 'digests': {}}
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:861:        result = {'urls': {}, 'digests': {}}
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:907:        result = {'urls': {}, 'digests': {}}
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:922:                # TODO SHA256 digest
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:923:                if 'digest' in info and info['digest']:
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:924:                    dist.digest = ('md5', info['digest'])
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:951:            result = {'urls': {}, 'digests': {}}
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:958:                'digests': {
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:1005:                    digests = result.get('digests', {})
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:1006:                    # next line could overwrite result['urls'], result['digests']
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:1015:                    dd = result.get('digests')
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:1016:                    if digests and dd:
+.venv\Lib\site-packages\pip\_vendor\distlib\locators.py:1017:                        dd.update(digests)
+.venv\Lib\site-packages\pip\_vendor\distlib\metadata.py:627:    __slots__ = ('_legacy', '_data', 'scheme')
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:335:        result = hasher(data).digest()
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:353:            digest = '%s=%s' % self.get_hash(data)
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:355:            records.append((ap, digest, size))
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:592:                        _, digest = self.get_hash(data, kind)
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:593:                        if digest != value:
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:594:                            raise DistlibException('digest mismatch for '
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:621:                        # Double check the digest of the written file
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:625:                                _, newdigest = self.get_hash(data, kind)
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:626:                                if newdigest != digest:
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:627:                                    raise DistlibException('digest mismatch '
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:872:                    _, digest = self.get_hash(data, kind)
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:873:                    if digest != value:
+.venv\Lib\site-packages\pip\_vendor\distlib\wheel.py:874:                        raise DistlibException('digest mismatch for '
+.venv\Lib\site-packages\pip\_vendor\msgpack\ext.py:29:    __slots__ = ["seconds", "nanoseconds"]
+.venv\Lib\site-packages\pip\_vendor\packaging\tags.py:50:    __slots__ = ["_abi", "_hash", "_interpreter", "_platform"]
+.venv\Lib\site-packages\pip\_vendor\pygments\lexers\python.py:306:                '__self__', '__slots__', '__weakref__'), suffix=r'\b'),
+.venv\Lib\site-packages\pip\_vendor\pygments\lexers\python.py:560:                '__slots__', '__weakref__'),
+.venv\Lib\site-packages\pip\_vendor\requests\api.py:31:    :param auth: (optional) Auth tuple to enable Basic/Digest/Custom HTTP Auth.
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:107:class HTTPDigestAuth(AuthBase):
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:108:    """Attaches HTTP Digest Authentication to the given Request object."""
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:126:    def build_digest_header(self, method, url):
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:142:        # lambdas assume digest modules are imported at the top level
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:148:                return hashlib.md5(x).hexdigest()
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:156:                return hashlib.sha1(x).hexdigest()
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:164:                return hashlib.sha256(x).hexdigest()
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:172:                return hashlib.sha512(x).hexdigest()
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:205:        cnonce = hashlib.sha1(s).hexdigest()[:16]
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:220:        # XXX should the partial digests be encoded too?
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:230:            base += f', digest="{entdig}"'
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:234:        return f"Digest {base}"
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:243:        Takes the given response and tries digest-auth, if needed.
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:260:        if "digest" in s_auth.lower() and self._thread_local.num_401_calls < 2:
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:262:            pat = re.compile(r"digest ", flags=re.IGNORECASE)
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:273:            prep.headers["Authorization"] = self.build_digest_header(
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:290:            r.headers["Authorization"] = self.build_digest_header(r.method, r.url)
+.venv\Lib\site-packages\pip\_vendor\requests\auth.py:294:            # In the case of HTTPDigestAuth being reused and the body of
+.venv\Lib\site-packages\pip\_vendor\requests\sessions.py:537:            Basic/Digest/Custom HTTP Auth.
+.venv\Lib\site-packages\pip\_vendor\rich\control.py:62:    __slots__ = ["segment"]
+.venv\Lib\site-packages\pip\_vendor\rich\emoji.py:28:    __slots__ = ["name", "style", "_char", "variant"]
+.venv\Lib\site-packages\pip\_vendor\rich\jupyter.py:39:    __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\rich\style.py:19:    __slots__ = ["bit"]
+.venv\Lib\site-packages\pip\_vendor\rich\style.py:66:    __slots__ = [
+.venv\Lib\site-packages\pip\_vendor\rich\style.py:768:    __slots__ = ["_stack"]
+.venv\Lib\site-packages\pip\_vendor\rich\text.py:132:    __slots__ = [
+.venv\Lib\site-packages\pip\_vendor\rich\_emoji_codes.py:2044:    "reminder_ribbon": "🎗",
+.venv\Lib\site-packages\pip\_vendor\rich\_emoji_codes.py:2147:    "slot_machine": "🎰",
+.venv\Lib\site-packages\pip\_vendor\rich\_emoji_codes.py:2148:    "sloth": "🦥",
+.venv\Lib\site-packages\pip\_vendor\rich\_ratio.py:89:        maximums (List[int]): List of maximums values for each slot.
+.venv\Lib\site-packages\pip\_vendor\rich\_ratio.py:121:        minimums (List[int]): List of minimum values for each slot.
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:150:_FORWARD_REF_HAS_CLASS = "__forward_is_class__" in typing.ForwardRef.__slots__
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:260:            # AttributeError happens if the object has __slots__ or a
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:710:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:802:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:811:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:820:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:829:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:837:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:848:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:859:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:900:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:920:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:1485:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:1626:    __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:1686:        __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:2409:    __slots__ = ('_name', '__doc__', '_getitem')
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:3120:            # AttributeError happens if the object has __slots__ or a
+.venv\Lib\site-packages\pip\_vendor\typing_extensions.py:4399:            elif "__forward_module__" in typing.ForwardRef.__slots__:
+.venv\Lib\site-packages\pip\_vendor\urllib3\packages\backports\weakref_finalize.py:33:    __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\urllib3\packages\backports\weakref_finalize.py:41:        __slots__ = ("weakref", "func", "args", "kwargs", "atexit", "index")
+.venv\Lib\site-packages\pip\_vendor\urllib3\packages\six.py:446:    MovedAttribute("AbstractDigestAuthHandler", "urllib2", "urllib.request"),
+.venv\Lib\site-packages\pip\_vendor\urllib3\packages\six.py:447:    MovedAttribute("HTTPDigestAuthHandler", "urllib2", "urllib.request"),
+.venv\Lib\site-packages\pip\_vendor\urllib3\packages\six.py:448:    MovedAttribute("ProxyDigestAuthHandler", "urllib2", "urllib.request"),
+.venv\Lib\site-packages\pip\_vendor\urllib3\packages\six.py:958:        slots = orig_vars.get("__slots__")
+.venv\Lib\site-packages\pip\_vendor\urllib3\packages\six.py:959:        if slots is not None:
+.venv\Lib\site-packages\pip\_vendor\urllib3\packages\six.py:960:            if isinstance(slots, str):
+.venv\Lib\site-packages\pip\_vendor\urllib3\packages\six.py:961:                slots = [slots]
+.venv\Lib\site-packages\pip\_vendor\urllib3\packages\six.py:962:            for slots_var in slots:
+.venv\Lib\site-packages\pip\_vendor\urllib3\packages\six.py:963:                orig_vars.pop(slots_var)
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:26:# Maps the length of a digest to a possible hash function producing this digest
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:33:def _const_compare_digest_backport(a, b):
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:35:    Compare two digests of equal length in constant time.
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:37:    The digests must be of type str/bytes.
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:38:    Returns True if the digests match, and False otherwise.
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:46:_const_compare_digest = getattr(hmac, "compare_digest", _const_compare_digest_backport)
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:196:    digest_length = len(fingerprint)
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:197:    if digest_length not in HASHFUNC_MAP:
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:199:    hashfunc = HASHFUNC_MAP.get(digest_length)
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:203:                digest_length
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:210:    cert_digest = hashfunc(cert).digest()
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:212:    if not _const_compare_digest(cert_digest, fingerprint_bytes):
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\ssl_.py:215:                fingerprint, hexlify(cert_digest)
+.venv\Lib\site-packages\pip\_vendor\urllib3\util\url.py:89:    __slots__ = ()
+.venv\Lib\site-packages\pip\_vendor\urllib3\_collections.py:282:            "Digest",
+.venv\Lib\site-packages\proto\datetime_helpers.py:82:    __slots__ = ("_nanosecond",)
+.venv\Lib\site-packages\pyasn1\type\base.py:182:        '__slots__',
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:38:digestedData = univ.ObjectIdentifier('1.2.840.113549.1.7.5')
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:81:class DigestAlgorithmIdentifier(AlgorithmIdentifier):
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:85:class DigestAlgorithmIdentifiers(univ.SetOf):
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:86:    componentType = DigestAlgorithmIdentifier()
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:89:class Digest(univ.OctetString):
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:104:class DigestedData(univ.Sequence):
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:107:        namedtype.NamedType('digestAlgorithm', DigestAlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:109:        namedtype.NamedType('digest', Digest())
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:214:class DigestEncryptionAlgorithmIdentifier(AlgorithmIdentifier):
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:218:class EncryptedDigest(univ.OctetString):
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:226:        namedtype.NamedType('digestAlgorithm', DigestAlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:229:        namedtype.NamedType('digestEncryptionAlgorithm', DigestEncryptionAlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:230:        namedtype.NamedType('encryptedDigest', EncryptedDigest()),
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:244:        namedtype.NamedType('digestAlgorithms', DigestAlgorithmIdentifiers()),
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:262:class DigestInfo(univ.Sequence):
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:264:        namedtype.NamedType('digestAlgorithm', DigestAlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:265:        namedtype.NamedType('digest', Digest())
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:272:        namedtype.OptionalNamedType('digestAlgorithms', DigestAlgorithmIdentifiers()),
+.venv\Lib\site-packages\pyasn1_modules\rfc2315.py:290:    digestedData: DigestedData(),
+.venv\Lib\site-packages\pyasn1_modules\rfc2634.py:231:# Message Signature Digest Attribute
+.venv\Lib\site-packages\pyasn1_modules\rfc2634.py:233:id_aa_msgSigDigest = univ.ObjectIdentifier('1.2.840.113549.1.9.16.2.5')
+.venv\Lib\site-packages\pyasn1_modules\rfc2634.py:235:class MsgSigDigest(univ.OctetString):
+.venv\Lib\site-packages\pyasn1_modules\rfc2634.py:321:    id_aa_msgSigDigest: MsgSigDigest(),
+.venv\Lib\site-packages\pyasn1_modules\rfc2985.py:69:MessageDigest = rfc5652.MessageDigest
+.venv\Lib\site-packages\pyasn1_modules\rfc2985.py:391:# Message digest
+.venv\Lib\site-packages\pyasn1_modules\rfc2985.py:393:pkcs_9_at_messageDigest = rfc5652.id_messageDigest
+.venv\Lib\site-packages\pyasn1_modules\rfc2985.py:395:messageDigest = CMSSingleAttribute()
+.venv\Lib\site-packages\pyasn1_modules\rfc2985.py:396:messageDigest['attrType'] = pkcs_9_at_messageDigest
+.venv\Lib\site-packages\pyasn1_modules\rfc2985.py:397:messageDigest['attrValues'][0] = MessageDigest()
+.venv\Lib\site-packages\pyasn1_modules\rfc2985.py:576:    pkcs_9_at_messageDigest: MessageDigest(),
+.venv\Lib\site-packages\pyasn1_modules\rfc3281.py:38:class ObjectDigestInfo(univ.Sequence):
+.venv\Lib\site-packages\pyasn1_modules\rfc3281.py:42:ObjectDigestInfo.componentType = namedtype.NamedTypes(
+.venv\Lib\site-packages\pyasn1_modules\rfc3281.py:43:    namedtype.NamedType('digestedObjectType', univ.Enumerated(
+.venv\Lib\site-packages\pyasn1_modules\rfc3281.py:46:    namedtype.NamedType('digestAlgorithm', rfc3280.AlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc3281.py:47:    namedtype.NamedType('objectDigest', univ.BitString())
+.venv\Lib\site-packages\pyasn1_modules\rfc3281.py:69:    namedtype.OptionalNamedType('certDigestInfo', ObjectDigestInfo())
+.venv\Lib\site-packages\pyasn1_modules\rfc3281.py:206:    namedtype.OptionalNamedType('objectDigestInfo', ObjectDigestInfo().subtype(
+.venv\Lib\site-packages\pyasn1_modules\rfc3281.py:231:    namedtype.OptionalNamedType('objectDigestInfo', ObjectDigestInfo().subtype(
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:315:class DigestAlgorithmIdentifier(rfc3280.AlgorithmIdentifier):
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:381:id_messageDigest = _buildOid(1, 2, 840, 113549, 1, 9, 4)
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:384:class DigestAlgorithmIdentifiers(univ.SetOf):
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:388:DigestAlgorithmIdentifiers.componentType = DigestAlgorithmIdentifier()
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:402:class Digest(univ.OctetString):
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:406:class DigestedData(univ.Sequence):
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:410:DigestedData.componentType = namedtype.NamedTypes(
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:412:    namedtype.NamedType('digestAlgorithm', DigestAlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:414:    namedtype.NamedType('digest', Digest())
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:567:    namedtype.NamedType('digestAlgorithm', DigestAlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:590:    namedtype.NamedType('digestAlgorithms', DigestAlgorithmIdentifiers()),
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:604:class MessageDigest(univ.OctetString):
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:648:    namedtype.OptionalNamedType('digestAlgorithm', DigestAlgorithmIdentifier().subtype(
+.venv\Lib\site-packages\pyasn1_modules\rfc3852.py:682:id_digestedData = _buildOid(1, 2, 840, 113549, 1, 7, 5)
+.venv\Lib\site-packages\pyasn1_modules\rfc4108.py:111:    ('badDigestAlgorithm', 12),
+.venv\Lib\site-packages\pyasn1_modules\rfc4108.py:228:# Firmware Package Message Digest Signed Attribute and Object Identifier
+.venv\Lib\site-packages\pyasn1_modules\rfc4108.py:230:id_aa_fwPkgMessageDigest = univ.ObjectIdentifier('1.2.840.113549.1.9.16.2.41')
+.venv\Lib\site-packages\pyasn1_modules\rfc4108.py:232:class FirmwarePackageMessageDigest(univ.Sequence):
+.venv\Lib\site-packages\pyasn1_modules\rfc4108.py:235:FirmwarePackageMessageDigest.componentType = namedtype.NamedTypes(
+.venv\Lib\site-packages\pyasn1_modules\rfc4108.py:237:    namedtype.NamedType('msgDigest', univ.OctetString())
+.venv\Lib\site-packages\pyasn1_modules\rfc4108.py:325:    id_aa_fwPkgMessageDigest: FirmwarePackageMessageDigest(),
+.venv\Lib\site-packages\pyasn1_modules\rfc4357.py:48:gostR3411_94_DigestSyntax = id_CryptoPro_modules + (1, 1,)
+.venv\Lib\site-packages\pyasn1_modules\rfc4357.py:321:    namedtype.NamedType('digestParamSet', univ.ObjectIdentifier().subtype(
+.venv\Lib\site-packages\pyasn1_modules\rfc4357.py:380:    namedtype.NamedType('digestParamSet', univ.ObjectIdentifier().subtype(
+.venv\Lib\site-packages\pyasn1_modules\rfc4357.py:423:class GostR3411_94_Digest(univ.OctetString):
+.venv\Lib\site-packages\pyasn1_modules\rfc4357.py:426:GostR3411_94_Digest.subtypeSpec = constraint.ValueSizeConstraint(32, 32)
+.venv\Lib\site-packages\pyasn1_modules\rfc4357.py:429:class GostR3411_94_DigestParameters(univ.ObjectIdentifier):
+.venv\Lib\site-packages\pyasn1_modules\rfc4357.py:432:GostR3411_94_DigestParameters.subtypeSpec = constraint.ConstraintsUnion(
+.venv\Lib\site-packages\pyasn1_modules\rfc4357.py:443:    namedtype.NamedType('h0', GostR3411_94_Digest())
+.venv\Lib\site-packages\pyasn1_modules\rfc5035.py:142:# Message Signature Digest Attribute
+.venv\Lib\site-packages\pyasn1_modules\rfc5035.py:144:id_aa_msgSigDigest = rfc2634.id_aa_msgSigDigest
+.venv\Lib\site-packages\pyasn1_modules\rfc5035.py:146:MsgSigDigest = rfc2634.MsgSigDigest
+.venv\Lib\site-packages\pyasn1_modules\rfc5126.py:56:MessageDigest = rfc5652.MessageDigest
+.venv\Lib\site-packages\pyasn1_modules\rfc5126.py:68:id_messageDigest = rfc5652.id_messageDigest
+.venv\Lib\site-packages\pyasn1_modules\rfc5480.py:61:# OIDs for Message Digest Algorithms
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:528:class DigestAlgorithmIdentifier(rfc5280.AlgorithmIdentifier):
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:534:id_digestedData = _buildOid(1, 2, 840, 113549, 1, 7, 5)
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:548:id_messageDigest = _buildOid(1, 2, 840, 113549, 1, 9, 4)
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:583:    namedtype.NamedType('digestAlgorithm', DigestAlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:631:class MessageDigest(univ.OctetString):
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:663:    namedtype.OptionalNamedType('digestAlgorithm', DigestAlgorithmIdentifier().subtype(
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:687:class Digest(univ.OctetString):
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:691:class DigestedData(univ.Sequence):
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:695:DigestedData.componentType = namedtype.NamedTypes(
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:697:    namedtype.NamedType('digestAlgorithm', DigestAlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:699:    namedtype.NamedType('digest', Digest())
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:705:class DigestAlgorithmIdentifiers(univ.SetOf):
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:709:DigestAlgorithmIdentifiers.componentType = DigestAlgorithmIdentifier()
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:718:    namedtype.NamedType('digestAlgorithms', DigestAlgorithmIdentifiers()),
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:744:    id_digestedData: DigestedData(),
+.venv\Lib\site-packages\pyasn1_modules\rfc5652.py:756:    id_messageDigest: MessageDigest(),
+.venv\Lib\site-packages\pyasn1_modules\rfc5752.py:25:        namedtype.NamedType('algID', rfc5652.DigestAlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc5752.py:32:        namedtype.NamedType('bodyHashAlg', rfc5652.DigestAlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc5755.py:98:class ObjectDigestInfo(univ.Sequence):
+.venv\Lib\site-packages\pyasn1_modules\rfc5755.py:100:        namedtype.NamedType('digestedObjectType',
+.venv\Lib\site-packages\pyasn1_modules\rfc5755.py:107:        namedtype.NamedType('digestAlgorithm',
+.venv\Lib\site-packages\pyasn1_modules\rfc5755.py:109:        namedtype.NamedType('objectDigest',
+.venv\Lib\site-packages\pyasn1_modules\rfc5755.py:122:        namedtype.OptionalNamedType('objectDigestInfo',
+.venv\Lib\site-packages\pyasn1_modules\rfc5755.py:123:            ObjectDigestInfo().subtype(implicitTag=tag.Tag(
+.venv\Lib\site-packages\pyasn1_modules\rfc5755.py:135:        namedtype.OptionalNamedType('objectDigestInfo',
+.venv\Lib\site-packages\pyasn1_modules\rfc5755.py:136:            ObjectDigestInfo().subtype(implicitTag=tag.Tag(
+.venv\Lib\site-packages\pyasn1_modules\rfc5755.py:200:        namedtype.OptionalNamedType('certDigestInfo', ObjectDigestInfo())
+.venv\Lib\site-packages\pyasn1_modules\rfc5934.py:394:    ('badDigestAlgorithm', 12),
+.venv\Lib\site-packages\pyasn1_modules\rfc6211.py:25:DigestAlgorithmIdentifier = rfc5652.DigestAlgorithmIdentifier
+.venv\Lib\site-packages\pyasn1_modules\rfc6211.py:41:    namedtype.NamedType('digestAlgorithm', DigestAlgorithmIdentifier()),
+.venv\Lib\site-packages\pyasn1_modules\rfc6955.py:25:MessageDigest = rfc5652.MessageDigest
+.venv\Lib\site-packages\pyasn1_modules\rfc6955.py:47:        namedtype.NamedType('hashValue', MessageDigest())
+.venv\Lib\site-packages\pyasn1_modules\rfc7191.py:108:    ('badDigestAlgorithm', 12),
+.venv\Lib\site-packages\pyasn1_modules\rfc7191.py:135:    ('mismatchedDigestAlg', 76),
+.venv\Lib\site-packages\pyasn1_modules\rfc7191.py:142:    ('badMessageDigest', 83),
+.venv\Lib\site-packages\pyasn1_modules\rfc7292.py:52:DigestInfo = rfc2315.DigestInfo
+.venv\Lib\site-packages\pyasn1_modules\rfc7292.py:260:    namedtype.NamedType('mac', DigestInfo()),
+.venv\Lib\site-packages\pyasn1_modules\rfc7906.py:110:id_messageDigest = rfc5652.id_messageDigest
+.venv\Lib\site-packages\pyasn1_modules\rfc7906.py:112:MessageDigest = rfc5652.MessageDigest
+.venv\Lib\site-packages\pyasn1_modules\rfc7906.py:709:    id_messageDigest: MessageDigest(),
+.venv\Lib\site-packages\pyasn1_modules\rfc8017.py:32:class DigestAlgorithm(AlgorithmIdentifier):
+.venv\Lib\site-packages\pyasn1_modules\rfc8017.py:121:class DigestInfo(univ.Sequence):
+.venv\Lib\site-packages\pyasn1_modules\rfc8017.py:123:        namedtype.NamedType('digestAlgorithm', DigestAlgorithm()),
+.venv\Lib\site-packages\pyasn1_modules\rfc8017.py:124:        namedtype.NamedType('digest', univ.OctetString())
+.venv\Lib\site-packages\pyasn1_modules\rfc8018.py:58:digestAlgorithm = _OID(rsadsi, 2)
+.venv\Lib\site-packages\pyasn1_modules\rfc8018.py:68:id_hmacWithSHA1 = _OID(digestAlgorithm, 7)
+.venv\Lib\site-packages\pyasn1_modules\rfc8018.py:70:id_hmacWithSHA224 = _OID(digestAlgorithm, 8)
+.venv\Lib\site-packages\pyasn1_modules\rfc8018.py:72:id_hmacWithSHA256 = _OID(digestAlgorithm, 9)
+.venv\Lib\site-packages\pyasn1_modules\rfc8018.py:74:id_hmacWithSHA384 = _OID(digestAlgorithm, 10)
+.venv\Lib\site-packages\pyasn1_modules\rfc8018.py:76:id_hmacWithSHA512 = _OID(digestAlgorithm, 11)
+.venv\Lib\site-packages\pyasn1_modules\rfc8018.py:78:id_hmacWithSHA512_224 = _OID(digestAlgorithm, 12)
+.venv\Lib\site-packages\pyasn1_modules\rfc8018.py:80:id_hmacWithSHA512_256 = _OID(digestAlgorithm, 13)
+.venv\Lib\site-packages\pycparser\c_ast.py:31:    __slots__ = ()
+.venv\Lib\site-packages\pycparser\c_ast.py:41:        for name in self.__slots__[:-2]:
+.venv\Lib\site-packages\pycparser\c_ast.py:168:    __slots__ = ('type', 'dim', 'dim_quals', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:190:    __slots__ = ('name', 'subscript', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:211:    __slots__ = ('op', 'lvalue', 'rvalue', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:233:    __slots__ = ('alignment', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:250:    __slots__ = ('op', 'left', 'right', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:272:    __slots__ = ('coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:286:    __slots__ = ('expr', 'stmts', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:308:    __slots__ = ('to_type', 'expr', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:329:    __slots__ = ('block_items', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:347:    __slots__ = ('type', 'init', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:368:    __slots__ = ('type', 'value', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:385:    __slots__ = ('coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:399:    __slots__ = ('name', 'quals', 'align', 'storage', 'funcspec', 'type', 'init', 'bitsize', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:429:    __slots__ = ('decls', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:447:    __slots__ = ('stmts', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:465:    __slots__ = ('cond', 'stmt', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:486:    __slots__ = ('coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:500:    __slots__ = ('coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:514:    __slots__ = ('name', 'values', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:532:    __slots__ = ('name', 'value', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:550:    __slots__ = ('enumerators', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:568:    __slots__ = ('exprs', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:586:    __slots__ = ('ext', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:604:    __slots__ = ('init', 'cond', 'next', 'stmt', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:633:    __slots__ = ('name', 'args', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:654:    __slots__ = ('args', 'type', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:675:    __slots__ = ('decl', 'param_decls', 'body', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:701:    __slots__ = ('name', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:717:    __slots__ = ('name', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:733:    __slots__ = ('names', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:749:    __slots__ = ('cond', 'iftrue', 'iffalse', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:774:    __slots__ = ('exprs', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:792:    __slots__ = ('name', 'stmt', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:810:    __slots__ = ('name', 'expr', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:832:    __slots__ = ('params', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:850:    __slots__ = ('quals', 'type', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:868:    __slots__ = ('expr', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:885:    __slots__ = ('cond', 'message', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:906:    __slots__ = ('name', 'decls', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:925:    __slots__ = ('name', 'type', 'field', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:947:    __slots__ = ('cond', 'stmt', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:968:    __slots__ = ('cond', 'iftrue', 'iffalse', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:993:    __slots__ = ('declname', 'quals', 'align', 'type', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:1013:    __slots__ = ('name', 'quals', 'storage', 'type', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:1033:    __slots__ = ('name', 'quals', 'align', 'type', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:1053:    __slots__ = ('op', 'expr', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:1071:    __slots__ = ('name', 'decls', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:1090:    __slots__ = ('cond', 'stmt', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\c_ast.py:1111:    __slots__ = ('string', 'coord', '__weakref__')
+.venv\Lib\site-packages\pycparser\plyparser.py:19:    __slots__ = ('file', 'line', 'column', '__weakref__')
+.venv\Lib\site-packages\pycparser\_ast_gen.py:96:            slots = ', '.join("'{0}'".format(e) for e in self.all_entries)
+.venv\Lib\site-packages\pycparser\_ast_gen.py:97:            slots += ", 'coord', '__weakref__'"
+.venv\Lib\site-packages\pycparser\_ast_gen.py:100:            slots = "'coord', '__weakref__'"
+.venv\Lib\site-packages\pycparser\_ast_gen.py:103:        src += "    __slots__ = (%s)\n" % slots
+.venv\Lib\site-packages\pycparser\_ast_gen.py:200:    __slots__ = ()
+.venv\Lib\site-packages\pycparser\_ast_gen.py:210:        for name in self.__slots__[:-2]:
+.venv\Lib\site-packages\pydantic\aliases.py:15:@dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\aliases.py:57:@dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\aliases.py:88:@dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\color.py:36:    __slots__ = 'r', 'g', 'b', 'alpha', '_tuple'
+.venv\Lib\site-packages\pydantic\color.py:80:    __slots__ = '_original', '_rgba'
+.venv\Lib\site-packages\pydantic\dataclasses.py:43:        slots: bool = ...,
+.venv\Lib\site-packages\pydantic\dataclasses.py:61:        slots: bool = ...,
+.venv\Lib\site-packages\pydantic\dataclasses.py:110:    slots: bool = False,
+.venv\Lib\site-packages\pydantic\dataclasses.py:135:        slots: Determines if the generated class should be a 'slots' `dataclass`, which does not allow the addition of
+.venv\Lib\site-packages\pydantic\dataclasses.py:148:        kwargs = {'kw_only': kw_only, 'slots': slots}
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:24:from pydantic._internal._internal_dataclass import slots_true as _slots_true
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:33:_slots_frozen = {**_slots_true, 'frozen': True}
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:36:@dataclass(**_slots_frozen)
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:51:@dataclass(**_slots_frozen)
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:56:@dataclass(**_slots_frozen)
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:62:@dataclass(**_slots_frozen)
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:68:@dataclass(**_slots_frozen)
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:73:@dataclass(**_slots_frozen)
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:78:@dataclass(**_slots_frozen)
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:83:@dataclass(**_slots_frozen)
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:108:@dataclass(**_slots_frozen)
+.venv\Lib\site-packages\pydantic\experimental\pipeline.py:128:@dataclass(**_slots_true)
+.venv\Lib\site-packages\pydantic\fields.py:159:    __slots__ = (
+.venv\Lib\site-packages\pydantic\fields.py:719:        for s in self.__slots__:
+.venv\Lib\site-packages\pydantic\fields.py:1175:    __slots__ = ('default', 'default_factory')
+.venv\Lib\site-packages\pydantic\fields.py:1282:@dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\functional_serializers.py:18:@dataclasses.dataclass(**_internal_dataclass.slots_true, frozen=True)
+.venv\Lib\site-packages\pydantic\functional_serializers.py:88:@dataclasses.dataclass(**_internal_dataclass.slots_true, frozen=True)
+.venv\Lib\site-packages\pydantic\functional_serializers.py:432:    @dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\functional_validators.py:27:@dataclasses.dataclass(frozen=True, **_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\functional_validators.py:88:@dataclasses.dataclass(frozen=True, **_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\functional_validators.py:156:@dataclasses.dataclass(frozen=True, **_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\functional_validators.py:253:@dataclasses.dataclass(frozen=True, **_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\functional_validators.py:736:    @dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\functional_validators.py:801:    @dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\json_schema.py:135:@dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\json_schema.py:2485:@dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\json_schema.py:2628:    @dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\main.py:241:    __slots__ = '__dict__', '__pydantic_fields_set__', '__pydantic_extra__', '__pydantic_private__'
+.venv\Lib\site-packages\pydantic\mypy.py:189:    __slots__ = (
+.venv\Lib\site-packages\pydantic\mypy.py:207:            for key in self.__slots__:
+.venv\Lib\site-packages\pydantic\mypy.py:215:            for key in self.__slots__:
+.venv\Lib\site-packages\pydantic\mypy.py:221:        return {key: getattr(self, key) for key in self.__slots__}
+.venv\Lib\site-packages\pydantic\networks.py:1038:    __slots__ = 'name', 'email'
+.venv\Lib\site-packages\pydantic\networks.py:1131:        __slots__ = ()
+.venv\Lib\site-packages\pydantic\networks.py:1170:        __slots__ = ()
+.venv\Lib\site-packages\pydantic\networks.py:1209:        __slots__ = ()
+.venv\Lib\site-packages\pydantic\plugin\_schema_validator.py:57:    __slots__ = '_schema_validator', 'validate_json', 'validate_python', 'validate_strings'
+.venv\Lib\site-packages\pydantic\types.py:1138:@_dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\types.py:2476:@_dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\types.py:2575:@_dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\types.py:2847:@_dataclasses.dataclass(**_internal_dataclass.slots_true)
+.venv\Lib\site-packages\pydantic\types.py:2894:@_dataclasses.dataclass(**_internal_dataclass.slots_true, frozen=True)
+.venv\Lib\site-packages\pydantic\types.py:2979:@_dataclasses.dataclass(**_internal_dataclass.slots_true, frozen=True)
+.venv\Lib\site-packages\pydantic\type_adapter.py:51:    slots = getattr(obj, '__slots__', None)
+.venv\Lib\site-packages\pydantic\type_adapter.py:52:    if slots is not None and attribute in slots:
+.venv\Lib\site-packages\pydantic\v1\class_validators.py:17:    __slots__ = 'func', 'pre', 'each_item', 'always', 'check_fields', 'skip_on_failure'
+.venv\Lib\site-packages\pydantic\v1\color.py:31:    __slots__ = 'r', 'g', 'b', 'alpha', '_tuple'
+.venv\Lib\site-packages\pydantic\v1\color.py:64:    __slots__ = '_original', '_rgba'
+.venv\Lib\site-packages\pydantic\v1\dataclasses.py:252:    __slots__ = '__dataclass__'
+.venv\Lib\site-packages\pydantic\v1\env_settings.py:139:    __slots__ = ('init_kwargs',)
+.venv\Lib\site-packages\pydantic\v1\env_settings.py:152:    __slots__ = ('env_file', 'env_file_encoding', 'env_nested_delimiter', 'env_prefix_len')
+.venv\Lib\site-packages\pydantic\v1\env_settings.py:276:    __slots__ = ('secrets_dir',)
+.venv\Lib\site-packages\pydantic\v1\error_wrappers.py:29:    __slots__ = 'exc', '_loc'
+.venv\Lib\site-packages\pydantic\v1\error_wrappers.py:51:    __slots__ = 'raw_errors', 'model', '_error_cache'
+.venv\Lib\site-packages\pydantic\v1\fields.py:102:    __slots__ = (
+.venv\Lib\site-packages\pydantic\v1\fields.py:186:        attrs = ((s, getattr(self, s)) for s in self.__slots__)
+.venv\Lib\site-packages\pydantic\v1\fields.py:365:    __slots__ = (
+.venv\Lib\site-packages\pydantic\v1\fields.py:1205:    __slots__ = ('default', 'default_factory')
+.venv\Lib\site-packages\pydantic\v1\fields.py:1231:    Private attrs are stored in model __slots__.
+.venv\Lib\site-packages\pydantic\v1\generics.py:65:    __slots__ = ()
+.venv\Lib\site-packages\pydantic\v1\main.py:131:        slots: SetStr = namespace.get('__slots__', ())
+.venv\Lib\site-packages\pydantic\v1\main.py:132:        slots = {slots} if isinstance(slots, str) else set(slots)
+.venv\Lib\site-packages\pydantic\v1\main.py:251:        exclude_from_namespace = fields | private_attributes.keys() | {'__slots__'}
+.venv\Lib\site-packages\pydantic\v1\main.py:276:            '__slots__': slots | private_attributes.keys(),
+.venv\Lib\site-packages\pydantic\v1\main.py:335:    __slots__ = ('__dict__', '__fields_set__')
+.venv\Lib\site-packages\pydantic\v1\main.py:964:    __slots__: Optional[Tuple[str, ...]] = None,
+.venv\Lib\site-packages\pydantic\v1\main.py:975:    :param __slots__: Deprecated, `__slots__` should not be passed to `create_model`
+.venv\Lib\site-packages\pydantic\v1\main.py:983:    if __slots__ is not None:
+.venv\Lib\site-packages\pydantic\v1\main.py:984:        # __slots__ will be ignored from here on
+.venv\Lib\site-packages\pydantic\v1\main.py:985:        warnings.warn('__slots__ should not be passed to create_model', RuntimeWarning)
+.venv\Lib\site-packages\pydantic\v1\mypy.py:226:    __slots__ = (
+.venv\Lib\site-packages\pydantic\v1\mypy.py:246:            for key in self.__slots__:
+.venv\Lib\site-packages\pydantic\v1\mypy.py:254:            for key in self.__slots__:
+.venv\Lib\site-packages\pydantic\v1\mypy.py:259:        return {key: getattr(self, key) for key in self.__slots__}
+.venv\Lib\site-packages\pydantic\v1\networks.py:181:    __slots__ = ('scheme', 'user', 'password', 'host', 'tld', 'host_type', 'port', 'path', 'query', 'fragment')
+.venv\Lib\site-packages\pydantic\v1\networks.py:395:        extra = ', '.join(f'{n}={getattr(self, n)!r}' for n in self.__slots__ if getattr(self, n) is not None)
+.venv\Lib\site-packages\pydantic\v1\networks.py:402:    __slots__ = ()
+.venv\Lib\site-packages\pydantic\v1\networks.py:420:    __slots__ = ()
+.venv\Lib\site-packages\pydantic\v1\networks.py:424:    __slots__ = AnyUrl.__slots__ + ('hosts',)
+.venv\Lib\site-packages\pydantic\v1\networks.py:501:    __slots__ = ()
+.venv\Lib\site-packages\pydantic\v1\networks.py:519:    __slots__ = ()
+.venv\Lib\site-packages\pydantic\v1\networks.py:602:    __slots__ = 'name', 'email'
+.venv\Lib\site-packages\pydantic\v1\networks.py:633:    __slots__ = ()
+.venv\Lib\site-packages\pydantic\v1\networks.py:657:    __slots__ = ()
+.venv\Lib\site-packages\pydantic\v1\utils.py:369:    __slots__: Tuple[str, ...] = tuple()
+.venv\Lib\site-packages\pydantic\v1\utils.py:379:        attrs = ((s, getattr(self, s)) for s in self.__slots__)
+.venv\Lib\site-packages\pydantic\v1\utils.py:428:    __slots__ = ('_obj',)
+.venv\Lib\site-packages\pydantic\v1\utils.py:488:    __slots__ = ('_items', '_type')
+.venv\Lib\site-packages\pydantic\v1\utils.py:634:    __slots__ = (
+.venv\Lib\site-packages\pydantic\_internal\_config.py:37:    __slots__ = ('config_dict',)
+.venv\Lib\site-packages\pydantic\_internal\_decorators.py:19:from ._internal_dataclass import slots_true
+.venv\Lib\site-packages\pydantic\_internal\_decorators.py:29:@dataclass(**slots_true)
+.venv\Lib\site-packages\pydantic\_internal\_decorators.py:53:@dataclass(**slots_true)
+.venv\Lib\site-packages\pydantic\_internal\_decorators.py:76:@dataclass(**slots_true)
+.venv\Lib\site-packages\pydantic\_internal\_decorators.py:90:@dataclass(**slots_true)
+.venv\Lib\site-packages\pydantic\_internal\_decorators.py:113:@dataclass(**slots_true)
+.venv\Lib\site-packages\pydantic\_internal\_decorators.py:132:@dataclass(**slots_true)
+.venv\Lib\site-packages\pydantic\_internal\_decorators.py:162:@dataclass  # can't use slots here since we set attributes on `__post_init__`
+.venv\Lib\site-packages\pydantic\_internal\_decorators.py:216:@dataclass(**slots_true)
+.venv\Lib\site-packages\pydantic\_internal\_decorators.py:412:@dataclass(**slots_true)
+.venv\Lib\site-packages\pydantic\_internal\_decorators.py:442:        # reminder: dicts are ordered and replacement does not alter the order
+.venv\Lib\site-packages\pydantic\_internal\_fields.py:42:    __slots__ = ()
+.venv\Lib\site-packages\pydantic\_internal\_generate_schema.py:326:    __slots__ = (
+.venv\Lib\site-packages\pydantic\_internal\_generate_schema.py:1966:                has_slots = hasattr(dataclass, '__slots__')
+.venv\Lib\site-packages\pydantic\_internal\_generate_schema.py:1992:                    slots=has_slots,
+.venv\Lib\site-packages\pydantic\_internal\_generate_schema.py:2870:    __slots__ = ('_stack',)
+.venv\Lib\site-packages\pydantic\_internal\_generate_schema.py:2889:    __slots__ = ('_stack',)
+.venv\Lib\site-packages\pydantic\_internal\_internal_dataclass.py:3:# `slots` is available on Python >= 3.10
+.venv\Lib\site-packages\pydantic\_internal\_internal_dataclass.py:5:    slots_true = {'slots': True}
+.venv\Lib\site-packages\pydantic\_internal\_internal_dataclass.py:7:    slots_true = {}
+.venv\Lib\site-packages\pydantic\_internal\_mock_val_ser.py:26:    __slots__ = '_error_message', '_code', '_attempt_rebuild', '_built_memo'
+.venv\Lib\site-packages\pydantic\_internal\_mock_val_ser.py:76:    __slots__ = '_error_message', '_code', '_val_or_ser', '_attempt_rebuild'
+.venv\Lib\site-packages\pydantic\_internal\_model_construction.py:255:            for instance_slot in '__pydantic_fields_set__', '__pydantic_extra__', '__pydantic_private__':
+.venv\Lib\site-packages\pydantic\_internal\_model_construction.py:257:                    instance_slot,
+.venv\Lib\site-packages\pydantic\_internal\_repr.py:38:    __slots__ = ()  # type: typing.Collection[str]
+.venv\Lib\site-packages\pydantic\_internal\_repr.py:47:        attrs_names = self.__slots__
+.venv\Lib\site-packages\pydantic\_internal\_utils.py:174:    __slots__ = ('_items', '_type')
+.venv\Lib\site-packages\pydantic\_internal\_utils.py:378:    # Define __slots__manually for performances
+.venv\Lib\site-packages\pydantic\_internal\_utils.py:379:    # @dataclasses.dataclass() only support slots=True in python>=3.10
+.venv\Lib\site-packages\pydantic\_internal\_utils.py:380:    __slots__ = ('wrapped',)
+.venv\Lib\site-packages\pydantic\_internal\_validate_call.py:52:    __slots__ = (
+.venv\Lib\site-packages\pydantic_core\core_schema.py:3128:        __slots__ = (
+.venv\Lib\site-packages\pydantic_core\core_schema.py:3329:    slots: bool
+.venv\Lib\site-packages\pydantic_core\core_schema.py:3347:    slots: bool | None = None,
+.venv\Lib\site-packages\pydantic_core\core_schema.py:3370:        slots: Whether `slots=True` on the dataclass, means each field is assigned independently, rather than
+.venv\Lib\site-packages\pydantic_core\core_schema.py:3387:        slots=slots,
+.venv\Lib\site-packages\pydantic_core\core_schema.py:3766:        __slots__ = (
+.venv\Lib\site-packages\requests\api.py:31:    :param auth: (optional) Auth tuple to enable Basic/Digest/Custom HTTP Auth.
+.venv\Lib\site-packages\requests\auth.py:107:class HTTPDigestAuth(AuthBase):
+.venv\Lib\site-packages\requests\auth.py:108:    """Attaches HTTP Digest Authentication to the given Request object."""
+.venv\Lib\site-packages\requests\auth.py:126:    def build_digest_header(self, method, url):
+.venv\Lib\site-packages\requests\auth.py:142:        # lambdas assume digest modules are imported at the top level
+.venv\Lib\site-packages\requests\auth.py:148:                return hashlib.md5(x).hexdigest()
+.venv\Lib\site-packages\requests\auth.py:156:                return hashlib.sha1(x).hexdigest()
+.venv\Lib\site-packages\requests\auth.py:164:                return hashlib.sha256(x).hexdigest()
+.venv\Lib\site-packages\requests\auth.py:172:                return hashlib.sha512(x).hexdigest()
+.venv\Lib\site-packages\requests\auth.py:205:        cnonce = hashlib.sha1(s).hexdigest()[:16]
+.venv\Lib\site-packages\requests\auth.py:220:        # XXX should the partial digests be encoded too?
+.venv\Lib\site-packages\requests\auth.py:230:            base += f', digest="{entdig}"'
+.venv\Lib\site-packages\requests\auth.py:234:        return f"Digest {base}"
+.venv\Lib\site-packages\requests\auth.py:243:        Takes the given response and tries digest-auth, if needed.
+.venv\Lib\site-packages\requests\auth.py:260:        if "digest" in s_auth.lower() and self._thread_local.num_401_calls < 2:
+.venv\Lib\site-packages\requests\auth.py:262:            pat = re.compile(r"digest ", flags=re.IGNORECASE)
+.venv\Lib\site-packages\requests\auth.py:273:            prep.headers["Authorization"] = self.build_digest_header(
+.venv\Lib\site-packages\requests\auth.py:290:            r.headers["Authorization"] = self.build_digest_header(r.method, r.url)
+.venv\Lib\site-packages\requests\auth.py:294:            # In the case of HTTPDigestAuth being reused and the body of
+.venv\Lib\site-packages\requests\sessions.py:537:            Basic/Digest/Custom HTTP Auth.
+.venv\Lib\site-packages\rsa\key.py:54:    __slots__ = ("n", "e", "blindfac", "blindfac_inverse", "mutex")
+.venv\Lib\site-packages\rsa\key.py:242:    __slots__ = ()
+.venv\Lib\site-packages\rsa\key.py:407:    __slots__ = ("d", "p", "q", "exp1", "exp2", "coef")
+.venv\Lib\site-packages\rsa\pkcs1.py:33:from hmac import compare_digest
+.venv\Lib\site-packages\rsa\pkcs1.py:268:    cleartext_marker_bad = not compare_digest(cleartext[:2], b"\x00\x02")
+.venv\Lib\site-packages\rsa\pkcs1.py:421:    """Returns the message digest.
+.venv\Lib\site-packages\rsa\pkcs1.py:445:    return hasher.digest()
+.venv\Lib\site-packages\rsa\pkcs1_v2.py:51:        hash_length = pkcs1.HASH_METHODS[hasher]().digest_size
+.venv\Lib\site-packages\six.py:426:    MovedAttribute("AbstractDigestAuthHandler", "urllib2", "urllib.request"),
+.venv\Lib\site-packages\six.py:427:    MovedAttribute("HTTPDigestAuthHandler", "urllib2", "urllib.request"),
+.venv\Lib\site-packages\six.py:428:    MovedAttribute("ProxyDigestAuthHandler", "urllib2", "urllib.request"),
+.venv\Lib\site-packages\six.py:889:        slots = orig_vars.get('__slots__')
+.venv\Lib\site-packages\six.py:890:        if slots is not None:
+.venv\Lib\site-packages\six.py:891:            if isinstance(slots, str):
+.venv\Lib\site-packages\six.py:892:                slots = [slots]
+.venv\Lib\site-packages\six.py:893:            for slots_var in slots:
+.venv\Lib\site-packages\six.py:894:                orig_vars.pop(slots_var)
+.venv\Lib\site-packages\stripe\_invoice.py:2234:        sending reminders for, or [automatically reconciling](https://docs.stripe.com/docs/billing/invoices/reconciliation) invoices, pass
+.venv\Lib\site-packages\stripe\_invoice.py:2256:        sending reminders for, or [automatically reconciling](https://docs.stripe.com/docs/billing/invoices/reconciliation) invoices, pass
+.venv\Lib\site-packages\stripe\_invoice_service.py:144:        sending reminders for, or [automatically reconciling](https://docs.stripe.com/docs/billing/invoices/reconciliation) invoices, pass
+.venv\Lib\site-packages\stripe\_invoice_service.py:169:        sending reminders for, or [automatically reconciling](https://docs.stripe.com/docs/billing/invoices/reconciliation) invoices, pass
+.venv\Lib\site-packages\stripe\_util.py:167:if hasattr(hmac, "compare_digest"):
+.venv\Lib\site-packages\stripe\_util.py:170:        return hmac.compare_digest(val1, val2)
+.venv\Lib\site-packages\stripe\_webhook.py:47:            digestmod=sha256,
+.venv\Lib\site-packages\stripe\_webhook.py:49:        return mac.hexdigest()
+.venv\Lib\site-packages\typing_extensions.py:161:_FORWARD_REF_HAS_CLASS = "__forward_is_class__" in typing.ForwardRef.__slots__
+.venv\Lib\site-packages\typing_extensions.py:234:    __slots__ = ('_name', '__doc__', '_getitem')
+.venv\Lib\site-packages\typing_extensions.py:319:            # AttributeError happens if the object has __slots__ or a
+.venv\Lib\site-packages\typing_extensions.py:790:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:884:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:893:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:902:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:911:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:919:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:930:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:941:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:959:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:976:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:1002:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:1022:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:1661:    __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:1721:        __slots__ = ()
+.venv\Lib\site-packages\typing_extensions.py:2870:            # AttributeError happens if the object has __slots__ or a
+.venv\Lib\site-packages\urllib3\http2\connection.py:63:    __slots__ = (
+.venv\Lib\site-packages\urllib3\http2\probe.py:7:    __slots__ = (
+.venv\Lib\site-packages\urllib3\util\ssl_.py:23:# Maps the length of a digest to a possible hash function producing this digest
+.venv\Lib\site-packages\urllib3\util\ssl_.py:166:    digest_length = len(fingerprint)
+.venv\Lib\site-packages\urllib3\util\ssl_.py:167:    if digest_length not in HASHFUNC_MAP:
+.venv\Lib\site-packages\urllib3\util\ssl_.py:169:    hashfunc = HASHFUNC_MAP.get(digest_length)
+.venv\Lib\site-packages\urllib3\util\ssl_.py:172:            f"Hash function implementation unavailable for fingerprint length: {digest_length}"
+.venv\Lib\site-packages\urllib3\util\ssl_.py:178:    cert_digest = hashfunc(cert).digest()
+.venv\Lib\site-packages\urllib3\util\ssl_.py:180:    if not hmac.compare_digest(cert_digest, fingerprint_bytes):
+.venv\Lib\site-packages\urllib3\util\ssl_.py:182:            f'Fingerprints did not match. Expected "{fingerprint}", got "{cert_digest.hex()}"'
+.venv\Lib\site-packages\urllib3\_collections.py:403:            "Digest",
+.venv\Lib\site-packages\websockets\asyncio\async_timeout.py:47:            # AttributeError happens if the object has __slots__ or a
+.venv\Lib\site-packages\websockets\asyncio\async_timeout.py:138:    __slots__ = ("_deadline", "_loop", "_state", "_timeout_handler", "_task")
+.venv\Lib\site-packages\websockets\asyncio\server.py:931:            return hmac.compare_digest(expected_password, password)
+.venv\Lib\site-packages\websockets\datastructures.py:65:    __slots__ = ["_dict", "_list"]
+.venv\Lib\site-packages\websockets\legacy\auth.py:176:            return hmac.compare_digest(expected_password, password)
+.venv\Lib\site-packages\websockets\sync\server.py:717:            return hmac.compare_digest(expected_password, password)
+.venv\Lib\site-packages\websockets\utils.py:32:    sha1 = hashlib.sha1((key + GUID).encode()).digest()
+.venv\Lib\site-packages\werkzeug\datastructures\auth.py:50:        """The authorization scheme, like ``basic``, ``digest``, or ``bearer``."""
+.venv\Lib\site-packages\werkzeug\datastructures\auth.py:188:        """The authorization scheme, like ``basic``, ``digest``, or ``bearer``."""
+.venv\Lib\site-packages\werkzeug\datastructures\auth.py:298:        if self.type == "digest":
+.venv\Lib\site-packages\werkzeug\datastructures\auth.py:309:            return f"Digest {', '.join(items)}"
+.venv\Lib\site-packages\werkzeug\datastructures\structures.py:556:    __slots__ = ("prev", "key", "value", "next")
+.venv\Lib\site-packages\werkzeug\debug\tbtools.py:221:    __slots__ = ("_te", "_cache_all_tracebacks", "_cache_all_frames")
+.venv\Lib\site-packages\werkzeug\debug\tbtools.py:358:    __slots__ = (
+.venv\Lib\site-packages\werkzeug\debug\__init__.py:45:    return hashlib.sha1(f"{pin} added salt".encode("utf-8", "replace")).hexdigest()[:12]
+.venv\Lib\site-packages\werkzeug\debug\__init__.py:205:    cookie_name = f"__wzd{h.hexdigest()[:20]}"
+.venv\Lib\site-packages\werkzeug\debug\__init__.py:211:        num = f"{int(h.hexdigest(), 16):09d}"[:9]
+.venv\Lib\site-packages\werkzeug\http.py:981:    return sha1(data).hexdigest()
+.venv\Lib\site-packages\werkzeug\local.py:52:    __slots__ = ("__storage",)
+.venv\Lib\site-packages\werkzeug\local.py:125:    __slots__ = ("_storage",)
+.venv\Lib\site-packages\werkzeug\local.py:206:    __slots__ = ("locals",)
+.venv\Lib\site-packages\werkzeug\local.py:271:    __slots__ = ("bind_f", "fallback", "is_attr", "class_value", "name")
+.venv\Lib\site-packages\werkzeug\local.py:356:    __slots__ = ()
+.venv\Lib\site-packages\werkzeug\local.py:466:    __slots__ = ("__wrapped", "_get_current_object")
+.venv\Lib\site-packages\werkzeug\local.py:566:    # __slots__ used by proxy itself
+.venv\Lib\site-packages\werkzeug\routing\exceptions.py:52:    __slots__ = ("path_info",)
+.venv\Lib\site-packages\werkzeug\routing\exceptions.py:148:    __slots__ = ("have_match_for", "websocket_mismatch")
+.venv\Lib\site-packages\werkzeug\sansio\request.py:285:        RFC 1864, is an MD5 digest of the entity-body for the purpose of
+.venv\Lib\site-packages\werkzeug\sansio\response.py:382:        RFC 1864, is an MD5 digest of the entity-body for the purpose of
+.venv\Lib\site-packages\werkzeug\security.py:131:    return hmac.compare_digest(_hash_internal(method, salt, password)[0], hashval)
+.venv\Lib\site-packages\werkzeug\utils.py:67:    If the class defines ``__slots__``, it must add ``_cache_{name}`` as
+.venv\Lib\site-packages\werkzeug\utils.py:68:    a slot. Alternatively, it can add ``__dict__``, but that's usually
+.venv\Lib\site-packages\werkzeug\utils.py:72:        Works with ``__slots__``.
+.venv\Lib\site-packages\werkzeug\utils.py:86:        self.slot_name = f"_cache_{self.__name__}"
+.venv\Lib\site-packages\werkzeug\utils.py:93:            setattr(obj, self.slot_name, value)
+.venv\Lib\site-packages\werkzeug\utils.py:104:            value = getattr(obj, self.slot_name, _missing)  # type: ignore[arg-type]
+.venv\Lib\site-packages\werkzeug\utils.py:112:                setattr(obj, self.slot_name, value)
+.venv\Lib\site-packages\werkzeug\utils.py:120:            setattr(obj, self.slot_name, _missing)
+.venv\Lib\site-packages\yarl\_url.py:339:    __slots__ = ("_cache", "_scheme", "_netloc", "_path", "_query", "_fragment")
+app.py:18:from routes.agenda_digest import agenda_digest_bp
+app.py:99:app.register_blueprint(agenda_digest_bp)
+app.py:100:print("[boot] Agenda Digest blueprint registrado ✓", flush=True)
+app.py:150:    sha12 = hashlib.sha256(tok.encode("utf-8")).hexdigest()[:12]
+app.py:464:    sha12 = hashlib.sha256(v.encode()).hexdigest()[:12]
+app.py:708:    mac = hashlib.sha256((raw).encode("utf-8")).hexdigest()
+domain\pricing.py:13:    (C) profissionais/{uid}/produtosEServicos (coleção)
+domain\pricing.py:14:      Esperado (produtosEServicos): slug, nome, sinonimos[], duracaoMin, precoBase, variacoes[].
+domain\pricing.py:20:Primeiro hit define o resultado. Retorna {"valor": <preco|precoBase|valor>, "origem": "map|precos|produtosEServicos|not_found"}.
+domain\pricing.py:157:    # (C) profissionais/{uid}/produtosEServicos
+domain\pricing.py:158:    col_c = _list_col(f"profissionais/{uid}/produtosEServicos", limit=500)
+domain\pricing.py:207:    'origem' ∈ {"map","precos","produtosEServicos","not_found"}.
+domain\pricing.py:227:            it["_origem"] = "produtosEServicos"
+domain\scheduling.py:3:MEI Robô — Domínio de agendamento (V1.0 pré-produção)
+domain\scheduling.py:12:        max_slots: int = 12,
+domain\scheduling.py:13:    ) -> {"slots": list[str], "regra": str}
+domain\scheduling.py:19:  - Passo entre slots: 30 minutos
+domain\scheduling.py:24:  - Gera slots sem verificar conflitos (ocupação vazia)
+domain\scheduling.py:121:def _load_agenda_config(uid: str) -> Dict[str, Any]:
+domain\scheduling.py:125:    cfg = _get_doc(f"profissionais/{uid}/configAgendamento") or {}
+domain\scheduling.py:135:    items = _list_col(f"profissionais/{uid}/produtosEServicos", limit=500)
+domain\scheduling.py:159:    """Lê agendamentos ativos para marcar ocupação. Offline: lista vazia."""
+domain\scheduling.py:163:    col = _get_col_ref(f"profissionais/{uid}/agendamentos")
+domain\scheduling.py:190:        logging.info("[scheduling] leitura de agendamentos falhou: %s", e)
+domain\scheduling.py:203:# ================== Geração de slots ==================
+domain\scheduling.py:221:    max_slots: int = 12,
+domain\scheduling.py:227:        {"slots": ["dd/mm %H:%M", ...],
+domain\scheduling.py:239:            "slots": [],
+domain\scheduling.py:243:    cfg = _load_agenda_config(uid)
+domain\scheduling.py:268:    slots: List[str] = []
+domain\scheduling.py:271:    while cursor.date() <= day_end.date() and len(slots) < max_slots:
+domain\scheduling.py:290:        slot_start = cursor
+domain\scheduling.py:291:        slot_end = slot_start + timedelta(minutes=dur)
+domain\scheduling.py:293:        if slot_end > day_close:
+domain\scheduling.py:299:        conflict = any(_overlaps(slot_start, slot_end, b_ini, b_fim) for b_ini, b_fim in busy)
+domain\scheduling.py:301:            slots.append(_fmt_br(slot_start))
+domain\scheduling.py:310:    return {"slots": slots, "regra": regra}
+mei-robo-whatsapp-webhook\app.py:7:# Drop A: Core API (licenças + agenda) DENTRO do webhook app
+nlu\intent.py:14:    "agendar",     # agenda / marcar horário / quando tem vaga
+nlu\intent.py:27:    # agendamento
+nlu\intent.py:28:    if any(k in t for k in ["agendar", "agenda", "marcar", "horário", "horario", "quando posso", "quando tem"]):
+nlu\intent.py:29:        return "agendar"
+routes\agenda_digest.py:2:# routes/agenda_digest.py
+routes\agenda_digest.py:3:# Minimal, safe GET endpoint for the daily agenda digest
+routes\agenda_digest.py:4:# - URL: /api/agenda/digest?dry_run=true|false&date=YYYY-MM-DD&timezone=America/Sao_Paulo
+routes\agenda_digest.py:16:agenda_digest_bp = Blueprint("agenda_digest_bp", __name__, url_prefix="/api/agenda")
+routes\agenda_digest.py:42:@agenda_digest_bp.route("/digest", methods=["GET"])
+routes\agenda_digest.py:44:def digest_get():
+routes\agenda_digest.py:57:        "header": f"Agenda do dia — {date_str} ({tz})",
+routes\agenda_digest.py:66:    logging.info("[agenda_digest] dry_run=%s date=%s tz=%s provider=%s from=%s bucket=%s",
+routes\agenda_digest.py:90:        to_email = request.args.get("to") or request.headers.get("X-Digest-To")
+routes\agenda_digest.py:98:                "detail": "Informe o destinatário via query ?to=email@dominio ou header X-Digest-To."
+routes\agenda_digest.py:101:        subject = f"MEI Robô — Agenda do dia {date_str}"
+routes\agenda_digest.py:110:            logging.info("[agenda_digest] sent to=%s subject=%s", to_email, subject)
+routes\agenda_digest.py:113:            logging.exception("[agenda_digest] send failed: %s", e)
+routes\captcha_bp.py:35:    mac = hmac.new(key.encode("utf-8"), raw.encode("utf-8"), hashlib.sha256).hexdigest()
+routes\core_api.py:5:from services.schedule import validar_agendamento_v1, salvar_agendamento, atualizar_estado_agendamento
+routes\core_api.py:62:# ---------- AGENDA ----------
+routes\core_api.py:63:@core_api.get("/agendamentos")
+routes\core_api.py:65:def listar_agendamentos():
+routes\core_api.py:68:        docs = db.collection(f"profissionais/{g.user.uid}/agendamentos").order_by("dataHora").stream()
+routes\core_api.py:75:        return _err("listar_agendamentos", e)
+routes\core_api.py:77:@core_api.post("/agendamentos")
+routes\core_api.py:79:def criar_agendamento():
+routes\core_api.py:83:        ok, msg, ag = validar_agendamento_v1(g.user.uid, data)
+routes\core_api.py:86:        ag = salvar_agendamento(g.user.uid, ag)
+routes\core_api.py:89:        return _err("criar_agendamento", e)
+routes\core_api.py:91:@core_api.patch("/agendamentos/<ag_id>")
+routes\core_api.py:93:def atualizar_agendamento_route(ag_id):
+routes\core_api.py:97:        ag = atualizar_estado_agendamento(g.user.uid, ag_id, body)
+routes\core_api.py:100:        return _err("atualizar_agendamento", e)
+routes\email.py:14:            kpis={"servicos": 6, "valor": "R$ 540", "novos": 2},
+routes\email.py:16:                {"hora":"08:00","cliente":"Carlos Silva","servico":"Corte masculino","preco":"R$ 60","status":"agendado","obs":""},
+routes\email.py:17:                {"hora":"09:30","cliente":"Ana Souza","servico":"Coloração","preco":"R$ 180","status":"agendado","obs":"retocar raiz"},
+routes\email.py:25:            links={"confirmar":"#ok","reagendar":"#reag","cancelar":"#cancel"}
+routes\email.py:28:        return render_template("emails/reminder.html",
+routes\email.py:30:            data="09/09", hora="14:00", nome="João", link="#reagendar"
+routes\importar_precos.py:37:    c_nome = pick("nome", "serviço", "servico", "descricao", "descrição", "produto", "item", "serviços", "servicos")
+services\config\schedule_schema.py:14:    "slot_size_min": 30,       # duração de cada slot
+services\db.py:201:    Ex.: 'profissionais/{uid}/produtosEServicos'
+services\db.py:215:    Ex.: add_doc('profissionais/{uid}/agendamentos', {...})
+services\email_sender.py:38:    subject = f"Agenda de hoje – {date_str}"
+services\email_sender.py:49:    # data espera: {"data":"09/09", "hora":"14:00", "nome":"João", "links":{"confirmar":"...", "reagendar":"...", "cancelar":"..."}}
+services\email_sender.py:54:def send_reminder(to_email: str, data: dict):
+services\email_sender.py:57:    html = _render("reminder", {"sender": SENDER_EMAIL, **data})
+services\humanizer.py:139:def text_confirm_agenda(servico, data_str, hora_str):
+services\humanizer.py:141:        f"Prontinho! Agendei {servico} para {data_str} às {hora_str}. Qualquer coisa eu remarco pra você. 😉",
+services\humanizer.py:142:        f"Tudo certo! Ficou {servico} em {data_str}, às {hora_str}. Se precisar mudar, é só me chamar.",
+services\humanizer.py:143:        f"Feito! {servico} marcado para {data_str}, {hora_str}. Se preferir outro horário depois, eu ajusto."
+services\humanizer.py:146:def audio_confirm_agenda(servico, data_iso, hhmm):
+services\humanizer.py:148:        f"Perfeito! Já deixei marcado o seu {servico} para {date_to_speech(data_iso)}, às {hour_to_speech(hhmm)}. Se precisar mudar, é só me falar.",
+services\humanizer.py:149:        f"Combinado! O {servico} ficou reservado para {date_to_speech(data_iso)}, por volta de {hour_to_speech(hhmm)}. Qualquer ajuste eu faço por aqui.",
+services\humanizer.py:150:        f"Ótimo! {servico} ficou agendado para {date_to_speech(data_iso)} às {hour_to_speech(hhmm)}. Se quiser trocar depois, me chama."
+services\humanizer.py:153:def text_confirm_reagenda(servico, data_str, hora_str):
+services\humanizer.py:155:        f"Tudo certo, reagendei {servico} para {data_str}, às {hora_str}. Pode contar comigo!",
+services\humanizer.py:156:        f"Pronto! Mudei {servico} para {data_str}, {hora_str}. Qualquer coisa, ajustamos de novo.",
+services\humanizer.py:157:        f"Feito! {servico} agora está para {data_str} às {hora_str}. Se não puder, me avisa."
+services\humanizer.py:160:def audio_confirm_reagenda(servico, data_iso, hhmm):
+services\humanizer.py:162:        f"Já troquei pra você: {servico} ficou para {date_to_speech(data_iso)}, às {hour_to_speech(hhmm)}. Combinado?",
+services\humanizer.py:163:        f"Mudança feita! {servico} agora é {date_to_speech(data_iso)}, por volta de {hour_to_speech(hhmm)}. Qualquer coisa, eu ajusto.",
+services\humanizer.py:164:        f"Pronto, reagendei: {servico} ficou em {date_to_speech(data_iso)} às {hour_to_speech(hhmm)}. Se precisar, é só falar."
+services\humanizer.py:217:    intent: 'confirm_agenda' | 'confirm_reagenda' | 'prices' | 'price_single' | 'help' | 'audio_error'
+services\humanizer.py:219:      - servico, data (YYYY-MM-DD), data_str (06/09), hora (HH:MM)
+services\humanizer.py:231:    if intent == "confirm_agenda":
+services\humanizer.py:233:            return audio_confirm_agenda(payload.get("servico",""), payload.get("data",""), payload.get("hora",""))
+services\humanizer.py:234:        return text_confirm_agenda(payload.get("servico",""), payload.get("data_str",""), payload.get("hora",""))
+services\humanizer.py:236:    if intent == "confirm_reagenda":
+services\humanizer.py:238:            return audio_confirm_reagenda(payload.get("servico",""), payload.get("data",""), payload.get("hora",""))
+services\humanizer.py:239:        return text_confirm_reagenda(payload.get("servico",""), payload.get("data_str",""), payload.get("hora",""))
+services\humanizer.py:265:    intent = q.get("intent","confirm_agenda")
+services\humanizer.py:268:        "servico": q.get("servico","Corte Masculino"),
+services\openai\nlu_intent.py:16:- intent: oneof["precos","agendar","reagendar","cancelar","saudacao","smalltalk","fallback"]
+services\openai\nlu_intent.py:64:    if intent not in {"precos","agendar","reagendar","cancelar","saudacao","smalltalk","fallback"}:
+services\schedule.py:12:def validar_agendamento_v1(uid: str, data: dict):
+services\schedule.py:14:    for k in ["clienteId", "servicoId", "dataHora"]:
+services\schedule.py:23:        return False, "+2 dias mínimos para agendar.", None
+services\schedule.py:32:    col = db.collection(f"profissionais/{uid}/agendamentos").where("estado", "in", ["solicitado", "confirmado"]).stream()
+services\schedule.py:46:        "servicoId": data["servicoId"],
+services\schedule.py:57:def salvar_agendamento(uid: str, ag: dict):
+services\schedule.py:58:    ref = db.collection(f"profissionais/{uid}/agendamentos").document()
+services\schedule.py:63:def atualizar_estado_agendamento(uid: str, ag_id: str, body: dict):
+services\schedule.py:65:    ref = db.document(f"profissionais/{uid}/agendamentos/{ag_id}")
+services\schedule.py:68:        raise ValueError("Agendamento não encontrado")
+services\schedule.py:75:    elif acao == "reagendar":
+services\schedule.py:78:            raise ValueError("Data/hora obrigatória para reagendar")
+services\storage_mgr.py:40:    return hashlib.sha256(data).hexdigest()
+services\wa_bot.backup.20250930.py:4:# - Preços: consolida de 3 fontes (doc.precos [map/lista], coleção /precos, coleção /produtosEServicos)
+services\wa_bot.backup.20250930.py:8:# - Agendar/Reagendar com regras (sem fim de semana; +2 dias) e integração schedule se existir
+services\wa_bot.backup.20250930.py:94:        "agendar": "agendar",
+services\wa_bot.backup.20250930.py:318:            if re.search(r"\b(agendar|agenda|marcar|agendamento|reservar)\b", t):
+services\wa_bot.backup.20250930.py:322:                    "intent": "agendar",
+services\wa_bot.backup.20250930.py:327:            if re.search(r"\b(reagendar|remarcar|mudar\s+hor[aó]rio|trocar\s+hor[aó]rio)\b", t):
+services\wa_bot.backup.20250930.py:328:                return {"intent": "reagendar", "serviceName": None, "dateText": None, "timeText": None}
+services\wa_bot.backup.20250930.py:410:        validar_agendamento_v1,
+services\wa_bot.backup.20250930.py:411:        salvar_agendamento,
+services\wa_bot.backup.20250930.py:412:        atualizar_estado_agendamento,
+services\wa_bot.backup.20250930.py:419:            validar_agendamento_v1,
+services\wa_bot.backup.20250930.py:420:            salvar_agendamento,
+services\wa_bot.backup.20250930.py:421:            atualizar_estado_agendamento,
+services\wa_bot.backup.20250930.py:443:            return {"servico": serviceName or "serviço", "data": dateText, "hora": timeText}
+services\wa_bot.backup.20250930.py:445:        def validar_agendamento_v1(uid, ag):
+services\wa_bot.backup.20250930.py:448:        def salvar_agendamento(uid, ag):
+services\wa_bot.backup.20250930.py:451:        def atualizar_estado_agendamento(uid, ag_id, body):
+services\wa_bot.backup.20250930.py:467:    "schedule_confirm": "Fechado: {servico} em {dia} às {hora}{preco}. Se precisar mudar, é só me falar.",
+services\wa_bot.backup.20250930.py:469:    "session_cleared": "Pronto, zerei nossa conversa. Quer recomeçar com ‘preços’ ou ‘agendar’?",
+services\wa_bot.backup.20250930.py:653:    # Mantém slug se vier de produtosEServicos
+services\wa_bot.backup.20250930.py:684:    # (C) Coleção /produtosEServicos
+services\wa_bot.backup.20250930.py:686:        for it in _list_collection_safe(f"profissionais/{uid}/produtosEServicos", limit=500):
+services\wa_bot.backup.20250930.py:690:        logging.info("[PRICES] erro lendo /produtosEServicos: %s", e)
+services\wa_bot.backup.20250930.py:733:        c["ps"] = len(_list_collection_safe(f"profissionais/{uid}/produtosEServicos", limit=500))
+services\wa_bot.backup.20250930.py:1200:# ---- NOVO: lembrar o último serviço citado (para agendar depois só com data/hora)
+services\wa_bot.backup.20250930.py:1214:# ========== Agendamento ==========
+services\wa_bot.backup.20250930.py:1246:        print(f"[WA_BOT][AGENDA] lookup cliente por waKey falhou: {e}", flush=True)
+services\wa_bot.backup.20250930.py:1260:        print(f"[WA_BOT][AGENDA] lookup cliente por waId falhou: {e}", flush=True)
+services\wa_bot.backup.20250930.py:1275:        print(f"[WA_BOT][AGENDA] lookup cliente por telefone falhou: {e}", flush=True)
+services\wa_bot.backup.20250930.py:1280:def _find_target_agendamento(uid: str, cliente_id: str, wa_id_raw: str, telefone: str):
+services\wa_bot.backup.20250930.py:1282:    Procura agendamento ativo do cliente tentando:
+services\wa_bot.backup.20250930.py:1301:            DB.collection(f"profissionais/{uid}/agendamentos")
+services\wa_bot.backup.20250930.py:1312:        print(f"[WA_BOT][AGENDA] query por clienteId falhou: {e}", flush=True)
+services\wa_bot.backup.20250930.py:1318:                DB.collection(f"profissionais/{uid}/agendamentos")
+services\wa_bot.backup.20250930.py:1329:            print(f"[WA_BOT][AGENDA] query por clienteWaKey falhou: {e}", flush=True)
+services\wa_bot.backup.20250930.py:1334:                DB.collection(f"profissionais/{uid}/agendamentos")
+services\wa_bot.backup.20250930.py:1345:            print(f"[WA_BOT][AGENDA] query por clienteWaId falhou: {e}", flush=True)
+services\wa_bot.backup.20250930.py:1358:                    DB.collection(f"profissionais/{uid}/agendamentos")
+services\wa_bot.backup.20250930.py:1371:            print(f"[WA_BOT][AGENDA] query por telefone falhou: {e}", flush=True)
+services\wa_bot.backup.20250930.py:1383:def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, svc: dict, dt: datetime, body_text: str, channel_mode: str = "text"):
+services\wa_bot.backup.20250930.py:1397:    servico_id = svc.get("id") or f"map:{(svc.get('nomeLower') or svc.get('nome') or 'servico').strip().lower()}"
+services\wa_bot.backup.20250930.py:1407:        "servicoId": servico_id,
+services\wa_bot.backup.20250930.py:1408:        "servicoNome": svc.get("nome") or svc.get("nomeLower"),
+services\wa_bot.backup.20250930.py:1422:        ok, motivo, _ = validar_agendamento_v1(uid_default, ag)
+services\wa_bot.backup.20250930.py:1424:            return False, f"Não foi possível agendar: {motivo}"
+services\wa_bot.backup.20250930.py:1425:        saved_id = salvar_agendamento(uid_default, ag)
+services\wa_bot.backup.20250930.py:1429:        print(f"[WA_BOT][AGENDA] salvar via schedule falhou: {e}", flush=True)
+services\wa_bot.backup.20250930.py:1438:            ref = DB.collection(f"profissionais/{uid_default}/agendamentos").document()
+services\wa_bot.backup.20250930.py:1443:        print(f"[WA_BOT][AGENDA][FALLBACK_SAVE] erro: {e2}", flush=True)
+services\wa_bot.backup.20250930.py:1444:        return False, "Tive um problema ao salvar seu agendamento. Pode tentar novamente em instantes?"
+services\wa_bot.backup.20250930.py:1452:            "servico": ag.get("servicoNome") or "serviço",
+services\wa_bot.backup.20250930.py:1457:        msg = H("confirm_agenda", payload, mode=("audio" if channel_mode == "audio" else "text"))
+services\wa_bot.backup.20250930.py:1461:        msg = f"Prontinho! Agendei {ag['servicoNome']} para {dia} às {hora}{preco_txt}. Se precisar alterar, é só me chamar. 😉"
+services\wa_bot.backup.20250930.py:1495:    # >>> Memoriza o serviço identificado (para agendar depois)
+services\wa_bot.backup.20250930.py:1546:        return send_text(to, f"Não consegui agendar: {reason}")
+services\wa_bot.backup.20250930.py:1566:    ok2, msg = _build_and_save_agendamento(uid, value, to, svc or {"nome": "serviço"}, dt, body_text, channel_mode=channel_mode)
+services\wa_bot.backup.20250930.py:1567:    return send_text(to, msg if ok2 else f"Não consegui agendar: {msg}")
+services\wa_bot.backup.20250930.py:1570:def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items, sess: dict, wa_id_raw: str, channel_mode: str = "text"):
+services\wa_bot.backup.20250930.py:1572:    if sess.get("servicoId") or sess.get("servicoNome"):
+services\wa_bot.backup.20250930.py:1574:            if it.get("id") == sess.get("servicoId") or it.get("nomeLower") == (sess.get("servicoNome") or "").lower():
+services\wa_bot.backup.20250930.py:1612:        # >>> Regras de agenda antes de salvar
+services\wa_bot.backup.20250930.py:1615:            return f"Não consegui agendar: {reason}"
+services\wa_bot.backup.20250930.py:1616:        ok, msg = _build_and_save_agendamento(uid_default, value, to_msisdn, svc, dt, body_text, channel_mode=channel_mode)
+services\wa_bot.backup.20250930.py:1622:        "intent": "agendar",
+services\wa_bot.backup.20250930.py:1623:        "servicoId": svc.get("id") if svc else None,
+services\wa_bot.backup.20250930.py:1624:        "servicoNome": (svc.get("nomeLower") or svc.get("nome")) if svc else None,
+services\wa_bot.backup.20250930.py:1632:        return f"Vamos agendar! Qual serviço você quer ({nomes}...) e para quando? Ex.: 01/09 14:00"
+services\wa_bot.backup.20250930.py:1639:def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, sess: dict, wa_id_raw: str, channel_mode: str = "text"):
+services\wa_bot.backup.20250930.py:1648:        _save_session(uid_default, wa_id_raw, {"intent": "reagendar", "waKey": br_equivalence_key(wa_id_or_phone=wa_id_raw or to_msisdn or "")})
+services\wa_bot.backup.20250930.py:1659:    alvo = _find_target_agendamento(uid_default, cliente_id, wa, to_msisdn)
+services\wa_bot.backup.20250930.py:1662:            "Não encontrei um agendamento ativo seu.\n"
+services\wa_bot.backup.20250930.py:1663:            "Você pode enviar: reagendar <ID> <dd/mm> <hh:mm> (ID aparece na confirmação)"
+services\wa_bot.backup.20250930.py:1668:        body = {"acao": "reagendar", "dataHora": dt.isoformat()}
+services\wa_bot.backup.20250930.py:1669:        atualizar_estado_agendamento(uid_default, ag_id, body)
+services\wa_bot.backup.20250930.py:1671:        print(f"[WA_BOT][AGENDA][REAGENDAR] erro: {e}", flush=True)
+services\wa_bot.backup.20250930.py:1672:        return "Não consegui reagendar agora. Pode tentar novamente em instantes?"
+services\wa_bot.backup.20250930.py:1677:    nome = alvo.get("servicoNome") or "serviço"
+services\wa_bot.backup.20250930.py:1680:        payload = {"servico": nome, "data": dt.strftime("%Y-%m-%d"), "data_str": dia, "hora": hora}
+services\wa_bot.backup.20250930.py:1681:        return H("confirm_reagenda", payload, mode=("audio" if channel_mode == "audio" else "text"))
+services\wa_bot.backup.20250930.py:1778:        # --- hard override para reagendamento por palavras-chave ---
+services\wa_bot.backup.20250930.py:1779:        if re.search(r"\b(reagendar|remarcar|trocar\s+(?:o|de)?\s*horario|mudar\s+(?:o|de)?\s*horario)\b", text_norm):
+services\wa_bot.backup.20250930.py:1780:            intent = "reagendar"
+services\wa_bot.backup.20250930.py:1808:        if intent == "agendar" and dateText and timeText:
+services\wa_bot.backup.20250930.py:1813:        # Slot-filling quando v1 sinaliza "agendar" sem data/hora
+services\wa_bot.backup.20250930.py:1814:        if NLU_MODE == "v1" and intent == "agendar" and not (dateText and timeText):
+services\wa_bot.backup.20250930.py:1817:            reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw, channel_mode=channel_mode)
+services\wa_bot.backup.20250930.py:1821:        # >>> NOVO: também faz slot-filling no modo legacy (sem v1)
+services\wa_bot.backup.20250930.py:1822:        if intent == "agendar" and not (dateText and timeText):
+services\wa_bot.backup.20250930.py:1825:            reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw, channel_mode=channel_mode)
+services\wa_bot.backup.20250930.py:1829:        if intent == "reagendar":
+services\wa_bot.backup.20250930.py:1831:            reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw, channel_mode=channel_mode)
+services\wa_bot.backup.20250930.py:1835:        # Slot-filling de agendamento genérico
+services\wa_bot.backup.20250930.py:1837:        if sess.get("intent") in ("agendar", "reagendar"):
+services\wa_bot.backup.20250930.py:1838:            if sess["intent"] == "agendar":
+services\wa_bot.backup.20250930.py:1840:                reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw, channel_mode=channel_mode)
+services\wa_bot.backup.20250930.py:1844:                reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw, channel_mode=channel_mode)
+services\wa_bot.py:126:    """Cria um agendamento. Retorna (ok, motivo, ag_id).
+services\wa_bot.py:140:    """Reagenda um registro existente. Assinatura enxuta e estaÌvel."""
+services\wa_bot_legacy.py:4:# - PreÃ§os: consolida de 3 fontes (doc.precos [map/lista], coleÃ§Ã£o /precos, coleÃ§Ã£o /produtosEServicos)
+services\wa_bot_legacy.py:8:# - Agendar/Reagendar com regras (sem fim de semana; +2 dias) e integraÃ§Ã£o schedule se existir
+services\wa_bot_legacy.py:94:        "agendar": "agendar",
+services\wa_bot_legacy.py:318:            if re.search(r"\b(agendar|agenda|marcar|agendamento|reservar)\b", t):
+services\wa_bot_legacy.py:322:                    "intent": "agendar",
+services\wa_bot_legacy.py:327:            if re.search(r"\b(reagendar|remarcar|mudar\s+hor[aÃ³]rio|trocar\s+hor[aÃ³]rio)\b", t):
+services\wa_bot_legacy.py:328:                return {"intent": "reagendar", "serviceName": None, "dateText": None, "timeText": None}
+services\wa_bot_legacy.py:410:        validar_agendamento_v1,
+services\wa_bot_legacy.py:411:        salvar_agendamento,
+services\wa_bot_legacy.py:412:        atualizar_estado_agendamento,
+services\wa_bot_legacy.py:419:            validar_agendamento_v1,
+services\wa_bot_legacy.py:420:            salvar_agendamento,
+services\wa_bot_legacy.py:421:            atualizar_estado_agendamento,
+services\wa_bot_legacy.py:443:            return {"servico": serviceName or "serviÃ§o", "data": dateText, "hora": timeText}
+services\wa_bot_legacy.py:445:        def validar_agendamento_v1(uid, ag):
+services\wa_bot_legacy.py:448:        def salvar_agendamento(uid, ag):
+services\wa_bot_legacy.py:451:        def atualizar_estado_agendamento(uid, ag_id, body):
+services\wa_bot_legacy.py:467:    "schedule_confirm": "Fechado: {servico} em {dia} Ã s {hora}{preco}. Se precisar mudar, Ã© sÃ³ me falar.",
+services\wa_bot_legacy.py:469:    "session_cleared": "Pronto, zerei nossa conversa. Quer recomeÃ§ar com â€˜preÃ§osâ€™ ou â€˜agendarâ€™?",
+services\wa_bot_legacy.py:653:    # MantÃ©m slug se vier de produtosEServicos
+services\wa_bot_legacy.py:684:    # (C) ColeÃ§Ã£o /produtosEServicos
+services\wa_bot_legacy.py:686:        for it in _list_collection_safe(f"profissionais/{uid}/produtosEServicos", limit=500):
+services\wa_bot_legacy.py:690:        logging.info("[PRICES] erro lendo /produtosEServicos: %s", e)
+services\wa_bot_legacy.py:733:        c["ps"] = len(_list_collection_safe(f"profissionais/{uid}/produtosEServicos", limit=500))
+services\wa_bot_legacy.py:1200:# ---- NOVO: lembrar o Ãºltimo serviÃ§o citado (para agendar depois sÃ³ com data/hora)
+services\wa_bot_legacy.py:1214:# ========== Agendamento ==========
+services\wa_bot_legacy.py:1246:        print(f"[WA_BOT][AGENDA] lookup cliente por waKey falhou: {e}", flush=True)
+services\wa_bot_legacy.py:1260:        print(f"[WA_BOT][AGENDA] lookup cliente por waId falhou: {e}", flush=True)
+services\wa_bot_legacy.py:1275:        print(f"[WA_BOT][AGENDA] lookup cliente por telefone falhou: {e}", flush=True)
+services\wa_bot_legacy.py:1280:def _find_target_agendamento(uid: str, cliente_id: str, wa_id_raw: str, telefone: str):
+services\wa_bot_legacy.py:1282:    Procura agendamento ativo do cliente tentando:
+services\wa_bot_legacy.py:1301:            DB.collection(f"profissionais/{uid}/agendamentos")
+services\wa_bot_legacy.py:1312:        print(f"[WA_BOT][AGENDA] query por clienteId falhou: {e}", flush=True)
+services\wa_bot_legacy.py:1318:                DB.collection(f"profissionais/{uid}/agendamentos")
+services\wa_bot_legacy.py:1329:            print(f"[WA_BOT][AGENDA] query por clienteWaKey falhou: {e}", flush=True)
+services\wa_bot_legacy.py:1334:                DB.collection(f"profissionais/{uid}/agendamentos")
+services\wa_bot_legacy.py:1345:            print(f"[WA_BOT][AGENDA] query por clienteWaId falhou: {e}", flush=True)
+services\wa_bot_legacy.py:1358:                    DB.collection(f"profissionais/{uid}/agendamentos")
+services\wa_bot_legacy.py:1371:            print(f"[WA_BOT][AGENDA] query por telefone falhou: {e}", flush=True)
+services\wa_bot_legacy.py:1383:def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, svc: dict, dt: datetime, body_text: str, channel_mode: str = "text"):
+services\wa_bot_legacy.py:1397:    servico_id = svc.get("id") or f"map:{(svc.get('nomeLower') or svc.get('nome') or 'servico').strip().lower()}"
+services\wa_bot_legacy.py:1407:        "servicoId": servico_id,
+services\wa_bot_legacy.py:1408:        "servicoNome": svc.get("nome") or svc.get("nomeLower"),
+services\wa_bot_legacy.py:1422:        ok, motivo, _ = validar_agendamento_v1(uid_default, ag)
+services\wa_bot_legacy.py:1424:            return False, f"NÃ£o foi possÃ­vel agendar: {motivo}"
+services\wa_bot_legacy.py:1425:        saved_id = salvar_agendamento(uid_default, ag)
+services\wa_bot_legacy.py:1429:        print(f"[WA_BOT][AGENDA] salvar via schedule falhou: {e}", flush=True)
+services\wa_bot_legacy.py:1438:            ref = DB.collection(f"profissionais/{uid_default}/agendamentos").document()
+services\wa_bot_legacy.py:1443:        print(f"[WA_BOT][AGENDA][FALLBACK_SAVE] erro: {e2}", flush=True)
+services\wa_bot_legacy.py:1444:        return False, "Tive um problema ao salvar seu agendamento. Pode tentar novamente em instantes?"
+services\wa_bot_legacy.py:1452:            "servico": ag.get("servicoNome") or "serviÃ§o",
+services\wa_bot_legacy.py:1457:        msg = H("confirm_agenda", payload, mode=("audio" if channel_mode == "audio" else "text"))
+services\wa_bot_legacy.py:1461:        msg = f"Prontinho! Agendei {ag['servicoNome']} para {dia} Ã s {hora}{preco_txt}. Se precisar alterar, Ã© sÃ³ me chamar. ðŸ˜‰"
+services\wa_bot_legacy.py:1495:    # >>> Memoriza o serviÃ§o identificado (para agendar depois)
+services\wa_bot_legacy.py:1546:        return send_text(to, f"NÃ£o consegui agendar: {reason}")
+services\wa_bot_legacy.py:1566:    ok2, msg = _build_and_save_agendamento(uid, value, to, svc or {"nome": "serviÃ§o"}, dt, body_text, channel_mode=channel_mode)
+services\wa_bot_legacy.py:1567:    return send_text(to, msg if ok2 else f"NÃ£o consegui agendar: {msg}")
+services\wa_bot_legacy.py:1570:def _agendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, items, sess: dict, wa_id_raw: str, channel_mode: str = "text"):
+services\wa_bot_legacy.py:1572:    if sess.get("servicoId") or sess.get("servicoNome"):
+services\wa_bot_legacy.py:1574:            if it.get("id") == sess.get("servicoId") or it.get("nomeLower") == (sess.get("servicoNome") or "").lower():
+services\wa_bot_legacy.py:1612:        # >>> Regras de agenda antes de salvar
+services\wa_bot_legacy.py:1615:            return f"NÃ£o consegui agendar: {reason}"
+services\wa_bot_legacy.py:1616:        ok, msg = _build_and_save_agendamento(uid_default, value, to_msisdn, svc, dt, body_text, channel_mode=channel_mode)
+services\wa_bot_legacy.py:1622:        "intent": "agendar",
+services\wa_bot_legacy.py:1623:        "servicoId": svc.get("id") if svc else None,
+services\wa_bot_legacy.py:1624:        "servicoNome": (svc.get("nomeLower") or svc.get("nome")) if svc else None,
+services\wa_bot_legacy.py:1632:        return f"Vamos agendar! Qual serviÃ§o vocÃª quer ({nomes}...) e para quando? Ex.: 01/09 14:00"
+services\wa_bot_legacy.py:1639:def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str, body_text: str, text_norm: str, sess: dict, wa_id_raw: str, channel_mode: str = "text"):
+services\wa_bot_legacy.py:1648:        _save_session(uid_default, wa_id_raw, {"intent": "reagendar", "waKey": br_equivalence_key(wa_id_or_phone=wa_id_raw or to_msisdn or "")})
+services\wa_bot_legacy.py:1659:    alvo = _find_target_agendamento(uid_default, cliente_id, wa, to_msisdn)
+services\wa_bot_legacy.py:1662:            "NÃ£o encontrei um agendamento ativo seu.\n"
+services\wa_bot_legacy.py:1663:            "VocÃª pode enviar: reagendar <ID> <dd/mm> <hh:mm> (ID aparece na confirmaÃ§Ã£o)"
+services\wa_bot_legacy.py:1668:        body = {"acao": "reagendar", "dataHora": dt.isoformat()}
+services\wa_bot_legacy.py:1669:        atualizar_estado_agendamento(uid_default, ag_id, body)
+services\wa_bot_legacy.py:1671:        print(f"[WA_BOT][AGENDA][REAGENDAR] erro: {e}", flush=True)
+services\wa_bot_legacy.py:1672:        return "NÃ£o consegui reagendar agora. Pode tentar novamente em instantes?"
+services\wa_bot_legacy.py:1677:    nome = alvo.get("servicoNome") or "serviÃ§o"
+services\wa_bot_legacy.py:1680:        payload = {"servico": nome, "data": dt.strftime("%Y-%m-%d"), "data_str": dia, "hora": hora}
+services\wa_bot_legacy.py:1681:        return H("confirm_reagenda", payload, mode=("audio" if channel_mode == "audio" else "text"))
+services\wa_bot_legacy.py:1778:        # --- hard override para reagendamento por palavras-chave ---
+services\wa_bot_legacy.py:1779:        if re.search(r"\b(reagendar|remarcar|trocar\s+(?:o|de)?\s*horario|mudar\s+(?:o|de)?\s*horario)\b", text_norm):
+services\wa_bot_legacy.py:1780:            intent = "reagendar"
+services\wa_bot_legacy.py:1808:        if intent == "agendar" and dateText and timeText:
+services\wa_bot_legacy.py:1813:        # Slot-filling quando v1 sinaliza "agendar" sem data/hora
+services\wa_bot_legacy.py:1814:        if NLU_MODE == "v1" and intent == "agendar" and not (dateText and timeText):
+services\wa_bot_legacy.py:1817:            reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw, channel_mode=channel_mode)
+services\wa_bot_legacy.py:1821:        # >>> NOVO: tambÃ©m faz slot-filling no modo legacy (sem v1)
+services\wa_bot_legacy.py:1822:        if intent == "agendar" and not (dateText and timeText):
+services\wa_bot_legacy.py:1825:            reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw, channel_mode=channel_mode)
+services\wa_bot_legacy.py:1829:        if intent == "reagendar":
+services\wa_bot_legacy.py:1831:            reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw, channel_mode=channel_mode)
+services\wa_bot_legacy.py:1835:        # Slot-filling de agendamento genÃ©rico
+services\wa_bot_legacy.py:1837:        if sess.get("intent") in ("agendar", "reagendar"):
+services\wa_bot_legacy.py:1838:            if sess["intent"] == "agendar":
+services\wa_bot_legacy.py:1840:                reply = _agendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, items, sess, to_raw, channel_mode=channel_mode)
+services\wa_bot_legacy.py:1844:                reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw, channel_mode=channel_mode)
