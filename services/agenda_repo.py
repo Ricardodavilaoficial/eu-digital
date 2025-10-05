@@ -164,26 +164,30 @@ def find_slots(req: Dict[str, Any]) -> List[Dict[str, str]]:
     return slots
 
 def create_event(uid: str, event: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    event = {
-      "date":"YYYY-MM-DD","hhmm":"09:30","tz":"America/Sao_Paulo",
-      "service_id":"corte","cliente":{"nome":"...","whatsapp":"+55..."},
-      "notes_public":"...", "notes_internal":"..."
-    }
-    """
-    db = _get_db()
-    # Define duração do serviço p/ gravar no registro
-    dur_min = _get_duration_min_for_service(uid, event.get("service_id") or "generico")
-    payload = dict(event)
-    payload["duration_min"] = int(dur_min)
-    payload["status"] = payload.get("status") or "agendado"
-    payload["created_at"] = firestore.SERVER_TIMESTAMP if firestore else None
-    payload["updated_at"] = firestore.SERVER_TIMESTAMP if firestore else None
-
     try:
+        db = _get_db()
+
+        dur_min = _get_duration_min_for_service(uid, event.get("service_id") or "generico")
+        payload = dict(event)
+        payload["duration_min"] = int(dur_min)
+        payload["status"] = payload.get("status") or "agendado"
+
+        # sentinels para timestamps (não serialize no echo!)
+        try:
+            payload["created_at"] = fb_firestore.SERVER_TIMESTAMP
+            payload["updated_at"] = fb_firestore.SERVER_TIMESTAMP
+        except Exception:
+            pass
+
         doc_ref = db.collection("profissionais").document(uid).collection("agendamentos").document()
         doc_ref.set(payload)
-        return {"ok": True, "id": doc_ref.id, "echo": payload}
+
+        # 🔧 rele o doc para resolver SERVER_TIMESTAMP e devolver algo serializável
+        snap = doc_ref.get()
+        echo = snap.to_dict() if snap and snap.exists else {k: v for k, v in payload.items() if k not in ("created_at", "updated_at")}
+
+        return {"ok": True, "id": doc_ref.id, "echo": echo}
+
     except Exception:
         logging.exception("[agenda_repo] falha ao criar agendamento")
         return {"ok": False, "error": "create_failed"}
