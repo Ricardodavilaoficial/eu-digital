@@ -28,7 +28,6 @@ def _overlaps(start1: datetime, end1: datetime, start2: datetime, end2: datetime
 
 def _get_db():
     try:
-        # Inicializa o Firebase Admin se ainda não houver app
         if not firebase_admin._apps:
             firebase_admin.initialize_app()
         return fb_firestore.client()
@@ -36,9 +35,7 @@ def _get_db():
         logging.exception("[agenda_repo] Firestore não inicializado")
         raise RuntimeError("Firestore não inicializado") from e
 
-
 def _get_duration_min_for_service(uid: str, service_id: str) -> int:
-    # Tenta produtosEServicos: slug == service_id com campos {duracaoMin|duration_min}
     try:
         db = _get_db()
         col = db.collection("profissionais").document(uid).collection("produtosEServicos")
@@ -67,21 +64,11 @@ def _load_conflicts_for_day(uid: str, date_str: str, tz_str: str) -> List[Dict[s
     return items
 
 def _day_iso(d: datetime) -> int:
-    # Monday=1 .. Sunday=7
     return int(d.isoweekday())
 
 # ---- API principais ----
 
 def find_slots(req: Dict[str, Any]) -> List[Dict[str, str]]:
-    """
-    req = {
-      "uid": "...",               # UID do MEI (obrigatório)
-      "service_id": "corte",
-      "window_start": "YYYY-MM-DD",
-      "window_days": 7,
-      "tz": "America/Sao_Paulo"
-    }
-    """
     uid = req.get("uid") or ""
     service_id = req.get("service_id") or ""
     window_start = req.get("window_start")
@@ -107,12 +94,10 @@ def find_slots(req: Dict[str, Any]) -> List[Dict[str, str]]:
     wh_start = _hhmm_to_time(rules["working_hours"]["start"])
     wh_end = _hhmm_to_time(rules["working_hours"]["end"])
 
-    # janela efetiva limitada por lead times
     first_ok_day = now.date()
     if not allow_same_day:
         first_ok_day = (now + timedelta(days=min_lead_days)).date()
     else:
-        # mesmo dia permitido, mas respeita min_lead_days se > 0
         first_ok_day = (now + timedelta(days=min_lead_days)).date()
 
     last_ok_day = (now + timedelta(days=max_lead_days)).date()
@@ -130,16 +115,13 @@ def find_slots(req: Dict[str, Any]) -> List[Dict[str, str]]:
         date_str = ddate.strftime("%Y-%m-%d")
         conflicts = _load_conflicts_for_day(uid, date_str, tz_str)
 
-        # monta janelas do dia
         cur_dt = tz.localize(datetime.combine(ddate, wh_start))
         end_dt = tz.localize(datetime.combine(ddate, wh_end))
         while cur_dt + timedelta(minutes=dur_min) <= end_dt:
-            # não oferecer horário passado no mesmo dia
             if ddate == now.date() and cur_dt <= now:
                 cur_dt += step
                 continue
 
-            # aplica buffer com compromissos já salvos
             start = cur_dt
             end = cur_dt + timedelta(minutes=dur_min)
             has_conflict = False
@@ -147,7 +129,6 @@ def find_slots(req: Dict[str, Any]) -> List[Dict[str, str]]:
                 try:
                     c_start = tz.localize(datetime.strptime(f"{c['date']} {c['hhmm']}", "%Y-%m-%d %H:%M"))
                     c_end = c_start + timedelta(minutes=int(c.get("duration_min") or dur_min))
-                    # buffer antes/depois
                     if buffer_min:
                         c_start = c_start - timedelta(minutes=buffer_min)
                         c_end = c_end + timedelta(minutes=buffer_min)
@@ -172,7 +153,6 @@ def create_event(uid: str, event: Dict[str, Any]) -> Dict[str, Any]:
         payload["duration_min"] = int(dur_min)
         payload["status"] = payload.get("status") or "agendado"
 
-        # sentinels para timestamps (não serialize no echo!)
         try:
             payload["created_at"] = fb_firestore.SERVER_TIMESTAMP
             payload["updated_at"] = fb_firestore.SERVER_TIMESTAMP
@@ -182,7 +162,6 @@ def create_event(uid: str, event: Dict[str, Any]) -> Dict[str, Any]:
         doc_ref = db.collection("profissionais").document(uid).collection("agendamentos").document()
         doc_ref.set(payload)
 
-        # 🔧 rele o doc para resolver SERVER_TIMESTAMP e devolver algo serializável
         snap = doc_ref.get()
         echo = snap.to_dict() if snap and snap.exists else {k: v for k, v in payload.items() if k not in ("created_at", "updated_at")}
 
@@ -204,3 +183,54 @@ def list_events_for(uid: str, date_str: str, tz_str: str) -> List[Dict[str, Any]
     except Exception:
         logging.exception("[agenda_repo] falha ao listar eventos do dia")
     return out
+
+
+# ---------------------------------------------------------------------
+# NOVAS FUNÇÕES: update_event e cancel_event
+# ---------------------------------------------------------------------
+
+def update_event(event_id: str, data: Dict[str, Any], uid: str) -> Dict[str, Any]:
+    """Atualiza campos específicos de um agendamento existente"""
+    try:
+        db = _get_db()
+        col = db.collection("profissionais").document(uid).collection("agendamentos")
+        doc_ref = col.document(event_id)
+        doc = doc_ref.get()
+        if not doc.exists:
+            return {"ok": False, "error": "not_found"}
+
+        update_payload = dict(data)
+        update_payload["updated_at"] = fb_firestore.SERVER_TIMESTAMP
+
+        doc_ref.update(update_payload)
+        snap = doc_ref.get()
+        return {"ok": True, "event": snap.to_dict()}
+    except Exception:
+        logging.exception(f"[agenda_repo] falha ao atualizar evento {event_id}")
+        return {"ok": False, "error": "update_failed"}
+
+
+def cancel_event(event_id: str, reason: str, uid: str) -> Dict[str, Any]:
+    """Cancela um agendamento e registra motivo e timestamp"""
+    try:
+        db = _get_db()
+        col = db.collection("profissionais").document(uid).collection("agendamentos")
+        doc_ref = col.document(event_id)
+        snap = doc_ref.get()
+        if not snap.exists:
+            return {"ok": False, "error": "not_found"}
+
+        event = snap.to_dict() or {}
+        updates = {
+            "status": "cancelado",
+            "cancel_reason": reason,
+            "cancelled_at": fb_firestore.SERVER_TIMESTAMP,
+            "updated_at": fb_firestore.SERVER_TIMESTAMP,
+        }
+
+        doc_ref.update(updates)
+        updated = doc_ref.get().to_dict()
+        return {"ok": True, "event": updated}
+    except Exception:
+        logging.exception(f"[agenda_repo] falha ao cancelar evento {event_id}")
+        return {"ok": False, "error": "cancel_failed"}
