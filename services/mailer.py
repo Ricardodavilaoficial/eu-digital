@@ -21,18 +21,30 @@ def _norm_emails(x: Union[str, Iterable[str]] | None) -> list[str]:
 
 def send_email(
     *,
-    to: Union[str, Iterable[str]],
-    subject: str,
-    text: str,
+    to=None,
+    subject: str = "",
+    text: str | None = None,
     from_email: str | None = None,
     html: str | None = None,
-    bcc: Union[str, Iterable[str]] | None = None,
+    bcc=None,
     reply_to: str | None = None,
+    **kw,  # <- engole params inesperados sem quebrar
 ):
     """
     Envia e-mail via SendGrid HTTP API.
-    Mantém compatibilidade com a versão anterior e aceita bcc/reply_to.
+    Aceita aliases: body_text/body_html e ignora kwargs extras.
     """
+
+    # ---- Normalização de aliases (evita TypeError na rota) ----
+    # Permite body_text/body_html (rota pode usar esses nomes)
+    if text is None:
+        text = kw.pop("body_text", None)
+    if html is None:
+        html = kw.pop("body_html", None)
+    # Permite 'sender' ou 'from' como alias de from_email
+    if from_email is None:
+        from_email = kw.pop("sender", None) or kw.pop("from", None)
+
     provider = (os.environ.get("EMAIL_PROVIDER") or "").strip().lower()
     if provider != "sendgrid":
         raise ProviderNotSupported(f"unsupported provider: {provider!r}")
@@ -41,10 +53,28 @@ def send_email(
     if not api_key:
         raise MissingConfig("SENDGRID_API_KEY ausente no ambiente do servidor")
 
-    # prioriza from_email explícito; senão usa EMAIL_SENDER, depois EMAIL_FROM
-    from_email = (from_email or os.environ.get("EMAIL_SENDER") or os.environ.get("EMAIL_FROM") or "").strip()
-    if not from_email:
+    # prioriza from_email explícito; senão EMAIL_SENDER, depois EMAIL_FROM
+    from_env = (from_email or os.environ.get("EMAIL_SENDER") or os.environ.get("EMAIL_FROM") or "").strip()
+    if not from_env:
         raise MissingConfig("EMAIL_SENDER/EMAIL_FROM ausente(s) no ambiente do servidor")
+
+    # Suporte a "Nome <email@dominio>" no EMAIL_FROM
+    from_name, from_addr = None, from_env
+    if "<" in from_env and ">" in from_env:
+        try:
+            name_part = from_env.split("<", 1)[0].strip().strip('"').strip()
+            addr_part = from_env.split("<", 1)[1].split(">", 1)[0].strip()
+            if "@" in addr_part:
+                from_name, from_addr = (name_part or None), addr_part
+        except Exception:
+            pass
+    if "@" not in from_addr:
+        # se ainda ficou inválido, cai no EMAIL_SENDER (que você já tem)
+        fallback = (os.environ.get("EMAIL_SENDER") or "").strip()
+        if "@" in fallback:
+            from_name, from_addr = None, fallback
+        else:
+            raise MissingConfig("Remetente inválido; verifique EMAIL_SENDER/EMAIL_FROM")
 
     to_list = _norm_emails(to)
     if not to_list:
@@ -52,7 +82,6 @@ def send_email(
 
     bcc_list = _norm_emails(bcc)
 
-    # monta personalização (to + opcional bcc)
     personalization = {"to": [{"email": e} for e in to_list]}
     if bcc_list:
         personalization["bcc"] = [{"email": e} for e in bcc_list]
@@ -63,17 +92,19 @@ def send_email(
 
     payload: dict = {
         "personalizations": [personalization],
-        "from": {"email": from_email},
+        "from": {"email": from_addr},
         "subject": subject,
         "content": content,
     }
+    if from_name:
+        payload["from"]["name"] = from_name
     if reply_to:
         payload["reply_to"] = {"email": reply_to}
 
-    data = json.dumps(payload).encode("utf-8")
+    # ---- Envio via SendGrid ----
     req = ulreq.Request(
         "https://api.sendgrid.com/v3/mail/send",
-        data=data,
+        data=json.dumps(payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -82,22 +113,23 @@ def send_email(
     )
 
     try:
-        # timeout explícito para robustez
         with ulreq.urlopen(req, timeout=20) as resp:
-            status = resp.getcode()
+            status = getattr(resp, "status", resp.getcode())
     except HTTPError as e:
         try:
-            body = e.read().decode("utf-8", errors="replace")
+            detail = e.read().decode("utf-8", "ignore")[:500]
         except Exception:
-            body = ""
-        raise MailerError(f"sendgrid_http_error_{e.code}: {body[:500]}") from e
+            detail = ""
+        raise MailerError(f"sendgrid_status_{e.code}: {detail}") from e
     except URLError as e:
-        raise MailerError(f"sendgrid_url_error: {e.reason}") from e
+        raise MailerError(f"sendgrid_connection_error: {e.reason}") from e
     except Exception as e:
         raise MailerError(f"sendgrid_request_failed: {e}") from e
 
-    # sucesso típico: 202 Accepted (às vezes 200)
+    # Sucesso padrão do SendGrid é 202 (Accepted)
     if status not in (200, 202):
-        raise MailerError(f"sendgrid_status_{status}")
+        raise MailerError(f"sendgrid_unexpected_status_{status}")
 
     return True
+
+
