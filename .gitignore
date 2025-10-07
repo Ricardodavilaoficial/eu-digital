@@ -176,3 +176,8 @@ upd.json
 *.log
 __pycache__ /
 .DS_Store
+idtoken.json
+idtoken.txt
+digest.json
+digest_preview.html
+agenda_preview.html
