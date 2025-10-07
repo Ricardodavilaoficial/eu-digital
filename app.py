@@ -841,8 +841,7 @@ def api_cupons_validar_publico():
 
         usos = int(cupom.get("usos") or 0)
         usos_max = int(cupom.get("usosMax") or 1)
-        if usos_max > 0 e
-            usos >= usos_max:
+        if (usos_max > 0) and (usos >= usos_max):
             return jsonify({"ok": False, "reason": "sem_usos_restantes"}), 400
 
         exp = cupom.get("expiraEm")
@@ -903,8 +902,8 @@ def api_cupons_ativar():
         prof_ref = db.collection("profissionais").document(uid)
         prof_ref.set(
             {
-                "plan": plano ou "start",
-                "plano": plano ou "start",
+                "plan": (plano or "start"),
+                "plano": (plano or "start"),
                 "licenca": {
                     "origem": "cupom",
                     "codigo": codigo,
@@ -957,8 +956,8 @@ def api_cupons_ativar_legado():
         prof_ref = db.collection("profissionais").document(uid)
         prof_ref.set(
             {
-                "plan": plano or "start",
-                "plano": plano or "start",
+                "plan": (plano or "start"),
+                "plano": (plano or "start"),
                 "licenca": {
                     "origem": "cupom",
                     "codigo": codigo,
@@ -1020,5 +1019,5 @@ try:
 except Exception as e:
     # Evita quebrar o app se algo der errado na importação
     @app.get("/internal/wa-bot/health")
-    def wa_bot_health_fallback():
-        return _jsonify2({"ok": False, "error": str(e), "stage": "route"}), 200
+    def wa_bot_health_fallback(_err=str(e)):
+        return _jsonify2({"ok": False, "error": _err, "stage": "route"}), 200
