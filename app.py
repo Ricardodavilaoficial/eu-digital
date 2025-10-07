@@ -16,6 +16,7 @@ from urllib import request as ulreq
 from urllib import parse as ulparse
 from flask import Flask, jsonify, request, send_from_directory, redirect
 from routes.agenda_digest import agenda_digest_bp
+from routes.health import health_bp
 
 # >>> VerificaÃ§Ã£o de Autoridade (Fase 1)
 from routes.verificacao_autoridade import verificacao_bp
@@ -89,6 +90,7 @@ app.register_blueprint(contacts_bp)
 # >>> Agenda (slots, appointments, reminders)
 app.register_blueprint(agenda_api_bp)
 app.register_blueprint(agenda_rem_bp)
+app.register_blueprint(health_bp)
 
 # âœ… Stripe Webhook (SEM auth/CSRF; precisa estar acessÃ­vel publicamente)
 app.register_blueprint(stripe_webhook_bp)
