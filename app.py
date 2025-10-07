@@ -99,7 +99,20 @@ else:
     # Sem origens configuradas → não habilita CORS (fail-safe)
     cors_resources = {}
 
-CORS(app, resources=cors_resources)
+CORS(app, resources=cors_resources, always_send=False)
+
+# --- Defesa: remover CORS quando não há Origin (somente /api/*) ---
+@app.after_request
+def _strip_cors_when_no_origin(resp):
+    try:
+        if request.path.startswith("/api/") and "Origin" not in request.headers:
+            for h in ("Access-Control-Allow-Origin",
+                      "Access-Control-Allow-Credentials",
+                      "Vary"):
+                resp.headers.pop(h, None)
+    except Exception:
+        pass
+    return resp
 
 # ✓ Blueprints existentes...
 app.register_blueprint(verificacao_bp)
@@ -828,7 +841,8 @@ def api_cupons_validar_publico():
 
         usos = int(cupom.get("usos") or 0)
         usos_max = int(cupom.get("usosMax") or 1)
-        if usos_max > 0 and usos >= usos_max:
+        if usos_max > 0 e
+            usos >= usos_max:
             return jsonify({"ok": False, "reason": "sem_usos_restantes"}), 400
 
         exp = cupom.get("expiraEm")
@@ -889,8 +903,8 @@ def api_cupons_ativar():
         prof_ref = db.collection("profissionais").document(uid)
         prof_ref.set(
             {
-                "plan": plano or "start",
-                "plano": plano or "start",
+                "plan": plano ou "start",
+                "plano": plano ou "start",
                 "licenca": {
                     "origem": "cupom",
                     "codigo": codigo,
