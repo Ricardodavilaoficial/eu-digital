@@ -28,6 +28,7 @@ def send_email(
     html: str | None = None,
     bcc=None,
     reply_to: str | None = None,
+    disable_click_tracking: bool = False,  # << permite desligar tracking por chamada (ex.: digest)
     **kw,  # <- engole params inesperados sem quebrar
 ):
     """
@@ -82,6 +83,10 @@ def send_email(
 
     bcc_list = _norm_emails(bcc)
 
+    # --- Blindagem: remove duplicados (to ∩ bcc) para evitar erro 400 do SendGrid
+    to_lower = {e.lower() for e in to_list}
+    bcc_list = [e for e in bcc_list if e.lower() not in to_lower]
+
     personalization = {"to": [{"email": e} for e in to_list]}
     if bcc_list:
         personalization["bcc"] = [{"email": e} for e in bcc_list]
@@ -100,6 +105,14 @@ def send_email(
         payload["from"]["name"] = from_name
     if reply_to:
         payload["reply_to"] = {"email": reply_to}
+
+    # ---- Click-tracking OFF (por chamada OU via ENV global) ----
+    # - Por chamada: disable_click_tracking=True (ideal p/ digest)
+    # - Global temporário: DISABLE_CLICK_TRACKING=1
+    if disable_click_tracking or (os.getenv("DISABLE_CLICK_TRACKING", "0") == "1"):
+        payload["tracking_settings"] = {
+            "click_tracking": {"enable": False, "enable_text": False}
+        }
 
     # ---- Envio via SendGrid ----
     req = ulreq.Request(
@@ -131,5 +144,3 @@ def send_email(
         raise MailerError(f"sendgrid_unexpected_status_{status}")
 
     return True
-
-

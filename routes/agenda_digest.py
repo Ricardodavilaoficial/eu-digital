@@ -296,7 +296,8 @@ def digest_get():
             html=body_html,
             from_email=email_from,
             bcc=bcc_list,
-            reply_to=reply_to
+            reply_to=reply_to,
+            disable_click_tracking=True  # <<< patch: link direto (sem reescrita) só no digest
         )
     except TypeError:
         # Fallback: algumas implementações aceitam apenas texto
