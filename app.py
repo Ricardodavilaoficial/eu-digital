@@ -1,6 +1,6 @@
-﻿# app.py â€” entrypoint para runtime Python do Render (produÃ§Ã£o)
-# MantÃ©m: health, debug, firestore-utils, /api/send-text, estÃ¡ticos
-# Webhook agora Ã© servido via routes/stripe_webhook (blueprint)
+﻿# app.py — entrypoint para runtime Python do Render (produção)
+# Mantém: health, debug, firestore-utils, /api/send-text, estáticos
+# Webhook agora é servido via routes/stripe_webhook (blueprint)
 
 import os
 import json
@@ -18,18 +18,18 @@ from flask import Flask, jsonify, request, send_from_directory, redirect
 from routes.agenda_digest import agenda_digest_bp
 from routes.health import health_bp
 
-# >>> VerificaÃ§Ã£o de Autoridade (Fase 1)
+# >>> Verificação de Autoridade (Fase 1)
 from routes.verificacao_autoridade import verificacao_bp
 from middleware.authority_gate import init_authority_gate
 
-# --- INÃCIO: integraÃ§Ã£o CNPJ.ws pÃºblica (blueprint) ---
+# --- INÍCIO: integração CNPJ.ws pública (blueprint) ---
 # Depende do arquivo: routes/cnpj_publica.py
-# Se ainda nÃ£o existir o pacote "routes", crie um __init__.py vazio dentro de /routes
+# Se ainda não existir o pacote "routes", crie um __init__.py vazio dentro de /routes
 try:
     from routes.cnpj_publica import bp_cnpj_publica
 except Exception as e:
     bp_cnpj_publica = None
-    logging.exception("Falha ao importar bp_cnpj_publica (CNPJ.ws pÃºblica): %s", e)
+    logging.exception("Falha ao importar bp_cnpj_publica (CNPJ.ws pública): %s", e)
 
 # >>> NOVOS BLUEPRINTS (Signed URL + Opt-in)
 from routes.media import media_bp
@@ -39,29 +39,29 @@ from routes.contacts import contacts_bp
 from routes.stripe_webhook import stripe_webhook_bp
 from routes.stripe_checkout import stripe_checkout_bp
 from routes.conta_status import bp_conta
-# --- FIM: integraÃ§Ã£o CNPJ.ws pÃºblica ---
+# --- FIM: integração CNPJ.ws pública ---
 
 # >>> Agenda (slots, appointments, reminders)
 from routes.agenda_api import agenda_api_bp
 from routes.agenda_reminders import agenda_rem_bp
 
 
-print("[boot] app.py raiz carregado âœ…", flush=True)
+print("[boot] app.py raiz carregado ✓", flush=True)
 logging.basicConfig(level=logging.INFO)
-# --- Filtro para rebaixar ruÃ­dos do legacy (sem editar o arquivo gigante) ---
-import logging, re
+# --- Filtro para rebaixar ruídos do legacy (sem editar o arquivo gigante) ---
+import logging as _logging
 
-class _DowngradeLegacyNoise(logging.Filter):
+class _DowngradeLegacyNoise(_logging.Filter):
     # cobre [wa_bot] + (nlu_intent|schedule) + "indispon" (ignora acentos/mojibake)
     _pat = re.compile(
-        r"\[wa_bot\].*?(nlu_intent|schedule).*?indispon",  # pega indisponÃ­vel/indisponivel/indisponÃƒÂ­vel
+        r"\[wa_bot\].*?(nlu_intent|schedule).*?indispon",
         re.IGNORECASE | re.DOTALL,
     )
-    def filter(self, record: logging.LogRecord) -> bool:
+    def filter(self, record: _logging.LogRecord) -> bool:
         msg = str(record.getMessage())
         if self._pat.search(msg):
-            if record.levelno >= logging.ERROR:
-                record.levelno = logging.WARNING
+            if record.levelno >= _logging.ERROR:
+                record.levelno = _logging.WARNING
                 record.levelname = "WARNING"
         return True
 
@@ -72,28 +72,41 @@ if not any(isinstance(f, _DowngradeLegacyNoise) for f in root_logger.filters):
 # --- fim do filtro ---
 
 # --------------------------------------------------------------------
-# 1) Cria a app primeiro e configura CORS-base controlado por ENV
+# 1) Cria a app primeiro e configura CORS fechado por whitelist (apenas /api/*)
 # --------------------------------------------------------------------
 app = Flask(__name__, static_folder="public", static_url_path="/")
 from flask_cors import CORS
 
-# --- CORS fechado por whitelist v1 ---
-_raw = os.getenv("ALLOWED_ORIGINS", "")
-_allowed = [o.strip() for o in _raw.split(",") if o.strip()]
+# Lê a whitelist de origens permitidas (se vazio, não libera ninguém)
+_allowed = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 
-# Aplica CORS só nas rotas /api/* (endpoints da sua API).
-# Se a lista estiver vazia, não libera ninguém.
-resources = {r"/api/*": {"origins": _allowed}} if _allowed else {}
+if _allowed:
+    cors_resources = {
+        r"/api/*": {
+            "origins": _allowed,
+            "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            "allow_headers": [
+                "Authorization",
+                "Content-Type",
+                "X-Requested-With",
+                "cf-turnstile-response",
+                "x-turnstile-token",
+            ],
+            "supports_credentials": False,
+        }
+    }
+else:
+    # Sem origens configuradas → não habilita CORS (fail-safe)
+    cors_resources = {}
 
-# Usamos Bearer token, então não precisamos de credentials.
-CORS(app, resources=resources, supports_credentials=False)
+CORS(app, resources=cors_resources)
 
-# âœ… Blueprints existentes...
+# ✓ Blueprints existentes...
 app.register_blueprint(verificacao_bp)
 if bp_cnpj_publica:
     app.register_blueprint(bp_cnpj_publica)
 
-# âœ… NOVOS BLUEPRINTS (Signed URL + Opt-in)
+# ✓ NOVOS BLUEPRINTS (Signed URL + Opt-in)
 app.register_blueprint(media_bp)
 app.register_blueprint(contacts_bp)
 
@@ -102,44 +115,24 @@ app.register_blueprint(agenda_api_bp)
 app.register_blueprint(agenda_rem_bp)
 app.register_blueprint(health_bp)
 
-# âœ… Stripe Webhook (SEM auth/CSRF; precisa estar acessÃ­vel publicamente)
+# ✓ Stripe Webhook (SEM auth/CSRF; precisa estar acessível publicamente)
 app.register_blueprint(stripe_webhook_bp)
-print("[boot] Stripe Webhook blueprint registrado âœ…", flush=True)
-# âœ… Stripe Checkout API
+print("[boot] Stripe Webhook blueprint registrado ✓", flush=True)
+# ✓ Stripe Checkout API
 app.register_blueprint(stripe_checkout_bp)
-print("[boot] Stripe Checkout blueprint registrado âœ…", flush=True)
-# âœ… Gate + Status (contratos do front)
+print("[boot] Stripe Checkout blueprint registrado ✓", flush=True)
+# ✓ Gate + Status (contratos do front)
 app.register_blueprint(bp_conta)
-# (se houver middlewares de auth/CSRF, mantenha-os DEPOIS â€” e isente /webhooks/stripe)
+# (se houver middlewares de auth/CSRF, mantenha-os DEPOIS — e isente /webhooks/stripe)
 
-# âœ… Admin (rota /admin/ping protegida)
+# ✓ Admin (rota /admin/ping protegida)
 from routes.admin import admin_bp
 app.register_blueprint(admin_bp)
-print("[boot] Admin blueprint registrado âœ…", flush=True)
+print("[boot] Admin blueprint registrado ✓", flush=True)
 app.register_blueprint(agenda_digest_bp)
 print("[boot] Agenda Digest blueprint registrado ✓", flush=True)
-_ALLOWED = os.environ.get("ALLOWED_ORIGINS", "")
-if _ALLOWED:
-    origins = [o.strip() for o in _ALLOWED.split(",") if o.strip()]
-else:
-    # fallback seguro para dev/local se a ENV nÃ£o estiver definida
-    origins = ["http://127.0.0.1:5501", "http://localhost:5501"]
-
-# CORS-base: libera origens definidas (todas as rotas)
-CORS(app, resources={r"/*": {"origins": origins}})
 
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
-
-# --------------------------------------------------------------------
-# 2) (Opcional) CORS adicional para /api/* como vocÃª jÃ¡ tinha
-#    Mantido para compatibilidade, pode coexistir com o CORS-base.
-# --------------------------------------------------------------------
-try:
-    from flask_cors import CORS as _CORS2
-    _CORS2(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
-    print("[init] CORS habilitado para /api/*")
-except Exception as e:
-    print(f"[warn] flask-cors indisponÃ­vel: {e}")
 
 # --------------------------------------------------------------------
 # 3) Agora que o app existe, importe e registre blueprints auxiliares
@@ -153,12 +146,12 @@ def _register_bp(bp, name: str):
         print(f"[bp][erro] Falhou ao registrar {name}: {e}")
         traceback.print_exc()
 
-# Blueprint de autenticaÃ§Ã£o (novo)
+# Blueprint de autenticação (novo)
 try:
     from routes.auth_bp import auth_bp
     _register_bp(auth_bp, "auth_bp (/auth/whoami)")
 except Exception as e:
-    print(f"[bp][warn] auth_bp nÃ£o registrado: {e}")
+    print(f"[bp][warn] auth_bp não registrado: {e}")
     traceback.print_exc()
 
 # -------------------------
@@ -181,7 +174,7 @@ try:
     from services.phone_utils import br_candidates as _br_candidates, br_equivalence_key as _br_equivalence_key, digits_only as _digits_only_external  # type: ignore
     print("[phone] usando services.phone_utils (externo)")
 except Exception:
-    print("[phone] services.phone_utils nÃ£o encontrado; usando fallback local")
+    print("[phone] services.phone_utils não encontrado; usando fallback local")
 
     _DIGITS_RE = re.compile(r"\D+")
 
@@ -207,7 +200,7 @@ except Exception:
 
     def _br_equivalence_key_local(msisdn: str) -> str:
         cc, ddd, local = _br_split(msisdn)
-        local8 = _digits_only_local(local)[-8:]  # Ãºltimos 8
+        local8 = _digits_only_local(local)[-8:]  # últimos 8
         return f"{cc}{ddd}{local8}"
 
     def _br_candidates_local(msisdn: str) -> List[str]:
@@ -215,13 +208,13 @@ except Exception:
         local_digits = _digits_only_local(local)
         cands = set()
         if len(local_digits) >= 9 and local_digits[0] == "9":
-            # JÃ¡ tem 9 -> gera com e sem 9
+            # Já tem 9 -> gera com e sem 9
             with9 = f"{cc}{ddd}{local_digits}"
             without9 = f"{cc}{ddd}{local_digits[1:]}" if len(local_digits) >= 1 else f"{cc}{ddd}{local_digits}"
             cands.add(with9)
             cands.add(without9)
         elif len(local_digits) == 8:
-            # 8 dÃ­gitos -> gera sem e com 9
+            # 8 dígitos -> gera sem e com 9
             without9 = f"{cc}{ddd}{local_digits}"
             with9 = f"{cc}{ddd}9{local_digits}"
             cands.add(without9)
@@ -280,7 +273,7 @@ FRONTEND_BASE = os.getenv("FRONTEND_BASE", "")  # ex.: https://mei-robo-prod.web
 
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
-# >>> Uso obrigatÃ³rio do STORAGE_BUCKET (sem fallback). LevantarÃ¡ KeyError se ausente.
+# >>> Uso obrigatório do STORAGE_BUCKET (sem fallback). Levantará KeyError se ausente.
 STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
 
 def fallback_text(context: str) -> str:
@@ -288,7 +281,7 @@ def fallback_text(context: str) -> str:
 
 # -------------------------
 # Blueprints existentes (mantidos + novos)
-# (OBS: verificacao_bp e bp_cnpj_publica jÃ¡ foram registrados acima)
+# (OBS: verificacao_bp e bp_cnpj_publica já foram registrados acima)
 # -------------------------
 try:
     from routes.routes import routes
@@ -311,20 +304,20 @@ except Exception as e:
     print(f"[bp][erro] import cupons_bp: {e}")
     traceback.print_exc()
 
-# >>> Compat de licenÃ§as/cupom (aceita POST /licencas/ativar-cupom)
+# >>> Compat de licenças/cupom (aceita POST /licencas/ativar-cupom)
 try:
     from routes.compat_licencas import bp as licencas_bp
     _register_bp(licencas_bp, "licencas_bp (/licencas/ativar-cupom compat)")
 except Exception as e:
-    print(f"[bp][warn] licencas_bp nÃ£o registrado: {e}")
+    print(f"[bp][warn] licencas_bp não registrado: {e}")
     traceback.print_exc()
 
-# >>> Novo: CAPTCHA (Turnstile) â€” valida token e seta cookie curto
+# >>> Novo: CAPTCHA (Turnstile) — valida token e seta cookie curto
 try:
     from routes.captcha_bp import captcha_bp
     _register_bp(captcha_bp, "captcha_bp (/captcha/verify)")
 except Exception as e:
-    print(f"[bp][warn] captcha_bp nÃ£o registrado: {e}")
+    print(f"[bp][warn] captcha_bp não registrado: {e}")
     traceback.print_exc()
 
 try:
@@ -338,21 +331,21 @@ try:
     from routes.configuracao import config_bp
     _register_bp(config_bp, "config_bp (/api/configuracao)")
 except Exception as e:
-    print(f"[bp][warn] config_bp nÃ£o registrado: {e}")
+    print(f"[bp][warn] config_bp não registrado: {e}")
     traceback.print_exc()
 
 try:
     from routes.importar_precos import importar_bp
     _register_bp(importar_bp, "importar_bp (/api/importar-precos)")
 except Exception as e:
-    print(f"[bp][warn] importar_bp nÃ£o registrado: {e}")
+    print(f"[bp][warn] importar_bp não registrado: {e}")
     traceback.print_exc()
 
 try:
     from routes.seed import seed_bp
     _register_bp(seed_bp, "seed_bp (/_seed/profissional)")
 except Exception as e:
-    print(f"[bp][warn] seed_bp nÃ£o registrado: {e}")
+    print(f"[bp][warn] seed_bp não registrado: {e}")
     traceback.print_exc()
 
 # >>> Webhook legado (se existir)
@@ -363,8 +356,8 @@ except Exception as e:
     print(f"[bp][erro] import bp_webhook: {e}")
     traceback.print_exc()
 
-# >>> VerificaÃ§Ã£o de Autoridade â€” (REMOVIDO registro duplicado via helper)
-# jÃ¡ registramos verificacao_bp no topo. Mantemos apenas o init do gate.
+# >>> Verificação de Autoridade — (REMOVIDO registro duplicado via helper)
+# já registramos verificacao_bp no topo. Mantemos apenas o init do gate.
 try:
     init_authority_gate(app, restricted_patterns=[
         r"^/api/cupons/.*",
@@ -374,14 +367,14 @@ try:
     ])
     print("[gate] Authority Gate registrado (condicional por VERIFICACAO_AUTORIDADE)")
 except Exception as e:
-    print(f"[gate][warn] authority_gate nÃ£o inicializado: {e}")
+    print(f"[gate][warn] authority_gate não inicializado: {e}")
     traceback.print_exc()
 
 # --------------------------------------------------------------------
 # SHIMS de compatibilidade para /api/verificacao/autoridade/*
-# (mantÃªm a pÃ¡gina vinculo.html funcionando sem alterar blueprints atuais)
+# (mantêm a página vinculo.html funcionando sem alterar blueprints atuais)
 # --------------------------------------------------------------------
-from flask import jsonify as _jsonify  # alias local sÃ³ p/ clareza
+from flask import jsonify as _jsonify  # alias local só p/ clareza
 
 @app.get("/api/verificacao/autoridade/status")
 def _verif_status_proxy():
@@ -393,7 +386,7 @@ def _verif_status_proxy():
 
 @app.post("/api/verificacao/autoridade/upload")
 def _verif_upload():
-    # Aceita multipart (PDF/JPG/PNG) â€” stub: grava em temp e marca pendente
+    # Aceita multipart (PDF/JPG/PNG) — stub: grava em temp e marca pendente
     from werkzeug.utils import secure_filename
     import tempfile
 
@@ -410,7 +403,7 @@ def _verif_upload():
         name = secure_filename(f.filename)
         ext = os.path.splitext(name)[1].lower()
         if ext not in ALLOW:
-            return _jsonify({"ok": False, "error": f"ExtensÃ£o nÃ£o permitida: {ext}"}), 400
+            return _jsonify({"ok": False, "error": f"Extensão não permitida: {ext}"}), 400
         f.seek(0, os.SEEK_END); sz = f.tell(); f.seek(0)
         size_total += sz
         if size_total > 25 * 1024 * 1024:
@@ -420,7 +413,7 @@ def _verif_upload():
         f.save(tmp_path)
         saved.append({"filename": name, "path": tmp_path})
 
-    # Marca â€œpendenteâ€ no modelo em memÃ³ria (stub v1)
+    # Marca “pendente” no modelo em memória (stub v1)
     from models.user_status import get_user_meta, set_user_meta, log_autorizacao
     uid = request.headers.get("X-Debug-User", "guest")
     meta = get_user_meta(uid)
@@ -513,10 +506,10 @@ def env_safe():
         "ELEVEN_VOICE_ID": os.getenv("ELEVEN_VOICE_ID"),
         "DEV_FORCE_ADMIN": os.getenv("DEV_FORCE_ADMIN"),
         "DEV_FAKE_UID": os.getenv("DEV_FAKE_UID"),
-        # >>> IncluÃ­mos as chaves do Turnstile no relatÃ³rio seguro (mascarado)
+        # >>> Incluímos as chaves do Turnstile no relatório seguro (mascarado)
         "TURNSTILE_SECRET_KEY": _mask_secret(os.getenv("TURNSTILE_SECRET_KEY", "")),
         "HUMAN_COOKIE_SIGNING_KEY": _mask_secret(os.getenv("HUMAN_COOKIE_SIGNING_KEY", "")),
-        # >>> CorreÃ§Ãµes pedidas:
+        # >>> Correções pedidas:
         "STORAGE_BUCKET": os.getenv("STORAGE_BUCKET"),
         "SIGNED_URL_EXPIRES_SECONDS": os.getenv("SIGNED_URL_EXPIRES_SECONDS"),
     }
@@ -531,7 +524,7 @@ except Exception as e:
     get_doc = None
     list_collection = None
     get_db = None
-    print(f"[warn] services.db indisponÃ­vel: {e}")
+    print(f"[warn] services.db indisponível: {e}")
 
 @app.route("/__ping_firestore", methods=["GET"])
 def ping_firestore():
@@ -603,7 +596,7 @@ def _load_wa_bot():
     except Exception as e:
         _WA_BOT_MOD = None
         _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\n" + (traceback.format_exc(limit=3) or "")
-        print(f"[init][erro] nÃ£o consegui importar services.wa_bot: {e}", flush=True)
+        print(f"[init][erro] não consegui importar services.wa_bot: {e}", flush=True)
         return None
 
 @app.get("/__wa_bot_status")
@@ -621,7 +614,7 @@ def wa_bot_status():
     }), 200
 
 # -------------------------
-# API utilitÃ¡ria de envio (texto) â€” agora com candidatos com/sem 9
+# API utilitária de envio (texto) — agora com candidatos com/sem 9
 # -------------------------
 from services.wa_send import send_text as wa_send_text
 
@@ -638,7 +631,7 @@ def api_send_text():
     if not to or not body:
         return {"ok": False, "error": "missing_to_or_body"}, 400
 
-    # Gera candidatos robustos (com/sem 9) + fallback de normalizaÃ§Ã£o
+    # Gera candidatos robustos (com/sem 9) + fallback de normalização
     cands = []
     try:
         cands = br_candidates(to)
@@ -695,7 +688,7 @@ def msisdn_debug():
     return jsonify(out), 200
 
 # =========================
-# Cupom â€” rotas absolutas (Plano B Ã  prova de falhas do blueprint)
+# Cupom — rotas absolutas (Plano B à prova de falhas do blueprint)
 # =========================
 from flask import g
 from datetime import datetime, timezone
@@ -706,7 +699,7 @@ import base64 as _b64
 def _uid_from_authorization() -> str | None:
     """
     Extrai UID do Authorization: Bearer <idToken> lendo o payload do JWT (sem validar assinatura).
-    TemporÃ¡rio para manter produÃ§Ã£o enquanto o services.auth.auth_required nÃ£o estÃ¡ disponÃ­vel.
+    Temporário para manter produção enquanto o services.auth.auth_required não está disponível.
     """
     auth = request.headers.get("Authorization", "").strip()
     if not auth.lower().startswith("bearer "):
@@ -749,7 +742,7 @@ def _human_cookie_ok() -> bool:
         if (time.time() - ts) > 5 * 60:
             return False
         return val == "1"
-    # modo sem assinatura (nÃ£o recomendado, mas tolerado se jÃ¡ existir)
+    # modo sem assinatura (não recomendado, mas tolerado se já existir)
     return raw == "1"
 
 def _verify_turnstile_token(token: str) -> bool:
@@ -773,10 +766,10 @@ def _verify_turnstile_token(token: str) -> bool:
         return False
 
 def _is_human_ok() -> bool:
-    # 1) cookie assinado vÃ¡lido (preferido)
+    # 1) cookie assinado válido (preferido)
     if _human_cookie_ok():
         return True
-    # 2) fallback: token passado no header ou body â†’ verificaÃ§Ã£o ao vivo
+    # 2) fallback: token passado no header ou body → verificação ao vivo
     tok = (
         request.headers.get("cf-turnstile-response")
         or (request.get_json(silent=True) or {}).get("cf_token")
@@ -788,7 +781,7 @@ def _is_human_ok() -> bool:
         return True
     return False
 
-# ---------- ValidaÃ§Ã£o PÃºblica (sem login) ----------
+# ---------- Validação Pública (sem login) ----------
 @app.route("/api/cupons/validar-publico", methods=["OPTIONS"])
 def _preflight_api_cupons_validar_publico():
     return ("", 204)
@@ -797,7 +790,7 @@ def _parse_iso_maybe_z(s: str):
     if not s:
         return None
     try:
-    # Python 3.11 aceita offset, mas nem sempre 'Z'; normaliza Z->+00:00
+        # Python 3.11 aceita offset, mas nem sempre 'Z'; normaliza Z->+00:00
         if isinstance(s, str) and s.endswith("Z"):
             s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s)
@@ -810,9 +803,9 @@ def _parse_iso_maybe_z(s: str):
 @app.route("/api/cupons/validar-publico", methods=["POST"])
 def api_cupons_validar_publico():
     """
-    Verifica se o cupom *pode* ser usado (nÃ£o consome). Sem exigir autenticaÃ§Ã£o.
+    Verifica se o cupom *pode* ser usado (não consome). Sem exigir autenticação.
     Entrada: { "codigo": "ABC-123" }
-    SaÃ­da: 200 {"ok": true, "cupom": {...}}  |  400 {"ok": false, "reason": "..."}
+    Saída: 200 {"ok": true, "cupom": {...}}  |  400 {"ok": false, "reason": "..."}
     """
     try:
         data = request.get_json(silent=True) or {}
@@ -825,7 +818,7 @@ def api_cupons_validar_publico():
         if not cupom:
             return jsonify({"ok": False, "reason": "nao_encontrado"}), 400
 
-        # checks bÃ¡sicos
+        # checks básicos
         status = (cupom.get("status") or "").lower()
         if status in {"used", "revogado", "invalido"}:
             return jsonify({"ok": False, "reason": status}), 400
@@ -869,12 +862,12 @@ def api_cupons_ativar():
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
         if not codigo:
-            return jsonify({"erro": "CÃ³digo do cupom Ã© obrigatÃ³rio"}), 400
+            return jsonify({"erro": "Código do cupom é obrigatório"}), 400
 
         uid = _uid_from_authorization() or (data.get("uid") or "").strip()
         if not uid:
-            # comportamento alinhado com a UI ("sessÃ£o expirada")
-            return jsonify({"erro": "NÃ£o autenticado"}), 401
+            # comportamento alinhado com a UI ("sessão expirada")
+            return jsonify({"erro": "Não autenticado"}), 401
 
         from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
         cupom = find_cupom_by_codigo(codigo)
@@ -919,7 +912,7 @@ def _preflight_api_cupons_ativar_legado():
 @app.route("/api/cupons/ativar-cupom", methods=["POST"])
 def api_cupons_ativar_legado():
     try:
-        # >>> Blindagem: exige humano_ok OU token Turnstile vÃ¡lido no header/body
+        # >>> Blindagem: exige humano_ok OU token Turnstile válido no header/body
         if not _is_human_ok():
             return jsonify({"erro": "captcha_required"}), 403
 
@@ -928,7 +921,7 @@ def api_cupons_ativar_legado():
         uid = (data.get("uid") or "").strip()
         # sync render: garantindo operador 'or' (nunca 'ou')
         if not codigo or not uid:
-            return jsonify({"erro": "CÃ³digo do cupom e UID sÃ£o obrigatÃ³rios"}), 400
+            return jsonify({"erro": "Código do cupom e UID são obrigatórios"}), 400
 
         from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
         cupom = find_cupom_by_codigo(codigo)
@@ -966,12 +959,12 @@ def api_cupons_ativar_legado():
         return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"}), 500
 
 # -------------------------
-# Rotas de conveniÃªncia â€” /ativar â†’ pÃ¡gina de ativaÃ§Ã£o
+# Rotas de conveniência — /ativar → página de ativação
 # -------------------------
 @app.get("/ativar")
 def goto_ativar():
     """
-    Redireciona para a tela de ativaÃ§Ã£o do frontend (se FRONTEND_BASE estiver setado),
+    Redireciona para a tela de ativação do frontend (se FRONTEND_BASE estiver setado),
     ou tenta servir /pages/ativar.html localmente. Fallback para index.html.
     """
     try:
@@ -979,7 +972,7 @@ def goto_ativar():
             dest = FRONTEND_BASE.rstrip("/") + "/pages/ativar.html"
             if urlparse(dest).scheme:
                 return redirect(dest, code=302)
-        # se nÃ£o houver FRONTEND_BASE, tenta servir local
+        # se não houver FRONTEND_BASE, tenta servir local
         return app.send_static_file("pages/ativar.html")
     except Exception:
         return app.send_static_file("index.html")
@@ -1001,17 +994,17 @@ def static_proxy(path):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
 # --- Rota de health do wa_bot (somente leitura) ---
-from flask import jsonify
+from flask import jsonify as _jsonify2
 try:
     from services import wa_bot
 
     @app.get("/internal/wa-bot/health")
     def wa_bot_health():
-        return jsonify(wa_bot.healthcheck()), 200
+        return _jsonify2(wa_bot.healthcheck()), 200
 except Exception as e:
-    # Evita quebrar o app se algo der errado na importaÃ§Ã£o
+    # Evita quebrar o app se algo der errado na importação
     @app.get("/internal/wa-bot/health")
     def wa_bot_health_fallback():
-        return jsonify({"ok": False, "error": str(e), "stage": "route"}), 200
-
+        return _jsonify2({"ok": False, "error": str(e), "stage": "route"}), 200
