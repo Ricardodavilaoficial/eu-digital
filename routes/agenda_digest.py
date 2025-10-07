@@ -228,7 +228,7 @@ def digest_get():
 
     # Corpos de e-mail (texto/HTML)
     nome_profissional = "Ricardo"  # se houver nome no perfil do profissional, trocar por esse valor
-    url_agenda = "https://mei-robo-prod.web.app/pages/agenda.html"
+    url_agenda = os.getenv("DIGEST_AGENDA_URL", "https://meirobo.com.br/pages/agenda.html?source=email-digest")
     subject, body_text, body_html = _build_email_bodies(
         nome_profissional, url_agenda, items, date_str, tz
     )
