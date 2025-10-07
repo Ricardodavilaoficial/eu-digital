@@ -75,8 +75,18 @@ if not any(isinstance(f, _DowngradeLegacyNoise) for f in root_logger.filters):
 # 1) Cria a app primeiro e configura CORS-base controlado por ENV
 # --------------------------------------------------------------------
 app = Flask(__name__, static_folder="public", static_url_path="/")
-from flask_cors import CORS  # importa depois de criar app
-CORS(app)  # se vocÃª jÃ¡ usa CORS custom, mantenha o seu
+from flask_cors import CORS
+
+# --- CORS fechado por whitelist v1 ---
+_raw = os.getenv("ALLOWED_ORIGINS", "")
+_allowed = [o.strip() for o in _raw.split(",") if o.strip()]
+
+# Aplica CORS só nas rotas /api/* (endpoints da sua API).
+# Se a lista estiver vazia, não libera ninguém.
+resources = {r"/api/*": {"origins": _allowed}} if _allowed else {}
+
+# Usamos Bearer token, então não precisamos de credentials.
+CORS(app, resources=resources, supports_credentials=False)
 
 # âœ… Blueprints existentes...
 app.register_blueprint(verificacao_bp)
