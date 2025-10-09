@@ -1,0 +1,17 @@
+  chore/etapa2-guard-v1_ready[m
+  chore/etapa2-logs-guard[m
+  drop-a-core-api[m
+  feat/agenda-digest[m
+  feat/cnpjws-publica-v1[m
+  feat/frontend-cnpj-v1[m
+  feat/hardening-backend-and-firebase-init[m
+  feat/validacao-banco-v1[m
+  feat/wa-bot-fachada-v1[m
+  feat/wa-bot-nlu-v1[m
+  fix/dashboard-firebase-v8[m
+  fix/firebase-init-coupons-hardening[m
+  fix/frontend-firebase-passos[m
+  hotfix/app-patch[m
+  hotfix/cupom-endpoints[m
+* [32mmain[m
+  refactor/fachada-v1-scaffold-v2[m
