@@ -291,6 +291,28 @@ STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
 
 def fallback_text(context: str) -> str:
     return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
+# --- HOTFIX: responder ao GET /webhook com hub.challenge (sem mexer no POST) ---
+from flask import Response
+
+@app.before_request
+def _handle_webhook_challenge():
+    # Intercepta SOMENTE o GET /webhook
+    if request.method == "GET" and request.path == "/webhook":
+        mode = request.args.get("hub.mode")
+        token = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge")
+        expected = os.getenv("VERIFY_TOKEN", "meirobo123")
+
+        # Condição oficial da Meta: mode=subscribe + tokens iguais + challenge presente
+        if mode == "subscribe" and token == expected and challenge:
+            # retorna TEXTO PURO (não JSON) e 200
+            return Response(challenge, status=200, mimetype="text/plain; charset=utf-8")
+
+        # Se não casar, devolve 403 sem passar para outros handlers/blueprints
+        return Response("Forbidden", status=403)
+    # Qualquer outra rota/método segue o fluxo normal
+    return None
+# --- FIM HOTFIX ---
 
 # -------------------------
 # Blueprints existentes (mantidos + novos)
