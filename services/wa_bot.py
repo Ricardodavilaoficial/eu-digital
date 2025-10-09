@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import traceback
+import logging
 from typing import Any, Dict, Optional, Tuple
 
 __version__ = "1.0.0-fachada"
@@ -159,6 +160,89 @@ def info() -> str:
         f"legacy={h['has_legacy']} new_pipeline={h['has_new_pipeline']}"
     )
 
+# =====================================================================
+# >>> ADIÇÃO MÍNIMA: adapter process_change(change) + auto-reply de backup
+# =====================================================================
+
+# Tenta importar o sender uma única vez (sem quebrar caso não exista)
+try:
+    from .wa_send import send_text as _send_text  # type: ignore
+except Exception as _e:
+    _send_text = None
+    logging.exception("[WA_BOT][FACHADA] wa_send indisponível: %s", _e)
+
+def _extract_from_and_text_from_change(change: Dict[str, Any]) -> Tuple[Optional[str], str]:
+    """Extrai wa_id do remetente e o texto, seguindo o shape da Cloud API."""
+    try:
+        value = (change or {}).get("value") or {}
+        msgs = value.get("messages") or []
+        if not msgs:
+            return None, ""
+        m = msgs[0]
+        from_id = m.get("from")
+        text = ""
+        if m.get("type") == "text":
+            text = ((m.get("text") or {}).get("body") or "").strip()
+        return from_id, text
+    except Exception:
+        return None, ""
+
+def _basic_autoreply(from_id: Optional[str], body: str) -> bool:
+    """Resposta enxuta caso o legacy não esteja disponível."""
+    try:
+        if not from_id or _send_text is None:
+            return False
+        t = (body or "").strip().lower()
+        if t in ("oi", "ola", "olá", "oie", "hello", "hi", "hey"):
+            _send_text(from_id, "Oi! Estou ligado ✅. Posso te ajudar com *agendamento* ou digite *precos*.")
+            return True
+        if t == "precos" or "preço" in t or "precos" in t or "preços" in t or "preco" in t:
+            _send_text(from_id, "Tabela: Corte masc R$50 | Barba R$35 | Combo R$75. Diga *agendar* para marcar.")
+            return True
+        if "agendar" in t or "agenda" in t:
+            _send_text(from_id, "Me diga o dia e hora (ex.: *amanhã 15h*) que eu verifico disponibilidade.")
+            return True
+        _send_text(from_id, "Recebi ✅. Para preços, digite *precos*. Para marcar, diga *agendar* + horário.")
+        return True
+    except Exception as e:
+        logging.exception("[WA_BOT][FACHADA] basic_autoreply erro: %s", e)
+        return False
+
+def process_change(change: Dict[str, Any]) -> bool:
+    """
+    Adapter esperado pelo backend:
+      - Se houver legacy.process_change, delega para ele.
+      - Caso contrário, tenta usar process_inbound(change).
+      - Persistindo indisponibilidade, faz um auto-reply básico (sem cair em FALLBACK).
+    Retorna True se algum caminho tratou a mensagem (enviou resposta/registrou ação).
+    """
+    # 1) Delegação ao legacy, se disponível
+    try:
+        if _using_legacy() and _HAS_LEGACY and _legacy is not None:
+            if hasattr(_legacy, "process_change"):
+                ok = bool(_legacy.process_change(change))  # type: ignore[attr-defined]
+                if ok:
+                    return True
+            # Sem process_change no legacy? tenta a entrada genérica
+            resp = _legacy.process_inbound(change)  # type: ignore[attr-defined]
+            if isinstance(resp, dict) and resp.get("ok"):
+                return True
+    except Exception as e:
+        logging.exception("[WA_BOT][FACHADA] delegação ao legacy falhou: %s", e)
+
+    # 2) Tenta a própria entrada genérica desta fachada
+    try:
+        resp2 = process_inbound(change)  # pode delegar ao legacy internamente
+        if isinstance(resp2, dict) and resp2.get("ok"):
+            return True
+    except Exception as e:
+        logging.exception("[WA_BOT][FACHADA] process_inbound local falhou: %s", e)
+
+    # 3) Último recurso: auto-reply simples (não deixa cair em [FALLBACK])
+    from_id, body = _extract_from_and_text_from_change(change)
+    ok_basic = _basic_autoreply(from_id, body)
+    return bool(ok_basic)
+
 
 __all__ = [
     "healthcheck",
@@ -167,6 +251,6 @@ __all__ = [
     "schedule_appointment",
     "reschedule_appointment",
     "info",
+    # >>> novo adapter exposto:
+    "process_change",
 ]
-
-
