@@ -291,28 +291,6 @@ STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
 
 def fallback_text(context: str) -> str:
     return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
-# --- HOTFIX: responder ao GET /webhook com hub.challenge (sem mexer no POST) ---
-from flask import Response
-
-@app.before_request
-def _handle_webhook_challenge():
-    # Intercepta SOMENTE o GET /webhook
-    if request.method == "GET" and request.path == "/webhook":
-        mode = request.args.get("hub.mode")
-        token = request.args.get("hub.verify_token")
-        challenge = request.args.get("hub.challenge")
-        expected = os.getenv("VERIFY_TOKEN", "meirobo123")
-
-        # Condição oficial da Meta: mode=subscribe + tokens iguais + challenge presente
-        if mode == "subscribe" and token == expected and challenge:
-            # retorna TEXTO PURO (não JSON) e 200
-            return Response(challenge, status=200, mimetype="text/plain; charset=utf-8")
-
-        # Se não casar, devolve 403 sem passar para outros handlers/blueprints
-        return Response("Forbidden", status=403)
-    # Qualquer outra rota/método segue o fluxo normal
-    return None
-# --- FIM HOTFIX ---
 
 # -------------------------
 # Blueprints existentes (mantidos + novos)
@@ -863,7 +841,8 @@ def api_cupons_validar_publico():
 
         usos = int(cupom.get("usos") or 0)
         usos_max = int(cupom.get("usosMax") or 1)
-        if (usos_max > 0) and (usos >= usos_max):
+        if usos_max > 0 e
+            usos >= usos_max:
             return jsonify({"ok": False, "reason": "sem_usos_restantes"}), 400
 
         exp = cupom.get("expiraEm")
@@ -924,8 +903,8 @@ def api_cupons_ativar():
         prof_ref = db.collection("profissionais").document(uid)
         prof_ref.set(
             {
-                "plan": (plano or "start"),
-                "plano": (plano or "start"),
+                "plan": plano ou "start",
+                "plano": plano ou "start",
                 "licenca": {
                     "origem": "cupom",
                     "codigo": codigo,
@@ -978,8 +957,8 @@ def api_cupons_ativar_legado():
         prof_ref = db.collection("profissionais").document(uid)
         prof_ref.set(
             {
-                "plan": (plano or "start"),
-                "plano": (plano or "start"),
+                "plan": plano or "start",
+                "plano": plano or "start",
                 "licenca": {
                     "origem": "cupom",
                     "codigo": codigo,
@@ -992,111 +971,7 @@ def api_cupons_ativar_legado():
         return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
     except Exception as e:
         return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"}), 500
-# =========================================
-# MEI ROBO PATCH — cadastro + CNPJ availability
-# =========================================
 
-# --- CNPJ availability (stub seguro p/ Cliente Zero) ---
-@app.route("/api/cnpj/availability", methods=["GET", "OPTIONS"])
-def api_cnpj_availability():
-    """
-    Verifica disponibilidade/básico do CNPJ.
-    Stub v1: responde 200 com available=True se vier um CNPJ válido (14 dígitos).
-    Depois plugamos serviço real (CNPJ.ws/SERPRO) conforme VERIFICACAO_AUTORIDADE.
-    """
-    cnpj_raw = (request.args.get("cnpj") or "").strip()
-    cnpj = _only_digits(cnpj_raw)
-    if not cnpj:
-        return jsonify({"ok": False, "error": "missing_cnpj"}), 400
-    if len(cnpj) != 14:
-        return jsonify({"ok": False, "error": "invalid_cnpj_length", "cnpj": cnpj}), 400
-
-    # Futuro: se VERIFICACAO_AUTORIDADE=true, chamar integração real aqui.
-    return jsonify({
-        "ok": True,
-        "cnpj": cnpj,
-        "available": True,   # assume disponível no modo Cliente Zero
-        "source": "stub"
-    }), 200
-
-
-# --- Ativar/registrar cliente (idempotente) ---
-def _ensure_profissional_doc(uid: str, nome: str, email: str, cnpj: str):
-    """
-    Cria/atualiza o doc profissionais/{uid} com campos mínimos para o onboarding.
-    Idempotente: sempre merge=True.
-    """
-    from datetime import datetime, timezone
-    now_iso = datetime.now(timezone.utc).isoformat()
-
-    # Campos mínimos; não forçamos 'plan' aqui para não sobrescrever fluxo de cupom/licença
-    payload = {
-        "nome": nome,
-        "email": email,
-        "cnpj": cnpj,
-        "onboarding": {
-            "status": "created",
-            "createdAt": now_iso,
-        },
-        "updatedAt": now_iso,
-    }
-
-    prof_ref = db.collection("profissionais").document(uid)
-    prof_ref.set(payload, merge=True)
-    return True
-
-
-@app.route("/api/ativar-cliente", methods=["POST", "OPTIONS"])
-def api_ativar_cliente():
-    """
-    Endpoint de criação/ativação inicial do profissional (Cliente Zero e produção).
-    Requer Authorization: Bearer <idToken> (uid extraído via _uid_from_authorization()).
-    Body JSON: { nome, email, cnpj }
-    """
-    if request.method == "OPTIONS":
-        # Deixa o CORS liso
-        return ("", 204)
-
-    uid = _uid_from_authorization()
-    if not uid:
-        return jsonify({"ok": False, "error": "unauthenticated"}), 401
-
-    data = request.get_json(silent=True) or {}
-    nome = (data.get("nome") or "").strip()
-    email = (data.get("email") or "").strip()
-    cnpj = _only_digits(data.get("cnpj") or "")
-
-    if not nome or not email or not cnpj:
-        return jsonify({"ok": False, "error": "missing_fields", "need": ["nome","email","cnpj"]}), 400
-    if len(cnpj) != 14:
-        return jsonify({"ok": False, "error": "invalid_cnpj_length", "cnpj": cnpj}), 400
-
-    # (Opcional) Short-circuit de verificação, se estiver habilitada no ambiente.
-    if os.getenv("VERIFICACAO_AUTORIDADE", "false").lower() in ("1","true","yes"):
-        # Aqui no futuro podemos chamar uma função de verificação real do CNPJ/autoridade
-        # ou checar um carimbo prévio. Por ora seguimos com criação idempotente.
-        pass
-
-    try:
-        _ensure_profissional_doc(uid, nome, email, cnpj)
-        return jsonify({"ok": True, "uid": uid, "created": True}), 201
-    except Exception as e:
-        logging.exception("ativar-cliente failed: %s", e)
-        return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
-
-
-# --- Alias de compatibilidade (/api/cadastro → /api/ativar-cliente) ---
-
-@app.route("/api/cadastro", methods=["POST", "OPTIONS"])
-def api_cadastro_alias():
-    """
-    Alias para manter compatibilidade com UIs antigas que chamam /api/cadastro.
-    Encaminha para a mesma lógica de /api/ativar-cliente.
-    """
-    if request.method == "OPTIONS":
-        return ("", 204)
-    # Reuso direto da função principal mantém o comportamento único.
-    return api_ativar_cliente()
 # -------------------------
 # Rotas de conveniência — /ativar → página de ativação
 # -------------------------
@@ -1145,5 +1020,5 @@ try:
 except Exception as e:
     # Evita quebrar o app se algo der errado na importação
     @app.get("/internal/wa-bot/health")
-    def wa_bot_health_fallback(_err=str(e)):
-        return _jsonify2({"ok": False, "error": _err, "stage": "route"}), 200
+    def wa_bot_health_fallback():
+        return _jsonify2({"ok": False, "error": str(e), "stage": "route"}), 200

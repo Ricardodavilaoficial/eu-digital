@@ -12,8 +12,27 @@
     "public": "public",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "headers": [
-      { "source": "**/*.@(html|htm)", "headers": [ { "key": "Cache-Control", "value": "no-store" } ] },
-      { "source": "/assets/partials/**", "headers": [ { "key": "Cache-Control", "value": "no-store" } ] }
+      {
+        "source": "**/*.@(html|htm)",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-store" },
+          { "key": "X-Frame-Options", "value": "DENY" },
+          { "key": "X-Content-Type-Options", "value": "nosniff" }
+        ]
+      },
+      {
+        "source": "/assets/partials/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-store" }
+        ]
+      },
+      {
+        "source": "assets/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "public,max-age=86400,immutable" },
+          { "key": "X-Content-Type-Options", "value": "nosniff" }
+        ]
+      }
     ]
   }
 }
