@@ -95,10 +95,15 @@ def process_inbound(event: Dict[str, Any]) -> Dict[str, Any]:
     try:
         if _using_legacy():
             _ensure_legacy("process_inbound")
-            return _legacy.process_inbound(event)  # type: ignore[attr-defined]
+            if hasattr(_legacy, "process_inbound"):
+                return _legacy.process_inbound(event)  # type: ignore[attr-defined]
+            # Legacy não possui process_inbound: não tratar como erro; sinalizar e seguir
+            return {"ok": False, "reason": "legacy_no_process_inbound", "stage": "fachada"}
         # v1 habilitado mas mantemos fallback no legacy nesta fase
         _ensure_legacy("process_inbound(v1-fallback)")
-        return _legacy.process_inbound(event)  # type: ignore[attr-defined]
+        if hasattr(_legacy, "process_inbound"):
+            return _legacy.process_inbound(event)  # type: ignore[attr-defined]
+        return {"ok": False, "reason": "legacy_no_process_inbound(v1)", "stage": "fachada"}
     except Exception as e:
         print(f"[WA_BOT][FACHADA] process_inbound ERRO: {e}\n{traceback.format_exc()}", flush=True)
         # Nunca explodir: devolver shape conhecido
@@ -231,10 +236,11 @@ def process_change(
                     ok = bool(_legacy.process_change(change))  # type: ignore[attr-defined]
                     if ok:
                         return True
-            # Fallback para entrada genérica do legacy
-            resp = _legacy.process_inbound(change)  # type: ignore[attr-defined]
-            if isinstance(resp, dict) and resp.get("ok"):
-                return True
+            # Fallback para entrada genérica do legacy (somente se existir)
+            if hasattr(_legacy, "process_inbound"):
+                resp = _legacy.process_inbound(change)  # type: ignore[attr-defined]
+                if isinstance(resp, dict) and resp.get("ok"):
+                    return True
     except Exception as e:
         logging.exception("[WA_BOT][FACHADA] delegação ao legacy falhou: %s", e)
 
