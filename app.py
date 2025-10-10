@@ -1,4 +1,6 @@
-﻿# app.py — entrypoint para runtime Python do Render (produção)
+﻿# Write the corrected app.py to a file for download
+
+app_py_content = r'''# app.py — entrypoint para runtime Python do Render (produção)
 # Mantém: health, debug, firestore-utils, /api/send-text, estáticos
 # Webhook agora é servido via routes/stripe_webhook (blueprint)
 
@@ -291,7 +293,7 @@ TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverif
 STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
 
 def fallback_text(context: str) -> str:
-    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
+    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\\nDigite 'precos' para ver a lista."
 # --- HOTFIX: responder ao GET /webhook com hub.challenge (sem mexer no POST) ---
 from flask import Response
 
@@ -476,6 +478,94 @@ def health():
         uid_default=UID_DEFAULT,
     )
 
+# =========================================
+# Verificação de e-mail (fallback)
+# =========================================
+# Helpers locais para esta rota (mínimos e isolados)
+import base64 as _b64
+
+def verify_bearer():
+    """Decodifica o Bearer JWT (sem validar assinatura) e retorna claims ou None."""
+    auth = request.headers.get("Authorization", "").strip()
+    if not auth.lower().startswith("bearer "):
+        return None
+    tok = auth.split(" ", 1)[1].strip()
+    parts = tok.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
+        payload = json.loads(_b64.urlsafe_b64decode((parts[1] + pad).encode()).decode())
+        uid = payload.get("user_id") or payload.get("uid") or payload.get("sub")
+        if not uid:
+            return None
+        payload["uid"] = uid
+        return payload
+    except Exception:
+        return None
+
+_fb_initialized = False
+fb_fs = None
+
+def ensure_firebase_admin():
+    """Inicializa firebase_admin sob demanda e expõe fb_fs (Firestore)."""
+    global _fb_initialized, fb_fs
+    if _fb_initialized and fb_fs is not None:
+        return
+    try:
+        import firebase_admin
+        from firebase_admin import credentials, firestore
+        if not firebase_admin._apps:
+            # Usa credenciais do ambiente (JSON na env var) se existir
+            cred_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON") or os.getenv("FIREBASE_CREDENTIALS_JSON")
+            if cred_json:
+                cred = credentials.Certificate(json.loads(cred_json))
+                firebase_admin.initialize_app(cred)
+            else:
+                firebase_admin.initialize_app()
+        fb_fs = firestore.client()
+        _fb_initialized = True
+    except Exception as e:
+        app.logger.warning("ensure_firebase_admin: falha ao inicializar firebase_admin: %s", e)
+        _fb_initialized = False
+        fb_fs = None
+
+@app.route("/api/auth/check-verification", methods=["POST", "OPTIONS"])
+def check_verification():
+    if request.method == "OPTIONS":
+        return ("", 200)
+
+    # precisa estar igual ao que você usa para decodificar o Bearer
+    claims = verify_bearer()
+    if not claims:
+        return jsonify(verified=False, error="unauthorized"), 401
+
+    ensure_firebase_admin()
+    if fb_fs is None:
+        return jsonify(verified=False, error="firebase_admin_unavailable"), 500
+
+    from firebase_admin import auth as fb_auth
+
+    try:
+        u = fb_auth.get_user(claims["uid"])
+    except Exception as e:
+        app.logger.warning("check-verification: get_user falhou: %s", e)
+        return jsonify(verified=False, error="user_not_found"), 404
+
+    if not u.email_verified:
+        return jsonify(verified=False), 200
+
+    # marca ativo no Firestore (ajuste a coleção se for diferente)
+    try:
+        fb_fs.collection("profissionais").document(claims["uid"]).set({
+            "status": "active",
+            "emailVerified": True
+        }, merge=True)
+    except Exception as e:
+        app.logger.warning("check-verification: firestore set falhou: %s", e)
+
+    return jsonify(verified=True), 200
+
 @app.route("/__routes", methods=["GET"])
 def list_routes():
     rules = []
@@ -631,7 +721,7 @@ def _load_wa_bot():
         return _WA_BOT_MOD
     except Exception as e:
         _WA_BOT_MOD = None
-        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\n" + (traceback.format_exc(limit=3) or "")
+        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\\n" + (traceback.format_exc(limit=3) or "")
         print(f"[init][erro] não consegui importar services.wa_bot: {e}", flush=True)
         return None
 
@@ -1111,6 +1201,7 @@ def api_cadastro_alias():
                 email_clean,
                 continue_url="https://www.meirobo.com.br/verify-email.html"
             )
+            app.logger.info("cadastro(alias): verification email enviado para %s", email_clean)
         else:
             app.logger.warning("cadastro(alias): e-mail não encontrado no payload; pulando envio de verificação.")
     except Exception as e:
@@ -1118,52 +1209,4 @@ def api_cadastro_alias():
 
     # 3) Segue o fluxo original (reuso da função principal)
     return api_ativar_cliente()
-# Rotas de conveniência — /ativar → página de ativação
-# -------------------------
-@app.get("/ativar")
-def goto_ativar():
-    """
-    Redireciona para a tela de ativação do frontend (se FRONTEND_BASE estiver setado),
-    ou tenta servir /pages/ativar.html localmente. Fallback para index.html.
-    """
-    try:
-        if FRONTEND_BASE:
-            dest = FRONTEND_BASE.rstrip("/") + "/pages/ativar.html"
-            if urlparse(dest).scheme:
-                return redirect(dest, code=302)
-        # se não houver FRONTEND_BASE, tenta servir local
-        return app.send_static_file("pages/ativar.html")
-    except Exception:
-        return app.send_static_file("index.html")
 
-# -------------------------
-# Static
-# -------------------------
-@app.route("/", methods=["GET"])
-def index():
-    return app.send_static_file("index.html")
-
-@app.route("/<path:path>", methods=["GET"])
-def static_proxy(path):
-    return send_from_directory(app.static_folder, path)
-
-# -------------------------
-# Main
-# -------------------------
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=True)
-
-# --- Rota de health do wa_bot (somente leitura) ---
-from flask import jsonify as _jsonify2
-try:
-    from services import wa_bot
-
-    @app.get("/internal/wa-bot/health")
-    def wa_bot_health():
-        return _jsonify2(wa_bot.healthcheck()), 200
-except Exception as e:
-    # Evita quebrar o app se algo der errado na importação
-    @app.get("/internal/wa-bot/health")
-    def wa_bot_health_fallback(_err=str(e)):
-        return _jsonify2({"ok": False, "error": _err, "stage": "route"}), 200
