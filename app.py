@@ -1,6 +1,6 @@
 ﻿# Write the corrected app.py to a file for download
 
-app_py_content = r'''# app.py — entrypoint para runtime Python do Render (produção)
+# app.py — entrypoint para runtime Python do Render (produção)
 # Mantém: health, debug, firestore-utils, /api/send-text, estáticos
 # Webhook agora é servido via routes/stripe_webhook (blueprint)
 
