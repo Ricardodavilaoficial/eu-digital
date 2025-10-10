@@ -17,6 +17,7 @@ from urllib import parse as ulparse
 from flask import Flask, jsonify, request, send_from_directory, redirect
 from routes.agenda_digest import agenda_digest_bp
 from routes.health import health_bp
+from services.mailer import send_verification_email
 
 # >>> Verificação de Autoridade (Fase 1)
 from routes.verificacao_autoridade import verificacao_bp
@@ -1084,20 +1085,39 @@ def api_ativar_cliente():
         logging.exception("ativar-cliente failed: %s", e)
         return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
 
-
 # --- Alias de compatibilidade (/api/cadastro → /api/ativar-cliente) ---
-
 @app.route("/api/cadastro", methods=["POST", "OPTIONS"])
 def api_cadastro_alias():
     """
     Alias para manter compatibilidade com UIs antigas que chamam /api/cadastro.
     Encaminha para a mesma lógica de /api/ativar-cliente.
+    Aqui também disparamos o e-mail de verificação de forma discreta.
     """
     if request.method == "OPTIONS":
         return ("", 204)
-    # Reuso direto da função principal mantém o comportamento único.
+
+    # 1) Tenta capturar o email do payload recebido do frontend
+    try:
+        data = request.get_json(silent=True) or {}
+        email_clean = (data.get("email") or "").strip().lower()
+    except Exception:
+        data = {}
+        email_clean = ""
+
+    # 2) Dispara o e-mail de verificação (não bloqueia o fluxo se falhar)
+    try:
+        if email_clean:
+            send_verification_email(
+                email_clean,
+                continue_url="https://www.meirobo.com.br/verify-email.html"
+            )
+        else:
+            app.logger.warning("cadastro(alias): e-mail não encontrado no payload; pulando envio de verificação.")
+    except Exception as e:
+        app.logger.warning("cadastro(alias): email verification send failed: %s", e)
+
+    # 3) Segue o fluxo original (reuso da função principal)
     return api_ativar_cliente()
-# -------------------------
 # Rotas de conveniência — /ativar → página de ativação
 # -------------------------
 @app.get("/ativar")
