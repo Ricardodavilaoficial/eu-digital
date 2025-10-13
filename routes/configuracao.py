@@ -3,6 +3,10 @@
 # - Recebe multipart/form-data com os campos do formulário e o arquivo de voz
 # - Faz upload do áudio para o GCS
 # - Salva/mescla os dados em Firestore: profissionais/{uid}
+#
+# Acrescentado com segurança:
+# - GET /api/configuracao: leitura "somente leitura" dos dados do profissional
+#   (usa Firebase ID Token; fallback de teste por ?uid=)
 
 from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
@@ -10,7 +14,13 @@ from werkzeug.utils import secure_filename
 from services import db as dbsvc
 from services import gcs_handler
 
+# Imports para leitura segura (GET) via Firebase Admin
+from firebase_admin import auth as fb_auth, firestore
+
 config_bp = Blueprint('config', __name__)
+
+# Firestore client (Firebase Admin já deve estar inicializado no app)
+_db = firestore.client()
 
 # Limite básico de validação (o main.py já tem MAX_CONTENT_LENGTH = 25MB)
 ALLOWED_AUDIO_MIMES = {
@@ -18,6 +28,75 @@ ALLOWED_AUDIO_MIMES = {
     "audio/mpeg", "audio/mp3",
     "audio/ogg", "audio/webm", "audio/x-m4a", "audio/aac", "audio/flac"
 }
+
+def _get_bearer_token():
+    authz = request.headers.get("Authorization", "")
+    if authz.startswith("Bearer "):
+        return (authz.split(" ", 1)[1] or "").strip()
+    return None
+
+def _resolve_uid_for_read():
+    """
+    Resolve o uid para leitura:
+    1) Preferir Firebase ID Token (Authorization: Bearer)
+    2) Fallback: querystring ?uid= (apenas para testes/diagnóstico)
+    """
+    token = _get_bearer_token()
+    if token:
+        try:
+            decoded = fb_auth.verify_id_token(token)
+            uid = decoded.get("uid")
+            if uid:
+                return uid
+        except Exception:
+            # cai para fallback ?uid=
+            pass
+    # Fallback CONTROLADO para CMD/teste
+    qs_uid = (request.args.get("uid") or "").strip()
+    return qs_uid or None
+
+@config_bp.route('/api/configuracao', methods=['GET'])
+def ler_configuracao():
+    """
+    Leitura "somente leitura" dos dados básicos do profissional para a tela configuracao.html.
+    NÃO exige áudio. NÃO altera nada.
+    Retorna campos achatados esperados pelo front:
+      - nome, email, cnpj (de dadosBasicos.*)
+      - segmento (de perfilProfissional.segmento)
+      - legal_name, trade_name se existirem em algum lugar
+    """
+    uid = _resolve_uid_for_read()
+    if not uid:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    # Lê doc profissionais/{uid}
+    try:
+        doc_ref = _db.collection("profissionais").document(uid)
+        snap = doc_ref.get()
+        if not snap.exists:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+
+        data = snap.to_dict() or {}
+
+        # Extrai dados nos caminhos atuais (sem mudar seu esquema)
+        dados_basicos = data.get("dadosBasicos", {}) or {}
+        perfil_prof   = data.get("perfilProfissional", {}) or {}
+
+        flat = {
+            "uid": uid,
+            "nome": dados_basicos.get("nome"),
+            "email": dados_basicos.get("email"),
+            "telefone": dados_basicos.get("telefone"),
+            "cnpj": dados_basicos.get("cnpj"),
+            "segmento": perfil_prof.get("segmento"),
+            # Esses dois podem vir do preenchimento da consulta CNPJ (se você salvar)
+            "legal_name": data.get("legal_name") or dados_basicos.get("legal_name"),
+            "trade_name": data.get("trade_name") or dados_basicos.get("trade_name"),
+        }
+
+        return jsonify({"ok": True, "data": flat}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
 
 @config_bp.route('/api/configuracao', methods=['POST'])
 def salvar_configuracao():

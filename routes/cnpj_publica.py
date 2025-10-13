@@ -1,4 +1,3 @@
-
 # routes/cnpj_publica.py
 # MEI Robô — Integração CNPJ.ws (API Pública) v1 (com heurística aprimorada)
 # Rota: GET /integracoes/cnpj/<cnpj>
@@ -26,6 +25,26 @@ HTTP_TIMEOUT = 8  # seconds
 CACHE_TTL_SECS = 24 * 60 * 60  # 24h
 
 _cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}  # key: cnpj, val: (expiry_ts, payload)
+
+# ====== CORS restrito somente para este blueprint ======
+_ALLOWED_ORIGINS = {
+    "https://www.meirobo.com.br",
+    "https://meirobo.com.br",
+    # Adicione seu preview se for testar a partir de um canal do Firebase Hosting:
+    # "https://<preview>--mei-robo-prod.web.app",
+}
+
+def _add_cors_headers(resp):
+    origin = request.headers.get("Origin", "")
+    if origin in _ALLOWED_ORIGINS:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        # Se não precisa enviar cookies, pode omitir a próxima linha:
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+    return resp
+# =======================================================
 
 
 def _only_digits(s: str) -> str:
@@ -57,16 +76,7 @@ def _normalize_text(s: str) -> str:
 
 
 def _match_nome(nome_busca: str, razao: str, socios: list) -> Tuple[str, Optional[str]]:
-    """
-    Heurística robusta:
-    - Normaliza (remove acentos/pontuação) e uppercase
-    - Remove stopwords comuns: DA, DE, DO, DAS, DOS, D, E
-    - EXATO: string normalizada de busca == alvo
-    - PROVAVEL:
-        a) busca como substring no alvo
-        b) >=2 tokens da busca aparecem na ORDEM no alvo
-        c) existe token >=4 chars da busca presente no alvo
-    """
+
     if not nome_busca:
         return ("NAO_INFORMADO", None)
 
@@ -194,12 +204,16 @@ def _set_cache(cnpj: str, payload: Dict[str, Any]):
     _cache[cnpj] = (time.time() + CACHE_TTL_SECS, payload)
 
 
-@bp_cnpj_publica.route("/integracoes/cnpj/<cnpj>", methods=["GET"])
+@bp_cnpj_publica.route("/integracoes/cnpj/<cnpj>", methods=["GET", "OPTIONS"])
 def integrar_cnpj_publica(cnpj: str):
+    # Pré-flight CORS
+    if request.method == "OPTIONS":
+        return _add_cors_headers(make_response("", 204))
+
     raw = cnpj or ""
     clean = _only_digits(raw)
     if not _valid_cnpj14(clean):
-        return make_response(jsonify({"erro": "CNPJ inválido", "cnpj": clean}), 400)
+        return _add_cors_headers(make_response(jsonify({"erro": "CNPJ inválido", "cnpj": clean}), 400))
 
     # cache
     cached = _get_cached(clean)
@@ -210,31 +224,31 @@ def integrar_cnpj_publica(cnpj: str):
         if nome:
             avaliacao, origem = _match_nome(nome, resp.get("razaoSocial"), resp.get("socios"))
             resp["vinculoNome"] = {"entrada": nome, "avaliacao": avaliacao, "origem": origem}
-        return jsonify(resp)
+        return _add_cors_headers(jsonify(resp))
 
     url = f"{CNPJWS_PUBLIC_BASE}/cnpj/{clean}"
     try:
         r = requests.get(url, timeout=HTTP_TIMEOUT)
     except requests.RequestException as e:
-        return make_response(jsonify({"erro": "Falha ao consultar origem", "detalhe": str(e)}), 502)
+        return _add_cors_headers(make_response(jsonify({"erro": "Falha ao consultar origem", "detalhe": str(e)}), 502))
 
     # repassar alguns status da origem
     if r.status_code == 404:
-        return make_response(jsonify({"erro": "CNPJ não encontrado", "cnpj": clean}), 404)
+        return _add_cors_headers(make_response(jsonify({"erro": "CNPJ não encontrado", "cnpj": clean}), 404))
     if r.status_code == 429:
         retry_after = r.headers.get("Retry-After")
         msg = {"erro": "Muitas consultas. Tente novamente em instantes.", "cnpj": clean}
         resp = make_response(jsonify(msg), 429)
         if retry_after:
             resp.headers["Retry-After"] = retry_after
-        return resp
+        return _add_cors_headers(resp)
     if r.status_code >= 500:
-        return make_response(jsonify({"erro": "Indisponibilidade na origem"}), 502)
+        return _add_cors_headers(make_response(jsonify({"erro": "Indisponibilidade na origem"}), 502))
 
     try:
         data = r.json()
     except ValueError:
-        return make_response(jsonify({"erro": "Resposta inválida da origem"}), 502)
+        return _add_cors_headers(make_response(jsonify({"erro": "Resposta inválida da origem"}), 502))
 
     canonic = _map_canonic(data)
     _set_cache(clean, canonic)
@@ -245,4 +259,10 @@ def integrar_cnpj_publica(cnpj: str):
         avaliacao, origem = _match_nome(nome, canonic.get("razaoSocial"), canonic.get("socios"))
         canonic["vinculoNome"] = {"entrada": nome, "avaliacao": avaliacao, "origem": origem}
 
-    return jsonify(canonic)
+    return _add_cors_headers(jsonify(canonic))
+
+
+@bp_cnpj_publica.after_request
+def _after_request(resp):
+    # Garante CORS nas respostas do blueprint
+    return _add_cors_headers(resp)

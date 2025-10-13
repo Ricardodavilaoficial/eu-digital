@@ -37,6 +37,8 @@ except Exception as e:
 # >>> NOVOS BLUEPRINTS (Signed URL + Opt-in)
 from routes.media import media_bp
 from routes.contacts import contacts_bp
+from routes.configuracao import config_bp
+from routes.configuracao import ler_configuracao as _config_read  # alias seguro pro GET
 
 # >>> Stripe Webhook
 from routes.stripe_webhook import stripe_webhook_bp
@@ -121,6 +123,66 @@ def _strip_cors_when_no_origin(resp):
 app.register_blueprint(verificacao_bp)
 if bp_cnpj_publica:
     app.register_blueprint(bp_cnpj_publica)
+app.register_blueprint(config_bp)
+
+# Alias direto para GET /api/configuracao (tolerante a barra / strict_slashes)
+app.add_url_rule(
+    "/api/configuracao",
+    view_func=_config_read,
+    methods=["GET"],
+    endpoint="config_read_alias",
+    strict_slashes=False
+)
+app.add_url_rule(
+    "/api/configuracao/",
+    view_func=_config_read,
+    methods=["GET"],
+    endpoint="config_read_alias_slash",
+    strict_slashes=False
+)
+print("[boot] Alias GET /api/configuracao registrado (com e sem barra) ✓")
+
+# Diagnóstico: listar regras carregadas para esse caminho
+try:
+    _regras = [
+        f"{r.rule} → {','.join(sorted(r.methods))}"
+        for r in app.url_map.iter_rules()
+        if r.rule in ("/api/configuracao", "/api/configuracao/")
+    ]
+    print("[boot] url_map /api/configuracao:", _regras)
+except Exception as _e:
+    print("[boot][warn] inspeção de url_map falhou:", _e)
+
+# === DEBUG TEMPORÁRIO (pode remover depois que validar) ===
+from flask import jsonify as _jsonify
+
+@app.route("/__map_config", methods=["GET"])
+def __map_config():
+    try:
+        entries = []
+        for r in app.url_map.iter_rules():
+            if r.rule in ("/api/configuracao", "/api/configuracao/"):
+                entries.append({
+                    "rule": r.rule,
+                    "endpoint": r.endpoint,
+                    "methods": sorted(list(r.methods)),
+                })
+        return _jsonify({"ok": True, "entries": entries}), 200
+    except Exception as e:
+        return _jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/__direct_config", methods=["GET"])
+def __direct_config():
+    # chama exatamente a função _config_read que o alias usa
+    return _config_read()
+# === FIM DEBUG TEMPORÁRIO ===
+
+# === BOOT TAG (diagnóstico leve) ===
+BOOT_TAG = "config-read-v3"  # mude o sufixo se precisar forçar reconhecimento
+@app.route("/__version", methods=["GET"])
+def __version():
+    return jsonify({"ok": True, "boot": BOOT_TAG}), 200
+# === FIM BOOT TAG ===
 
 # ✓ NOVOS BLUEPRINTS (Signed URL + Opt-in)
 app.register_blueprint(media_bp)
@@ -368,6 +430,7 @@ except Exception as e:
 try:
     from routes.configuracao import config_bp
     _register_bp(config_bp, "config_bp (/api/configuracao)")
+    
 except Exception as e:
     print(f"[bp][warn] config_bp não registrado: {e}")
     traceback.print_exc()
