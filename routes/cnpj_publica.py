@@ -33,6 +33,7 @@ _ALLOWED_ORIGINS = {
     # Adicione seu preview se for testar a partir de um canal do Firebase Hosting:
     # "https://<preview>--mei-robo-prod.web.app",
 }
+_CORS_MAX_AGE = "86400"  # 24h
 
 def _add_cors_headers(resp):
     origin = request.headers.get("Origin", "")
@@ -41,7 +42,9 @@ def _add_cors_headers(resp):
         resp.headers["Vary"] = "Origin"
         resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        # Se não precisa enviar cookies, pode omitir a próxima linha:
+        resp.headers["Access-Control-Max-Age"] = _CORS_MAX_AGE
+        # Se não precisa enviar cookies/auth por cabeçalho, pode omitir a próxima linha.
+        # Mantive compatível; remova se quiser estritamente sem credenciais.
         resp.headers["Access-Control-Allow-Credentials"] = "true"
     return resp
 # =======================================================
@@ -76,7 +79,6 @@ def _normalize_text(s: str) -> str:
 
 
 def _match_nome(nome_busca: str, razao: str, socios: list) -> Tuple[str, Optional[str]]:
-
     if not nome_busca:
         return ("NAO_INFORMADO", None)
 
@@ -134,7 +136,7 @@ def _match_nome(nome_busca: str, razao: str, socios: list) -> Tuple[str, Optiona
     return ("NAO_ENCONTRADO", None)
 
 
-def _map_canonic(json_src: Dict[str, Any]) -> Dict[str, Any]:
+def _map_canonic(json_src: Dict[str, Any]) -> Dict[str, Any]]:
     """Mapeia JSON da CNPJ.ws pública para o esquema canônico do MEI Robô."""
     razao_social = json_src.get("razao_social")
     estabelecimento = json_src.get("estabelecimento") or {}
