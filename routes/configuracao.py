@@ -77,7 +77,7 @@ def ler_configuracao():
 
     # Lê doc profissionais/{uid}
     try:
-        doc_ref = _db.collection("profissionais").document(uid)
+        doc_ref = _get_db().collection("profissionais").document(uid)
         snap = doc_ref.get()
         if not snap.exists:
             return jsonify({"ok": False, "error": "not_found"}), 404
