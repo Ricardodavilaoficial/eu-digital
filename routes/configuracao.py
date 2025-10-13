@@ -1,4 +1,4 @@
-# routes/configuracao.py
+d# routes/configuracao.py
 # Rota de configuração inicial do MEI (onboarding)
 # - Recebe multipart/form-data com os campos do formulário e o arquivo de voz
 # - Faz upload do áudio para o GCS
@@ -15,19 +15,31 @@ from services import db as dbsvc
 from services import gcs_handler
 
 # Imports para leitura segura (GET) via Firebase Admin
-import firebase_admin
-from firebase_admin import auth as fb_auth, firestore
+import os, json, firebase_admin
+from firebase_admin import auth as fb_auth, firestore, credentials
 
 config_bp = Blueprint('config', __name__)
 
 def _get_db():
-    """Garante firebase_admin inicializado e retorna o client do Firestore."""
+    """Inicializa o Firebase Admin se necessário e retorna o client do Firestore."""
     try:
         firebase_admin.get_app()
     except ValueError:
-        firebase_admin.initialize_app()
+        # 1) Tenta credencial JSON inline por env (recomendado no Render)
+        cred_json = os.getenv("FIREBASE_ADMIN_CREDENTIALS") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        if cred_json:
+            try:
+                info = json.loads(cred_json)
+                cred = credentials.Certificate(info)
+            except Exception:
+                # Se a env vier como caminho por engano, cai em ADC
+                cred = credentials.ApplicationDefault()
+        else:
+            # 2) Sem JSON inline → ADC padrão (usa GOOGLE_APPLICATION_CREDENTIALS=path)
+            cred = credentials.ApplicationDefault()
+        firebase_admin.initialize_app(cred)
     return firestore.client()
-    
+
 # Limite básico de validação (o main.py já tem MAX_CONTENT_LENGTH = 25MB)
 ALLOWED_AUDIO_MIMES = {
     "audio/wav", "audio/x-wav",
