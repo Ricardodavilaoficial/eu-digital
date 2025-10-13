@@ -7,6 +7,7 @@
 # Acrescentado com segurança:
 # - GET /api/configuracao: leitura "somente leitura" dos dados do profissional
 #   (usa Firebase ID Token; fallback de teste por ?uid=)
+# - BLINDAGEM CNPJ: bloqueia alteração de CNPJ já gravado sem override admin.
 
 from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
@@ -95,6 +96,38 @@ def _normalize_cnpj(cnpj):
     digits = re.sub(r"\D", "", s)
     return digits or None
 
+# ---------------------------
+# BLINDAGEM CNPJ (helpers)
+# ---------------------------
+
+def _admin_override_enabled() -> bool:
+    # Desligado por padrão. Para ligar: ADMIN_CNPJ_OVERRIDE=1
+    return os.getenv("ADMIN_CNPJ_OVERRIDE", "0") in ("1", "true", "True", "yes", "YES")
+
+def _is_admin_override(req) -> bool:
+    """
+    Permite override via header X-Admin-Override com valor secreto.
+    Para ativar:
+      - ADMIN_CNPJ_OVERRIDE=1
+      - ADMIN_CNPJ_SECRET=<token_secreto>
+    """
+    if not _admin_override_enabled():
+        return False
+    secret = (os.getenv("ADMIN_CNPJ_SECRET") or "").strip()
+    provided = (req.headers.get("X-Admin-Override") or "").strip()
+    return bool(secret) and provided == secret
+
+def _read_current_cnpj(uid: str):
+    """Lê o doc profissionais/{uid} e retorna o CNPJ normalizado (flat ou dadosBasicos.cnpj)."""
+    db = _get_db()
+    snap = db.collection("profissionais").document(uid).get()
+    if not snap.exists:
+        return None
+    data = snap.to_dict() or {}
+    dados_basicos = data.get("dadosBasicos") or {}
+    cnpj_raw = _first_non_empty(data.get("cnpj"), dados_basicos.get("cnpj"))
+    return _normalize_cnpj(cnpj_raw)
+
 @config_bp.route('/api/configuracao', methods=['GET'], strict_slashes=False)
 def ler_configuracao():
     """
@@ -155,7 +188,8 @@ def salvar_configuracao():
     nome       = (request.form.get('nome') or "").strip()
     email      = (request.form.get('email') or "").strip()
     telefone   = (request.form.get('telefone') or "").strip()
-    cnpj       = (request.form.get('cnpj') or "").strip()
+    cnpj_in    = (request.form.get('cnpj') or "").strip()
+    cnpj_new   = _normalize_cnpj(cnpj_in)
 
     segmento   = (request.form.get('segmento') or "").strip()
     esp1       = (request.form.get('esp1') or "").strip()
@@ -167,6 +201,26 @@ def salvar_configuracao():
 
     # UID provisório para testes (frontend guarda em localStorage)
     uid = (request.form.get('uid') or "demo").strip()
+
+    # -------- BLINDAGEM CNPJ (antes de subir áudio) --------
+    try:
+        cnpj_current = _read_current_cnpj(uid)
+        if cnpj_current:
+            # Se já existe CNPJ salvo e o novo valor é diferente, bloquear sem override
+            if cnpj_new and cnpj_new != cnpj_current and not _is_admin_override(request):
+                return jsonify({
+                    "ok": False,
+                    "error": "CNPJ alteration not allowed",
+                    "message": "Alteração de CNPJ não permitida sem aprovação administrativa.",
+                    "uid": uid,
+                    "current_cnpj": cnpj_current
+                }), 409
+            # Se não veio CNPJ no form, preservar o atual
+            if not cnpj_new:
+                cnpj_new = cnpj_current
+    except Exception as e:
+        # Em caso de falha de leitura do doc, preferimos não prosseguir com alteração de CNPJ
+        return jsonify({"ok": False, "error": "internal_error", "detail": f"Falha ao validar CNPJ: {e}"}), 500
 
     # -------- Áudio obrigatório --------
     voz_file = request.files.get('voz')
@@ -200,7 +254,7 @@ def salvar_configuracao():
             "nome": nome,
             "email": email,
             "telefone": telefone,
-            "cnpj": cnpj,
+            "cnpj": cnpj_new or "",   # mantém compatibilidade
         },
         "perfilProfissional": {
             "segmento": segmento,
@@ -224,4 +278,5 @@ def salvar_configuracao():
     except Exception as e:
         return (f"Erro ao salvar no Firestore: {e}", 500)
 
+    # Resposta preservando o formato já usado no front:
     return jsonify({"status": "ok", "uid": uid, "vozUrl": voz_url})
