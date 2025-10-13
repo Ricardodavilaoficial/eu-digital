@@ -16,6 +16,10 @@ app = module.app
 
 print(f"[server] loaded app from {APP_PATH}", flush=True)
 
+# === ACRESCIMO: handler do GET /api/configuracao (do blueprint) ===
+from routes.configuracao import ler_configuracao as _config_read  # GET handler
+# =================================================================
+
 # -------------------------------------------------------------------
 # Fallback helpers (usados só se o app.py não expor os oficiais)
 # -------------------------------------------------------------------
@@ -111,5 +115,30 @@ def _register_missing_routes():
 
         app.add_url_rule("/api/send-text", endpoint="server_api_send_text", view_func=api_send_text_local, methods=["GET", "POST"])
         print("[server] /api/send-text (server_api_send_text) adicionado", flush=True)
+
+    # === ACRESCIMO: GET /api/configuracao (aliases) se estiver faltando ===
+    if "/api/configuracao" not in existing_rules and "/api/configuracao/" not in existing_rules:
+        app.add_url_rule(
+            "/api/configuracao",
+            endpoint="server_config_read_alias",
+            view_func=_config_read,
+            methods=["GET"],
+            strict_slashes=False,
+        )
+        app.add_url_rule(
+            "/api/configuracao/",
+            endpoint="server_config_read_alias_slash",
+            view_func=_config_read,
+            methods=["GET"],
+            strict_slashes=False,
+        )
+        print("[server] /api/configuracao (aliases GET) adicionados", flush=True)
+
+    # === ACRESCIMO: canário de versão para confirmar imagem em produção ===
+    if "/__version" not in existing_rules:
+        def __version_local():
+            return jsonify({"ok": True, "boot": "server-bridge-v1"}), 200
+        app.add_url_rule("/__version", endpoint="server_version", view_func=__version_local, methods=["GET"])
+        print("[server] /__version (server_version) adicionado", flush=True)
 
 _register_missing_routes()
