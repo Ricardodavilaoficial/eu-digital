@@ -15,13 +15,19 @@ from services import db as dbsvc
 from services import gcs_handler
 
 # Imports para leitura segura (GET) via Firebase Admin
+import firebase_admin
 from firebase_admin import auth as fb_auth, firestore
 
 config_bp = Blueprint('config', __name__)
 
-# Firestore client (Firebase Admin já deve estar inicializado no app)
-_db = firestore.client()
-
+def _get_db():
+    """Garante firebase_admin inicializado e retorna o client do Firestore."""
+    try:
+        firebase_admin.get_app()
+    except ValueError:
+        firebase_admin.initialize_app()
+    return firestore.client()
+    
 # Limite básico de validação (o main.py já tem MAX_CONTENT_LENGTH = 25MB)
 ALLOWED_AUDIO_MIMES = {
     "audio/wav", "audio/x-wav",
