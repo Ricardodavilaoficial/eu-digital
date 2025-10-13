@@ -15,7 +15,7 @@ from services import db as dbsvc
 from services import gcs_handler
 
 # Imports para leitura segura (GET) via Firebase Admin
-import os, json, firebase_admin
+import os, json, re, firebase_admin
 from firebase_admin import auth as fb_auth, firestore, credentials
 
 config_bp = Blueprint('config', __name__)
@@ -73,15 +73,37 @@ def _resolve_uid_for_read():
     qs_uid = (request.args.get("uid") or "").strip()
     return qs_uid or None
 
-@config_bp.route('/api/configuracao', methods=['GET'])
+def _first_non_empty(*vals):
+    """Retorna o primeiro valor não vazio/não None, já com strip() se for string."""
+    for v in vals:
+        if v is None:
+            continue
+        if isinstance(v, str):
+            vs = v.strip()
+            if vs != "":
+                return vs
+        else:
+            # números/boolean/etc.
+            return v
+    return None
+
+def _normalize_cnpj(cnpj):
+    """Mantém apenas dígitos; retorna None se entrada vazia."""
+    if not cnpj:
+        return None
+    s = str(cnpj)
+    digits = re.sub(r"\D", "", s)
+    return digits or None
+
+@config_bp.route('/api/configuracao', methods=['GET'], strict_slashes=False)
 def ler_configuracao():
     """
     Leitura "somente leitura" dos dados básicos do profissional para a tela configuracao.html.
     NÃO exige áudio. NÃO altera nada.
     Retorna campos achatados esperados pelo front:
-      - nome, email, cnpj (de dadosBasicos.*)
-      - segmento (de perfilProfissional.segmento)
-      - legal_name, trade_name se existirem em algum lugar
+      - nome, email, cnpj (aceita flat raiz OU dadosBasicos.*)
+      - segmento (aceita perfilProfissional.segmento OU flat.segmento)
+      - legal_name, trade_name se existirem (raiz OU dadosBasicos.*)
     """
     uid = _resolve_uid_for_read()
     if not uid:
@@ -96,27 +118,38 @@ def ler_configuracao():
 
         data = snap.to_dict() or {}
 
-        # Extrai dados nos caminhos atuais (sem mudar seu esquema)
-        dados_basicos = data.get("dadosBasicos", {}) or {}
-        perfil_prof   = data.get("perfilProfissional", {}) or {}
+        # Possíveis caminhos
+        dados_basicos = (data.get("dadosBasicos") or {}) if isinstance(data.get("dadosBasicos"), dict) else {}
+        perfil_prof   = (data.get("perfilProfissional") or {}) if isinstance(data.get("perfilProfissional"), dict) else {}
+
+        # Consolidação tolerante a esquemas antigos/novos
+        nome      = _first_non_empty(data.get("nome"),      dados_basicos.get("nome"))
+        email     = _first_non_empty(data.get("email"),     dados_basicos.get("email"))
+        telefone  = _first_non_empty(data.get("telefone"),  dados_basicos.get("telefone"))
+        cnpj_raw  = _first_non_empty(data.get("cnpj"),      dados_basicos.get("cnpj"))
+        cnpj      = _normalize_cnpj(cnpj_raw)
+
+        segmento  = _first_non_empty(perfil_prof.get("segmento"), data.get("segmento"))
+
+        legal_nm  = _first_non_empty(data.get("legal_name"),  dados_basicos.get("legal_name"))
+        trade_nm  = _first_non_empty(data.get("trade_name"),  dados_basicos.get("trade_name"))
 
         flat = {
             "uid": uid,
-            "nome": dados_basicos.get("nome"),
-            "email": dados_basicos.get("email"),
-            "telefone": dados_basicos.get("telefone"),
-            "cnpj": dados_basicos.get("cnpj"),
-            "segmento": perfil_prof.get("segmento"),
-            # Esses dois podem vir do preenchimento da consulta CNPJ (se você salvar)
-            "legal_name": data.get("legal_name") or dados_basicos.get("legal_name"),
-            "trade_name": data.get("trade_name") or dados_basicos.get("trade_name"),
+            "nome": nome or "",
+            "email": email or "",
+            "telefone": telefone or "",
+            "cnpj": cnpj or "",
+            "segmento": segmento or "",  # se vazio, o front chamará /integracoes/cnpj/<cnpj>
+            "legal_name": legal_nm or "",
+            "trade_name": trade_nm or "",
         }
 
         return jsonify({"ok": True, "data": flat}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
 
-@config_bp.route('/api/configuracao', methods=['POST'])
+@config_bp.route('/api/configuracao', methods=['POST'], strict_slashes=False)
 def salvar_configuracao():
     # -------- Campos do form --------
     nome       = (request.form.get('nome') or "").strip()
