@@ -1,4 +1,4 @@
-d# routes/configuracao.py
+# routes/configuracao.py
 # Rota de configuração inicial do MEI (onboarding)
 # - Recebe multipart/form-data com os campos do formulário e o arquivo de voz
 # - Faz upload do áudio para o GCS
