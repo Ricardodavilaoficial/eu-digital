@@ -5,10 +5,11 @@
 #   POST /api/voz/upload/     (mesma função; evita redirect 308/405)
 #   GET  /api/voz/ping        (sanidade)
 #   GET  /api/voz/diag        (diagnóstico rápido)
+#   GET  /api/voz/last        (retorna vozClonada do Firestore)
+#   POST /api/voz/gcs_diag_write  (teste de escrita no bucket)
 
 from flask import Blueprint, request, jsonify
-import time, logging
-import importlib
+import time, logging, importlib
 
 from services.voice_validation import (
     ensure_audio_present,
@@ -121,9 +122,28 @@ def voz_diag():
         "mutagen": {"available": mutagen_ok, "version": mutagen_ver},
         "min_seconds": _MIN_SECONDS
     }), 200
+
+@voz_upload_bp.route("/api/voz/last", methods=["GET"])
+def voz_last():
+    """Lê vozClonada do Firestore para o UID informado."""
+    uid = (request.args.get("uid") or "").strip()
+    if not uid:
+        return jsonify({"ok": False, "error": "missing_uid"}), 400
+    try:
+        from google.cloud import firestore
+        db = firestore.Client()
+        doc = db.collection("profissionais").document(uid).get()
+        data = doc.to_dict() or {}
+        return jsonify({
+            "ok": True,
+            "uid": uid,
+            "vozClonada": data.get("vozClonada") or None
+        }), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": "firestore_error", "detail": str(e)}), 500
+
 @voz_upload_bp.route("/api/voz/gcs_diag_write", methods=["POST"])
 def gcs_diag_write():
-    from services.storage_gcs import upload_bytes_and_get_url
     uid = (request.form.get("uid") or "diag")
     try:
         url, bucket, path, access = upload_bytes_and_get_url(uid, "diag.txt", b"ok", "text/plain")

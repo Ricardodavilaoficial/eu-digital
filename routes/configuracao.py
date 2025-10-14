@@ -1,23 +1,25 @@
 # routes/configuracao.py
 # Rota de configuração inicial do MEI (onboarding)
-# - Recebe multipart/form-data com os campos do formulário e o arquivo de voz
-# - Faz upload do áudio para o GCS
-# - Salva/mescla os dados em Firestore: profissionais/{uid}
+# - POST /api/configuracao (multipart): salva dados + upload de áudio (voz)
+# - GET  /api/configuracao (somente leitura): retorna dados achatados p/ front
 #
-# Acrescentado com segurança:
-# - GET /api/configuracao: leitura "somente leitura" dos dados do profissional
-#   (usa Firebase ID Token; fallback de teste por ?uid=)
-# - BLINDAGEM CNPJ: bloqueia alteração de CNPJ já gravado sem override admin.
+# Extras:
+# - Blindagem de CNPJ: não permite alterar CNPJ salvo sem override admin.
+# - Suporte a FIREBASE_ADMIN_CREDENTIALS ou GOOGLE_APPLICATION_CREDENTIALS_JSON (inline)
+# - Devolve vozClonada no GET p/ player do front.
 
 from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
 
-from services import db as dbsvc
-from services import gcs_handler
-
-# Imports para leitura segura (GET) via Firebase Admin
+# Firestore (via Firebase Admin)
 import os, json, re, firebase_admin
 from firebase_admin import auth as fb_auth, firestore, credentials
+
+# GCS helper oficial do projeto
+from services.storage_gcs import upload_bytes_and_get_url
+
+# DB service usado para salvar a config (mantém compat compatível com teu serviço)
+from services import db as dbsvc
 
 config_bp = Blueprint('config', __name__)
 
@@ -27,7 +29,11 @@ def _get_db():
         firebase_admin.get_app()
     except ValueError:
         # 1) Tenta credencial JSON inline por env (recomendado no Render)
-        cred_json = os.getenv("FIREBASE_ADMIN_CREDENTIALS") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        cred_json = (
+            os.getenv("FIREBASE_ADMIN_CREDENTIALS")
+            or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+            or os.getenv("GOOGLE_APPLICATION_CREDENTIAL_JSON")  # fallback sem 'S'
+        )
         if cred_json:
             try:
                 info = json.loads(cred_json)
@@ -41,7 +47,7 @@ def _get_db():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Limite básico de validação (o main.py já tem MAX_CONTENT_LENGTH = 25MB)
+# Limite básico de validação (o app.py já tem MAX_CONTENT_LENGTH = 25MB)
 ALLOWED_AUDIO_MIMES = {
     "audio/wav", "audio/x-wav",
     "audio/mpeg", "audio/mp3",
@@ -57,8 +63,8 @@ def _get_bearer_token():
 def _resolve_uid_for_read():
     """
     Resolve o uid para leitura:
-    1) Preferir Firebase ID Token (Authorization: Bearer)
-    2) Fallback: querystring ?uid= (apenas para testes/diagnóstico)
+      1) Preferir Firebase ID Token (Authorization: Bearer)
+      2) Fallback: querystring ?uid= (para CMD/testes)
     """
     token = _get_bearer_token()
     if token:
@@ -68,9 +74,7 @@ def _resolve_uid_for_read():
             if uid:
                 return uid
         except Exception:
-            # cai para fallback ?uid=
-            pass
-    # Fallback CONTROLADO para CMD/teste
+            pass  # cai no fallback
     qs_uid = (request.args.get("uid") or "").strip()
     return qs_uid or None
 
@@ -84,7 +88,6 @@ def _first_non_empty(*vals):
             if vs != "":
                 return vs
         else:
-            # números/boolean/etc.
             return v
     return None
 
@@ -128,21 +131,25 @@ def _read_current_cnpj(uid: str):
     cnpj_raw = _first_non_empty(data.get("cnpj"), dados_basicos.get("cnpj"))
     return _normalize_cnpj(cnpj_raw)
 
+# ---------------------------
+# GET /api/configuracao
+# ---------------------------
+
 @config_bp.route('/api/configuracao', methods=['GET'], strict_slashes=False)
 def ler_configuracao():
     """
     Leitura "somente leitura" dos dados básicos do profissional para a tela configuracao.html.
-    NÃO exige áudio. NÃO altera nada.
+    NÃO altera nada.
     Retorna campos achatados esperados pelo front:
-      - nome, email, cnpj (aceita flat raiz OU dadosBasicos.*)
-      - segmento (aceita perfilProfissional.segmento OU flat.segmento)
-      - legal_name, trade_name se existirem (raiz OU dadosBasicos.*)
+      - nome, email, telefone, cnpj
+      - segmento
+      - legal_name, trade_name
+      - vozClonada (url + meta) se existir
     """
     uid = _resolve_uid_for_read()
     if not uid:
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
-    # Lê doc profissionais/{uid}
     try:
         doc_ref = _get_db().collection("profissionais").document(uid)
         snap = doc_ref.get()
@@ -151,11 +158,12 @@ def ler_configuracao():
 
         data = snap.to_dict() or {}
 
-        # Possíveis caminhos
+        # caminhos possíveis
         dados_basicos = (data.get("dadosBasicos") or {}) if isinstance(data.get("dadosBasicos"), dict) else {}
         perfil_prof   = (data.get("perfilProfissional") or {}) if isinstance(data.get("perfilProfissional"), dict) else {}
+        voz_clonada   = data.get("vozClonada") or {}
 
-        # Consolidação tolerante a esquemas antigos/novos
+        # consolidação tolerante
         nome      = _first_non_empty(data.get("nome"),      dados_basicos.get("nome"))
         email     = _first_non_empty(data.get("email"),     dados_basicos.get("email"))
         telefone  = _first_non_empty(data.get("telefone"),  dados_basicos.get("telefone"))
@@ -173,14 +181,21 @@ def ler_configuracao():
             "email": email or "",
             "telefone": telefone or "",
             "cnpj": cnpj or "",
-            "segmento": segmento or "",  # se vazio, o front chamará /integracoes/cnpj/<cnpj>
+            "segmento": segmento or "",
             "legal_name": legal_nm or "",
             "trade_name": trade_nm or "",
+            # player no front:
+            "vozClonadaUrl": (voz_clonada.get("arquivoUrl") or ""),
+            "vozClonada": voz_clonada or None,  # devolve estrutura inteira se quiserem
         }
 
         return jsonify({"ok": True, "data": flat}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
+
+# ---------------------------
+# POST /api/configuracao
+# ---------------------------
 
 @config_bp.route('/api/configuracao', methods=['POST'], strict_slashes=False)
 def salvar_configuracao():
@@ -206,7 +221,6 @@ def salvar_configuracao():
     try:
         cnpj_current = _read_current_cnpj(uid)
         if cnpj_current:
-            # Se já existe CNPJ salvo e o novo valor é diferente, bloquear sem override
             if cnpj_new and cnpj_new != cnpj_current and not _is_admin_override(request):
                 return jsonify({
                     "ok": False,
@@ -215,11 +229,9 @@ def salvar_configuracao():
                     "uid": uid,
                     "current_cnpj": cnpj_current
                 }), 409
-            # Se não veio CNPJ no form, preservar o atual
             if not cnpj_new:
                 cnpj_new = cnpj_current
     except Exception as e:
-        # Em caso de falha de leitura do doc, preferimos não prosseguir com alteração de CNPJ
         return jsonify({"ok": False, "error": "internal_error", "detail": f"Falha ao validar CNPJ: {e}"}), 500
 
     # -------- Áudio obrigatório --------
@@ -229,22 +241,17 @@ def salvar_configuracao():
 
     content_type = (voz_file.content_type or "").lower()
     if not any(content_type.startswith(a.split('/')[0]) or content_type == a for a in ALLOWED_AUDIO_MIMES):
-        # Aceita "audio/*" genérico também:
         if not content_type.startswith("audio/"):
             return (f"Tipo de áudio não suportado: {content_type}", 415)
 
-    # Nome seguro e caminho no bucket
+    # Nome seguro
     filename = secure_filename(voz_file.filename or "voz.wav")
-    dest_path = f"profissionais/{uid}/voz/{filename}"
 
-    # -------- Upload para GCS --------
+    # -------- Upload para GCS (usa helper do projeto) --------
     try:
-        voz_url = gcs_handler.upload_fileobj(
-            voz_file,
-            dest_path,
-            content_type=content_type or "audio/wav",
-            public=True  # em produção, considere public=False (Signed URL)
-        )
+        buf = voz_file.read()
+        url, bucket, path, access = upload_bytes_and_get_url(uid, filename, buf, content_type or "audio/wav")
+        voz_url = url
     except Exception as e:
         return (f"Falha no upload da voz: {e}", 500)
 
@@ -254,7 +261,7 @@ def salvar_configuracao():
             "nome": nome,
             "email": email,
             "telefone": telefone,
-            "cnpj": cnpj_new or "",   # mantém compatibilidade
+            "cnpj": cnpj_new or "",
         },
         "perfilProfissional": {
             "segmento": segmento,
@@ -278,5 +285,4 @@ def salvar_configuracao():
     except Exception as e:
         return (f"Erro ao salvar no Firestore: {e}", 500)
 
-    # Resposta preservando o formato já usado no front:
     return jsonify({"status": "ok", "uid": uid, "vozUrl": voz_url})
