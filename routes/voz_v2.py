@@ -121,3 +121,12 @@ def voz_diag():
         "mutagen": {"available": mutagen_ok, "version": mutagen_ver},
         "min_seconds": _MIN_SECONDS
     }), 200
+@voz_upload_bp.route("/api/voz/gcs_diag_write", methods=["POST"])
+def gcs_diag_write():
+    from services.storage_gcs import upload_bytes_and_get_url
+    uid = (request.form.get("uid") or "diag")
+    try:
+        url, bucket, path, access = upload_bytes_and_get_url(uid, "diag.txt", b"ok", "text/plain")
+        return jsonify({"ok": True, "bucket": bucket, "path": path, "url": url, "access": access}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
