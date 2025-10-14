@@ -590,7 +590,40 @@ def __routes():
     # ordena por caminho p/ facilitar grep
     out.sort(key=lambda x: x["rule"])
     return jsonify({"count": len(out), "routes": out}), 200
+# -------------------------------------
+# Diagnóstico de blueprints/voz
+# -------------------------------------
+import importlib.util
 
+@app.get("/__bp_debug")
+def __bp_debug():
+    info = {
+        "VOZ_V2_ENABLED": os.getenv("VOZ_V2_ENABLED"),
+        "blueprints": sorted(list(app.blueprints.keys())),
+        "voz_v2": {
+            "spec_found": False,
+            "import_ok": False,
+            "has_vox_bp_attr": False,
+            "attr_name": "voz_upload_bp",
+            "import_error": None,
+            "module_file": None,
+        },
+        "routes_count": len(list(app.url_map.iter_rules())),
+        "routes_sample": sorted([str(r) for r in app.url_map.iter_rules() if "/api/voz" in str(r)]),
+    }
+
+    try:
+        spec = importlib.util.find_spec("routes.voz_v2")
+        info["voz_v2"]["spec_found"] = bool(spec)
+        if spec and spec.origin:
+            info["voz_v2"]["module_file"] = spec.origin
+        mod = importlib.import_module("routes.voz_v2")
+        info["voz_v2"]["import_ok"] = True
+        info["voz_v2"]["has_vox_bp_attr"] = hasattr(mod, "voz_upload_bp")
+    except Exception as e:
+        info["voz_v2"]["import_error"] = f"{type(e).__name__}: {e}"
+
+    return jsonify(info), 200
 # =====================================
 # EOF
 # =====================================
