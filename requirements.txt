@@ -1,31 +1,30 @@
 # Web
-stripe>=10.0.0
-Flask
-gunicorn
-flask-cors
+Flask>=3.0.0,<4
+gunicorn>=21.2.0
+flask-cors>=4.0.0
 
 # Utilidades
 requests>=2.31.0
-python-dotenv
-python-dateutil
-pytz
+python-dotenv>=1.0.0
+python-dateutil>=2.8.2
+pytz>=2023.3
 
 # IA / Voz
 openai==0.28.1
-pydub==0.25.1
+pydub==0.25.1        # requer ffmpeg instalado no SO para processamento real de áudio
 elevenlabs==1.13.5
-mutagen           # <-- para detectar duração de MP3/WAV com precisão
+mutagen>=1.47.0      # detectar duração de MP3/WAV com precisão
 
 # Google Cloud / Firebase
-firebase-admin
-google-cloud-firestore
-google-cloud-texttospeech
-google-cloud-speech
-google-cloud-storage
+firebase-admin>=6.4.0
+google-cloud-firestore>=2.13.0
+google-cloud-texttospeech>=2.14.1
+google-cloud-speech>=2.21.0
+google-cloud-storage>=2.16.0
 
 # Tabelas (importação de preços)
-pandas
-openpyxl
+pandas>=2.1.0
+openpyxl>=3.1.2
 
 # Docs (opcional, para leitura .docx no GCS)
-python-docx
+python-docx>=1.0.0
