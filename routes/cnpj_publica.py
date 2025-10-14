@@ -11,6 +11,7 @@
 #
 # Dependências: Flask, requests  (requirements.txt → requests>=2.31.0)
 
+import os
 import re
 import time
 import json
@@ -49,19 +50,40 @@ def _add_cors_headers(resp):
         resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         resp.headers["Access-Control-Max-Age"] = _CORS_MAX_AGE
-        # Se não precisa cookies/auth, pode remover a próxima linha:
+        # Se não precisa enviar cookies/auth, pode remover a próxima linha:
         resp.headers["Access-Control-Allow-Credentials"] = "true"
     return resp
 # =======================================================
 
+# --- Rate limit simples por IP (janela de 1 min) ---
+_RATE_LIMIT_MAX = int(os.getenv("CNPJ_RATE_MAX_PER_MIN", "10"))
+_rate_bucket: Dict[str, Tuple[int, int]] = {}  # ip -> (window_minute, count)
+
+def _client_ip() -> str:
+    return (
+        request.headers.get("CF-Connecting-IP")
+        or (request.headers.get("X-Forwarded-For", "").split(",")[0].strip() if request.headers.get("X-Forwarded-For") else "")
+        or request.remote_addr
+        or "0.0.0.0"
+    )
+
+def _rate_limit_ok(ip: str) -> bool:
+    if _RATE_LIMIT_MAX <= 0:
+        return True
+    now_min = int(time.time() // 60)
+    win, cnt = _rate_bucket.get(ip, (now_min, 0))
+    if win != now_min:
+        win, cnt = now_min, 0
+    cnt += 1
+    _rate_bucket[ip] = (win, cnt)
+    return cnt <= _RATE_LIMIT_MAX
+# ------------------------------------------------------
 
 def _only_digits(s: str) -> str:
     return re.sub(r"\D+", "", s or "")
 
-
 def _valid_cnpj14(s: str) -> bool:
     return bool(re.fullmatch(r"\d{14}", s or ""))
-
 
 def _normalize_text(s: str) -> str:
     """
@@ -81,6 +103,34 @@ def _normalize_text(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip().upper()
     return s
 
+# --- Fallback de CNAE: extrai código da descrição se necessário ---
+_CNAE_CODE_RE = re.compile(r"(\d{2}\.\d{2}-\d)(?:/\d{1,2})?")
+
+def _cnae_from_any(obj: dict) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Extrai (codigo, descricao) de diferentes formatos vindos da pública.
+    Tenta campos: codigo|code|id|cnae e descricao|description|text.
+    Se não houver codigo, tenta inferir da descricao (regex).
+    Normaliza 1234-5 -> 12.34-5 quando possível.
+    """
+    if not isinstance(obj, dict):
+        return (None, None)
+
+    cand_code = obj.get("codigo") or obj.get("code") or obj.get("id") or obj.get("cnae")
+    cand_desc = obj.get("descricao") or obj.get("description") or obj.get("text")
+
+    if cand_code:
+        cand_code = str(cand_code).strip()
+        # Normaliza: 1234-5 → 12.34-5
+        if re.fullmatch(r"\d{4}-\d", cand_code):
+            cand_code = cand_code[:2] + "." + cand_code[2:]
+    else:
+        if isinstance(cand_desc, str):
+            m = _CNAE_CODE_RE.search(cand_desc)
+            if m:
+                cand_code = m.group(1)
+
+    return (cand_code or None, cand_desc or None)
 
 def _match_nome(nome_busca: str, razao: str, socios: List[dict]) -> Tuple[str, Optional[str]]:
     if not nome_busca:
@@ -139,7 +189,6 @@ def _match_nome(nome_busca: str, razao: str, socios: List[dict]) -> Tuple[str, O
 
     return ("NAO_ENCONTRADO", None)
 
-
 def _map_canonic(json_src: Dict[str, Any]) -> Dict[str, Any]:
     """Mapeia JSON da CNPJ.ws pública para o esquema canônico do MEI Robô."""
     razao_social = json_src.get("razao_social")
@@ -167,6 +216,13 @@ def _map_canonic(json_src: Dict[str, Any]) -> Dict[str, Any]:
             "qualificacao": s.get("qualificacao") or s.get("qualificacao_socio")
         })
 
+    # CNAE com fallback
+    cnae_pri_code, cnae_pri_desc = _cnae_from_any(atividade_principal)
+    cnaes_sec_list = []
+    for it in atividades_secundarias:
+        code, desc = _cnae_from_any(it or {})
+        cnaes_sec_list.append({"codigo": code, "descricao": desc})
+
     canonic = {
         "fonte": "cnpj.ws_publica",
         "cnpj": _only_digits(estabelecimento.get("cnpj") or json_src.get("cnpj_completo") or ""),
@@ -174,13 +230,8 @@ def _map_canonic(json_src: Dict[str, Any]) -> Dict[str, Any]:
         "nomeFantasia": estabelecimento.get("nome_fantasia"),
         "dataAbertura": estabelecimento.get("data_inicio_atividade"),
         "situacao": estabelecimento.get("situacao"),
-        "cnaePrincipal": {
-            "codigo": atividade_principal.get("codigo"),
-            "descricao": atividade_principal.get("descricao"),
-        },
-        "cnaesSecundarios": [
-            {"codigo": it.get("codigo"), "descricao": it.get("descricao")} for it in atividades_secundarias
-        ],
+        "cnaePrincipal": {"codigo": cnae_pri_code, "descricao": cnae_pri_desc},
+        "cnaesSecundarios": cnaes_sec_list,
         "endereco": endereco,
         "simples": {
             "optante": simples.get("simples") if isinstance(simples.get("simples"), bool) else None,
@@ -193,7 +244,6 @@ def _map_canonic(json_src: Dict[str, Any]) -> Dict[str, Any]:
     }
     return canonic
 
-
 def _get_cached(cnpj: str) -> Optional[Dict[str, Any]]:
     now = time.time()
     item = _cache.get(cnpj)
@@ -205,10 +255,8 @@ def _get_cached(cnpj: str) -> Optional[Dict[str, Any]]:
         return None
     return payload
 
-
 def _set_cache(cnpj: str, payload: Dict[str, Any]):
     _cache[cnpj] = (time.time() + CACHE_TTL_SECS, payload)
-
 
 def _handle_cnpj_lookup(clean: str):
     # cache
@@ -219,7 +267,10 @@ def _handle_cnpj_lookup(clean: str):
         if nome:
             avaliacao, origem = _match_nome(nome, resp.get("razaoSocial"), resp.get("socios"))
             resp["vinculoNome"] = {"entrada": nome, "avaliacao": avaliacao, "origem": origem}
-        return _add_cors_headers(jsonify(resp))
+        out = jsonify(resp)
+        # Marcar hint de HIT em header (útil para observar no Edge)
+        out.headers["X-Cache-Status"] = "HIT"
+        return _add_cors_headers(out)
 
     url = f"{CNPJWS_PUBLIC_BASE}/cnpj/{clean}"
     try:
@@ -254,34 +305,58 @@ def _handle_cnpj_lookup(clean: str):
         avaliacao, origem = _match_nome(nome, canonic.get("razaoSocial"), canonic.get("socios"))
         canonic["vinculoNome"] = {"entrada": nome, "avaliacao": avaliacao, "origem": origem}
 
-    return _add_cors_headers(jsonify(canonic))
-
+    out = jsonify(canonic)
+    out.headers["X-Cache-Status"] = "MISS"
+    return _add_cors_headers(out)
 
 # ── NOVO: /api/cnpj/<cnpj>
 @cnpj_bp.route("/api/cnpj/<cnpj>", methods=["GET", "OPTIONS"])
 def api_cnpj(cnpj: str):
     if request.method == "OPTIONS":
         return _add_cors_headers(make_response("", 204))
+
+    # rate limit
+    ip = _client_ip()
+    if not _rate_limit_ok(ip):
+        msg = {"erro": "too_many_requests", "retry": 60}
+        return _add_cors_headers(make_response(jsonify(msg), 429))
+
     raw = cnpj or ""
     clean = _only_digits(raw)
     if not _valid_cnpj14(clean):
         return _add_cors_headers(make_response(jsonify({"erro": "CNPJ inválido", "cnpj": clean}), 400))
     return _handle_cnpj_lookup(clean)
-
 
 # ── LEGADO: /integracoes/cnpj/<cnpj>
 @cnpj_bp.route("/integracoes/cnpj/<cnpj>", methods=["GET", "OPTIONS"])
 def integrar_cnpj_publica(cnpj: str):
     if request.method == "OPTIONS":
         return _add_cors_headers(make_response("", 204))
+
+    # rate limit
+    ip = _client_ip()
+    if not _rate_limit_ok(ip):
+        msg = {"erro": "too_many_requests", "retry": 60}
+        return _add_cors_headers(make_response(jsonify(msg), 429))
+
     raw = cnpj or ""
     clean = _only_digits(raw)
     if not _valid_cnpj14(clean):
         return _add_cors_headers(make_response(jsonify({"erro": "CNPJ inválido", "cnpj": clean}), 400))
     return _handle_cnpj_lookup(clean)
 
-
 @cnpj_bp.after_request
 def _after_request(resp):
-    # Garante CORS nas respostas do blueprint
-    return _add_cors_headers(resp)
+    # CORS deste blueprint
+    resp = _add_cors_headers(resp)
+
+    # Cache HTTP leve + ETag em respostas JSON 200
+    try:
+        if resp.status_code == 200 and (resp.mimetype or "").startswith("application/json"):
+            resp.headers.setdefault("Cache-Control", "public, max-age=3600")
+            # ETag curta (não-criptográfica) — suficiente para revalidação condicional
+            et = str(hash(resp.get_data(as_text=False)))[:16]
+            resp.headers.setdefault("ETag", et)
+    except Exception:
+        pass
+    return resp
