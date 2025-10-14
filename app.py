@@ -183,10 +183,10 @@ if os.getenv("CNPJ_BP_ENABLED", "false").lower() in ("1","true","yes"):
 # Voz V2 — usa o blueprint unificado routes/voz_v2.py
 if os.getenv("VOZ_V2_ENABLED", "false").lower() in ("1","true","yes"):
     try:
-        from routes.voz_v2 import voz_v2_bp
-        _register_bp(voz_v2_bp, "voz_v2 (/api/voz/*)")
+        from routes.voz_v2 import voz_upload_bp  # <- nome correto do blueprint
+        _register_bp(voz_upload_bp, "voz_upload_v2 (/api/voz/*)")
     except Exception as e:
-        print("[bp][warn] voz_v2:", e)
+        print("[bp][warn] voz_upload_v2:", e)
 
 # =====================================
 # Health simples adicional e versão
