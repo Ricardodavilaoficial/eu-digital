@@ -1,6 +1,12 @@
 # routes/voz_v2.py
+# Voz V2 — upload de amostra de voz para clonagem
+# Endpoints:
+#   POST /api/voz/upload      (multipart: voz, uid)
+#   POST /api/voz/upload/     (mesma função; evita redirect 308/405)
+#   GET  /api/voz/ping        (sanidade)
+
 from flask import Blueprint, request, jsonify
-import time, logging, os
+import time, logging
 
 from services.voice_validation import (
     ensure_audio_present,
@@ -12,32 +18,36 @@ from services.voice_validation import (
 from services.storage_gcs import upload_bytes_and_get_url
 from services.voice_metadata import record_last_voice_url
 
-voz_v2_bp = Blueprint("voz_v2", __name__)
+# OBS: o app.py espera importar **voz_upload_bp**
+voz_upload_bp = Blueprint("voz_upload_v2", __name__)
 
-# V2 — Upload de amostra de voz (PRIVADO + Signed URL) 
-# POST /api/voz/upload   (multipart: voz, uid)
-@voz_v2_bp.route("/api/voz/upload", methods=["POST"])
-def voz_upload():
-    req_id = f"cfg-voz-{int(time.time() * 1000)}"
+_MIN_SECONDS = 30  # mínimo recomendado V2 (>=60s ideal)
 
+def _do_upload():
+    req_id = f"cfg-voz-{int(time.time()*1000)}"
+
+    # 1) Arquivo obrigatório
     f = ensure_audio_present(request.files.get("voz"))
     mimetype = validate_mime(f.mimetype)
 
+    # 2) Tamanho
     raw = f.read()
     validate_size(len(raw))
 
+    # 3) Duração
     duration = probe_duration(raw, mimetype)
-    if duration < 30:  # mínimo V2: 30s (recomendado ≥60s)
+    if duration < _MIN_SECONDS:
         return jsonify({
             "ok": False,
             "error": "too_short",
-            "message": "Áudio muito curto. Grave ao menos 30 segundos."
+            "message": f"Áudio muito curto. Grave ao menos {_MIN_SECONDS} segundos."
         }), 422
 
+    # 4) UID + nome seguro
     uid = (request.form.get("uid") or "").strip() or "sem_uid"
     filename = sanitize_filename(f.filename)
 
-    # Upload (preferência: privado + Signed URL)
+    # 5) Upload (preferência: privado + Signed URL dentro de upload_bytes_and_get_url)
     try:
         url, bucket, gcs_path, access = upload_bytes_and_get_url(uid, filename, raw, mimetype)
     except Exception as e:
@@ -49,7 +59,7 @@ def voz_upload():
             "request_id": req_id
         }), 500
 
-    # Persistência leve (não bloqueante)
+    # 6) Persistência leve (não bloqueante)
     try:
         record_last_voice_url(uid, url, mimetype, len(raw), int(round(duration)))
     except Exception as e:
@@ -67,3 +77,25 @@ def voz_upload():
         "vozUrl": url,
         "meta": {"mime": mimetype, "bytes": len(raw), "duration_sec": int(round(duration))}
     }), 200
+
+
+# ===== Rotas =====
+
+# sem barra
+@voz_upload_bp.route("/api/voz/upload", methods=["POST", "OPTIONS"])
+def voz_upload_no_slash():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    return _do_upload()
+
+# com barra (evita redirect/308 em alguns proxies → 405)
+@voz_upload_bp.route("/api/voz/upload/", methods=["POST", "OPTIONS"])
+def voz_upload_with_slash():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    return _do_upload()
+
+# sanidade
+@voz_upload_bp.route("/api/voz/ping", methods=["GET"])
+def voz_ping():
+    return jsonify({"ok": True, "service": "voz_v2"}), 200
