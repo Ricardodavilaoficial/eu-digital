@@ -351,8 +351,6 @@ except Exception as _e:
 
 # === DEBUG TEMPORÁRIO (pode remover depois que validar) ===
 from flask import jsonify as _jsonify  # (já importado acima, mantém)
-from routes.cnpj_publica import cnpj_bp
-from routes.voz_upload_bp import voz_upload_bp
 
 @app.route("/__map_config", methods=["GET"])
 def __map_config():
@@ -1473,19 +1471,4 @@ def api_cadastro_alias():
     except Exception:
         data = {}
     ...
-
-# --- Modular Blueprints (guarded by ENV flags) ---
-try:
-    from routes.cnpj_publica import cnpj_bp
-    if os.getenv('CNPJ_BP_ENABLED') == 'true':
-        app.register_blueprint(cnpj_bp)
-except Exception as e:
-    logging.warning('CNPJ_BP disabled or import failed: %s', e)
-
-try:
-    from routes.voz_upload_bp import voz_upload_bp
-    if os.getenv('VOZ_V2_ENABLED') == 'true':
-        app.register_blueprint(voz_upload_bp)
-except Exception as e:
-    logging.warning('VOZ_V2 disabled or import failed: %s', e)
 
