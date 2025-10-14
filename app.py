@@ -574,6 +574,22 @@ def api_cadastro_alias():
     except Exception as e:
         app.logger.warning("cadastro(alias): send_verification_email falhou: %s", e)
     return api_ativar_cliente()
+# -------------------------------------
+# Diagnóstico: lista de rotas ativas
+# -------------------------------------
+@app.get("/__routes")
+def __routes():
+    out = []
+    for rule in app.url_map.iter_rules():
+        methods = sorted([m for m in rule.methods if m not in {"HEAD", "OPTIONS"}])
+        out.append({
+            "rule": str(rule),
+            "endpoint": rule.endpoint,
+            "methods": methods,
+        })
+    # ordena por caminho p/ facilitar grep
+    out.sort(key=lambda x: x["rule"])
+    return jsonify({"count": len(out), "routes": out}), 200
 
 # =====================================
 # EOF
