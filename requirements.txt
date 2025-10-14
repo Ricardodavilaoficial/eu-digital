@@ -5,7 +5,7 @@ gunicorn
 flask-cors
 
 # Utilidades
-requests
+requests>=2.31.0
 python-dotenv
 python-dateutil
 pytz
@@ -14,6 +14,7 @@ pytz
 openai==0.28.1
 pydub==0.25.1
 elevenlabs==1.13.5
+mutagen           # <-- para detectar duração de MP3/WAV com precisão
 
 # Google Cloud / Firebase
 firebase-admin

@@ -1,24 +1,30 @@
 # routes/cnpj_publica.py
 # MEI Robô — Integração CNPJ.ws (API Pública) v1 (com heurística aprimorada)
-# Rota: GET /integracoes/cnpj/<cnpj>
+# Endpoints:
+#   - GET /api/cnpj/<cnpj>                (novo)
+#   - GET /integracoes/cnpj/<cnpj>        (legado mantido)
+#
 # - Sem token (fonte pública), limite 3 req/min/IP na origem
 # - Cache em memória (TTL padrão 24h) — substituível por Redis
 # - Normaliza para o "esquema canônico" do MEI Robô
 # - Heurística por nome (?nome=...): EXATO | PROVAVEL | NAO_ENCONTRADO
 #
-# Dependências: Flask, requests
-#   pip install Flask requests
+# Dependências: Flask, requests  (requirements.txt → requests>=2.31.0)
 
 import re
 import time
 import json
 import requests
 from datetime import datetime, timedelta
-from typing import Any, Dict, Tuple, Optional
+from typing import Any, Dict, Tuple, Optional, List
 
 from flask import Blueprint, request, jsonify, make_response
 
-bp_cnpj_publica = Blueprint("cnpj_publica", __name__)
+# ──────────────────────────────────────────────────────────────────────────────
+# Blueprint (sem prefixo para manter o legado) — expõe /api/cnpj e /integracoes/cnpj
+# ──────────────────────────────────────────────────────────────────────────────
+cnpj_bp = Blueprint("cnpj_publica", __name__)
+bp_cnpj_publica = cnpj_bp  # compat nome legado
 
 CNPJWS_PUBLIC_BASE = "https://publica.cnpj.ws"
 HTTP_TIMEOUT = 8  # seconds
@@ -43,7 +49,7 @@ def _add_cors_headers(resp):
         resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         resp.headers["Access-Control-Max-Age"] = _CORS_MAX_AGE
-        # Se não precisa enviar cookies/auth, pode remover a próxima linha:
+        # Se não precisa cookies/auth, pode remover a próxima linha:
         resp.headers["Access-Control-Allow-Credentials"] = "true"
     return resp
 # =======================================================
@@ -65,19 +71,18 @@ def _normalize_text(s: str) -> str:
     - Colapsa espaços
     - Uppercase
     """
-    import unicodedata, re
+    import unicodedata
     if not s:
         return ""
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    # Troca pontuação por espaço e remove caracteres não alfanuméricos (mantém letras/números/espaço)
     s = re.sub(r"[\'\".,\-_/\(\)\[\]\{\}:;]+", " ", s)
     s = re.sub(r"[^A-Za-z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s).strip().upper()
     return s
 
 
-def _match_nome(nome_busca: str, razao: str, socios: list) -> Tuple[str, Optional[str]]:
+def _match_nome(nome_busca: str, razao: str, socios: List[dict]) -> Tuple[str, Optional[str]]:
     if not nome_busca:
         return ("NAO_INFORMADO", None)
 
@@ -178,8 +183,8 @@ def _map_canonic(json_src: Dict[str, Any]) -> Dict[str, Any]:
         ],
         "endereco": endereco,
         "simples": {
-            "optante": bool(simples.get("simples")) if isinstance(simples.get("simples"), bool) else None,
-            "mei": bool(simples.get("mei")) if isinstance(simples.get("mei"), bool) else None,
+            "optante": simples.get("simples") if isinstance(simples.get("simples"), bool) else None,
+            "mei": simples.get("mei") if isinstance(simples.get("mei"), bool) else None,
             "dataOpcaoSimples": simples.get("data_opcao"),
             "dataOpcaoMei": simples.get("data_opcao_mei") or simples.get("data_opcao_simei"),
         },
@@ -205,22 +210,11 @@ def _set_cache(cnpj: str, payload: Dict[str, Any]):
     _cache[cnpj] = (time.time() + CACHE_TTL_SECS, payload)
 
 
-@bp_cnpj_publica.route("/integracoes/cnpj/<cnpj>", methods=["GET", "OPTIONS"])
-def integrar_cnpj_publica(cnpj: str):
-    # Pré-flight CORS
-    if request.method == "OPTIONS":
-        return _add_cors_headers(make_response("", 204))
-
-    raw = cnpj or ""
-    clean = _only_digits(raw)
-    if not _valid_cnpj14(clean):
-        return _add_cors_headers(make_response(jsonify({"erro": "CNPJ inválido", "cnpj": clean}), 400))
-
+def _handle_cnpj_lookup(clean: str):
     # cache
     cached = _get_cached(clean)
     if cached:
         resp = dict(cached)  # shallow copy
-        # enriquecimento por nome (se solicitado) não é cacheado, para não poluir
         nome = request.args.get("nome", "", type=str)
         if nome:
             avaliacao, origem = _match_nome(nome, resp.get("razaoSocial"), resp.get("socios"))
@@ -263,7 +257,31 @@ def integrar_cnpj_publica(cnpj: str):
     return _add_cors_headers(jsonify(canonic))
 
 
-@bp_cnpj_publica.after_request
+# ── NOVO: /api/cnpj/<cnpj>
+@cnpj_bp.route("/api/cnpj/<cnpj>", methods=["GET", "OPTIONS"])
+def api_cnpj(cnpj: str):
+    if request.method == "OPTIONS":
+        return _add_cors_headers(make_response("", 204))
+    raw = cnpj or ""
+    clean = _only_digits(raw)
+    if not _valid_cnpj14(clean):
+        return _add_cors_headers(make_response(jsonify({"erro": "CNPJ inválido", "cnpj": clean}), 400))
+    return _handle_cnpj_lookup(clean)
+
+
+# ── LEGADO: /integracoes/cnpj/<cnpj>
+@cnpj_bp.route("/integracoes/cnpj/<cnpj>", methods=["GET", "OPTIONS"])
+def integrar_cnpj_publica(cnpj: str):
+    if request.method == "OPTIONS":
+        return _add_cors_headers(make_response("", 204))
+    raw = cnpj or ""
+    clean = _only_digits(raw)
+    if not _valid_cnpj14(clean):
+        return _add_cors_headers(make_response(jsonify({"erro": "CNPJ inválido", "cnpj": clean}), 400))
+    return _handle_cnpj_lookup(clean)
+
+
+@cnpj_bp.after_request
 def _after_request(resp):
     # Garante CORS nas respostas do blueprint
     return _add_cors_headers(resp)
