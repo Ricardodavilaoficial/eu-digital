@@ -1,862 +1,187 @@
-﻿# Write the corrected app.py to a file for download
+﻿# app.py — MEI Robô (produção) — fachada enxuta com flags
+# Mantém: CORS/health/env/version/wa_debug/send-text, Stripe webhooks/checkout,
+# blueprints principais, cupons (rotas absolutas), webhook GET challenge (Meta).
+# Modulações: CNPJ e Voz V2 atrás de flags; imports protegidos por try/except.
 
-# app.py — entrypoint para runtime Python do Render (produção)
-# Mantém: health, debug, firestore-utils, /api/send-text, estáticos
-# Webhook agora é servido via routes/stripe_webhook (blueprint)
-
-import os
-import json
-import logging
-import traceback
-import re
-import hashlib
-import importlib, types
-import time
+import os, io, struct, json, logging, traceback, re, hashlib, importlib, types, time
+from datetime import datetime, timedelta, timezone
 from typing import List, Tuple
-from urllib.parse import urlparse
-from urllib import request as ulreq
-from urllib import parse as ulparse
-from flask import Flask, jsonify, request, send_from_directory, redirect
-from routes.agenda_digest import agenda_digest_bp
-from routes.health import health_bp
-from services.mailer import send_verification_email
-import requests  # <<< acrescido para fetch_cnpj_info
-
-# >>> Verificação de Autoridade (Fase 1)
-from routes.verificacao_autoridade import verificacao_bp
-from middleware.authority_gate import init_authority_gate
-
-# --- INÍCIO: integração CNPJ.ws pública (blueprint) ---
-# Depende do arquivo: routes/cnpj_publica.py
-# Se ainda não existir o pacote "routes", crie um __init__.py vazio dentro de /routes
-try:
-    from routes.cnpj_publica import bp_cnpj_publica
-except Exception as e:
-    bp_cnpj_publica = None
-    logging.exception("Falha ao importar bp_cnpj_publica (CNPJ.ws pública): %s", e)
-
-# >>> NOVOS BLUEPRINTS (Signed URL + Opt-in)
-from routes.media import media_bp
-from routes.contacts import contacts_bp
-from routes.configuracao import config_bp
-from routes.configuracao import ler_configuracao as _config_read  # alias seguro pro GET
-
-# >>> Stripe Webhook
-from routes.stripe_webhook import stripe_webhook_bp
-from routes.stripe_checkout import stripe_checkout_bp
-from routes.conta_status import bp_conta
-# --- FIM: integração CNPJ.ws pública ---
-
-# >>> Agenda (slots, appointments, reminders)
-from routes.agenda_api import agenda_api_bp
-from routes.agenda_reminders import agenda_rem_bp
-
-
-print("[boot] app.py raiz carregado ✓", flush=True)
-logging.basicConfig(level=logging.INFO)
-# --- Filtro para rebaixar ruídos do legacy (sem editar o arquivo gigante) ---
-import logging as _logging
-
-class _DowngradeLegacyNoise(_logging.Filter):
-    # cobre [wa_bot] + (nlu_intent|schedule) + "indispon" (ignora acentos/mojibake)
-    _pat = re.compile(
-        r"\[wa_bot\].*?(nlu_intent|schedule).*?indispon",
-        re.IGNORECASE | re.DOTALL,
-    )
-    def filter(self, record: _logging.LogRecord) -> bool:
-        msg = str(record.getMessage())
-        if self._pat.search(msg):
-            if record.levelno >= _logging.ERROR:
-                record.levelno = _logging.WARNING
-                record.levelname = "WARNING"
-        return True
-
-root_logger = logging.getLogger()
-# evita filtros duplicados em restarts quentes
-if not any(isinstance(f, _DowngradeLegacyNoise) for f in root_logger.filters):
-    root_logger.addFilter(_DowngradeLegacyNoise())
-# --- fim do filtro ---
-
-# --------------------------------------------------------------------
-# 1) Cria a app primeiro e configura CORS fechado por whitelist (apenas /api/*)
-# --------------------------------------------------------------------
-app = Flask(__name__, static_folder="public", static_url_path="/")
+from urllib import request as ulreq, parse as ulparse
+from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
-# Lê a whitelist de origens permitidas (se vazio, não libera ninguém)
+print("[boot] app.py fachada enxuta carregado ✓", flush=True)
+logging.basicConfig(level=logging.INFO)
+
+# =====================================
+# App + CORS (whitelist apenas /api/*)
+# =====================================
+app = Flask(__name__, static_folder="public", static_url_path="/")
+
 _allowed = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
-
-if _allowed:
-    cors_resources = {
-        r"/api/*": {
-            "origins": _allowed,
-            "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            "allow_headers": [
-                "Authorization",
-                "Content-Type",
-                "X-Requested-With",
-                "cf-turnstile-response",
-                "x-turnstile-token",
-            ],
-            "supports_credentials": False,
-        }
+cors_resources = {
+    r"/api/*": {
+        "origins": _allowed or [],
+        "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        "allow_headers": ["Authorization","Content-Type","X-Requested-With","cf-turnstile-response","x-turnstile-token"],
+        "supports_credentials": False,
     }
-else:
-    # Sem origens configuradas → não habilita CORS (fail-safe)
-    cors_resources = {}
-
+} if _allowed else {}
 CORS(app, resources=cors_resources, always_send=False)
 
-# --- Defesa: remover CORS quando não há Origin (somente /api/*) ---
 @app.after_request
 def _strip_cors_when_no_origin(resp):
     try:
         if request.path.startswith("/api/") and "Origin" not in request.headers:
-            for h in ("Access-Control-Allow-Origin",
-                      "Access-Control-Allow-Credentials",
-                      "Vary"):
+            for h in ("Access-Control-Allow-Origin","Access-Control-Allow-Credentials","Vary"):
                 resp.headers.pop(h, None)
     except Exception:
         pass
     return resp
 
-# ✓ Blueprints existentes...
-app.register_blueprint(verificacao_bp)
-if bp_cnpj_publica:
-    app.register_blueprint(bp_cnpj_publica)
-app.register_blueprint(config_bp)
+# ================================
+# Webhook GET challenge (Meta)
+# ================================
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
 
-# -----------------------------------------------------------------------------
-# HELPER NOVO — fetch_cnpj_info(cnpj_digits)
-# -----------------------------------------------------------------------------
-def fetch_cnpj_info(cnpj_digits: str):
-    """
-    Recebe CNPJ com 14 dígitos. Em sucesso, retorna dict padronizado:
-    {
-      "razaoSocial": "...",
-      "nomeFantasia": "...",
-      "cnae": "...",
-      "cnaeDescricao": "..."
-    }
-    Em erro/timeout/dados ausentes, retorna None.
-    """
-    try:
-        cnpj = "".join(ch for ch in str(cnpj_digits or "") if ch.isdigit())
-        if len(cnpj) != 14:
-            return None
-
-        # API pública padrão (fallback se não houver wrapper interno)
-        url = f"https://publica.cnpj.ws/cnpj/{cnpj}"
-        r = requests.get(url, timeout=(3, 5))
-        if r.status_code != 200:
-            return None
-
-        j = r.json() if r.content else {}
-        # Extrações tolerantes às variações do payload
-        razao = (
-            j.get("razao_social")
-            or j.get("razaoSocial")
-            or (j.get("empresa") or {}).get("razao_social")
-        )
-        fantasia = (
-            j.get("nome_fantasia")
-            or j.get("nomeFantasia")
-            or (j.get("estabelecimento") or {}).get("nome_fantasia")
-        )
-
-        # CNAE principal pode vir em j["estabelecimento"]["atividade_principal"]
-        est = j.get("estabelecimento") or {}
-        atv_principal = est.get("atividade_principal") or {}
-        cnae = (
-            atv_principal.get("subclasse")
-            or atv_principal.get("codigo")
-            or atv_principal.get("cnae")
-        )
-        cnae_desc = atv_principal.get("descricao") or atv_principal.get("descricao_simplificada")
-
-        # Caso venha como 0000000-0/00, normaliza para string simples
-        if isinstance(cnae, (int, float)):
-            cnae = str(cnae)
-        if cnae:
-            cnae = str(cnae).strip()
-
-        if not (razao or fantasia or cnae or cnae_desc):
-            return None
-
-        return {
-            "razaoSocial": (razao or "").strip() or None,
-            "nomeFantasia": (fantasia or "").strip() or None,
-            "cnae": (cnae or "").strip() or None,
-            "cnaeDescricao": (cnae_desc or "").strip() or None,
-        }
-    except Exception:
-        return None
-# -----------------------------------------------------------------------------
-
-
-# Alias direto para GET /api/configuracao (tolerante a barra / strict_slashes)
-# Agora apontando para wrapper que faz lazy-populate e adiciona data.empresa
-def _uid_from_authorization() -> str | None:
-    """
-    (reutilizada adiante) Extrai UID do Authorization: Bearer <idToken> lendo o payload do JWT.
-    """
-    auth = request.headers.get("Authorization", "").strip()
-    if not auth.lower().startswith("bearer "):
-        return None
-    tok = auth.split(" ", 1)[1].strip()
-    parts = tok.split(".")
-    if len(parts) < 2:
-        return None
-    try:
-        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
-        payload = json.loads(ulparse.unquote_to_bytes(parts[1] + pad).decode(errors="ignore"))
-    except Exception:
-        # fallback de base64
-        try:
-            import base64 as _b64
-            pad = "=" * ((4 - len(parts[1]) % 4) % 4)
-            payload = json.loads(_b64.urlsafe_b64decode((parts[1] + pad).encode()).decode())
-        except Exception:
-            return None
-    uid = payload.get("user_id") or payload.get("uid") or payload.get("sub")
-    return uid or None
-
-from services.db import db  # já usado adiante
-
-def _try_lazy_populate_empresa(uid: str):
-    """
-    Lê profissionais/{uid}; se existir cnpj e faltar empresa.razaoSocial, consulta API e grava.
-    Retorna o bloco empresa (ou None).
-    """
-    try:
-        if not uid:
-            return None
-        doc_ref = db.collection("profissionais").document(uid)
-        snap = doc_ref.get()
-        data = snap.to_dict() if snap and snap.exists else {}
-        cnpj = "".join(ch for ch in str((data or {}).get("cnpj") or "") if ch.isdigit())
-        empresa = (data or {}).get("empresa") or {}
-        razao_ok = (empresa or {}).get("razaoSocial")
-
-        if cnpj and len(cnpj) == 14 and not (razao_ok and str(razao_ok).strip()):
-            info = fetch_cnpj_info(cnpj)
-            if info:
-                # persiste empresa{...}
-                doc_ref.set({"empresa": info}, merge=True)
-                return info
-        # Se já havia empresa, retorna a existente
-        if empresa:
-            return {
-                "razaoSocial": empresa.get("razaoSocial"),
-                "nomeFantasia": empresa.get("nomeFantasia"),
-                "cnae": empresa.get("cnae"),
-                "cnaeDescricao": empresa.get("cnaeDescricao"),
-            }
-    except Exception:
-        pass
+@app.before_request
+def _handle_webhook_challenge():
+    if request.method == "GET" and request.path == "/webhook":
+        mode = request.args.get("hub.mode")
+        token = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge")
+        if mode == "subscribe" and token == VERIFY_TOKEN and challenge:
+            return Response(challenge, status=200, mimetype="text/plain; charset=utf-8")
+        return Response("Forbidden", status=403)
     return None
 
-from flask import jsonify as _jsonify
-
-def _config_read_plus():
-    """
-    Wrapper para GET /api/configuracao:
-    - chama handler original (_config_read) para manter comportamento;
-    - faz lazy-populate de empresa{...} se houver cnpj e faltar razão social;
-    - acrescenta data.empresa ao JSON de resposta (sem quebrar o formato).
-    """
-    # 1) Primeiro tenta enriquecer Firestore (não falha o fluxo se der erro)
-    uid = request.args.get("uid") or _uid_from_authorization()
-    emp = _try_lazy_populate_empresa(uid) if uid else None
-
-    # 2) Chama o handler original para obter o payload base
-    base_resp = _config_read()
-    status = 200
-    headers = {}
-    if isinstance(base_resp, tuple):
-        # Pode ser (Response, status) ou (dict, status)
-        if len(base_resp) == 2:
-            base, status = base_resp
-        elif len(base_resp) >= 3:
-            base, status, headers = base_resp[0], base_resp[1], base_resp[2]
-        else:
-            base = base_resp[0]
-    else:
-        base = base_resp
-
-    # Extrai JSON de base de forma segura
-    try:
-        if hasattr(base, "get_json"):
-            j = base.get_json(silent=True) or {}
-        elif isinstance(base, (dict, list)):
-            j = base
-        else:
-            # Tenta desserializar se for bytes/str
-            body = getattr(base, "data", None)
-            if isinstance(body, (bytes, bytearray)):
-                j = json.loads(body.decode("utf-8", errors="ignore"))
-            elif isinstance(base, str):
-                j = json.loads(base)
-            else:
-                j = {}
-    except Exception:
-        j = {}
-
-    # 3) Injeta empresa{...} dentro de data
-    try:
-        if isinstance(j, dict):
-            data = j.get("data")
-            if isinstance(data, dict):
-                # se já não veio empresa do handler original, ou estiver vazio, usa emp
-                has_empresa = isinstance(data.get("empresa"), dict) and any(data["empresa"].values())
-                if not has_empresa and emp:
-                    data["empresa"] = emp
-            elif data is None and emp:
-                j["data"] = {"empresa": emp}
-    except Exception:
-        pass
-
-    # 4) Retorna JSON padronizado preservando status
-    if headers:
-        return _jsonify(j), status, headers
-    return _jsonify(j), status
-
-# Registra os aliases apontando para o wrapper acima
-app.add_url_rule(
-    "/api/configuracao",
-    view_func=_config_read_plus,
-    methods=["GET"],
-    endpoint="config_read_alias",
-    strict_slashes=False
-)
-app.add_url_rule(
-    "/api/configuracao/",
-    view_func=_config_read_plus,
-    methods=["GET"],
-    endpoint="config_read_alias_slash",
-    strict_slashes=False
-)
-print("[boot] Alias GET /api/configuracao registrado (com lazy-populate empresa) ✓")
-
-# Diagnóstico: listar regras carregadas para esse caminho
-try:
-    _regras = [
-        f"{r.rule} → {','.join(sorted(r.methods))}"
-        for r in app.url_map.iter_rules()
-        if r.rule in ("/api/configuracao", "/api/configuracao/")
-    ]
-    print("[boot] url_map /api/configuracao:", _regras)
-except Exception as _e:
-    print("[boot][warn] inspeção de url_map falhou:", _e)
-
-# === DEBUG TEMPORÁRIO (pode remover depois que validar) ===
-from flask import jsonify as _jsonify  # (já importado acima, mantém)
-from routes.cnpj_publica import cnpj_bp
-from routes.voz_upload_bp import voz_upload_bp
-
-@app.route("/__map_config", methods=["GET"])
-def __map_config():
-    try:
-        entries = []
-        for r in app.url_map.iter_rules():
-            if r.rule in ("/api/configuracao", "/api/configuracao/"):
-                entries.append({
-                    "rule": r.rule,
-                    "endpoint": r.endpoint,
-                    "methods": sorted(list(r.methods)),
-                })
-        return _jsonify({"ok": True, "entries": entries}), 200
-    except Exception as e:
-        return _jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route("/__direct_config", methods=["GET"])
-def __direct_config():
-    # chama exatamente a função _config_read (sem wrapper)
-    return _config_read()
-# === FIM DEBUG TEMPORÁRIO ===
-
-# === BOOT TAG (diagnóstico leve) ===
-BOOT_TAG = "config-read-v3"  # mude o sufixo se precisar forçar reconhecimento
-@app.route("/__version", methods=["GET"])
-def __version():
-    return jsonify({"ok": True, "boot": BOOT_TAG}), 200
-# === FIM BOOT TAG ===
-
-# ✓ NOVOS BLUEPRINTS (Signed URL + Opt-in)
-app.register_blueprint(media_bp)
-app.register_blueprint(contacts_bp)
-
-# >>> Agenda (slots, appointments, reminders)
-app.register_blueprint(agenda_api_bp)
-app.register_blueprint(agenda_rem_bp)
-app.register_blueprint(health_bp)
-
-# ✓ Stripe Webhook (SEM auth/CSRF; precisa estar acessível publicamente)
-app.register_blueprint(stripe_webhook_bp)
-print("[boot] Stripe Webhook blueprint registrado ✓", flush=True)
-# ✓ Stripe Checkout API
-app.register_blueprint(stripe_checkout_bp)
-print("[boot] Stripe Checkout blueprint registrado ✓", flush=True)
-# ✓ Gate + Status (contratos do front)
-app.register_blueprint(bp_conta)
-# (se houver middlewares de auth/CSRF, mantenha-os DEPOIS — e isente /webhooks/stripe)
-
-# ✓ Admin (rota /admin/ping protegida)
-from routes.admin import admin_bp
-app.register_blueprint(admin_bp)
-print("[boot] Admin blueprint registrado ✓", flush=True)
-app.register_blueprint(agenda_digest_bp)
-print("[boot] Agenda Digest blueprint registrado ✓", flush=True)
-
-app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
-
-# --------------------------------------------------------------------
-# 3) Agora que o app existe, importe e registre blueprints auxiliares
-#    com helper (evita NameError e import circular)
-# --------------------------------------------------------------------
+# ================================
+# Blueprints principais (sempre ON)
+# ================================
 def _register_bp(bp, name: str):
     try:
         app.register_blueprint(bp)
         print(f"[bp] Registrado: {name}")
     except Exception as e:
-        print(f"[bp][erro] Falhou ao registrar {name}: {e}")
+        print(f"[bp][erro] {name}: {e}")
         traceback.print_exc()
 
-# Blueprint de autenticação (novo)
 try:
-    from routes.auth_bp import auth_bp
-    _register_bp(auth_bp, "auth_bp (/auth/whoami)")
+    from routes.health import health_bp
+    _register_bp(health_bp, "health_bp")
 except Exception as e:
-    print(f"[bp][warn] auth_bp não registrado: {e}")
-    traceback.print_exc()
-
-# -------------------------
-# Helpers de telefone (com fallback)
-# -------------------------
-def _token_fingerprint(tok: str):
-    if not tok:
-        return {"present": False, "length": 0, "sha256_12": None}
-    sha12 = hashlib.sha256(tok.encode("utf-8")).hexdigest()[:12]
-    return {"present": True, "length": len(tok), "sha256_12": sha12}
-
-def _only_digits(s: str) -> str:
-    return "".join(ch for ch in str(s or "") if ch.isdigit())
-
-_br_candidates = None
-_br_equivalence_key = None
-_digits_only_external = None
+    print("[bp][warn] health_bp:", e)
 
 try:
-    from services.phone_utils import br_candidates as _br_candidates, br_equivalence_key as _br_equivalence_key, digits_only as _digits_only_external  # type: ignore
-    print("[phone] usando services.phone_utils (externo)")
-except Exception:
-    print("[phone] services.phone_utils não encontrado; usando fallback local")
+    from routes.agenda_api import agenda_api_bp
+    _register_bp(agenda_api_bp, "agenda_api_bp")
+except Exception as e:
+    print("[bp][warn] agenda_api_bp:", e)
 
-    _DIGITS_RE = re.compile(r"\D+")
+try:
+    from routes.agenda_reminders import agenda_rem_bp
+    _register_bp(agenda_rem_bp, "agenda_rem_bp")
+except Exception as e:
+    print("[bp][warn] agenda_rem_bp:", e)
 
-    def _digits_only_local(s: str) -> str:
-        return _DIGITS_RE.sub("", s or "")
+try:
+    from routes.agenda_digest import agenda_digest_bp
+    _register_bp(agenda_digest_bp, "agenda_digest_bp")
+except Exception as e:
+    print("[bp][warn] agenda_digest_bp:", e)
 
-    def _ensure_cc_55(d: str) -> str:
-        d = _digits_only_local(d)
-        # Remove zeros internacionais tipo 0055
-        if d.startswith("00"):
-            d = d[2:]
-        if not d.startswith("55"):
-            d = "55" + d
-        return d
+try:
+    from routes.media import media_bp
+    _register_bp(media_bp, "media_bp")
+except Exception as e:
+    print("[bp][warn] media_bp:", e)
 
-    def _br_split(msisdn: str) -> Tuple[str, str, str]:
-        d = _ensure_cc_55(msisdn)
-        cc = d[:2]
-        rest = d[2:]
-        ddd = rest[:2] if len(rest) >= 10 else rest[:2]
-        local = rest[2:]
-        return cc, ddd, local
+try:
+    from routes.contacts import contacts_bp
+    _register_bp(contacts_bp, "contacts_bp")
+except Exception as e:
+    print("[bp][warn] contacts_bp:", e)
 
-    def _br_equivalence_key_local(msisdn: str) -> str:
-        cc, ddd, local = _br_split(msisdn)
-        local8 = _digits_only_local(local)[-8:]  # últimos 8
-        return f"{cc}{ddd}{local8}"
+try:
+    from routes.configuracao import config_bp, ler_configuracao as _config_read
+    _register_bp(config_bp, "config_bp (/api/configuracao GET)")
+except Exception as e:
+    print("[bp][warn] config_bp:", e)
+    _config_read = None
 
-    def _br_candidates_local(msisdn: str) -> List[str]:
-        cc, ddd, local = _br_split(msisdn)
-        local_digits = _digits_only_local(local)
-        cands = set()
-        if len(local_digits) >= 9 and local_digits[0] == "9":
-            # Já tem 9 -> gera com e sem 9
-            with9 = f"{cc}{ddd}{local_digits}"
-            without9 = f"{cc}{ddd}{local_digits[1:]}" if len(local_digits) >= 1 else f"{cc}{ddd}{local_digits}"
-            cands.add(with9)
-            cands.add(without9)
-        elif len(local_digits) == 8:
-            # 8 dígitos -> gera sem e com 9
-            without9 = f"{cc}{ddd}{local_digits}"
-            with9 = f"{cc}{ddd}9{local_digits}"
-            cands.add(without9)
-            cands.add(with9)
-        else:
-            cands.add(f"{cc}{ddd}{local_digits}")
-        # Mantemos apenas 55 + DDD(2) + 8/9
-        return [c for c in cands if len(c) in (12, 13)]
+try:
+    from routes.stripe_webhook import stripe_webhook_bp
+    _register_bp(stripe_webhook_bp, "stripe_webhook_bp")
+except Exception as e:
+    print("[bp][warn] stripe_webhook_bp:", e)
 
-    _br_candidates = _br_candidates_local
-    _br_equivalence_key = _br_equivalence_key_local
-    _digits_only_external = _digits_only_local
+try:
+    from routes.stripe_checkout import stripe_checkout_bp
+    _register_bp(stripe_checkout_bp, "stripe_checkout_bp")
+except Exception as e:
+    print("[bp][warn] stripe_checkout_bp:", e)
 
-def br_candidates(msisdn: str) -> List[str]:
+try:
+    from routes.conta_status import bp_conta
+    _register_bp(bp_conta, "bp_conta")
+except Exception as e:
+    print("[bp][warn] bp_conta:", e)
+
+try:
+    from routes.admin import admin_bp
+    _register_bp(admin_bp, "admin_bp")
+except Exception as e:
+    print("[bp][warn] admin_bp:", e)
+
+# Verificação de Autoridade (gate)
+try:
+    from routes.verificacao_autoridade import verificacao_bp
+    _register_bp(verificacao_bp, "verificacao_bp")
+except Exception as e:
+    print("[bp][warn] verificacao_bp:", e)
+
+try:
+    from middleware.authority_gate import init_authority_gate
+    init_authority_gate(app, restricted_patterns=[r"^/api/cupons/.*", r"^/api/importar-precos$", r"^/admin/.*", r"^/webhook/.*"])
+    print("[gate] Authority Gate on")
+except Exception as e:
+    print("[gate][warn] authority_gate:", e)
+
+# ================================
+# Blueprints opcionais (flags)
+# ================================
+# CNPJ pública
+if os.getenv("CNPJ_BP_ENABLED", "false").lower() in ("1","true","yes"):
     try:
-        return _br_candidates(msisdn)  # type: ignore
-    except Exception:
-        d = _only_digits(msisdn)
-        if d.startswith("55") and len(d) == 12:
-            return [d[:4] + "9" + d[4:], d]
-        return [d]
+        from routes.cnpj_publica import cnpj_bp
+        _register_bp(cnpj_bp, "cnpj_bp (/api/cnpj/<cnpj>)")
+    except Exception as e:
+        print("[bp][warn] cnpj_bp:", e)
 
-def br_equivalence_key(msisdn: str) -> str:
+# Voz V2 (placeholder) — mantém V1 no blueprint config_bp se existir
+if os.getenv("VOZ_V2_ENABLED", "false").lower() in ("1","true","yes"):
     try:
-        return _br_equivalence_key(msisdn)  # type: ignore
-    except Exception:
-        d = _only_digits(msisdn)
-        if d.startswith("55"):
-            cc = d[:2]
-            ddd = d[2:4] if len(d) >= 4 else ""
-            local8 = d[-8:]
-            return f"{cc}{ddd}{local8}"
-        local8 = d[-8:]
-        return local8
+        from routes.voz_upload_bp import voz_upload_bp
+        _register_bp(voz_upload_bp, "voz_upload_v2")
+    except Exception as e:
+        print("[bp][warn] voz_upload_v2:", e)
 
-def _normalize_br_msisdn(wa_id: str) -> str:
-    """
-    Mantida por compatibilidade: retorna 55 + DDD(2) + local(9) quando detectar celular sem o '9'.
-    """
-    if not wa_id:
-        return ""
-    digits = _only_digits(wa_id)
-    if digits.startswith("55") and len(digits) == 12:
-        digits = digits[:4] + "9" + digits[4:]
-    return digits
+# =====================================
+# Health simples adicional e versão
+# =====================================
+APP_TAG = os.getenv("APP_TAG", "2025-10-14-F1")
 
-# -------------------------
-# Config
-# -------------------------
-APP_TAG = os.getenv("APP_TAG", "2025-08-27")
-UID_DEFAULT = os.getenv("UID_DEFAULT", "ricardo-prod-uid")
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
-GRAPH_VERSION = os.getenv("GRAPH_VERSION", "v23.0")
-PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("PHONE_NUMBER_ID")
-FRONTEND_BASE = os.getenv("FRONTEND_BASE", "")  # ex.: https://mei-robo-prod.web.app
-
-TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
-
-# >>> Uso obrigatório do STORAGE_BUCKET (sem fallback). Levantará KeyError se ausente.
-STORAGE_BUCKET = os.environ["STORAGE_BUCKET"]
-
-def fallback_text(context: str) -> str:
-    return f"[FALLBACK] MEI Robo PROD :: {APP_TAG} :: {context}\nDigite 'precos' para ver a lista."
-# --- HOTFIX: responder ao GET /webhook com hub.challenge (sem mexer no POST) ---
-from flask import Response
-
-@app.before_request
-def _handle_webhook_challenge():
-    # Intercepta SOMENTE o GET /webhook
-    if request.method == "GET" and request.path == "/webhook":
-        mode = request.args.get("hub.mode")
-        token = request.args.get("hub.verify_token")
-        challenge = request.args.get("hub.challenge")
-        expected = os.getenv("VERIFY_TOKEN", "meirobo123")
-
-        # Condição oficial da Meta: mode=subscribe + tokens iguais + challenge presente
-        if mode == "subscribe" and token == expected and challenge:
-            # retorna TEXTO PURO (não JSON) e 200
-            return Response(challenge, status=200, mimetype="text/plain; charset=utf-8")
-
-        # Se não casar, devolve 403 sem passar para outros handlers/blueprints
-        return Response("Forbidden", status=403)
-    # Qualquer outra rota/método segue o fluxo normal
-    return None
-# --- FIM HOTFIX ---
-
-# -------------------------
-# Blueprints existentes (mantidos + novos)
-# (OBS: verificacao_bp e bp_cnpj_publica já foram registrados acima)
-# -------------------------
-try:
-    from routes.routes import routes
-    _register_bp(routes, "routes")
-except Exception as e:
-    print(f"[bp][erro] import routes: {e}")
-    traceback.print_exc()
-
-try:
-    from routes.teste_eleven_route import teste_eleven_route
-    _register_bp(teste_eleven_route, "teste_eleven_route")
-except Exception as e:
-    print(f"[bp][erro] import teste_eleven_route: {e}")
-    traceback.print_exc()
-
-try:
-    from routes.cupons import cupons_bp
-    _register_bp(cupons_bp, "cupons_bp")
-except Exception as e:
-    print(f"[bp][erro] import cupons_bp: {e}")
-    traceback.print_exc()
-
-# >>> Compat de licenças/cupom (aceita POST /licencas/ativar-cupom)
-try:
-    from routes.compat_licencas import bp as licencas_bp
-    _register_bp(licencas_bp, "licencas_bp (/licencas/ativar-cupom compat)")
-except Exception as e:
-    print(f"[bp][warn] licencas_bp não registrado: {e}")
-    traceback.print_exc()
-
-# >>> Novo: CAPTCHA (Turnstile) — valida token e seta cookie curto
-try:
-    from routes.captcha_bp import captcha_bp
-    _register_bp(captcha_bp, "captcha_bp (/captcha/verify)")
-except Exception as e:
-    print(f"[bp][warn] captcha_bp não registrado: {e}")
-    traceback.print_exc()
-
-try:
-    from routes.core_api import core_api
-    _register_bp(core_api, "core_api")
-except Exception as e:
-    print(f"[bp][erro] import core_api: {e}")
-    traceback.print_exc()
-
-try:
-    from routes.configuracao import config_bp
-    _register_bp(config_bp, "config_bp (/api/configuracao)")
-    
-except Exception as e:
-    print(f"[bp][warn] config_bp não registrado: {e}")
-    traceback.print_exc()
-
-try:
-    from routes.importar_precos import importar_bp
-    _register_bp(importar_bp, "importar_bp (/api/importar-precos)")
-except Exception as e:
-    print(f"[bp][warn] importar_bp não registrado: {e}")
-    traceback.print_exc()
-
-try:
-    from routes.seed import seed_bp
-    _register_bp(seed_bp, "seed_bp (/_seed/profissional)")
-except Exception as e:
-    print(f"[bp][warn] seed_bp não registrado: {e}")
-    traceback.print_exc()
-
-# >>> Webhook legado (se existir)
-try:
-    from routes.webhook import bp_webhook
-    _register_bp(bp_webhook, "bp_webhook (/webhook)")
-except Exception as e:
-    print(f"[bp][erro] import bp_webhook: {e}")
-    traceback.print_exc()
-
-# >>> Verificação de Autoridade — (REMOVIDO registro duplicado via helper)
-# já registramos verificacao_bp no topo. Mantemos apenas o init do gate.
-try:
-    init_authority_gate(app, restricted_patterns=[
-        r"^/api/cupons/.*",
-        r"^/api/importar-precos$",
-        r"^/admin/.*",
-        r"^/webhook/.*"
-    ])
-    print("[gate] Authority Gate registrado (condicional por VERIFICACAO_AUTORIDADE)")
-except Exception as e:
-    print(f"[gate][warn] authority_gate não inicializado: {e}")
-    traceback.print_exc()
-
-# --------------------------------------------------------------------
-# SHIMS de compatibilidade para /api/verificacao/autoridade/*
-# (mantêm a página vinculo.html funcionando sem alterar blueprints atuais)
-# --------------------------------------------------------------------
-from flask import jsonify as _jsonify  # alias local só p/ clareza
-
-@app.get("/api/verificacao/autoridade/status")
-def _verif_status_proxy():
-    # Reutiliza o gate simples do bp_conta
-    from routes.conta_status import _vinculo_dict
-    score = int(os.getenv("SCORE_VINCULO", "82"))
-    out = _vinculo_dict(score)
-    return _jsonify(out), 200
-
-@app.post("/api/verificacao/autoridade/upload")
-def _verif_upload():
-    # Aceita multipart (PDF/JPG/PNG) — stub: grava em temp e marca pendente
-    from werkzeug.utils import secure_filename
-    import tempfile
-
-    if not request.files:
-        return _jsonify({"ok": False, "error": "Nenhum arquivo enviado."}), 400
-
-    ALLOW = {".pdf", ".png", ".jpg", ".jpeg"}
-    saved = []
-    size_total = 0
-    for key in request.files:
-        f = request.files.get(key)
-        if not f or not getattr(f, "filename", ""):
-            continue
-        name = secure_filename(f.filename)
-        ext = os.path.splitext(name)[1].lower()
-        if ext not in ALLOW:
-            return _jsonify({"ok": False, "error": f"Extensão não permitida: {ext}"}), 400
-        f.seek(0, os.SEEK_END); sz = f.tell(); f.seek(0)
-        size_total += sz
-        if size_total > 25 * 1024 * 1024:
-            return _jsonify({"ok": False, "error": "Limite total de 25MB excedido."}), 400
-        fd, tmp_path = tempfile.mkstemp(prefix="verif_", suffix=ext)
-        os.close(fd)
-        f.save(tmp_path)
-        saved.append({"filename": name, "path": tmp_path})
-
-    # Marca “pendente” no modelo em memória (stub v1)
-    from models.user_status import get_user_meta, set_user_meta, log_autorizacao
-    uid = request.headers.get("X-Debug-User", "guest")
-    meta = get_user_meta(uid)
-    pend = meta.get("pendentes", [])
-    for s in saved:
-        pend.append({"arquivo": s["filename"], "situacao": "pendente_review"})
-        log_autorizacao(uid, {"acao": "upload_pendente", "arquivo": s["filename"]})
-    meta["pendentes"] = pend
-    set_user_meta(uid, meta)
-    return _jsonify({"ok": True, "pendentes": len(pend)}), 200
-
-# -------------------------
-# Health / routes list
-# -------------------------
 @app.route("/health", methods=["GET"])
-def health():
-    return jsonify(
-        ok=True,
-        service="mei-robo-prod",
-        has_whatsapp_token=bool(os.getenv("WHATSAPP_TOKEN")),
-        has_phone_number_id=bool(PHONE_NUMBER_ID),
-        graph_version=GRAPH_VERSION,
-        app_tag=APP_TAG,
-        uid_default=UID_DEFAULT,
-    )
+def health_simple():
+    return jsonify(ok=True, service="mei-robo-prod", app_tag=APP_TAG), 200
 
-# =========================================
-# Verificação de e-mail (fallback)
-# =========================================
-# Helpers locais para esta rota (mínimos e isolados)
-import base64 as _b64
+@app.route("/__version", methods=["GET"])
+def __version():
+    return jsonify({"ok": True, "boot": APP_TAG}), 200
 
-def verify_bearer():
-    """Decodifica o Bearer JWT (sem validar assinatura) e retorna claims ou None."""
-    auth = request.headers.get("Authorization", "").strip()
-    if not auth.lower().startswith("bearer "):
-        return None
-    tok = auth.split(" ", 1)[1].strip()
-    parts = tok.split(".")
-    if len(parts) < 2:
-        return None
-    try:
-        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
-        payload = json.loads(_b64.urlsafe_b64decode((parts[1] + pad).encode()).decode())
-        uid = payload.get("user_id") or payload.get("uid") or payload.get("sub")
-        if not uid:
-            return None
-        payload["uid"] = uid
-        return payload
-    except Exception:
-        return None
-
-_fb_initialized = False
-fb_fs = None
-
-def ensure_firebase_admin():
-    """Inicializa firebase_admin sob demanda e expõe fb_fs (Firestore)."""
-    global _fb_initialized, fb_fs
-    if _fb_initialized and fb_fs is not None:
-        return
-    try:
-        import firebase_admin
-        from firebase_admin import credentials, firestore
-        if not firebase_admin._apps:
-            # Usa credenciais do ambiente (JSON na env var) se existir
-            cred_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON") or os.getenv("FIREBASE_CREDENTIALS_JSON")
-            if cred_json:
-                cred = credentials.Certificate(json.loads(cred_json))
-                firebase_admin.initialize_app(cred)
-            else:
-                firebase_admin.initialize_app()
-        fb_fs = firestore.client()
-        _fb_initialized = True
-    except Exception as e:
-        app.logger.warning("ensure_firebase_admin: falha ao inicializar firebase_admin: %s", e)
-        _fb_initialized = False
-        fb_fs = None
-
-@app.route("/api/auth/check-verification", methods=["POST", "OPTIONS"])
-def check_verification():
-    if request.method == "OPTIONS":
-        return ("", 200)
-
-    # precisa estar igual ao que você usa para decodificar o Bearer
-    claims = verify_bearer()
-    if not claims:
-        return jsonify(verified=False, error="unauthorized"), 401
-
-    ensure_firebase_admin()
-    if fb_fs is None:
-        return jsonify(verified=False, error="firebase_admin_unavailable"), 500
-
-    from firebase_admin import auth as fb_auth
-
-    try:
-        u = fb_auth.get_user(claims["uid"])
-    except Exception as e:
-        app.logger.warning("check-verification: get_user falhou: %s", e)
-        return jsonify(verified=False, error="user_not_found"), 404
-
-    if not u.email_verified:
-        return jsonify(verified=False), 200
-
-    # marca ativo no Firestore (ajuste a coleção se for diferente)
-    try:
-        fb_fs.collection("profissionais").document(claims["uid"]).set({
-            "status": "active",
-            "emailVerified": True
-        }, merge=True)
-    except Exception as e:
-        app.logger.warning("check-verification: firestore set falhou: %s", e)
-
-    return jsonify(verified=True), 200
-
-@app.route("/__routes", methods=["GET"])
-def list_routes():
-    rules = []
-    for r in app.url_map.iter_rules():
-        methods = sorted(list(r.methods - {"HEAD", "OPTIONS"}))
-        rules.append({"rule": str(r), "endpoint": r.endpoint, "methods": methods})
-    return jsonify(routes=rules, count=len(rules))
-
-# -------------------------
-# Debug WA + Env Seguro
-# -------------------------
-@app.get("/__wa_debug")
-def __wa_debug():
-    fp = _token_fingerprint(os.getenv("WHATSAPP_TOKEN", ""))
-    out = {
-        "graph_version": GRAPH_VERSION,
-        "phone_number_id": PHONE_NUMBER_ID,
-        "token_fingerprint": fp,
-        "pid": os.getpid(),
-        "app_tag": APP_TAG,
-        "openai_model": os.getenv("OPENAI_NLU_MODEL"),
-        "use_llm_for_all": os.getenv("USE_LLM_FOR_ALL"),
-    }
-    try:
-        from services.budget_guard import budget_fingerprint
-        out["budget"] = budget_fingerprint()
-    except Exception:
-        out["budget"] = {"available": False}
-    return jsonify(out), 200
-
+# =====================================
+# Env seguro (sem segredos em claro)
+# =====================================
 def _mask_secret(value: str):
     if not value:
         return {"present": False}
@@ -872,102 +197,19 @@ def env_safe():
 
     safe = {
         "VERIFY_TOKEN": bool(os.getenv("VERIFY_TOKEN")),
-        "GRAPH_VERSION": GRAPH_VERSION,
-        "PHONE_NUMBER_ID": PHONE_NUMBER_ID,
-        "OPENAI_NLU_MODEL": os.getenv("OPENAI_NLU_MODEL"),
-        "USE_LLM_FOR_ALL": os.getenv("USE_LLM_FOR_ALL"),
-        "BUDGET_MONTHLY_USD": os.getenv("BUDGET_MONTHLY_USD"),
-        "BUDGET_RESERVE_PCT": os.getenv("BUDGET_RESERVE_PCT"),
-        "TZ": os.getenv("TZ"),
-        "STT_SECONDS_AVG": os.getenv("STT_SECONDS_AVG"),
-        "UID_DEFAULT": os.getenv("UID_DEFAULT"),
-        "APP_TAG": os.getenv("APP_TAG"),
+        "APP_TAG": APP_TAG,
         "FRONTEND_BASE": os.getenv("FRONTEND_BASE"),
-        "WHATSAPP_TOKEN": _mask_secret(os.getenv("WHATSAPP_TOKEN")),
-        "OPENAI_API_KEY": _mask_secret(os.getenv("OPENAI_API_KEY")),
+        "WHATSAPP_TOKEN": _mask_secret(os.getenv("WHATSAPP_TOKEN", "")),
+        "OPENAI_API_KEY": _mask_secret(os.getenv("OPENAI_API_KEY", "")),
         "FIREBASE_PROJECT_ID": os.getenv("FIREBASE_PROJECT_ID"),
-        "FIREBASE_CREDENTIALS_JSON": {"present": bool(os.getenv("FIREBASE_CREDENTIALS_JSON"))},
-        "FIREBASE_SERVICE_ACCOUNT_JSON": {"present": bool(os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON"))},
-        "GOOGLE_APPLICATION_CREDENTIALS_JSON": {"present": bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))},
-        "ELEVEN_API_KEY": _mask_secret(os.getenv("ELEVEN_API_KEY")),
-        "ELEVEN_VOICE_ID": os.getenv("ELEVEN_VOICE_ID"),
-        "DEV_FORCE_ADMIN": os.getenv("DEV_FORCE_ADMIN"),
-        "DEV_FAKE_UID": os.getenv("DEV_FAKE_UID"),
-        # >>> Incluímos as chaves do Turnstile no relatório seguro (mascarado)
-        "TURNSTILE_SECRET_KEY": _mask_secret(os.getenv("TURNSTILE_SECRET_KEY", "")),
-        "HUMAN_COOKIE_SIGNING_KEY": _mask_secret(os.getenv("HUMAN_COOKIE_SIGNING_KEY", "")),
-        # >>> Correções pedidas:
         "STORAGE_BUCKET": os.getenv("STORAGE_BUCKET"),
         "SIGNED_URL_EXPIRES_SECONDS": os.getenv("SIGNED_URL_EXPIRES_SECONDS"),
     }
-    return jsonify({"ok": True, "env": safe})
+    return jsonify({"ok": True, "env": safe}), 200
 
-# -------------------------
-# Firestore utils (debug)
-# -------------------------
-try:
-    from services.db import get_doc, list_collection, get_db
-except Exception as e:
-    get_doc = None
-    list_collection = None
-    get_db = None
-    print(f"[warn] services.db indisponível: {e}")
-
-@app.route("/__ping_firestore", methods=["GET"])
-def ping_firestore():
-    if get_db is None:
-        return jsonify({"ok": False, "error": "services.db not available"}), 500
-    try:
-        client = get_db()
-        _ = next(client.collections(), None)
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route("/__doc", methods=["GET"])
-def debug_doc():
-    if get_doc is None:
-        return jsonify({"ok": False, "error": "services.db not available"}), 500
-
-    path = request.args.get("path", "").strip()
-    field = request.args.get("field", "").strip()
-    limit = int(request.args.get("limit", "10"))
-
-    if not path:
-        return jsonify({"ok": False, "error": "missing ?path="}), 400
-
-    parts = [p for p in path.split("/") if p]
-    try:
-        if len(parts) % 2 == 0:
-            doc = get_doc(path)
-            if doc is None:
-                return jsonify({"ok": True, "kind": "doc", "path": path, "data": None})
-            if field:
-                return jsonify({"ok": True, "kind": "doc", "path": path, "field": field, "data": doc.get(field)})
-            return jsonify({"ok": True, "kind": "doc", "path": path, "data": doc})
-        else:
-            items = list_collection(path, limit=limit)
-            return jsonify({"ok": True, "kind": "collection", "collection": path, "count": len(items), "items": items})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route("/__list", methods=["GET"])
-def debug_list():
-    if list_collection is None:
-        return jsonify({"ok": False, "error": "services.db not available"}), 500
-    col = request.args.get("col")
-    limit = int(request.args.get("limit", "5"))
-    if not col:
-        return jsonify({"ok": False, "error": "missing ?col="}), 400
-    try:
-        items = list_collection(col, limit=limit)
-        return jsonify({"ok": True, "collection": col, "count": len(items), "items": items})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-# -------------------------
-# Lazy import do wa_bot + status
-# -------------------------
+# =====================================
+# WA bot status + lazy import
+# =====================================
 _WA_BOT_MOD = None
 _WA_BOT_LAST_ERR = None
 
@@ -983,7 +225,7 @@ def _load_wa_bot():
     except Exception as e:
         _WA_BOT_MOD = None
         _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\n" + (traceback.format_exc(limit=3) or "")
-        print(f"[init][erro] não consegui importar services.wa_bot: {e}", flush=True)
+        print(f"[init][erro] services.wa_bot: {e}", flush=True)
         return None
 
 @app.get("/__wa_bot_status")
@@ -993,16 +235,42 @@ def wa_bot_status():
         "ok": True,
         "service": "mei-robo-prod",
         "app_tag": APP_TAG,
-        "uid_default": UID_DEFAULT,
         "loaded": bool(mod and hasattr(mod, "process_change")),
         "has_process_change": bool(getattr(mod, "process_change", None)) if mod else False,
         "last_error": _WA_BOT_LAST_ERR,
         "module": getattr(mod, "__file__", None) if mod else None,
     }), 200
 
-# -------------------------
-# API utilitária de envio (texto) — agora com candidatos com/sem 9
-# -------------------------
+# =====================================
+# Helpers telefone + send-text
+# =====================================
+from typing import List
+def _only_digits(s: str) -> str:
+    return "".join(ch for ch in str(s or "") if ch.isdigit())
+
+def _normalize_br_msisdn(wa_id: str) -> str:
+    if not wa_id:
+        return ""
+    digits = _only_digits(wa_id)
+    if digits.startswith("55") and len(digits) == 12:
+        digits = digits[:4] + "9" + digits[4:]
+    return digits
+
+def br_candidates(msisdn: str) -> List[str]:
+    d = _only_digits(msisdn)
+    if d.startswith("55") and len(d) == 12:
+        return [d[:4] + "9" + d[4:], d]
+    return [d]
+
+def br_equivalence_key(msisdn: str) -> str:
+    d = _only_digits(msisdn)
+    if d.startswith("55"):
+        cc = d[:2]
+        ddd = d[2:4] if len(d) >= 4 else ""
+        local8 = d[-8:]
+        return f"{cc}{ddd}{local8}"
+    return d[-8:]
+
 from services.wa_send import send_text as wa_send_text
 
 @app.route("/api/send-text", methods=["GET", "POST"])
@@ -1018,145 +286,62 @@ def api_send_text():
     if not to or not body:
         return {"ok": False, "error": "missing_to_or_body"}, 400
 
-    # Gera candidatos robustos (com/sem 9) + fallback de normalização
-    cands = []
-    try:
-        cands = br_candidates(to)
-    except Exception:
-        cands = []
-    if not cands:
-        cands = [_normalize_br_msisdn(to)]
-
-    # De-dup
-    seen = set()
-    cands = [c for c in cands if not (c in seen or seen.add(c))]
-
+    cands = br_candidates(to) or [_normalize_br_msisdn(to)]
+    seen = set(); cands = [c for c in cands if not (c in seen or seen.add(c))]
     eq_key = br_equivalence_key(to)
-    print(f"[API][SEND_TEXT] to={to} eq_key={eq_key} cands={cands} body_preview={body[:80]}", flush=True)
 
     last_resp = None
     for cand in cands:
         ok, resp = wa_send_text(cand, body)
-        print(f"[API][SEND_TEXT][try] cand={cand} ok={ok}", flush=True)
         if ok:
             return {"ok": True, "used": cand, "eq_key": eq_key, "resp": resp}, 200
         last_resp = resp
-
     return {"ok": False, "eq_key": eq_key, "tried": cands, "resp": last_resp}, 500
 
-# -------------------------
-# MSISDN debug helper
-# -------------------------
-@app.route("/__msisdn_debug", methods=["GET"])
-def msisdn_debug():
-    num = request.args.get("num", "")
-    if not num:
-        return jsonify({"ok": False, "error": "missing ?num="}), 400
-
-    digits = _only_digits(num)
-    norm = _normalize_br_msisdn(num)
-    try:
-        cands = br_candidates(num)
-    except Exception:
-        cands = [norm]
-    try:
-        key = br_equivalence_key(num)
-    except Exception:
-        key = None
-
-    out = {
-        "ok": True,
-        "input": num,
-        "digits_only": digits,
-        "normalized": norm,
-        "candidates": cands,
-        "equivalence_key": key,
-    }
-    return jsonify(out), 200
-
-# =========================
-# Cupom — rotas absolutas (Plano B à prova de falhas do blueprint)
-# =========================
-from flask import g
-from datetime import datetime, timezone
-from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
-from services.db import db
+# =====================================
+# Cupons — rotas absolutas (mantidas)
+# =====================================
 import base64 as _b64
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
-def _uid_from_authorization() -> str | None:
-    """
-    Extrai UID do Authorization: Bearer <idToken> lendo o payload do JWT (sem validar assinatura).
-    Temporário para manter produção enquanto o services.auth.auth_required não está disponível.
-    """
-    auth = request.headers.get("Authorization", "").strip()
-    if not auth.lower().startswith("bearer "):
-        return None
-    tok = auth.split(" ", 1)[1].strip()
-    parts = tok.split(".")
-    if len(parts) < 2:
-        return None
-    try:
-        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
-        payload = json.loads(_b64.urlsafe_b64decode((parts[1] + pad).encode()).decode())
-        uid = payload.get("user_id") or payload.get("uid") or payload.get("sub")
-        return uid or None
-    except Exception:
-        return None
-
-# ---- Turnstile helpers (LEGADO)
 def _sign_value(raw: str, key: str) -> str:
-    mac = hashlib.sha256((raw).encode("utf-8")).hexdigest()
-    return mac[:16]
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 def _human_cookie_ok() -> bool:
     raw = request.cookies.get("human_ok", "")
-    if not raw:
-        return False
+    if not raw: return False
     parts = raw.split(".")
     if len(parts) == 3:
         val, ts_str, sig = parts
         key = os.getenv("HUMAN_COOKIE_SIGNING_KEY", "").strip()
-        if not key:
-            return False
+        if not key: return False
         base = f"{val}.{ts_str}"
         expect = _sign_value(base, key)
-        if sig != expect:
-            return False
-        try:
-            ts = int(ts_str)
-        except Exception:
-            return False
-        if (time.time() - ts) > 5 * 60:
-            return False
+        if sig != expect: return False
+        try: ts = int(ts_str)
+        except Exception: return False
+        if (time.time() - ts) > 5 * 60: return False
         return val == "1"
-    # modo sem assinatura (não recomendado, mas tolerado se já existir)
     return raw == "1"
 
 def _verify_turnstile_token(token: str) -> bool:
     secret = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
-    if not secret or not token:
-        return False
+    if not secret or not token: return False
     data = ulparse.urlencode({
         "secret": secret,
         "response": token,
         "remoteip": request.headers.get("CF-Connecting-IP") or request.remote_addr or ""
     }).encode("utf-8")
-    req = ulreq.Request(TURNSTILE_VERIFY_URL, data=data, headers={
-        "Content-Type": "application/x-www-form-urlencoded"
-    })
+    req = ulreq.Request(TURNSTILE_VERIFY_URL, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"})
     try:
         with ulreq.urlopen(req, timeout=10) as resp:
             body = resp.read().decode("utf-8", errors="replace")
-            j = json.loads(body)
-            return bool(j.get("success"))
+            j = json.loads(body); return bool(j.get("success"))
     except Exception:
         return False
 
 def _is_human_ok() -> bool:
-    # 1) cookie assinado válido (preferido)
-    if _human_cookie_ok():
-        return True
-    # 2) fallback: token passado no header ou body → verificação ao vivo
+    if _human_cookie_ok(): return True
     tok = (
         request.headers.get("cf-turnstile-response")
         or (request.get_json(silent=True) or {}).get("cf_token")
@@ -1164,328 +349,203 @@ def _is_human_ok() -> bool:
         or (request.get_json(silent=True) or {}).get("token")
         or request.headers.get("x-turnstile-token")
     )
-    if tok and _verify_turnstile_token(tok):
-        return True
-    return False
+    return _verify_turnstile_token(tok) if tok else False
 
-# ---------- Validação Pública (sem login) ----------
-@app.route("/api/cupons/validar-publico", methods=["OPTIONS"])
-def _preflight_api_cupons_validar_publico():
-    return ("", 204)
+def _uid_from_authorization() -> str | None:
+    auth = request.headers.get("Authorization", "").strip()
+    if not auth.lower().startswith("bearer "): return None
+    tok = auth.split(" ", 1)[1].strip()
+    parts = tok.split(".")
+    if len(parts) < 2: return None
+    try:
+        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
+        payload = json.loads(_b64.urlsafe_b64decode((parts[1] + pad).encode()).decode())
+        return payload.get("user_id") or payload.get("uid") or payload.get("sub")
+    except Exception:
+        return None
+
+from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
+from services.db import db
 
 def _parse_iso_maybe_z(s: str):
-    if not s:
-        return None
+    if not s: return None
     try:
-        # Python 3.11 aceita offset, mas nem sempre 'Z'; normaliza Z->+00:00
         if isinstance(s, str) and s.endswith("Z"):
             s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+        if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
         return dt
     except Exception:
         return None
 
+@app.route("/api/cupons/validar-publico", methods=["OPTIONS"])
+def _preflight_api_cupons_validar_publico(): return ("", 204)
+
 @app.route("/api/cupons/validar-publico", methods=["POST"])
 def api_cupons_validar_publico():
-    """
-    Verifica se o cupom *pode* ser usado (não consome). Sem exigir autenticação.
-    Entrada: { "codigo": "ABC-123" }
-    Saída: 200 {"ok": true, "cupom": {...}}  |  400 {"ok": false, "reason": "..."}
-    """
     try:
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
-        if not codigo:
-            return jsonify({"ok": False, "reason": "codigo_obrigatorio"}), 400
-
-        from services.coupons import find_cupom_by_codigo
+        if not codigo: return jsonify({"ok": False, "reason": "codigo_obrigatorio"}), 400
         cupom = find_cupom_by_codigo(codigo)
-        if not cupom:
-            return jsonify({"ok": False, "reason": "nao_encontrado"}), 400
+        if not cupom: return jsonify({"ok": False, "reason": "nao_encontrado"}), 400
 
-        # checks básicos
         status = (cupom.get("status") or "").lower()
-        if status in {"used", "revogado", "invalido"}:
-            return jsonify({"ok": False, "reason": status}), 400
-
-        if cupom.get("ativo") is False:
-            return jsonify({"ok": False, "reason": "inativo"}), 400
+        if status in {"used","revogado","invalido"}: return jsonify({"ok": False, "reason": status}), 400
+        if cupom.get("ativo") is False: return jsonify({"ok": False, "reason": "inativo"}), 400
 
         usos = int(cupom.get("usos") or 0)
         usos_max = int(cupom.get("usosMax") or 1)
-        if (usos_max > 0) and (usos >= usos_max):
-            return jsonify({"ok": False, "reason": "sem_usos_restantes"}), 400
+        if (usos_max > 0) and (usos >= usos_max): return jsonify({"ok": False, "reason": "sem_usos_restantes"}), 400
 
         exp = cupom.get("expiraEm")
         if exp:
             dt = _parse_iso_maybe_z(exp if isinstance(exp, str) else str(exp))
             now_utc = datetime.now(timezone.utc)
-            if dt and dt < now_utc:
-                return jsonify({"ok": False, "reason": "expirado"}), 400
+            if dt and dt < now_utc: return jsonify({"ok": False, "reason": "expirado"}), 400
 
-        # sucesso
-        public = {
-            "codigo": cupom.get("codigo"),
-            "tipo": cupom.get("tipo"),
-            "escopo": cupom.get("escopo"),
-            "expiraEm": cupom.get("expiraEm"),
-            "usos": usos,
-            "usosMax": usos_max,
-        }
+        public = {k: cupom.get(k) for k in ("codigo","tipo","escopo","expiraEm")}
+        public.update({"usos": usos, "usosMax": usos_max})
         return jsonify({"ok": True, "cupom": public}), 200
     except Exception as e:
         return jsonify({"ok": False, "reason": "erro_interno", "detail": str(e)}), 500
 
-# ---------- Ativar (com token OU uid) ----------
 @app.route("/api/cupons/ativar", methods=["OPTIONS"])
-def _preflight_api_cupons_ativar():
-    return ("", 204)
+def _preflight_api_cupons_ativar(): return ("", 204)
 
 @app.route("/api/cupons/ativar", methods=["POST"])
 def api_cupons_ativar():
     try:
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
-        if not codigo:
-            return jsonify({"erro": "Código do cupom é obrigatório"}), 400
-
+        if not codigo: return jsonify({"erro": "Código do cupom é obrigatório"}), 400
         uid = _uid_from_authorization() or (data.get("uid") or "").strip()
-        if not uid:
-            # comportamento alinhado com a UI ("sessão expirada")
-            return jsonify({"erro": "Não autenticado"}), 401
+        if not uid: return jsonify({"erro": "Não autenticado"}), 401
 
-        from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
         cupom = find_cupom_by_codigo(codigo)
-
-        # >>> envia ip/ua para auditoria (blindagem)
         ctx = {
             "ip": request.headers.get("CF-Connecting-IP")
-                  or (request.headers.get("X-Forwarded-For", "").split(",")[0].strip() if request.headers.get("X-Forwarded-For") else "")
-                  or request.remote_addr
-                  or "",
+                  or (request.headers.get("X-Forwarded-For","").split(",")[0].strip() if request.headers.get("X-Forwarded-For") else "")
+                  or request.remote_addr or "",
             "ua": request.headers.get("User-Agent") or "",
         }
         ok, msg, plano = validar_consumir_cupom(cupom, uid, ctx=ctx)
-        if not ok:
-            return jsonify({"erro": msg}), 400
+        if not ok: return jsonify({"erro": msg}), 400
 
-        from services.db import db
         now_iso = datetime.now(timezone.utc).isoformat()
-        prof_ref = db.collection("profissionais").document(uid)
-        prof_ref.set(
-            {
-                "plan": (plano or "start"),
-                "plano": (plano or "start"),
-                "licenca": {
-                    "origem": "cupom",
-                    "codigo": codigo,
-                    "activatedAt": now_iso,
-                },
-                "updatedAt": now_iso,
-            },
-            merge=True,
-        )
+        db.collection("profissionais").document(uid).set({
+            "plan": (plano or "start"),
+            "plano": (plano or "start"),
+            "licenca": {"origem": "cupom", "codigo": codigo, "activatedAt": now_iso},
+            "updatedAt": now_iso,
+        }, merge=True)
         return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
     except Exception as e:
         return jsonify({"erro": f"ativar_cupom[app]: {str(e)}"}), 500
 
-# ---------- Legado absoluto (codigo+uid no body; sem token) ----------
 @app.route("/api/cupons/ativar-cupom", methods=["OPTIONS"])
-def _preflight_api_cupons_ativar_legado():
-    return ("", 204)
+def _preflight_api_cupons_ativar_legado(): return ("", 204)
 
 @app.route("/api/cupons/ativar-cupom", methods=["POST"])
 def api_cupons_ativar_legado():
     try:
-        # >>> Blindagem: exige humano_ok OU token Turnstile válido no header/body
-        if not _is_human_ok():
-            return jsonify({"erro": "captcha_required"}), 403
-
+        if not _is_human_ok(): return jsonify({"erro": "captcha_required"}), 403
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
         uid = (data.get("uid") or "").strip()
-        # sync render: garantindo operador 'or' (nunca 'ou')
-        if not codigo or not uid:
-            return jsonify({"erro": "Código do cupom e UID são obrigatórios"}), 400
+        if not codigo or not uid: return jsonify({"erro": "Código do cupom e UID são obrigatórios"}), 400
 
-        from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
         cupom = find_cupom_by_codigo(codigo)
-
-        # >>> envia ip/ua para auditoria (blindagem)
         ctx = {
             "ip": request.headers.get("CF-Connecting-IP")
-                  or (request.headers.get("X-Forwarded-For", "").split(",")[0].strip() if request.headers.get("X-Forwarded-For") else "")
-                  or request.remote_addr
-                  or "",
+                  or (request.headers.get("X-Forwarded-For","").split(",")[0].strip() if request.headers.get("X-Forwarded-For") else "")
+                  or request.remote_addr or "",
             "ua": request.headers.get("User-Agent") or "",
         }
         ok, msg, plano = validar_consumir_cupom(cupom, uid, ctx=ctx)
-        if not ok:
-            return jsonify({"erro": msg}), 400
+        if not ok: return jsonify({"erro": msg}), 400
 
-        from services.db import db
         now_iso = datetime.now(timezone.utc).isoformat()
-        prof_ref = db.collection("profissionais").document(uid)
-        prof_ref.set(
-            {
-                "plan": (plano or "start"),
-                "plano": (plano or "start"),
-                "licenca": {
-                    "origem": "cupom",
-                    "codigo": codigo,
-                    "activatedAt": now_iso,
-                },
-                "updatedAt": now_iso,
-            },
-            merge=True,
-        )
+        db.collection("profissionais").document(uid).set({
+            "plan": (plano or "start"),
+            "plano": (plano or "start"),
+            "licenca": {"origem": "cupom", "codigo": codigo, "activatedAt": now_iso},
+            "updatedAt": now_iso,
+        }, merge=True)
         return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
     except Exception as e:
         return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"}), 500
-# =========================================
-# MEI ROBO PATCH — cadastro + CNPJ availability
-# =========================================
 
-# --- CNPJ availability (stub seguro p/ Cliente Zero) ---
+# =====================================
+# Cadastro / ativar-cliente + CNPJ availability (stub)
+# =====================================
+from services.mailer import send_verification_email
+
+def _only_digits_public(s): return "".join(ch for ch in str(s or "") if ch.isdigit())
+
 @app.route("/api/cnpj/availability", methods=["GET", "OPTIONS"])
 def api_cnpj_availability():
-    """
-    Verifica disponibilidade/básico do CNPJ.
-    Stub v1: responde 200 com available=True se vier um CNPJ válido (14 dígitos).
-    Depois plugamos serviço real (CNPJ.ws/SERPRO) conforme VERIFICACAO_AUTORIDADE.
-    """
+    if request.method == "OPTIONS": return ("", 204)
     cnpj_raw = (request.args.get("cnpj") or "").strip()
-    cnpj = _only_digits(cnpj_raw)
-    if not cnpj:
-        return jsonify({"ok": False, "error": "missing_cnpj"}), 400
-    if len(cnpj) != 14:
-        return jsonify({"ok": False, "error": "invalid_cnpj_length", "cnpj": cnpj}), 400
+    cnpj = _only_digits_public(cnpj_raw)
+    if not cnpj: return jsonify({"ok": False, "error": "missing_cnpj"}), 400
+    if len(cnpj) != 14: return jsonify({"ok": False, "error": "invalid_cnpj_length", "cnpj": cnpj}), 400
+    return jsonify({"ok": True, "cnpj": cnpj, "available": True, "source": "stub"}), 200
 
-    # Futuro: se VERIFICACAO_AUTORIDADE=true, chamar integração real aqui.
-    return jsonify({
-        "ok": True,
-        "cnpj": cnpj,
-        "available": True,   # assume disponível no modo Cliente Zero
-        "source": "stub"
-    }), 200
-
-
-# --- Ativar/registrar cliente (idempotente) ---
 def _ensure_profissional_doc(uid: str, nome: str, email: str, cnpj: str):
-    """
-    Cria/atualiza o doc profissionais/{uid} com campos mínimos para o onboarding.
-    Idempotente: sempre merge=True.
-    Também tenta popular empresa{...} a partir do CNPJ (se ainda não existir).
-    """
-    from datetime import datetime, timezone
     now_iso = datetime.now(timezone.utc).isoformat()
-
-    # Normaliza CNPJ para apenas dígitos
-    cnpj_digits = "".join(ch for ch in str(cnpj or "") if ch.isdigit())
-
-    # Campos mínimos; não forçamos 'plan' aqui para não sobrescrever fluxo de cupom/licença
-    payload = {
-        "nome": nome,
-        "email": email,
-        "cnpj": cnpj_digits,
-        "onboarding": {
-            "status": "created",
-            "createdAt": now_iso,
-        },
+    db.collection("profissionais").document(uid).set({
+        "nome": nome, "email": email, "cnpj": cnpj,
+        "onboarding": {"status": "created", "createdAt": now_iso},
         "updatedAt": now_iso,
-    }
-
-    prof_ref = db.collection("profissionais").document(uid)
-
-    # Verifica se já existe empresa.razaoSocial; se não, tenta buscar na API
-    try:
-        snap = prof_ref.get()
-        existing = snap.to_dict() if snap and snap.exists else {}
-        empresa_existing = (existing or {}).get("empresa") or {}
-        razao_ok = (empresa_existing or {}).get("razaoSocial")
-        if cnpj_digits and len(cnpj_digits) == 14 and not (razao_ok and str(razao_ok).strip()):
-            info = fetch_cnpj_info(cnpj_digits)
-            if info:
-                payload["empresa"] = info
-    except Exception:
-        # Em caso de erro na verificação/consulta, segue sem empresa
-        pass
-
-    prof_ref.set(payload, merge=True)
+    }, merge=True)
     return True
 
+def _uid_from_bearer() -> str | None:
+    auth = request.headers.get("Authorization", "").strip()
+    if not auth.lower().startswith("bearer "): return None
+    tok = auth.split(" ", 1)[1].strip()
+    parts = tok.split(".")
+    if len(parts) < 2: return None
+    try:
+        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
+        payload = json.loads(_b64.urlsafe_b64decode((parts[1] + pad).encode()).decode())
+        return payload.get("user_id") or payload.get("uid") or payload.get("sub")
+    except Exception:
+        return None
 
 @app.route("/api/ativar-cliente", methods=["POST", "OPTIONS"])
 def api_ativar_cliente():
-    """
-    Endpoint de criação/ativação inicial do profissional (Cliente Zero e produção).
-    Requer Authorization: Bearer <idToken> (uid extraído via _uid_from_authorization()).
-    Body JSON: { nome, email, cnpj }
-    """
-    if request.method == "OPTIONS":
-        # Deixa o CORS liso
-        return ("", 204)
-
-    uid = _uid_from_authorization()
-    if not uid:
-        return jsonify({"ok": False, "error": "unauthenticated"}), 401
-
+    if request.method == "OPTIONS": return ("", 204)
+    uid = _uid_from_bearer()
+    if not uid: return jsonify({"ok": False, "error": "unauthenticated"}), 401
     data = request.get_json(silent=True) or {}
     nome = (data.get("nome") or "").strip()
     email = (data.get("email") or "").strip()
-    cnpj = _only_digits(data.get("cnpj") or "")
-
+    cnpj = _only_digits_public(data.get("cnpj") or "")
     if not nome or not email or not cnpj:
         return jsonify({"ok": False, "error": "missing_fields", "need": ["nome","email","cnpj"]}), 400
     if len(cnpj) != 14:
         return jsonify({"ok": False, "error": "invalid_cnpj_length", "cnpj": cnpj}), 400
+    _ensure_profissional_doc(uid, nome, email, cnpj)
+    return jsonify({"ok": True, "uid": uid, "created": True}), 201
 
-    # (Opcional) Short-circuit de verificação, se estiver habilitada no ambiente.
-    if os.getenv("VERIFICACAO_AUTORIDADE", "false").lower() in ("1","true","yes"):
-        # Aqui no futuro podemos chamar uma função de verificação real do CNPJ/autoridade
-        # ou checar um carimbo prévio. Por ora seguimos com criação idempotente.
-        pass
-
-    try:
-        _ensure_profissional_doc(uid, nome, email, cnpj)
-        return jsonify({"ok": True, "uid": uid, "created": True}), 201
-    except Exception as e:
-        logging.exception("ativar-cliente failed: %s", e)
-        return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
-
-# --- Alias de compatibilidade (/api/cadastro → /api/ativar-cliente) ---
 @app.route("/api/cadastro", methods=["POST", "OPTIONS"])
 def api_cadastro_alias():
-    """
-    Alias para manter compatibilidade com UIs antigas que chamam /api/cadastro.
-    Encaminha para a mesma lógica de /api/ativar-cliente.
-    Aqui também disparamos o e-mail de verificação de forma discreta.
-    """
-    if request.method == "OPTIONS":
-        return ("", 204)
-
-    # 1) Tenta capturar o email do payload recebido do frontend
+    if request.method == "OPTIONS": return ("", 204)
+    data = request.get_json(silent=True) or {}
+    email_clean = (data.get("email") or "").strip().lower()
     try:
-        data = request.get_json(silent=True) or {}
-        email_clean = (data.get("email") or "").strip().lower()
-    except Exception:
-        data = {}
-    ...
+        if email_clean:
+            send_verification_email(email_clean, continue_url="https://www.meirobo.com.br/verify-email.html")
+            app.logger.info("cadastro(alias): verification email enviado para %s", email_clean)
+        else:
+            app.logger.warning("cadastro(alias): e-mail ausente; pulando verificação.")
+    except Exception as e:
+        app.logger.warning("cadastro(alias): send_verification_email falhou: %s", e)
+    return api_ativar_cliente()
 
-# --- Modular Blueprints (guarded by ENV flags) ---
-try:
-    from routes.cnpj_publica import cnpj_bp
-    if os.getenv('CNPJ_BP_ENABLED') == 'true':
-        app.register_blueprint(cnpj_bp)
-except Exception as e:
-    logging.warning('CNPJ_BP disabled or import failed: %s', e)
-
-try:
-    from routes.voz_upload_bp import voz_upload_bp
-    if os.getenv('VOZ_V2_ENABLED') == 'true':
-        app.register_blueprint(voz_upload_bp)
-except Exception as e:
-    logging.warning('VOZ_V2 disabled or import failed: %s', e)
+# =====================================
+# EOF
+# =====================================
 
