@@ -4,9 +4,11 @@
 #   POST /api/voz/upload      (multipart: voz, uid)
 #   POST /api/voz/upload/     (mesma função; evita redirect 308/405)
 #   GET  /api/voz/ping        (sanidade)
+#   GET  /api/voz/diag        (diagnóstico rápido)
 
 from flask import Blueprint, request, jsonify
 import time, logging
+import importlib
 
 from services.voice_validation import (
     ensure_audio_present,
@@ -18,10 +20,9 @@ from services.voice_validation import (
 from services.storage_gcs import upload_bytes_and_get_url
 from services.voice_metadata import record_last_voice_url
 
-# OBS: o app.py espera importar **voz_upload_bp**
 voz_upload_bp = Blueprint("voz_upload_v2", __name__)
 
-_MIN_SECONDS = 30  # mínimo recomendado V2 (>=60s ideal)
+_MIN_SECONDS = 30  # recomendado (>=60s ideal)
 
 def _do_upload():
     req_id = f"cfg-voz-{int(time.time()*1000)}"
@@ -36,7 +37,8 @@ def _do_upload():
 
     # 3) Duração
     duration = probe_duration(raw, mimetype)
-    if duration < _MIN_SECONDS:
+    # Aceita quando for desconhecida (<=0). Só barra se for conhecida e < 30s.
+    if (duration is not None) and (duration > 0) and (duration < _MIN_SECONDS):
         return jsonify({
             "ok": False,
             "error": "too_short",
@@ -47,7 +49,7 @@ def _do_upload():
     uid = (request.form.get("uid") or "").strip() or "sem_uid"
     filename = sanitize_filename(f.filename)
 
-    # 5) Upload (preferência: privado + Signed URL dentro de upload_bytes_and_get_url)
+    # 5) Upload (público ou Signed URL, conforme storage_gcs)
     try:
         url, bucket, gcs_path, access = upload_bytes_and_get_url(uid, filename, raw, mimetype)
     except Exception as e:
@@ -61,13 +63,14 @@ def _do_upload():
 
     # 6) Persistência leve (não bloqueante)
     try:
-        record_last_voice_url(uid, url, mimetype, len(raw), int(round(duration)))
+        dur_sec = int(round(duration)) if (duration and duration > 0) else None
+        record_last_voice_url(uid, url, mimetype, len(raw), dur_sec)
     except Exception as e:
         logging.warning("(%s) Firestore vozClonada set warning: %s", req_id, e)
 
     logging.info(
         "[voz-upload] req_id=%s uid=%s mime=%s bytes=%d duration=%.2f bucket=%s path=%s access=%s",
-        req_id, uid, mimetype, len(raw), duration, bucket, gcs_path, access
+        req_id, uid, mimetype, len(raw), (duration or -1), bucket, gcs_path, access
     )
 
     return jsonify({
@@ -75,27 +78,46 @@ def _do_upload():
         "status": "ok",
         "uid": uid,
         "vozUrl": url,
-        "meta": {"mime": mimetype, "bytes": len(raw), "duration_sec": int(round(duration))}
+        "meta": {
+            "mime": mimetype,
+            "bytes": len(raw),
+            "duration_sec": (int(round(duration)) if (duration and duration > 0) else None),
+            "duration_known": bool(duration and duration > 0)
+        }
     }), 200
 
 
 # ===== Rotas =====
 
-# sem barra
 @voz_upload_bp.route("/api/voz/upload", methods=["POST", "OPTIONS"])
 def voz_upload_no_slash():
     if request.method == "OPTIONS":
         return ("", 204)
     return _do_upload()
 
-# com barra (evita redirect/308 em alguns proxies → 405)
 @voz_upload_bp.route("/api/voz/upload/", methods=["POST", "OPTIONS"])
 def voz_upload_with_slash():
     if request.method == "OPTIONS":
         return ("", 204)
     return _do_upload()
 
-# sanidade
 @voz_upload_bp.route("/api/voz/ping", methods=["GET"])
 def voz_ping():
     return jsonify({"ok": True, "service": "voz_v2"}), 200
+
+@voz_upload_bp.route("/api/voz/diag", methods=["GET"])
+def voz_diag():
+    # diagnóstico rápido do ambiente de voz
+    mutagen_ok = False
+    mutagen_ver = None
+    try:
+        m = importlib.import_module("mutagen")
+        mutagen_ok = True
+        mutagen_ver = getattr(m, "__version__", None)
+    except Exception:
+        mutagen_ok = False
+    return jsonify({
+        "ok": True,
+        "mutagen": {"available": mutagen_ok, "version": mutagen_ver},
+        "min_seconds": _MIN_SECONDS
+    }), 200
