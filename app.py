@@ -18,6 +18,9 @@ logging.basicConfig(level=logging.INFO)
 # =====================================
 app = Flask(__name__, static_folder="public", static_url_path="/")
 
+# Limite de upload (25 MB) — importante para áudio
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
+
 _allowed = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 cors_resources = {
     r"/api/*": {
@@ -54,6 +57,25 @@ def _handle_webhook_challenge():
             return Response(challenge, status=200, mimetype="text/plain; charset=utf-8")
         return Response("Forbidden", status=403)
     return None
+
+# =====================================
+# Error handlers padrão (úteis p/ voz)
+# =====================================
+@app.errorhandler(ValueError)
+def _handle_value_error(e):
+    msg = str(e) or "invalid_request"
+    mapping = {
+        "missing_audio": (400, "Áudio de voz é obrigatório."),
+        "unsupported_media_type": (415, "Formato não suportado. Envie MP3 ou WAV."),
+        "empty_audio": (422, "Arquivo de áudio vazio."),
+        "payload_too_large": (413, "Arquivo muito grande. Máx. 25 MB."),
+    }
+    status, human = mapping.get(msg, (400, msg))
+    return jsonify({"ok": False, "error": msg, "message": human}), status
+
+@app.errorhandler(OverflowError)
+def _handle_overflow_error(e):
+    return jsonify({"ok": False, "error": "payload_too_large", "message": "Arquivo muito grande. Máx. 25 MB."}), 413
 
 # ================================
 # Blueprints principais (sempre ON)
@@ -158,13 +180,13 @@ if os.getenv("CNPJ_BP_ENABLED", "false").lower() in ("1","true","yes"):
     except Exception as e:
         print("[bp][warn] cnpj_bp:", e)
 
-# Voz V2 (placeholder) — mantém V1 no blueprint config_bp se existir
+# Voz V2 — usa o blueprint unificado routes/voz_v2.py
 if os.getenv("VOZ_V2_ENABLED", "false").lower() in ("1","true","yes"):
     try:
-        from routes.voz_upload_bp import voz_upload_bp
-        _register_bp(voz_upload_bp, "voz_upload_v2")
+        from routes.voz_v2 import voz_v2_bp
+        _register_bp(voz_v2_bp, "voz_v2 (/api/voz/*)")
     except Exception as e:
-        print("[bp][warn] voz_upload_v2:", e)
+        print("[bp][warn] voz_v2:", e)
 
 # =====================================
 # Health simples adicional e versão
@@ -178,6 +200,15 @@ def health_simple():
 @app.route("/__version", methods=["GET"])
 def __version():
     return jsonify({"ok": True, "boot": APP_TAG}), 200
+
+# Pequeno diagnóstico das flags de voz
+@app.get("/__voice_flags")
+def __voice_flags():
+    return jsonify({
+        "VOZ_V2_ENABLED": os.getenv("VOZ_V2_ENABLED"),
+        "ELEVEN_API_KEY": bool(os.getenv("ELEVEN_API_KEY")),
+        "ELEVEN_VOICE_ID": os.getenv("ELEVEN_VOICE_ID") is not None,
+    }), 200
 
 # =====================================
 # Env seguro (sem segredos em claro)
@@ -244,7 +275,6 @@ def wa_bot_status():
 # =====================================
 # Helpers telefone + send-text
 # =====================================
-from typing import List
 def _only_digits(s: str) -> str:
     return "".join(ch for ch in str(s or "") if ch.isdigit())
 
@@ -548,4 +578,3 @@ def api_cadastro_alias():
 # =====================================
 # EOF
 # =====================================
-
