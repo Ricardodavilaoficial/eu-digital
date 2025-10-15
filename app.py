@@ -157,12 +157,6 @@ except Exception as e:
 
 # Verificação de Autoridade (gate)
 try:
-    from routes.verificacao_autoridade import verificacao_bp
-    _register_bp(verificacao_bp, "verificacao_bp")
-except Exception as e:
-    print("[bp][warn] verificacao_bp:", e)
-
-try:
     from middleware.authority_gate import init_authority_gate
     init_authority_gate(app, restricted_patterns=[r"^/api/cupons/.*", r"^/api/importar-precos$", r"^/admin/.*", r"^/webhook/.*"])
     print("[gate] Authority Gate on")
@@ -187,6 +181,28 @@ if os.getenv("VOZ_V2_ENABLED", "false").lower() in ("1","true","yes"):
         _register_bp(voz_upload_bp, "voz_upload_v2 (/api/voz/*)")
     except Exception as e:
         print("[bp][warn] voz_upload_v2:", e)
+
+# Voz TTS (ElevenLabs) — independente da VOZ_V2 (apenas TTS)
+try:
+    from routes.voz_tts import voz_tts_bp
+    app.register_blueprint(voz_tts_bp, url_prefix="/api/voz")  # expõe /api/voz/tts
+    print("[bp] Registrado: voz_tts_bp (/api/voz/tts)")
+except Exception as e:
+    print("[bp][warn] voz_tts_bp:", e)
+
+# Voz PROCESS (/api/voz/process) — marca status ready + voiceId
+try:
+    from routes.voz_process_bp import voz_process_bp
+    _register_bp(voz_process_bp, "voz_process_bp (/api/voz/process)")
+except Exception as e:
+    print("[bp][warn] voz_process_bp:", e)
+
+# (Opcional) Voz STT — se existir arquivo routes/voz_stt_bp.py
+try:
+    from routes.voz_stt_bp import voz_stt_bp
+    _register_bp(voz_stt_bp, "voz_stt_bp (/api/voz/stt)")
+except Exception as e:
+    print("[bp][warn] voz_stt_bp:", e)
 
 # =====================================
 # Health simples adicional e versão
@@ -403,7 +419,8 @@ def _parse_iso_maybe_z(s: str):
         if isinstance(s, str) and s.endswith("Z"):
             s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+        if dt.tzinfo is None:   # <-- corrigido
+            dt = dt.replace(tzinfo=timezone.utc)
         return dt
     except Exception:
         return None
@@ -421,7 +438,7 @@ def api_cupons_validar_publico():
         if not cupom: return jsonify({"ok": False, "reason": "nao_encontrado"}), 400
 
         status = (cupom.get("status") or "").lower()
-        if status in {"used","revogado","invalido"}: return jsonify({"ok": False, "reason": status}), 400
+        if status in {"used","revogado","invalido"}: return jsonify({"ok": False, "reason": "status"}), 400
         if cupom.get("ativo") is False: return jsonify({"ok": False, "reason": "inativo"}), 400
 
         usos = int(cupom.get("usos") or 0)
@@ -483,7 +500,7 @@ def api_cupons_ativar_legado():
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
         uid = (data.get("uid") or "").strip()
-        if not codigo or not uid: return jsonify({"erro": "Código do cupom e UID são obrigatórios"}), 400
+        if not codigo or not uid: return jsonify({"erro": "Código do cupom é obrigatório e UID também"}), 400
 
         cupom = find_cupom_by_codigo(codigo)
         ctx = {
@@ -574,6 +591,7 @@ def api_cadastro_alias():
     except Exception as e:
         app.logger.warning("cadastro(alias): send_verification_email falhou: %s", e)
     return api_ativar_cliente()
+
 # -------------------------------------
 # Diagnóstico: lista de rotas ativas
 # -------------------------------------
@@ -590,6 +608,7 @@ def __routes():
     # ordena por caminho p/ facilitar grep
     out.sort(key=lambda x: x["rule"])
     return jsonify({"count": len(out), "routes": out}), 200
+
 # -------------------------------------
 # Diagnóstico de blueprints/voz
 # -------------------------------------
@@ -624,6 +643,7 @@ def __bp_debug():
         info["voz_v2"]["import_error"] = f"{type(e).__name__}: {e}"
 
     return jsonify(info), 200
+
 # =====================================
 # EOF
 # =====================================
