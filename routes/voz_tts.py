@@ -1,34 +1,27 @@
 # routes/voz_tts.py
-# Blueprint: TTS via ElevenLabs (POST /api/voz/tts e /api/voz/tts/)
+# TTS via ElevenLabs
+# Rotas:
+#   POST /api/voz/tts        (também aceita /api/voz/tts/)
+#   GET  /api/voz/tts/ping   (também aceita /api/voz/tts/ping/)
 #
-# Requisitos de ambiente:
-#   ELEVEN_API_KEY (obrigatório)
-#   ELEVEN_VOICE_ID (opcional; pode vir por query/body como voice_id)
-#   VOZ_V2_ENABLED=true (opcional; se presente e != 'true', recusa)
-#
-# Retorna: audio/mpeg (MP3) com a locução do texto informado.
-# Segurança/Observações:
-# - Não persiste nada em Firestore/Storage.
-# - Timeouts conservadores para upstream.
-# - Sanitiza tamanho de texto (padrão 1000; VOZ_TTS_MAX_CHARS).
-# - Suporta JSON {text, voice_id, model, optimize_streaming_latency}
-#   ou x-www-form-urlencoded / multipart form.
+# Segurança/robustez:
+# - Não persiste nada em banco/Storage.
+# - Limita tamanho de texto.
+# - Timeouts conservadores em upstream.
+# - Cabeçalhos explícitos e stream sem carregar tudo em RAM.
 
 from flask import Blueprint, request, Response, jsonify
 import os, logging, requests
 
 voz_tts_bp = Blueprint("voz_tts_bp", __name__)
-
 ELEVEN_TTS_URL_TEMPLATE = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
 
 def _env_true(v: str) -> bool:
-    return str(v or "").strip().lower() in ("1","true","yes","y","on")
+    return str(v or "").strip().lower() in ("1", "true", "yes", "y", "on")
 
-# Aceita /api/voz/tts e /api/voz/tts/ (evita 405 por barra final)
-@voz_tts_bp.route("/tts", methods=["POST"]), strict_slashes=False)
-@voz_tts_bp.route("/tts/", methods=["POST"]), strict_slashes=False)
+@voz_tts_bp.route("/tts", methods=["POST"], strict_slashes=False)
 def tts_post():
-    # Feature flag opcional
+    # Feature flag opcional (default habilitado)
     if not _env_true(os.environ.get("VOZ_V2_ENABLED", "true")):
         return jsonify({"ok": False, "error": "feature_disabled"}), 403
 
@@ -46,12 +39,15 @@ def tts_post():
     if not text:
         return jsonify({"ok": False, "error": "missing_text"}), 400
 
-    # Limite de caracteres
-    max_chars = int(os.environ.get("VOZ_TTS_MAX_CHARS", "1000"))
+    # Limite de caracteres (defesa contra abusos)
+    try:
+        max_chars = int(os.environ.get("VOZ_TTS_MAX_CHARS", "1000"))
+    except Exception:
+        max_chars = 1000
     if len(text) > max_chars:
         return jsonify({"ok": False, "error": "text_too_long", "limit": max_chars}), 413
 
-    # Voice id (prioridade: body → query → env)
+    # Voice id (prioridade: body -> query -> env)
     voice_id = (data.get("voice_id") or request.args.get("voice_id") or os.environ.get("ELEVEN_VOICE_ID") or "").strip()
     if not voice_id:
         return jsonify({"ok": False, "error": "missing_voice_id"}), 400
@@ -75,7 +71,6 @@ def tts_post():
             "use_speaker_boost": _env_true(os.environ.get("ELEVEN_VOICE_SPK_BOOST", "true")),
         },
     }
-    # Latência de streaming (0–4)
     try:
         opt_int = int(opt_latency)
         if opt_int in (0, 1, 2, 3, 4):
@@ -86,7 +81,6 @@ def tts_post():
     url = ELEVEN_TTS_URL_TEMPLATE.format(voice_id=voice_id)
 
     try:
-        # stream=True para não carregar tudo em memória
         r = requests.post(url, headers=headers, json=payload, timeout=(5, 30), stream=True)
     except requests.RequestException as e:
         logging.exception("ElevenLabs request failed: %s", e)
@@ -115,7 +109,6 @@ def tts_post():
     }
     return Response(generate(), headers=headers_resp, status=200)
 
-# Utilitários TTS ficam sob /tts/*
-@voz_tts_bp.route("/tts/ping", methods=["GET"]), strict_slashes=False)
+@voz_tts_bp.route("/tts/ping", methods=["GET"], strict_slashes=False)
 def tts_ping():
     return jsonify({"ok": True, "service": "voz_tts", "enabled": _env_true(os.environ.get("VOZ_V2_ENABLED", "true"))})
