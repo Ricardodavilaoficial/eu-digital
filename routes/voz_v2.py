@@ -130,7 +130,7 @@ def voz_last():
     if not uid:
         return jsonify({"ok": False, "error": "missing_uid"}), 400
     try:
-        from google.cloud import firestore
+        from services.gcp_creds import get_firestore_client
         db = get_firestore_client()
         doc = db.collection("profissionais").document(uid).get()
         data = doc.to_dict() or {}
