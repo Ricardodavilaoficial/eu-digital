@@ -644,6 +644,27 @@ def __bp_debug():
 
     return jsonify(info), 200
 
+# --- ADC quick check ---
+@app.get("/__adc_debug")
+def __adc_debug():
+    import os, json
+    p = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    info = {"GOOGLE_APPLICATION_CREDENTIALS": p, "exists": False, "size": None}
+    try:
+        if p and os.path.isfile(p):
+            import os as _os
+            info["exists"] = True
+            info["size"] = _os.path.getsize(p)
+        # tenta carregar JSON (sem expor conteúdo)
+        if info["exists"]:
+            with open(p, "r", encoding="utf-8") as f:
+                j = json.load(f)
+            info["json_ok"] = isinstance(j, dict) and j.get("type") == "service_account"
+            info["project_id"] = j.get("project_id")
+    except Exception as e:
+        info["error"] = str(e)
+    return info, 200
+
 # =====================================
 # EOF
 # =====================================
