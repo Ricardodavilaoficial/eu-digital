@@ -25,8 +25,8 @@ def _env_true(v: str) -> bool:
     return str(v or "").strip().lower() in ("1","true","yes","y","on")
 
 # Aceita /api/voz/tts e /api/voz/tts/ (evita 405 por barra final)
-@voz_tts_bp.route("/tts", methods=["POST"])
-@voz_tts_bp.route("/tts/", methods=["POST"])
+@voz_tts_bp.route("/tts", methods=["POST"]), strict_slashes=False)
+@voz_tts_bp.route("/tts/", methods=["POST"]), strict_slashes=False)
 def tts_post():
     # Feature flag opcional
     if not _env_true(os.environ.get("VOZ_V2_ENABLED", "true")):
@@ -116,6 +116,6 @@ def tts_post():
     return Response(generate(), headers=headers_resp, status=200)
 
 # Utilitários TTS ficam sob /tts/*
-@voz_tts_bp.route("/tts/ping", methods=["GET"])
+@voz_tts_bp.route("/tts/ping", methods=["GET"]), strict_slashes=False)
 def tts_ping():
     return jsonify({"ok": True, "service": "voz_tts", "enabled": _env_true(os.environ.get("VOZ_V2_ENABLED", "true"))})
