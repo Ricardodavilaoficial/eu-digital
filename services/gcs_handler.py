@@ -8,6 +8,13 @@ import re
 import traceback
 from datetime import timedelta
 
+# ---- Back-compat: manter o nome que outros módulos esperam ----
+def get_storage_client():
+    """Compatibilidade: delega para o provider centralizado."""
+    from services.gcp_creds import get_storage_client as _g
+    return _g()
+# ----------------------------------------------------------------
+
 # >>> usa APENAS o helper centralizado (evita conflito de nomes)
 from services.gcp_creds import get_storage_client as gcp_get_storage_client
 
