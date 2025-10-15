@@ -5,12 +5,11 @@
 import os
 import io
 import re
-import json
 import traceback
 from datetime import timedelta
 
-from google.cloud import storage
-from google.oauth2 import service_account
+# >>> usa APENAS o helper centralizado (evita conflito de nomes)
+from services.gcp_creds import get_storage_client as gcp_get_storage_client
 
 # Opcional, apenas se usar leitura de .docx no bucket
 try:
@@ -18,59 +17,6 @@ try:
     _DOCX_OK = True
 except Exception:
     _DOCX_OK = False
-
-
-# ----------------------------
-# Inicialização do GCS Client
-# ----------------------------
-def get_storage_client():
-    """
-    Prioridade das credenciais:
-      1) GOOGLE_APPLICATION_CREDENTIALS_JSON (conteúdo JSON inline)
-      2) FIREBASE_SERVICE_ACCOUNT_JSON (conteúdo JSON inline - compat)
-      3) FIREBASE_ADMIN_CREDENTIALS (conteúdo JSON inline - compat MEI Robô)
-      4) GOOGLE_APPLICATION_CREDENTIALS (caminho para arquivo .json)
-      5) ADC (Application Default Credentials)
-    """
-    # 1/2/3) JSON inline (preferido no Render)
-    json_inline = (
-        os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-        or os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")   # compat
-        or os.environ.get("FIREBASE_ADMIN_CREDENTIALS")      # compat MEI Robô
-    )
-    if json_inline:
-        try:
-            creds_info = json.loads(json_inline)
-            credentials = service_account.Credentials.from_service_account_info(creds_info)
-            print("[GCS] Using inline JSON credentials.")
-            # Força o project se existir no JSON
-            return storage.Client(credentials=credentials, project=creds_info.get("project_id"))
-        except Exception as e:
-            print(f"[GCS][ERR] Invalid inline JSON credentials: {e}")
-            traceback.print_exc()
-
-    # 4) Caminho de arquivo
-    json_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if json_path:
-        if os.path.exists(json_path):
-            try:
-                credentials = service_account.Credentials.from_service_account_file(json_path)
-                print(f"[GCS] Using GOOGLE_APPLICATION_CREDENTIALS file: {json_path}")
-                return storage.Client(credentials=credentials)
-            except Exception as e:
-                print(f"[GCS][ERR] Failed to load credentials from file: {e}")
-                traceback.print_exc()
-        else:
-            print(f"[GCS][WARN] File not found at GOOGLE_APPLICATION_CREDENTIALS: {json_path}")
-
-    # 5) ADC (último recurso, ex.: local dev com `gcloud auth application-default login`)
-    try:
-        print("[GCS] Using Application Default Credentials (ADC).")
-        return storage.Client()
-    except Exception as e:
-        print(f"[GCS][ERR] Failed to init ADC client: {e}")
-        traceback.print_exc()
-        return None
 
 
 # ----------------------------
@@ -84,7 +30,7 @@ def _resolve_gcs_bucket_name():
          - "NOME.firebasestorage.app" -> "NOME.appspot.com"
          - Se já vier "NOME.appspot.com", mantém
       3) Se ainda não houver, usar GCS_BUCKET (legado)
-      4) Por fim, fallback estático (legado)
+      4) Fallback (ajuste conforme seu projeto, se necessário)
     """
     # 1) Preferir env dedicada para GCS
     b = (os.environ.get("STORAGE_GCS_BUCKET") or "").strip()
@@ -94,10 +40,8 @@ def _resolve_gcs_bucket_name():
     # 2) Derivar de STORAGE_BUCKET quando vier domínio web do Firebase Storage
     s = (os.environ.get("STORAGE_BUCKET") or "").strip()
     if s:
-        # Se já for um nome de bucket (sem pontos) ou já estiver em *.appspot.com:
-        if "." not in s or s.endswith(".appspot.com"):
+        if s.endswith(".appspot.com"):
             return s
-        # Converter domínio de download do Firebase para nome de bucket GCS
         m = re.match(r"^([a-z0-9\-]+)\.firebasestorage\.app$", s)
         if m:
             return f"{m.group(1)}.appspot.com"
@@ -107,25 +51,32 @@ def _resolve_gcs_bucket_name():
     if gcs_bucket_legacy:
         return gcs_bucket_legacy
 
-    # 4) Fallback (LEGADO; ajuste conforme seu projeto, se necessário)
+    # 4) Fallback (ajuste se necessário)
     return "eu-digital-ricardo"
 
 
+# ----------------------------
+# Inicialização do Bucket
+# ----------------------------
 def _init_bucket():
-    client = get_storage_client()
-    if not client:
+    try:
+        client = gcp_get_storage_client()
+    except Exception as e:
+        print(f"[GCS][ERR] get_storage_client falhou: {e}")
+        traceback.print_exc()
         return None
+
     bucket_name = _resolve_gcs_bucket_name()
     if not bucket_name:
         print("[GCS][ERR] Bucket não configurado. Defina STORAGE_GCS_BUCKET ou STORAGE_BUCKET ou GCS_BUCKET.")
         return None
+
     print(f"[GCS] Using bucket: {bucket_name}")
     return client.bucket(bucket_name)
 
 
-# Client e Bucket globais (simples)
-_storage_client = get_storage_client()
-_bucket = _init_bucket() if _storage_client else None
+# Client/Bucket globais (simples)
+_bucket = _init_bucket()
 if _bucket is None:
     print("[GCS][WARN] Bucket não inicializado. Verifique credenciais e variáveis de ambiente.")
 
@@ -134,11 +85,9 @@ if _bucket is None:
 # Helpers de Upload/Download
 # ----------------------------
 def _ensure_bucket():
-    global _storage_client, _bucket
+    global _bucket
     if _bucket is None:
-        # tentativa de reinit (robustez)
-        _storage_client = get_storage_client()
-        _bucket = _init_bucket() if _storage_client else None
+        _bucket = _init_bucket()
         if _bucket is None:
             raise RuntimeError("Bucket GCS não inicializado. Verifique credenciais e STORAGE_GCS_BUCKET/STORAGE_BUCKET/GCS_BUCKET.")
     return _bucket
