@@ -183,3 +183,5 @@ digest_preview.html
 agenda_preview.html
 public/
 routes.json
+idtoken.json
+idtoken.txt
