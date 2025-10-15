@@ -131,7 +131,7 @@ def voz_last():
         return jsonify({"ok": False, "error": "missing_uid"}), 400
     try:
         from google.cloud import firestore
-        db = firestore.Client()
+        db = get_firestore_client()
         doc = db.collection("profissionais").document(uid).get()
         data = doc.to_dict() or {}
         return jsonify({

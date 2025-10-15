@@ -1,12 +1,12 @@
 
 from flask import Blueprint, request, jsonify
 import os, time, hashlib
-from google.cloud import firestore
+from services.gcp_creds import get_firestore_client
 
 voz_process_bp = Blueprint("voz_process_bp", __name__)
 
 def _get_fs_client():
-    return firestore.Client()
+    return get_firestore_client()
 
 @voz_process_bp.route("/api/voz/process", methods=["POST", "OPTIONS"])
 def api_voz_process():
