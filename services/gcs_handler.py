@@ -27,38 +27,57 @@ except Exception:
 
 
 # ----------------------------
+# Normalização de nome de bucket
+# ----------------------------
+def _normalize_bucket_name(name: str) -> str:
+    """
+    Converte DOMÍNIO WEB do Firebase Storage (*.firebasestorage.app)
+    para o NOME REAL do bucket GCS (*.appspot.com).
+    Se já estiver em *.appspot.com, mantém.
+    """
+    name = (name or "").strip()
+    if not name:
+        return ""
+    if name.endswith(".firebasestorage.app"):
+        return re.sub(r"\.firebasestorage\.app$", ".appspot.com", name)
+    return name
+
+
+# ----------------------------
 # Resolvedor de nome de bucket
 # ----------------------------
 def _resolve_gcs_bucket_name():
     """
     Ordem segura para descobrir o NOME REAL do bucket GCS (não o domínio de download):
-      1) STORAGE_GCS_BUCKET (ex.: mei-robo-prod.appspot.com)
-      2) Se não houver, derivar de STORAGE_BUCKET:
-         - "NOME.firebasestorage.app" -> "NOME.appspot.com"
-         - Se já vier "NOME.appspot.com", mantém
-      3) Se ainda não houver, usar GCS_BUCKET (legado)
-      4) Fallback (ajuste conforme seu projeto, se necessário)
+      1) STORAGE_GCS_BUCKET
+      2) STORAGE_BUCKET
+      3) FIREBASE_STORAGE_BUCKET
+      4) GCS_BUCKET (legado)
+      5) Fallback (ajuste conforme seu projeto)
+    Todos os candidatos são normalizados para *.appspot.com.
     """
+
     # 1) Preferir env dedicada para GCS
-    b = (os.environ.get("STORAGE_GCS_BUCKET") or "").strip()
+    b = _normalize_bucket_name(os.environ.get("STORAGE_GCS_BUCKET"))
     if b:
         return b
 
-    # 2) Derivar de STORAGE_BUCKET quando vier domínio web do Firebase Storage
-    s = (os.environ.get("STORAGE_BUCKET") or "").strip()
+    # 2) STORAGE_BUCKET (pode vir como firebasestorage.app)
+    s = _normalize_bucket_name(os.environ.get("STORAGE_BUCKET"))
     if s:
-        if s.endswith(".appspot.com"):
-            return s
-        m = re.match(r"^([a-z0-9\-]+)\.firebasestorage\.app$", s)
-        if m:
-            return f"{m.group(1)}.appspot.com"
+        return s
 
-    # 3) Legado
-    gcs_bucket_legacy = (os.environ.get("GCS_BUCKET") or "").strip()
-    if gcs_bucket_legacy:
-        return gcs_bucket_legacy
+    # 3) FIREBASE_STORAGE_BUCKET (também pode vir como firebasestorage.app)
+    fb = _normalize_bucket_name(os.environ.get("FIREBASE_STORAGE_BUCKET"))
+    if fb:
+        return fb
 
-    # 4) Fallback (ajuste se necessário)
+    # 4) Legado: GCS_BUCKET
+    gcs_legacy = _normalize_bucket_name(os.environ.get("GCS_BUCKET"))
+    if gcs_legacy:
+        return gcs_legacy
+
+    # 5) Fallback (ajuste se necessário)
     return "eu-digital-ricardo"
 
 
@@ -75,11 +94,16 @@ def _init_bucket():
 
     bucket_name = _resolve_gcs_bucket_name()
     if not bucket_name:
-        print("[GCS][ERR] Bucket não configurado. Defina STORAGE_GCS_BUCKET ou STORAGE_BUCKET ou GCS_BUCKET.")
+        print("[GCS][ERR] Bucket não configurado. Defina STORAGE_GCS_BUCKET ou STORAGE_BUCKET ou FIREBASE_STORAGE_BUCKET ou GCS_BUCKET.")
         return None
 
     print(f"[GCS] Using bucket: {bucket_name}")
-    return client.bucket(bucket_name)
+    try:
+        return client.bucket(bucket_name)
+    except Exception as e:
+        print(f"[GCS][ERR] client.bucket('{bucket_name}') falhou: {e}")
+        traceback.print_exc()
+        return None
 
 
 # Client/Bucket globais (simples)
@@ -96,7 +120,10 @@ def _ensure_bucket():
     if _bucket is None:
         _bucket = _init_bucket()
         if _bucket is None:
-            raise RuntimeError("Bucket GCS não inicializado. Verifique credenciais e STORAGE_GCS_BUCKET/STORAGE_BUCKET/GCS_BUCKET.")
+            raise RuntimeError(
+                "Bucket GCS não inicializado. Verifique credenciais e "
+                "STORAGE_GCS_BUCKET/STORAGE_BUCKET/FIREBASE_STORAGE_BUCKET/GCS_BUCKET."
+            )
     return _bucket
 
 
@@ -237,3 +264,17 @@ def montar_contexto_para_pergunta(pergunta: str):
         print(f"[DOCX][ERR] Erro ao montar contexto: {e}")
         traceback.print_exc()
         return ""
+
+
+# ----------------------------
+# Diagnóstico (opcional)
+# ----------------------------
+def debug_bucket_config() -> dict:
+    """Retorna um snapshot da config relevante de bucket já normalizada."""
+    return {
+        "STORAGE_GCS_BUCKET": os.getenv("STORAGE_GCS_BUCKET"),
+        "STORAGE_BUCKET": os.getenv("STORAGE_BUCKET"),
+        "FIREBASE_STORAGE_BUCKET": os.getenv("FIREBASE_STORAGE_BUCKET"),
+        "GCS_BUCKET": os.getenv("GCS_BUCKET"),
+        "resolved": _resolve_gcs_bucket_name(),
+    }

@@ -4,6 +4,7 @@
 #   POST /media/signed-url
 #
 # Requer auth (ID Token Firebase). Perspectiva v1.0 (Render/Flask).
+
 from __future__ import annotations
 
 import os
@@ -15,14 +16,13 @@ from typing import Optional
 from flask import Blueprint, request, jsonify
 from services.auth import auth_required, current_uid
 
-# Usaremos o client do gcs_handler para manter coerência com o restante do app
+# Usamos o client do GCS centralizado no app
 from services.gcs_handler import get_storage_client
 
 media_bp = Blueprint("media_bp", __name__)
 
 # Config e limites
 _SANDBOX_UID = os.getenv("SANDBOX_UID", "demo_uid")
-_BUCKET_NAME = os.getenv("GCS_BUCKET", "eu-digital-ricardo")
 _EXPIRES_MINUTES = int(os.getenv("SIGNED_URL_EXPIRES_MIN", "15"))
 
 # MIME allowlist básica (pode expandir depois)
@@ -37,20 +37,65 @@ _ALLOWED_MIME = {
     "video/mp4": ".mp4",
 }
 
+def _normalize_to_appspot(name: str) -> str:
+    """
+    Aceita tanto <proj>.firebasestorage.app quanto <proj>.appspot.com
+    e retorna SEMPRE no formato <proj>.appspot.com (usado pelas APIs do GCS).
+    """
+    name = (name or "").strip()
+    if not name:
+        return ""
+    if name.endswith(".firebasestorage.app"):
+        return name.replace(".firebasestorage.app", ".appspot.com")
+    return name
+
+def _resolve_bucket_from_env() -> str:
+    """
+    Resolve o bucket GCS a partir do ambiente, SEM fallback para nomes arbitrários.
+      Ordem:
+        1) STORAGE_GCS_BUCKET
+        2) FIREBASE_STORAGE_BUCKET ou STORAGE_BUCKET
+        3) FIREBASE_PROJECT_ID/GOOGLE_CLOUD_PROJECT -> <proj>.appspot.com
+      Todos normalizados para .appspot.com
+    """
+    b = (os.getenv("STORAGE_GCS_BUCKET") or "").strip()
+    if b:
+        return _normalize_to_appspot(b)
+    b2 = (os.getenv("FIREBASE_STORAGE_BUCKET") or os.getenv("STORAGE_BUCKET") or "").strip()
+    if b2:
+        return _normalize_to_appspot(b2)
+    proj = (os.getenv("FIREBASE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "").strip()
+    if proj:
+        return f"{proj}.appspot.com"
+    raise RuntimeError("Bucket não configurado. Defina STORAGE_GCS_BUCKET ou FIREBASE_STORAGE_BUCKET/STORAGE_BUCKET ou FIREBASE_PROJECT_ID.")
+
 def _safe_filename(name: str) -> str:
     # limpa tudo que não for [a-z0-9._-]
     return re.sub(r"[^a-zA-Z0-9._-]+", "_", (name or "").strip())[:128]
+
+def _infer_ext_from_content_type(ct: str) -> Optional[str]:
+    ct = (ct or "").lower().strip()
+    return _ALLOWED_MIME.get(ct)
 
 @media_bp.route("/media/signed-url", methods=["POST"])
 @auth_required
 def create_signed_url():
     """
-    Solicita uma dupla de URLs assinadas:
+    Solicita uma dupla de URLs assinadas (V4):
       - uploadUrl (PUT) para o cliente enviar o arquivo
       - downloadUrl (GET) para leitura temporária após upload
-    Body JSON esperado (parcial):
-      { "contentType": "image/jpeg", "filename": "foto.jpg" }
-    Resposta: { ok, uploadUrl, downloadUrl, path, expiresInSeconds }
+
+    Body JSON aceito:
+      {
+        "contentType": "audio/mpeg",              # obrigatório e dentro da allowlist
+        "filename": "voz_teste.mp3",              # opcional se "path" for enviado
+        "path": "profissionais/<uid>/voz/...",    # opcional; se ausente, geramos um canônico em sandbox/
+        "bucket": "<proj>.firebasestorage.app"    # opcional; normalizamos para <proj>.appspot.com
+        "public": true                            # (ignorado aqui; upload assinado não precisa)
+      }
+
+    Resposta:
+      { ok, uploadUrl, downloadUrl, path, bucket, expiresInSeconds, contentType }
     """
     try:
         user_uid = current_uid()
@@ -59,22 +104,47 @@ def create_signed_url():
 
         data = request.get_json(silent=True) or {}
         content_type = (data.get("contentType") or "").strip().lower()
-        filename = _safe_filename(data.get("filename") or "")
-
         if content_type not in _ALLOWED_MIME:
             return jsonify({"ok": False, "error": "content_type_not_allowed"}), 400
 
-        # Extensão por MIME (ignora extensão enviada pelo cliente)
-        ext = _ALLOWED_MIME[content_type]
-        # Caminho canônico: sandbox/<SANDBOX_UID>/<uid>/<YYYY>/<MM>/<DD>/<uuid>.<ext>
-        now = datetime.utcnow()
-        key = f"{uuid.uuid4().hex}{ext}"
-        path = f"sandbox/{_SANDBOX_UID}/{user_uid}/{now:%Y/%m/%d}/{key}"
+        # Bucket: do body (normalizado) OU do ambiente (normalizado)
+        requested_bucket = (data.get("bucket") or "").strip()
+        if requested_bucket:
+            bucket_name = _normalize_to_appspot(requested_bucket)
+        else:
+            bucket_name = _resolve_bucket_from_env()
+
+        # Caminho:
+        # - Se o cliente mandou "path", usamos como está (depois sanitizamos o nome final se quiser)
+        # - Caso contrário, geramos um canônico em sandbox/<SANDBOX_UID>/<uid>/YYYY/MM/DD/<uuid>.<ext>
+        provided_path = (data.get("path") or "").strip()
+        filename = _safe_filename(data.get("filename") or "")
+        ext = _infer_ext_from_content_type(content_type)
+        if not ext:
+            return jsonify({"ok": False, "error": "cannot_map_extension"}), 400
+
+        if provided_path:
+            # Garantir que termina com a extensão correta (se não terminar, acrescenta)
+            # e evitar path vazio.
+            p = provided_path
+            if not re.search(r"\.[A-Za-z0-9]{1,8}$", p):
+                p = f"{p.rstrip('/')}/{uuid.uuid4().hex}{ext}"
+            path = p.lstrip("/")  # path do GCS não deve começar com '/'
+        else:
+            now = datetime.utcnow()
+            key = f"{uuid.uuid4().hex}{ext}"
+            if filename and not filename.lower().endswith(ext):
+                # Se mandaram filename sem extensão coerente, usamos key com ext certa.
+                key_name = key
+            else:
+                key_name = key
+            path = f"sandbox/{_SANDBOX_UID}/{user_uid}/{now:%Y/%m/%d}/{key_name}"
 
         client = get_storage_client()
         if client is None:
             return jsonify({"ok": False, "error": "storage_client_unavailable"}), 500
-        bucket = client.bucket(_BUCKET_NAME)
+
+        bucket = client.bucket(bucket_name)
         blob = bucket.blob(path)
 
         # URL de upload (PUT) — V4
@@ -97,10 +167,12 @@ def create_signed_url():
             "uploadUrl": upload_url,
             "downloadUrl": download_url,
             "path": path,
-            "bucket": _BUCKET_NAME,
+            "bucket": bucket_name,
             "expiresInSeconds": _EXPIRES_MINUTES * 60,
             "contentType": content_type,
         }
         return jsonify(out), 200
+
     except Exception as e:
+        # Evite vazar detalhes demais em produção; aqui mantemos mensagem útil para diagnóstico.
         return jsonify({"ok": False, "error": f"internal_error: {e}"}), 500
