@@ -58,6 +58,33 @@ def _handle_webhook_challenge():
         return Response("Forbidden", status=403)
     return None
 
+# =========================================================
+# BYPASS PÚBLICO ANTECIPADO (signup/CNPJ/health/captcha)
+# =========================================================
+from flask import jsonify as _jsonify  # já importado acima, mas evita shadowing
+_PUBLIC_ALLOW_EXACT = {
+    "/health",
+    "/captcha/verify",
+    "/api/cadastro",   # cadastro deve ser público (protegido por captcha no handler)
+}
+_PUBLIC_ALLOW_PREFIX = (
+    "/api/cnpj",       # cobre /api/cnpj/availability e /api/cnpj/<cnpj>
+)
+
+@app.before_request
+def _public_allowlist_early_bypass():
+    """
+    Bypass antecipado: libera caminhos públicos ANTES de qualquer gate de Auth
+    que possa ter sido registrado em blueprints. Não altera as demais rotas.
+    """
+    path = (request.path or "/").strip()
+    if path in _PUBLIC_ALLOW_EXACT:
+        return
+    for pref in _PUBLIC_ALLOW_PREFIX:
+        if path.startswith(pref):
+            return
+    # Outras rotas seguem o fluxo normal
+
 # =====================================
 # Error handlers padrão (úteis p/ voz)
 # =====================================
@@ -419,7 +446,7 @@ def _parse_iso_maybe_z(s: str):
         if isinstance(s, str) and s.endswith("Z"):
             s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:   # <-- corrigido
+        if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
     except Exception:
@@ -524,9 +551,15 @@ def api_cupons_ativar_legado():
         return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"}), 500
 
 # =====================================
-# Cadastro / ativar-cliente + CNPJ availability (stub)
+# Cadastro / ativar-cliente + CNPJ availability (ajustado)
 # =====================================
 from services.mailer import send_verification_email
+try:
+    from services.firebase_admin_init import ensure_firebase_admin
+    from firebase_admin import auth as fb_auth
+except Exception:
+    ensure_firebase_admin = None
+    fb_auth = None
 
 def _only_digits_public(s): return "".join(ch for ch in str(s or "") if ch.isdigit())
 
@@ -561,6 +594,37 @@ def _uid_from_bearer() -> str | None:
     except Exception:
         return None
 
+def _validate_signup_payload(data: dict):
+    email = (data.get("email") or "").strip().lower()
+    senha = (data.get("senha") or "").strip()
+    nome = (data.get("nome") or "").strip()
+    telefone = _only_digits_public(data.get("telefone") or "")
+    cnpj = _only_digits_public(data.get("cnpj") or "")
+    segmento = (data.get("segmento") or "").strip().lower()
+
+    if not _is_human_ok():
+        return None, (429, {"ok": False, "error": "captcha_required"})
+
+    if not email:   return None, (422, {"ok": False, "error": "invalid_field", "field": "email"})
+    if "@" not in email or "." not in email.split("@")[-1]:
+        return None, (422, {"ok": False, "error": "invalid_field", "field": "email"})
+
+    if not senha or len(senha) < 8:
+        return None, (422, {"ok": False, "error": "weak_password"})
+
+    if not nome:    return None, (422, {"ok": False, "error": "invalid_field", "field": "nome"})
+    if not telefone:return None, (422, {"ok": False, "error": "invalid_field", "field": "telefone"})
+    if not cnpj or len(cnpj) != 14:
+        return None, (422, {"ok": False, "error": "invalid_field", "field": "cnpj"})
+
+    if segmento and segmento not in {"barbearia","beleza","manicure","estetica","padaria","restaurante","servicos","tecnologia"}:
+        return None, (422, {"ok": False, "error": "invalid_field", "field": "segmento"})
+
+    return {
+        "email": email, "senha": senha, "nome": nome,
+        "telefone": telefone, "cnpj": cnpj, "segmento": segmento or "servicos"
+    }, None
+
 @app.route("/api/ativar-cliente", methods=["POST", "OPTIONS"])
 def api_ativar_cliente():
     if request.method == "OPTIONS": return ("", 204)
@@ -578,19 +642,78 @@ def api_ativar_cliente():
     return jsonify({"ok": True, "uid": uid, "created": True}), 201
 
 @app.route("/api/cadastro", methods=["POST", "OPTIONS"])
-def api_cadastro_alias():
-    if request.method == "OPTIONS": return ("", 204)
+def api_cadastro():
+    """
+    Signup público e robusto:
+    - captcha obrigatório (Turnstile),
+    - valida payload,
+    - se houver Bearer: usa uid do token (idempotente),
+    - se não houver Bearer: cria usuário no Firebase Auth (se disponível),
+      envia e-mail de verificação e cria doc do profissional.
+    """
+    if request.method == "OPTIONS":
+        return ("", 204)
     data = request.get_json(silent=True) or {}
-    email_clean = (data.get("email") or "").strip().lower()
+
+    # Validações + Captcha
+    payload, err = _validate_signup_payload(data)
+    if err:
+        status, body = err
+        return jsonify(body), status
+
+    email = payload["email"]; senha = payload["senha"]; nome = payload["nome"]
+    telefone = payload["telefone"]; cnpj = payload["cnpj"]; segmento = payload["segmento"]
+
+    uid = _uid_from_bearer()
+
     try:
-        if email_clean:
-            send_verification_email(email_clean, continue_url="https://www.meirobo.com.br/verify-email.html")
-            app.logger.info("cadastro(alias): verification email enviado para %s", email_clean)
-        else:
-            app.logger.warning("cadastro(alias): e-mail ausente; pulando verificação.")
+        if uid:
+            # Caminho idempotente autenticado (front já criou user via SDK)
+            _ensure_profissional_doc(uid, nome, email, cnpj)
+            try:
+                send_verification_email(email, continue_url=os.getenv("VERIFY_CONTINUE_URL","https://www.meirobo.com.br/verify-email.html"))
+            except Exception as e:
+                app.logger.warning("cadastro(auth): falha ao enviar verificação: %s", e)
+            return jsonify({"ok": True, "created": True, "uid": uid, "mode": "auth"}), 201
+
+        # Caminho público (sem token): criar usuário se Admin SDK disponível
+        if ensure_firebase_admin and fb_auth:
+            try:
+                ensure_firebase_admin()
+                user = fb_auth.create_user(email=email, password=senha)
+                uid = user.uid
+            except Exception as e:
+                # Trata e-mails já existentes como idempotência
+                msg = str(e).lower()
+                if "already exists" in msg or "already-exists" in msg:
+                    # Tentamos descobrir UID pelo e-mail (quando possível)
+                    try:
+                        user = fb_auth.get_user_by_email(email)
+                        uid = user.uid
+                    except Exception:
+                        uid = None
+                    if not uid:
+                        return jsonify({"ok": False, "error": "email_already_exists"}), 409
+                else:
+                    return jsonify({"ok": False, "error": "auth_create_failed", "detail": str(e)}), 400
+
+        if not uid:
+            # Se não conseguimos criar/descobrir UID (p.ex. sem Admin SDK),
+            # devolve 202 para o front completar via SDK e refazer chamada autenticada
+            return jsonify({"ok": True, "created": False, "mode": "client_sdk_required"}), 202
+
+        # Criar doc do profissional e enviar verificação
+        _ensure_profissional_doc(uid, nome, email, cnpj)
+        try:
+            send_verification_email(email, continue_url=os.getenv("VERIFY_CONTINUE_URL","https://www.meirobo.com.br/verify-email.html"))
+        except Exception as e:
+            app.logger.warning("cadastro(public): falha ao enviar verificação: %s", e)
+
+        return jsonify({"ok": True, "created": True, "uid": uid, "mode": "public"}), 201
+
     except Exception as e:
-        app.logger.warning("cadastro(alias): send_verification_email falhou: %s", e)
-    return api_ativar_cliente()
+        app.logger.exception("cadastro: erro inesperado")
+        return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
 
 # -------------------------------------
 # Diagnóstico: lista de rotas ativas
@@ -605,7 +728,6 @@ def __routes():
             "endpoint": rule.endpoint,
             "methods": methods,
         })
-    # ordena por caminho p/ facilitar grep
     out.sort(key=lambda x: x["rule"])
     return jsonify({"count": len(out), "routes": out}), 200
 
@@ -655,7 +777,6 @@ def __adc_debug():
             import os as _os
             info["exists"] = True
             info["size"] = _os.path.getsize(p)
-        # tenta carregar JSON (sem expor conteúdo)
         if info["exists"]:
             with open(p, "r", encoding="utf-8") as f:
                 j = json.load(f)
