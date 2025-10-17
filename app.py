@@ -17,6 +17,13 @@ logging.basicConfig(level=logging.INFO)
 # App + CORS (whitelist apenas /api/*)
 # =====================================
 app = Flask(__name__, static_folder="public", static_url_path="/")
+CORS(app)  
+
+# ou CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# === Blueprint da voz (process sync real) ===
+from routes.voz_process_bp import bp as voz_process_bp
+app.register_blueprint(voz_process_bp)
 
 # Limite de upload (25 MB) — importante para áudio
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
