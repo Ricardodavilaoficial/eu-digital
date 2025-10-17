@@ -17,7 +17,9 @@ logging.basicConfig(level=logging.INFO)
 # App + CORS (whitelist apenas /api/*)
 # =====================================
 app = Flask(__name__, static_folder="public", static_url_path="/")
-CORS(app)  # ou CORS(app, resources={r"/api/*": {"origins": "*"}})
+CORS(app)  
+
+# ou CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # === Blueprint da voz (process sync real) ===
 from routes.voz_process_bp import bp as voz_process_bp
