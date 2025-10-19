@@ -139,7 +139,8 @@ def check_verification():
                 # já existe → apenas atualiza campos de verificação
                 txn.set(prof_ref, base_update, merge=True)
 
-        fs.transaction(_txn_upsert)  # executa transação
+        txn = fs.transaction()
+        _txn_upsert(txn)
 
         return jsonify({"ok": True, "verified": True}), 200
 
