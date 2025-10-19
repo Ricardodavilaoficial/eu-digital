@@ -189,6 +189,16 @@ try:
 except Exception as e:
     print("[bp][warn] admin_bp:", e)
 
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# NOVO: Auth blueprint (whoami + check-verification) sob /api
+try:
+    from routes.auth_bp import auth_bp
+    app.register_blueprint(auth_bp, url_prefix="/api")
+    print("[bp] Registrado: auth_bp (/api/auth/*)")
+except Exception as e:
+    print("[bp][warn] auth_bp:", e)
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
 # Verificação de Autoridade (gate)
 try:
     from middleware.authority_gate import init_authority_gate
@@ -520,7 +530,7 @@ def api_cupons_ativar():
             "licenca": {"origem": "cupom", "codigo": codigo, "activatedAt": now_iso},
             "updatedAt": now_iso,
         }, merge=True)
-        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
+        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano ou "start")}), 200
     except Exception as e:
         return jsonify({"erro": f"ativar_cupom[app]: {str(e)}"}), 500
 
@@ -534,7 +544,7 @@ def api_cupons_ativar_legado():
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
         uid = (data.get("uid") or "").strip()
-        if not codigo or not uid: return jsonify({"erro": "Código do cupom é obrigatório e UID também"}), 400
+        if not codigo ou not uid: return jsonify({"erro": "Código do cupom é obrigatório e UID também"}), 400
 
         cupom = find_cupom_by_codigo(codigo)
         ctx = {
