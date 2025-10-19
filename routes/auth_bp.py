@@ -48,6 +48,7 @@ def whoami():
             "provider": decoded.get("firebase", {}).get("sign_in_provider")
         })
     except Exception as e:
+        # Expired token, signature error etc. → 401 ajuda o front a renovar o token
         return jsonify({"ok": False, "error": str(e)}), 401
 
 
@@ -94,56 +95,62 @@ def check_verification():
             # Não verificado ainda — front pode tentar de novo
             return jsonify({"ok": True, "verified": False}), 200
 
-        # ----- Verificado: upsert idempotente do usuário -----
+        # ----- Verificado: upsert idempotente do usuário (SEM transação) -----
         fs = _get_fs()
         prof_ref = fs.collection("profissionais").document(uid)
         lead_ref = fs.collection("leads").document(uid)  # opcional: onde /api/cadastro gravou dados temporários
 
         now_iso = _utc_now_iso()
 
-        def _txn_upsert(txn):
-            prof_snap = txn.get(prof_ref)
-            base_update = {
-                "uid": uid,
-                "email": email,
-                "status": "verified",
-                "emailVerified": True,
-                "verifiedAt": now_iso,
-                "updatedAt": now_iso,
+        # snapshot atual do profissional
+        prof_snap = prof_ref.get()
+
+        base_update = {
+            "uid": uid,
+            "email": email,
+            "status": "verified",
+            "emailVerified": True,
+            "verifiedAt": now_iso,
+            "updatedAt": now_iso,
+        }
+
+        if not prof_snap.exists:
+            # mínimos ao criar
+            base_create = {
+                "createdAt": now_iso,
+                **base_update
             }
 
-            if not prof_snap.exists:
-                # mínimos ao criar
-                base_create = {
-                    "createdAt": now_iso,
-                    **base_update
-                }
-
-                # consome (merge) dados do lead, se existir
-                lead_snap = txn.get(lead_ref)
+            # tenta consumir dados do lead, se existir
+            try:
+                lead_snap = lead_ref.get()
                 if lead_snap.exists:
                     lead_data = lead_snap.to_dict() or {}
-                    # copia campos usuais se existirem
                     for k in ("nome", "telefone", "cnpj", "segmento"):
                         if k in lead_data and lead_data[k]:
                             base_create[k] = lead_data[k]
                     # marca o lead como consumido (opcional)
-                    txn.set(lead_ref, {
+                    lead_ref.set({
                         **lead_data,
                         "status": "consumed",
                         "consumedAt": now_iso
                     }, merge=True)
+            except Exception:
+                # se falhar o lead, segue sem bloquear a verificação
+                pass
 
-                txn.set(prof_ref, base_create, merge=False)
-            else:
-                # já existe → apenas atualiza campos de verificação
-                txn.set(prof_ref, base_update, merge=True)
+            # cria o doc do profissional
+            prof_ref.set(base_create, merge=False)
 
-        txn = fs.transaction()
-        _txn_upsert(txn)
+        else:
+            # já existe → apenas atualiza campos de verificação
+            prof_ref.set(base_update, merge=True)
 
         return jsonify({"ok": True, "verified": True}), 200
 
+    except fb_auth.ExpiredIdTokenError as e:
+        # Semântica melhor para token vencido
+        return jsonify({"ok": False, "error": "expired_token", "detail": str(e)}), 401
     except Exception as e:
         # Qualquer exceção inesperada → reporta sem vazar stack
         return jsonify({"ok": False, "error": "check_verification_failed", "detail": str(e)}), 500
