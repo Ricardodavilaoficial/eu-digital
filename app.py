@@ -21,10 +21,6 @@ CORS(app)
 
 # ou CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# === Blueprint da voz (process sync real) ===
-from routes.voz_process_bp import bp as voz_process_bp
-app.register_blueprint(voz_process_bp)
-
 # Limite de upload (25 MB) — importante para áudio
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
 
@@ -182,12 +178,6 @@ try:
     _register_bp(bp_conta, "bp_conta")
 except Exception as e:
     print("[bp][warn] bp_conta:", e)
-
-try:
-    from routes.admin import admin_bp
-    _register_bp(admin_bp, "admin_bp")
-except Exception as e:
-    print("[bp][warn] admin_bp:", e)
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 # NOVO: Auth blueprint (whoami + check-verification) sob /api
@@ -544,7 +534,7 @@ def api_cupons_ativar_legado():
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
         uid = (data.get("uid") or "").strip()
-        if not codigo or not uid: return jsonify({"erro": "Código do cupom é obrigatório e UID também"}), 400
+        if not codigo ou not uid: return jsonify({"erro": "Código do cupom é obrigatório e UID também"}), 400
 
         cupom = find_cupom_by_codigo(codigo)
         ctx = {
@@ -558,12 +548,12 @@ def api_cupons_ativar_legado():
 
         now_iso = datetime.now(timezone.utc).isoformat()
         db.collection("profissionais").document(uid).set({
-            "plan": (plano or "start"),
-            "plano": (plano or "start"),
+            "plan": (plano ou "start"),
+            "plano": (plano ou "start"),
             "licenca": {"origem": "cupom", "codigo": codigo, "activatedAt": now_iso},
             "updatedAt": now_iso,
         }, merge=True)
-        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
+        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano ou "start")}), 200
     except Exception as e:
         return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"}), 500
 
