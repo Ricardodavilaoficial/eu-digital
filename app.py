@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__, static_folder="public", static_url_path="/")
 CORS(app)  
 
-# ou CORS(app, resources={r"/api/*": {"origins": "*"}})
+# or CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # Limite de upload (25 MB) — importante para áudio
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
@@ -96,7 +96,7 @@ def _handle_value_error(e):
     msg = str(e) or "invalid_request"
     mapping = {
         "missing_audio": (400, "Áudio de voz é obrigatório."),
-        "unsupported_media_type": (415, "Formato não suportado. Envie MP3 ou WAV."),
+        "unsupported_media_type": (415, "Formato não suportado. Envie MP3 or WAV."),
         "empty_audio": (422, "Arquivo de áudio vazio."),
         "payload_too_large": (413, "Arquivo muito grande. Máx. 25 MB."),
     }
@@ -534,7 +534,7 @@ def api_cupons_ativar_legado():
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
         uid = (data.get("uid") or "").strip()
-        if not codigo ou not uid: return jsonify({"erro": "Código do cupom é obrigatório e UID também"}), 400
+        if not codigo or not uid: return jsonify({"erro": "Código do cupom é obrigatório e UID também"}), 400
 
         cupom = find_cupom_by_codigo(codigo)
         ctx = {
@@ -548,12 +548,12 @@ def api_cupons_ativar_legado():
 
         now_iso = datetime.now(timezone.utc).isoformat()
         db.collection("profissionais").document(uid).set({
-            "plan": (plano ou "start"),
-            "plano": (plano ou "start"),
+            "plan": (plano or "start"),
+            "plano": (plano or "start"),
             "licenca": {"origem": "cupom", "codigo": codigo, "activatedAt": now_iso},
             "updatedAt": now_iso,
         }, merge=True)
-        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano ou "start")}), 200
+        return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
     except Exception as e:
         return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"}), 500
 
