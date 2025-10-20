@@ -28,3 +28,4 @@ openpyxl>=3.1.2
 
 # Docs (opcional, para leitura .docx no GCS)
 python-docx>=1.0.0
+stripe==13.0.0
