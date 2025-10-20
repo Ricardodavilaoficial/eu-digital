@@ -4,59 +4,95 @@
 #   - GET /api/cnpj/<cnpj>                (novo)
 #   - GET /integracoes/cnpj/<cnpj>        (legado mantido)
 #
-# - Sem token (fonte pública), limite 3 req/min/IP na origem
+# - Sem token (fonte pública), limite X req/min/IP (env)
 # - Cache em memória (TTL padrão 24h) — substituível por Redis
 # - Normaliza para o "esquema canônico" do MEI Robô
 # - Heurística por nome (?nome=...): EXATO | PROVAVEL | NAO_ENCONTRADO
-#
-# Dependências: Flask, requests  (requirements.txt → requests>=2.31.0)
 
 import os
 import re
 import time
 import json
+import hashlib
 import requests
 from datetime import datetime, timedelta
 from typing import Any, Dict, Tuple, Optional, List
 
-from flask import Blueprint, request, jsonify, make_response
+from flask import Blueprint, request, jsonify, make_response, current_app
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Blueprint (sem prefixo para manter o legado) — expõe /api/cnpj e /integracoes/cnpj
+# Blueprint (sem prefixo global) — expõe /api/cnpj e /integracoes/cnpj
 # ──────────────────────────────────────────────────────────────────────────────
 cnpj_bp = Blueprint("cnpj_publica", __name__)
 bp_cnpj_publica = cnpj_bp  # compat nome legado
 
-CNPJWS_PUBLIC_BASE = "https://publica.cnpj.ws"
+# ======================== Config por ENV =========================
+CNPJWS_PUBLIC_BASE = os.getenv("CNPJWS_PUBLIC_BASE", "https://publica.cnpj.ws").rstrip("/")
 HTTP_TIMEOUT = 8  # seconds
-CACHE_TTL_SECS = 24 * 60 * 60  # 24h
+CACHE_TTL_SECS = int(os.getenv("CNPJ_CACHE_TTL_SECS", str(24 * 60 * 60)))  # 24h
+CACHE_MAX = int(os.getenv("CNPJ_CACHE_MAX_ENTRIES", "2000"))               # soft limit
+_RATE_LIMIT_MAX = int(os.getenv("CNPJ_RATE_MAX_PER_MIN", "10"))
 
-_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}  # key: cnpj, val: (expiry_ts, payload)
-
-# ====== CORS restrito somente para este blueprint ======
+# CORS allow-list (padrão + extras do env, separados por vírgula)
 _ALLOWED_ORIGINS = {
     "https://www.meirobo.com.br",
     "https://meirobo.com.br",
-    # Adicione seu preview se for testar a partir de um canal do Firebase Hosting:
-    # "https://<preview>--mei-robo-prod.web.app",
 }
+_extra = [o.strip() for o in os.getenv("CNPJ_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+_ALLOWED_ORIGINS.update(_extra)
 _CORS_MAX_AGE = "86400"  # 24h
 
+# ======================== Cache in-memory ========================
+_cache: Dict[str, Tuple[float, Dict[str, Any], str]] = {}  # key: cnpj → (expiry_ts, payload, etag)
+
+def _json_etag(payload: Dict[str, Any]) -> str:
+    """ETag determinística baseada no JSON indentado com chaves ordenadas."""
+    try:
+        data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(data).hexdigest()[:32]
+    except Exception:
+        # fallback fraco, mas não quebra
+        return str(hash(str(payload)))[:16]
+
+def _get_cached(cnpj: str) -> Optional[Tuple[Dict[str, Any], str]]:
+    now = time.time()
+    item = _cache.get(cnpj)
+    if not item:
+        return None
+    exp, payload, etag = item
+    if now > exp:
+        _cache.pop(cnpj, None)
+        return None
+    return payload, etag
+
+def _set_cache(cnpj: str, payload: Dict[str, Any]):
+    # Trim simples se extrapolar o limite (descarta itens mais antigos por expiração aproximada)
+    if CACHE_MAX > 0 and len(_cache) >= CACHE_MAX:
+        try:
+            # remove os 5% mais antigos (aprox.) para aliviar pressão
+            to_remove = max(1, CACHE_MAX // 20)
+            oldest = sorted(_cache.items(), key=lambda kv: kv[1][0])[:to_remove]
+            for k, _ in oldest:
+                _cache.pop(k, None)
+        except Exception:
+            pass
+    etag = _json_etag(payload)
+    _cache[cnpj] = (time.time() + CACHE_TTL_SECS, payload, etag)
+
+# ======================== CORS por blueprint =====================
 def _add_cors_headers(resp):
     origin = request.headers.get("Origin", "")
     if origin in _ALLOWED_ORIGINS:
         resp.headers["Access-Control-Allow-Origin"] = origin
         resp.headers["Vary"] = "Origin"
         resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, If-None-Match"
         resp.headers["Access-Control-Max-Age"] = _CORS_MAX_AGE
-        # Se não precisa enviar cookies/auth, pode remover a próxima linha:
+        # Sem cookies/auth, mas mantido true para flexibilidade
         resp.headers["Access-Control-Allow-Credentials"] = "true"
     return resp
-# =======================================================
 
-# --- Rate limit simples por IP (janela de 1 min) ---
-_RATE_LIMIT_MAX = int(os.getenv("CNPJ_RATE_MAX_PER_MIN", "10"))
+# ======================== Rate limit simples =====================
 _rate_bucket: Dict[str, Tuple[int, int]] = {}  # ip -> (window_minute, count)
 
 def _client_ip() -> str:
@@ -77,8 +113,8 @@ def _rate_limit_ok(ip: str) -> bool:
     cnt += 1
     _rate_bucket[ip] = (win, cnt)
     return cnt <= _RATE_LIMIT_MAX
-# ------------------------------------------------------
 
+# ======================== Normalização/Heurística ================
 def _only_digits(s: str) -> str:
     return re.sub(r"\D+", "", s or "")
 
@@ -89,7 +125,7 @@ def _normalize_text(s: str) -> str:
     """
     Normaliza texto para comparação:
     - NFKD + remove acentos
-    - Remove pontuações comuns (' . , - / \ ( ) [ ] { } " : ;)
+    - Remove pontuações
     - Colapsa espaços
     - Uppercase
     """
@@ -103,16 +139,10 @@ def _normalize_text(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip().upper()
     return s
 
-# --- Fallback de CNAE: extrai código da descrição se necessário ---
+# --- Fallback de CNAE: extrai código da descrição, se necessário ---
 _CNAE_CODE_RE = re.compile(r"(\d{2}\.\d{2}-\d)(?:/\d{1,2})?")
 
 def _cnae_from_any(obj: dict) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Extrai (codigo, descricao) de diferentes formatos vindos da pública.
-    Tenta campos: codigo|code|id|cnae e descricao|description|text.
-    Se não houver codigo, tenta inferir da descricao (regex).
-    Normaliza 1234-5 -> 12.34-5 quando possível.
-    """
     if not isinstance(obj, dict):
         return (None, None)
 
@@ -244,39 +274,54 @@ def _map_canonic(json_src: Dict[str, Any]) -> Dict[str, Any]:
     }
     return canonic
 
-def _get_cached(cnpj: str) -> Optional[Dict[str, Any]]:
-    now = time.time()
-    item = _cache.get(cnpj)
-    if not item:
-        return None
-    exp, payload = item
-    if now > exp:
-        _cache.pop(cnpj, None)
-        return None
-    return payload
+# ======================== HTTP helpers ===========================
+def _requests_get_with_retries(url: str, *, timeout: int, max_retries: int = 2):
+    last_exc = None
+    for i in range(max_retries + 1):
+        try:
+            return requests.get(url, timeout=timeout)
+        except requests.RequestException as e:
+            last_exc = e
+            # backoff curto
+            time.sleep(0.25 * (i + 1))
+    raise last_exc or requests.RequestException("request_failed")
 
-def _set_cache(cnpj: str, payload: Dict[str, Any]):
-    _cache[cnpj] = (time.time() + CACHE_TTL_SECS, payload)
-
+# ======================== Core handlers ==========================
 def _handle_cnpj_lookup(clean: str):
     # cache
     cached = _get_cached(clean)
     if cached:
-        resp = dict(cached)  # shallow copy
+        payload, etag = cached
+
+        # If-None-Match → 304
+        inm = request.headers.get("If-None-Match")
+        if inm and inm.strip('"') == etag:
+            resp = make_response("", 304)
+            resp.headers["ETag"] = etag
+            resp.headers["Cache-Control"] = "public, max-age=3600"
+            resp.headers["X-Cache-Status"] = "HIT"
+            return _add_cors_headers(resp)
+
+        # enriquecer com vinculoNome, se solicitado
+        resp_payload = dict(payload)
         nome = request.args.get("nome", "", type=str)
         if nome:
-            avaliacao, origem = _match_nome(nome, resp.get("razaoSocial"), resp.get("socios"))
-            resp["vinculoNome"] = {"entrada": nome, "avaliacao": avaliacao, "origem": origem}
-        out = jsonify(resp)
-        # Marcar hint de HIT em header (útil para observar no Edge)
+            avaliacao, origem = _match_nome(nome, resp_payload.get("razaoSocial"), resp_payload.get("socios"))
+            resp_payload["vinculoNome"] = {"entrada": nome, "avaliacao": avaliacao, "origem": origem}
+
+        out = jsonify(resp_payload)
         out.headers["X-Cache-Status"] = "HIT"
+        out.headers["ETag"] = etag
+        out.headers.setdefault("Cache-Control", "public, max-age=3600")
         return _add_cors_headers(out)
 
+    # origem
     url = f"{CNPJWS_PUBLIC_BASE}/cnpj/{clean}"
     try:
-        r = requests.get(url, timeout=HTTP_TIMEOUT)
+        r = _requests_get_with_retries(url, timeout=HTTP_TIMEOUT, max_retries=2)
     except requests.RequestException as e:
-        return _add_cors_headers(make_response(jsonify({"erro": "Falha ao consultar origem", "detalhe": str(e)}), 502))
+        current_app.logger.info({"event": "cnpj.fetch_error", "cnpj": clean, "detail": str(e)})
+        return _add_cors_headers(make_response(jsonify({"erro": "Falha ao consultar origem"}), 502))
 
     # repassar alguns status da origem
     if r.status_code == 404:
@@ -298,6 +343,16 @@ def _handle_cnpj_lookup(clean: str):
 
     canonic = _map_canonic(data)
     _set_cache(clean, canonic)
+    etag = _json_etag(canonic)
+
+    # If-None-Match para MISS recém-populada
+    inm = request.headers.get("If-None-Match")
+    if inm and inm.strip('"') == etag:
+        resp = make_response("", 304)
+        resp.headers["ETag"] = etag
+        resp.headers["Cache-Control"] = "public, max-age=3600"
+        resp.headers["X-Cache-Status"] = "MISS-304"
+        return _add_cors_headers(resp)
 
     # enriquecimento: heurística por nome se solicitado
     nome = request.args.get("nome", "", type=str)
@@ -307,6 +362,8 @@ def _handle_cnpj_lookup(clean: str):
 
     out = jsonify(canonic)
     out.headers["X-Cache-Status"] = "MISS"
+    out.headers["ETag"] = etag
+    out.headers.setdefault("Cache-Control", "public, max-age=3600")
     return _add_cors_headers(out)
 
 # ── NOVO: /api/cnpj/<cnpj>
@@ -350,13 +407,11 @@ def _after_request(resp):
     # CORS deste blueprint
     resp = _add_cors_headers(resp)
 
-    # Cache HTTP leve + ETag em respostas JSON 200
+    # Garante cabeçalhos de cache/etag em respostas JSON 200
     try:
         if resp.status_code == 200 and (resp.mimetype or "").startswith("application/json"):
             resp.headers.setdefault("Cache-Control", "public, max-age=3600")
-            # ETag curta (não-criptográfica) — suficiente para revalidação condicional
-            et = str(hash(resp.get_data(as_text=False)))[:16]
-            resp.headers.setdefault("ETag", et)
+            resp.headers.setdefault("ETag", resp.headers.get("ETag") or "")
     except Exception:
         pass
     return resp

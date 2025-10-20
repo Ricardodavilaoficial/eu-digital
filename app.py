@@ -589,11 +589,31 @@ def api_cnpj_availability():
     if len(cnpj) != 14: return jsonify({"ok": False, "error": "invalid_cnpj_length", "cnpj": cnpj}), 400
     return jsonify({"ok": True, "cnpj": cnpj, "available": True, "source": "stub"}), 200
 
+def _now_iso_utc() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 def _ensure_profissional_doc(uid: str, nome: str, email: str, cnpj: str):
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = _now_iso_utc()
     db.collection("profissionais").document(uid).set({
         "nome": nome, "email": email, "cnpj": cnpj,
         "onboarding": {"status": "created", "createdAt": now_iso},
+        "updatedAt": now_iso,
+    }, merge=True)
+    return True
+
+# === NOVO: escrita de lead (quando flag ligada) ===
+def _write_lead_doc(uid: str, *, nome: str, telefone: str, cnpj: str, segmento: str, email: str):
+    now_iso = _now_iso_utc()
+    db.collection("leads").document(uid).set({
+        "uid": uid,
+        "nome": nome,
+        "telefone": telefone,
+        "cnpj": cnpj,
+        "segmento": segmento,
+        "email": email,
+        "source": "cadastro",
+        "status": "pending",
+        "createdAt": now_iso,
         "updatedAt": now_iso,
     }, merge=True)
     return True
@@ -642,6 +662,9 @@ def _validate_signup_payload(data: dict):
         "telefone": telefone, "cnpj": cnpj, "segmento": segmento or "servicos"
     }, None
 
+# === Flag de migração: grava apenas em leads/{uid} no signup
+SIGNUP_WRITES_TO_LEADS_ONLY = os.getenv("SIGNUP_WRITES_TO_LEADS_ONLY", "false").lower() in ("1","true","yes")
+
 @app.route("/api/ativar-cliente", methods=["POST", "OPTIONS"])
 def api_ativar_cliente():
     if request.method == "OPTIONS": return ("", 204)
@@ -666,7 +689,7 @@ def api_cadastro():
     - valida payload,
     - se houver Bearer: usa uid do token (idempotente),
     - se não houver Bearer: cria usuário no Firebase Auth (se disponível),
-      envia e-mail de verificação e cria doc do profissional.
+      envia e-mail de verificação e (dependendo da flag) grava em leads/{uid} OU profissionais/{uid}.
     """
     if request.method == "OPTIONS":
         return ("", 204)
@@ -686,12 +709,18 @@ def api_cadastro():
     try:
         if uid:
             # Caminho idempotente autenticado (front já criou user via SDK)
-            _ensure_profissional_doc(uid, nome, email, cnpj)
+            if SIGNUP_WRITES_TO_LEADS_ONLY:
+                _write_lead_doc(uid, nome=nome, telefone=telefone, cnpj=cnpj, segmento=segmento, email=email)
+                app.logger.info({"event":"signup.lead_write","uid":uid,"mode":"auth","flag":"leads_only"})
+            else:
+                _ensure_profissional_doc(uid, nome, email, cnpj)
+                app.logger.info({"event":"signup.prof_write","uid":uid,"mode":"auth","flag":"off"})
             try:
                 send_verification_email(email, continue_url=os.getenv("VERIFY_CONTINUE_URL","https://www.meirobo.com.br/verify-email.html"))
             except Exception as e:
                 app.logger.warning("cadastro(auth): falha ao enviar verificação: %s", e)
-            return jsonify({"ok": True, "created": True, "uid": uid, "mode": "auth"}), 201
+            # Inclui next para UX do front (mesmo não sendo obrigatório)
+            return jsonify({"ok": True, "created": True, "uid": uid, "mode": "auth", "next": "verifyEmail", "email": email}), 201
 
         # Caminho público (sem token): criar usuário se Admin SDK disponível
         if ensure_firebase_admin and fb_auth:
@@ -719,14 +748,21 @@ def api_cadastro():
             # devolve 202 para o front completar via SDK e refazer chamada autenticada
             return jsonify({"ok": True, "created": False, "mode": "client_sdk_required"}), 202
 
-        # Criar doc do profissional e enviar verificação
-        _ensure_profissional_doc(uid, nome, email, cnpj)
+        # Gravação conforme flag
+        if SIGNUP_WRITES_TO_LEADS_ONLY:
+            _write_lead_doc(uid, nome=nome, telefone=telefone, cnpj=cnpj, segmento=segmento, email=email)
+            app.logger.info({"event":"signup.lead_write","uid":uid,"mode":"public","flag":"leads_only"})
+        else:
+            _ensure_profissional_doc(uid, nome, email, cnpj)
+            app.logger.info({"event":"signup.prof_write","uid":uid,"mode":"public","flag":"off"})
+
+        # Envia verificação sempre
         try:
             send_verification_email(email, continue_url=os.getenv("VERIFY_CONTINUE_URL","https://www.meirobo.com.br/verify-email.html"))
         except Exception as e:
             app.logger.warning("cadastro(public): falha ao enviar verificação: %s", e)
 
-        return jsonify({"ok": True, "created": True, "uid": uid, "mode": "public"}), 201
+        return jsonify({"ok": True, "created": True, "uid": uid, "mode": "public", "next": "verifyEmail", "email": email}), 201
 
     except Exception as e:
         app.logger.exception("cadastro: erro inesperado")
