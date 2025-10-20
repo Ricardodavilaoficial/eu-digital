@@ -26,9 +26,7 @@ PUBLIC_ALLOWLIST = {
 }
 
 # Prefixos sempre públicos (todas as subrotas liberadas)
-PUBLIC_PREFIXES = (
-    "/api/cnpj",   # cobre /api/cnpj/availability e /api/cnpj/<cnpj>
-,)
+PUBLIC_PREFIXES = ("/api/cnpj",)
 
 def init_authority_gate(app, restricted_patterns=None):
     """
