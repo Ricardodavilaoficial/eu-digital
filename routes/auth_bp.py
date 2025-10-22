@@ -146,8 +146,8 @@ def check_verification():
         return jsonify({"ok": False, "error": "check_verification_failed", "detail": str(e)}), 500
 
 
-# 🔧 Correção: prefixo /api adicionado — nada mais alterado
-@auth_bp.route("/api/auth/reclaim-email", methods=["POST"])
+# ✅ Correção final — rota ajustada sem duplicar o prefixo
+@auth_bp.route("/auth/reclaim-email", methods=["POST"])
 def reclaim_email():
     try:
         ensure_firebase_admin()
