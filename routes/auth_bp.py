@@ -61,7 +61,7 @@ def _has_pending_lead_by_email(fs, email: str) -> bool:
 
 # ---------- Rotas ----------
 
-@auth_bp.route("/auth/whoami", methods=["GET"])
+@auth_bp.route("/whoami", methods=["GET"])
 def whoami():
     try:
         ensure_firebase_admin()
@@ -78,7 +78,7 @@ def whoami():
         return jsonify({"ok": False, "error": str(e)}), 401
 
 
-@auth_bp.route("/auth/check-verification", methods=["POST"])
+@auth_bp.route("/check-verification", methods=["POST"])
 def check_verification():
     try:
         ensure_firebase_admin()
@@ -146,8 +146,9 @@ def check_verification():
         return jsonify({"ok": False, "error": "check_verification_failed", "detail": str(e)}), 500
 
 
-# ✅ Correção final — rota ajustada sem duplicar o prefixo
-@auth_bp.route("/auth/reclaim-email", methods=["POST"])
+# ✅ Correção final — rota ajustada sem duplicar o prefixo e aceitando barra final
+@auth_bp.route("/reclaim-email", methods=["POST"])
+@auth_bp.route("/reclaim-email/", methods=["POST"])
 def reclaim_email():
     try:
         ensure_firebase_admin()
