@@ -183,7 +183,7 @@ except Exception as e:
 # NOVO: Auth blueprint (whoami + check-verification) sob /api
 try:
     from routes.auth_bp import auth_bp
-    app.register_blueprint(auth_bp, url_prefix="/api")
+    app.register_blueprint(auth_bp, url_prefix="/api/auth")
     print("[bp] Registrado: auth_bp (/api/auth/*)")
 except Exception as e:
     print("[bp][warn] auth_bp:", e)
