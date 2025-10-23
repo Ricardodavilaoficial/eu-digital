@@ -660,9 +660,41 @@ def api_cadastro():
     """
     if request.method == "OPTIONS":
         return ("", 204)
-    data = request.get_json(silent=True) or {}
 
-    # Validações + Captcha
+    # --- pegue o token do Turnstile de forma robusta ---
+    data_json = request.get_json(silent=True) or {}
+
+    turnstile_token = (
+        request.form.get("cf-turnstile-response")
+        or request.form.get("turnstileToken")
+        or data_json.get("cf-turnstile-response")
+        or data_json.get("turnstileToken")
+    )
+
+    # só exige se TURNSTILE_REQUIRED estiver ligado (como está no Render)
+    if os.getenv("TURNSTILE_REQUIRED", "true").strip().lower() in ("1","true","yes","on"):
+        if not turnstile_token:
+            return jsonify({"ok": False, "error": "captcha_required"}), 429
+
+        # valida no Cloudflare (reutiliza função existente)
+        try:
+            ok = _verify_turnstile_token(turnstile_token)  # já usa secret e remote ip
+        except Exception:
+            ok = False
+
+        if not ok:
+            # manter a mesma semântica para o front
+            return jsonify({"ok": False, "error": "captcha_required"}), 429
+    # --- fim leitura/validação do captcha ---
+
+    # Garanta que _validate_signup_payload() também "enxergue" o token via _is_human_ok()
+    if "token" not in data_json and "cf_token" not in data_json and "cf_resp" not in data_json:
+        if turnstile_token:
+            data_json["token"] = turnstile_token
+
+    data = data_json
+
+    # Validações + demais campos
     payload, err = _validate_signup_payload(data)
     if err:
         status, body = err
