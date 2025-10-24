@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 # App + CORS (whitelist apenas /api/*)
 # =====================================
 app = Flask(__name__, static_folder="public", static_url_path="/")
-CORS(app)  
+CORS(app)
 
 # or CORS(app, resources={r"/api/*": {"origins": "*"}})
 
@@ -29,6 +29,7 @@ cors_resources = {
     r"/api/*": {
         "origins": _allowed or [],
         "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        # ✅ headers incluem os dois do Turnstile (já estavam OK)
         "allow_headers": ["Authorization","Content-Type","X-Requested-With","cf-turnstile-response","x-turnstile-token"],
         "supports_credentials": False,
     }
@@ -67,8 +68,9 @@ def _handle_webhook_challenge():
 from flask import jsonify as _jsonify  # já importado acima, mas evita shadowing
 _PUBLIC_ALLOW_EXACT = {
     "/health",
-    "/captcha/verify",
-    "/api/cadastro",   # cadastro deve ser público (protegido por captcha no handler)
+    "/captcha/verify",        # compat legado
+    "/api/captcha/verify",    # novo endpoint opcional
+    "/api/cadastro",          # cadastro deve ser público (protegido por captcha no handler)
 }
 _PUBLIC_ALLOW_PREFIX = (
     "/api/cnpj",       # cobre /api/cnpj/availability e /api/cnpj/<cnpj>
@@ -404,20 +406,32 @@ def _human_cookie_ok() -> bool:
         return val == "1"
     return raw == "1"
 
+# ✅ Helper do Turnstile com logging de motivo/exception (sem vazar secret)
 def _verify_turnstile_token(token: str) -> bool:
     secret = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
-    if not secret or not token: return False
+    if not secret or not token:
+        return False
     data = ulparse.urlencode({
         "secret": secret,
         "response": token,
         "remoteip": request.headers.get("CF-Connecting-IP") or request.remote_addr or ""
     }).encode("utf-8")
-    req = ulreq.Request(TURNSTILE_VERIFY_URL, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    req = ulreq.Request(
+        TURNSTILE_VERIFY_URL,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"}
+    )
     try:
         with ulreq.urlopen(req, timeout=10) as resp:
             body = resp.read().decode("utf-8", errors="replace")
-            j = json.loads(body); return bool(j.get("success"))
-    except Exception:
+            j = json.loads(body)
+            ok = bool(j.get("success"))
+            if not ok:
+                reason = ",".join(j.get("error-codes", [])) or "unknown"
+                print(f"[turnstile] verify: success=false reason={reason}")
+            return ok
+    except Exception as e:
+        print(f"[turnstile] verify: exception={type(e).__name__} msg={e}")
         return False
 
 def _is_human_ok() -> bool:
@@ -661,7 +675,7 @@ def api_cadastro():
     if request.method == "OPTIONS":
         return ("", 204)
 
-    # --- pegue o token do Turnstile de forma robusta ---
+    # --- início: leitura / validação do captcha (bloco alinhado ao combinado) ---
     data_json = request.get_json(silent=True) or {}
 
     turnstile_token = (
@@ -671,28 +685,27 @@ def api_cadastro():
         or data_json.get("turnstileToken")
     )
 
-    # só exige se TURNSTILE_REQUIRED estiver ligado (como está no Render)
     if os.getenv("TURNSTILE_REQUIRED", "true").strip().lower() in ("1","true","yes","on"):
         if not turnstile_token:
+            print("[cadastro] captcha_missing")
             return jsonify({"ok": False, "error": "captcha_required"}), 429
 
-        # valida no Cloudflare (reutiliza função existente)
         try:
-            ok = _verify_turnstile_token(turnstile_token)  # já usa secret e remote ip
-        except Exception:
+            ok = _verify_turnstile_token(turnstile_token)
+        except Exception as e:
+            print(f"[cadastro] captcha_verify_exception={type(e).__name__} msg={e}")
             ok = False
 
         if not ok:
-            # manter a mesma semântica para o front
+            print("[cadastro] captcha_failed")
             return jsonify({"ok": False, "error": "captcha_required"}), 429
-    # --- fim leitura/validação do captcha ---
 
-    # Garanta que _validate_signup_payload() também "enxergue" o token via _is_human_ok()
     if "token" not in data_json and "cf_token" not in data_json and "cf_resp" not in data_json:
         if turnstile_token:
             data_json["token"] = turnstile_token
 
     data = data_json
+    # --- fim: leitura / validação do captcha ---
 
     # Validações + demais campos
     payload, err = _validate_signup_payload(data)
@@ -753,6 +766,27 @@ def api_cadastro():
     except Exception as e:
         app.logger.exception("cadastro: erro inesperado")
         return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
+
+# -------------------------------------
+# (Opcional) Captcha diagnostics
+# -------------------------------------
+from flask import Blueprint
+captcha_bp = Blueprint("captcha_bp", __name__, url_prefix="/api/captcha")
+
+@captcha_bp.route("/verify", methods=["POST"])
+def captcha_verify():
+    body = request.get_json(silent=True) or {}
+    token = (body.get("token") or body.get("cf_resp") or request.form.get("token") or "").strip()
+    if not token:
+        return jsonify({"ok": False, "error": "missing token"}), 400
+    return jsonify({"ok": _verify_turnstile_token(token)}), 200
+
+# Registrar blueprint opcional
+try:
+    app.register_blueprint(captcha_bp)
+    print("[bp] Registrado: captcha_bp (/api/captcha/verify)")
+except Exception as e:
+    print("[bp][warn] captcha_bp:", e)
 
 # -------------------------------------
 # Diagnóstico: lista de rotas ativas
