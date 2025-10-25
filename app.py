@@ -9,6 +9,7 @@ from typing import List, Tuple
 from urllib import request as ulreq, parse as ulparse
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
+from uuid import uuid4  # ✅ para req_id em /api/cadastro
 
 print("[boot] app.py fachada enxuta carregado ✓", flush=True)
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +34,7 @@ cors_resources = {
         "allow_headers": [
             "Authorization", "Content-Type", "X-Requested-With",
             "cf-turnstile-response", "x-turnstile-token",
-            "X-Submit-Nonce"  # ← ADICIONADO: permite nonce de submissão para rastreio
+            "X-Submit-Nonce"  # ← permite nonce de submissão para rastreio
         ],
         "supports_credentials": False,
     }
@@ -186,7 +187,7 @@ except Exception as e:
     print("[bp][warn] bp_conta:", e)
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-# NOVO: Auth blueprint (whoami + check-verification) sob /api
+# Auth blueprint (whoami + check-verification) sob /api
 try:
     from routes.auth_bp import auth_bp
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
@@ -410,7 +411,7 @@ def _human_cookie_ok() -> bool:
         return val == "1"
     return raw == "1"
 
-# ✅ Helper do Turnstile com logging de motivo/exception (sem vazar secret)
+# ✅ Helper do Turnstile legado (bool) — mantido p/ compat de outros endpoints
 def _verify_turnstile_token(token: str) -> bool:
     secret = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
     if not secret or not token:
@@ -449,18 +450,30 @@ def _is_human_ok() -> bool:
     )
     return _verify_turnstile_token(tok) if tok else False
 
-def _uid_from_authorization() -> str | None:
-    auth = request.headers.get("Authorization", "").strip()
-    if not auth.lower().startswith("bearer "): return None
-    tok = auth.split(" ", 1)[1].strip()
-    parts = tok.split(".")
-    if len(parts) < 2: return None
+# ✅ Novo helper canônico p/ /api/cadastro (tuple)
+def verify_turnstile(token: str, client_ip: str) -> Tuple[bool, list, dict]:
+    secret = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
+    if not secret or not token:
+        return False, ["missing_secret_or_token"], {}
+    data = ulparse.urlencode({
+        "secret": secret,
+        "response": token,
+        "remoteip": client_ip or ""
+    }).encode("utf-8")
+    req = ulreq.Request(
+        TURNSTILE_VERIFY_URL,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"}
+    )
     try:
-        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
-        payload = json.loads(_b64.urlsafe_b64decode((parts[1] + pad).encode()).decode())
-        return payload.get("user_id") or payload.get("uid") or payload.get("sub")
-    except Exception:
-        return None
+        with ulreq.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            j = json.loads(body)
+            ok = bool(j.get("success"))
+            errs = j.get("error-codes", []) or []
+            return ok, errs, j
+    except Exception as e:
+        return False, [f"exception:{type(e).__name__}"], {"error": str(e)}
 
 from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
 from services.db import db
@@ -619,7 +632,8 @@ def _uid_from_bearer() -> str | None:
     except Exception:
         return None
 
-def _validate_signup_payload(data: dict):
+# ✅ aceita pré-checagem do captcha; se informado, não revalida aqui
+def _validate_signup_payload(data: dict, human_ok_prechecked: bool | None = None):
     email = (data.get("email") or "").strip().lower()
     senha = (data.get("senha") or "").strip()
     nome = (data.get("nome") or "").strip()
@@ -627,7 +641,10 @@ def _validate_signup_payload(data: dict):
     cnpj = _only_digits_public(data.get("cnpj") or "")
     segmento = (data.get("segmento") or "").strip().lower()
 
-    if not _is_human_ok():
+    if human_ok_prechecked is None:
+        if not _is_human_ok():
+            return None, (429, {"ok": False, "error": "captcha_required"})
+    elif human_ok_prechecked is False:
         return None, (429, {"ok": False, "error": "captcha_required"})
 
     if not email:   return None, (422, {"ok": False, "error": "invalid_field", "field": "email"})
@@ -670,57 +687,43 @@ def api_ativar_cliente():
 def api_cadastro():
     """
     Signup público e robusto:
-    - captcha obrigatório (Turnstile),
-    - valida payload,
-    - se houver Bearer: usa uid do token (idempotente),
+    - captcha obrigatório (Turnstile) — verificado UMA ÚNICA VEZ aqui;
+    - valida payload;
+    - se houver Bearer: usa uid do token (idempotente);
     - se não houver Bearer: cria usuário no Firebase Auth (se disponível),
       envia e-mail de verificação e cria doc do profissional.
     """
     if request.method == "OPTIONS":
         return ("", 204)
 
-    # --- início: leitura / validação do captcha (bloco alinhado ao combinado) ---
-    data_json = request.get_json(silent=True) or {}
+    # ===== Início: diagnóstico da tentativa e leitura única do token =====
+    body = request.get_json(silent=True) or {}
 
-    # --- diagnóstico de tentativa (nonce + UA) ---
-    nonce = request.headers.get('X-Submit-Nonce', '')
-    ua = (request.headers.get('User-Agent', '') or '')[:80]
-    print(f"[cadastro] nonce={nonce} ua={ua}")
+    req_id = request.headers.get('X-Submit-Nonce') or str(uuid4())[:8]
+    ua = (request.headers.get('User-Agent','') or '')[:80]
+    print(f"[cadastro] ENTER req={req_id} ua={ua}")
 
-    turnstile_token = (
-        request.form.get("cf-turnstile-response")
-        or request.form.get("turnstileToken")
-        or data_json.get("cf-turnstile-response")
-        or data_json.get("turnstileToken")
-    )
+    token = (body.get("turnstile_token") or
+             body.get("cf-turnstile-response") or
+             body.get("cf_token") or
+             request.headers.get("cf-turnstile-response") or
+             request.headers.get("X-Turnstile-Token") or "").strip()
 
+    # Verifica Turnstile uma única vez
+    client_ip = request.headers.get("CF-Connecting-IP") or request.remote_addr or ""
+    print(f"[cadastro] VERIFY#1 req={req_id}")
+    ok, errs, raw = verify_turnstile(token, client_ip)
+    print(f"[cadastro] VERIFIED req={req_id} ok={ok} errs={errs}")
     if os.getenv("TURNSTILE_REQUIRED", "true").strip().lower() in ("1","true","yes","on"):
-        if not turnstile_token:
-            print("[cadastro] captcha_missing")
-            return jsonify({"ok": False, "error": "captcha_required"}), 429
-
-        try:
-            ok = _verify_turnstile_token(turnstile_token)
-        except Exception as e:
-            print(f"[cadastro] captcha_verify_exception={type(e).__name__} msg={e}")
-            ok = False
-
         if not ok:
-            print("[cadastro] captcha_failed")
-            return jsonify({"ok": False, "error": "captcha_required"}), 429
+            return jsonify({"ok": False, "error": "captcha_required", "detail": errs}), 429
+    # ===== Fim: captcha verificado (não repetir depois) =====
 
-    if "token" not in data_json and "cf_token" not in data_json and "cf_resp" not in data_json:
-        if turnstile_token:
-            data_json["token"] = turnstile_token
-
-    data = data_json
-    # --- fim: leitura / validação do captcha ---
-
-    # Validações + demais campos
-    payload, err = _validate_signup_payload(data)
+    # Validações + demais campos (sem repetir captcha)
+    payload, err = _validate_signup_payload(body, human_ok_prechecked=True if ok else False)
     if err:
-        status, body = err
-        return jsonify(body), status
+        status, resp = err
+        return jsonify(resp), status
 
     email = payload["email"]; senha = payload["senha"]; nome = payload["nome"]
     telefone = payload["telefone"]; cnpj = payload["cnpj"]; segmento = payload["segmento"]
