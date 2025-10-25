@@ -30,7 +30,11 @@ cors_resources = {
         "origins": _allowed or [],
         "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         # ✅ headers incluem os dois do Turnstile (já estavam OK)
-        "allow_headers": ["Authorization","Content-Type","X-Requested-With","cf-turnstile-response","x-turnstile-token"],
+        "allow_headers": [
+            "Authorization", "Content-Type", "X-Requested-With",
+            "cf-turnstile-response", "x-turnstile-token",
+            "X-Submit-Nonce"  # ← ADICIONADO: permite nonce de submissão para rastreio
+        ],
         "supports_credentials": False,
     }
 } if _allowed else {}
@@ -677,6 +681,11 @@ def api_cadastro():
 
     # --- início: leitura / validação do captcha (bloco alinhado ao combinado) ---
     data_json = request.get_json(silent=True) or {}
+
+    # --- diagnóstico de tentativa (nonce + UA) ---
+    nonce = request.headers.get('X-Submit-Nonce', '')
+    ua = (request.headers.get('User-Agent', '') or '')[:80]
+    print(f"[cadastro] nonce={nonce} ua={ua}")
 
     turnstile_token = (
         request.form.get("cf-turnstile-response")
