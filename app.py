@@ -56,6 +56,10 @@ def _strip_cors_when_no_origin(resp):
 # ================================
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "meirobo123")
 
+# === Authority flags (mantém OFF por padrão para não impactar produção) ===
+AUTHORITY_LINKAGE_ENABLED = os.getenv("AUTHORITY_LINKAGE_ENABLED", "0") in ("1","true","TRUE")
+BLOCK_PAYMENT_UNTIL_AUTHORITY_APPROVED = os.getenv("BLOCK_PAYMENT_UNTIL_AUTHORITY_APPROVED","0") in ("1","true","TRUE")
+
 @app.before_request
 def _handle_webhook_challenge():
     if request.method == "GET" and request.path == "/webhook":
@@ -70,6 +74,16 @@ def _handle_webhook_challenge():
 # =========================================================
 # BYPASS PÚBLICO ANTECIPADO (signup/CNPJ/health/captcha)
 # =========================================================
+
+# === Blueprint: authority (vinculação de CNPJ) — isolado e atrás de flag ===
+try:
+    from routes.authority_bp import authority_bp
+    app.register_blueprint(authority_bp)
+    print("[boot] authority_bp registrado ✓", flush=True)
+except Exception as e:
+    # Mantém produção viva mesmo se o arquivo ainda não existir
+    print("[boot] authority_bp não registrado:", e, flush=True)
+
 from flask import jsonify as _jsonify  # já importado acima, mas evita shadowing
 _PUBLIC_ALLOW_EXACT = {
     "/health",
