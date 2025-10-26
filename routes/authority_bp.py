@@ -16,7 +16,7 @@ except Exception:
 authority_bp = Blueprint("authority_bp", __name__, url_prefix="/api")
 
 # Flags (lidas do ambiente)
-AUTHORITY_LINKAGE_ENABLED = os.getenv("AUTHORITY_LINKAGE_ENABLED", "1") in ("1", "true", "TRUE")
+AUTHORITY_LINKAGE_ENABLED = os.getenv("AUTHORITY_LINKAGE_ENABLED", "0") in ("1","true","TRUE")
 
 def _utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -44,6 +44,7 @@ def _require_admin(uid):
         return False
 
 def _authority_ref(db, uid):
+    # guardamos em subcoleção 'meta', doc 'authority'
     return db.collection("profissionais").document(uid).collection("meta").document("authority")
 
 def _doc_safe_get(doc):
@@ -108,15 +109,12 @@ def authority_evidence_url():
     db = fb_fs.client()
     _init_if_missing(db, uid)
 
-    # Esqueleto: ainda sem Signed URL real nesta atividade.
-    # Geramos um evidenceId e retornamos uploadUrl=None por enquanto.
     data = request.get_json(silent=True) or {}
     filename = (data.get("filename") or "").strip()
     contentType = (data.get("contentType") or "").strip()
 
     evidence_id = hashlib.sha256(f"{uid}:{filename}:{time.time()}".encode("utf-8")).hexdigest()[:24]
 
-    # Guardamos um placeholder de "pendente de upload"
     ref = _authority_ref(db, uid)
     snap = ref.get()
     payload = _doc_safe_get(snap) or {}
@@ -134,7 +132,7 @@ def authority_evidence_url():
 
     return jsonify({
         "evidenceId": evidence_id,
-        "uploadUrl": None,      # será preenchido na Atividade 2 (Signed URL)
+        "uploadUrl": None,      # Atividade 2: Signed URL real
         "expiresInSec": 0
     })
 
@@ -172,7 +170,6 @@ def authority_evidence_commit():
             break
 
     if not found:
-        # caso commit venha sem ter chamado evidence-url, criamos direto
         arr.append({
             "id": evidence_id or hashlib.sha256(f"{uid}:{time.time()}".encode()).hexdigest()[:24],
             "path": f"authority/{uid}/{evidence_id or 'adhoc'}",
@@ -184,7 +181,6 @@ def authority_evidence_commit():
             "type": ev_type
         })
 
-    # Ao menos 1 evidência → UNDER_REVIEW
     ref.set({
         "evidence": arr,
         "status": "UNDER_REVIEW",
@@ -232,13 +228,11 @@ def admin_authority_pending():
     ensure_firebase_admin()
     db = fb_fs.client()
 
-    # Consulta simples: busca documentos meta/authority com status UNDER_REVIEW ou DOCS_REQUIRED
-    # Obs.: como authority está em subcoleção meta, listaremos por agregação (collectionGroup).
+    # Buscar docs em subcoleção 'meta' com status pendente
     q1 = db.collection_group("meta").where("status", "in", ["UNDER_REVIEW", "DOCS_REQUIRED"]).stream()
     out = []
     for d in q1:
         data = d.to_dict() or {}
-        # extrair uid a partir do caminho: profissionais/{uid}/meta/authority
         parts = d.reference.path.split("/")
         try:
             prof_idx = parts.index("profissionais")
