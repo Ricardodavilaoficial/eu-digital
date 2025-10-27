@@ -209,20 +209,9 @@ try:
 except Exception as e:
     print("[bp][warn] auth_bp:", e)
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-    from routes.verify_email_link_bp import verify_email_link_bp
-_   register_bp(verify_email_link_bp, "verify_email_link_bp")
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-# NOVO: Auth blueprint (whoami + check-verification) sob /api
-try:
-    from routes.auth_bp import auth_bp
-    app.register_blueprint(auth_bp, url_prefix="/api/auth")
-    print("[bp] Registrado: auth_bp (/api/auth/*)")
-except Exception as e:
-    print("[bp][warn] auth_bp:", e)
-# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-    from routes.verify_email_link_bp import verify_email_link_bp
-    _register_bp(verify_email_link_bp, "verify_email_link_bp")
+from routes.verify_email_link_bp import verify_email_link_bp
+_register_bp(verify_email_link_bp, "verify_email_link_bp")
 
 # ================================
 # Blueprints opcionais (flags)
