@@ -223,6 +223,7 @@ except Exception as e:
 
 from routes.verify_email_link_bp import verify_email_link_bp
 _register_bp(verify_email_link_bp, "verify_email_link_bp")
+
 # ================================
 # Blueprints opcionais (flags)
 # ================================
