@@ -1,5 +1,5 @@
 # routes/authority_bp.py
-# Esqueleto v1 — Vinculação de autoridade ao CNPJ
+# Vinculação de autoridade ao CNPJ — v1.1 (Signed URL real)
 # Estados: UNVERIFIED → DOCS_REQUIRED → UNDER_REVIEW → APPROVED | REJECTED
 
 import os, hashlib, time
@@ -98,6 +98,10 @@ def authority_start():
 
 @authority_bp.route("/authority/evidence-url", methods=["POST"])
 def authority_evidence_url():
+    """
+    Gera Signed URL (V4) para upload direto no GCS via PUT.
+    Requer ENV STORAGE_BUCKET=<seu-bucket>
+    """
     if not AUTHORITY_LINKAGE_ENABLED:
         return jsonify({"error": "authority_linkage_disabled"}), 503
 
@@ -111,17 +115,44 @@ def authority_evidence_url():
 
     data = request.get_json(silent=True) or {}
     filename = (data.get("filename") or "").strip()
-    contentType = (data.get("contentType") or "").strip()
+    contentType = (data.get("contentType") or "").strip() or "application/octet-stream"
+
+    if not filename:
+        return jsonify({"error": "filename_required"}), 400
 
     evidence_id = hashlib.sha256(f"{uid}:{filename}:{time.time()}".encode("utf-8")).hexdigest()[:24]
+    object_path = f"authority/{uid}/{evidence_id}/{filename}"
 
+    # === Signed URL (Google Cloud Storage) ===
+    upload_url = None
+    expires = 600  # 10 min
+    try:
+        from google.cloud import storage
+        bucket_name = os.environ["STORAGE_BUCKET"]  # já canônico no app.py
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_path)
+
+        # URL assinada V4 p/ método PUT
+        upload_url = blob.generate_signed_url(
+            version="v4",
+            expiration=expires,
+            method="PUT",
+            content_type=contentType,
+        )
+    except KeyError:
+        return jsonify({"error":"signed_url_failed","detail":"STORAGE_BUCKET env missing"}), 500
+    except Exception as e:
+        return jsonify({"error":"signed_url_failed","detail":str(e)}), 500
+
+    # Persistimos placeholder na evidência
     ref = _authority_ref(db, uid)
     snap = ref.get()
     payload = _doc_safe_get(snap) or {}
     evid = payload.get("evidence", [])
     evid.append({
         "id": evidence_id,
-        "path": f"authority/{uid}/{evidence_id}",
+        "path": object_path,
         "filename": filename,
         "contentType": contentType,
         "uploadedAt": None,
@@ -132,8 +163,8 @@ def authority_evidence_url():
 
     return jsonify({
         "evidenceId": evidence_id,
-        "uploadUrl": None,      # Atividade 2: Signed URL real
-        "expiresInSec": 0
+        "uploadUrl": upload_url,
+        "expiresInSec": expires
     })
 
 @authority_bp.route("/authority/evidence-commit", methods=["POST"])
