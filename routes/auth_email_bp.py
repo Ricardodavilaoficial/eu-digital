@@ -3,6 +3,7 @@ from flask import Blueprint, request, jsonify, current_app, render_template
 import json, os
 from urllib import request as ulreq
 from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin
 
 auth_email_bp = Blueprint("auth_email_bp", __name__)
 
@@ -12,17 +13,58 @@ def _internal_base():
     # Usa o host atual (https://<render-domain>/)
     return (request.url_root or "").rstrip("/")
 
-def _http_json(method: str, url: str, headers: dict | None = None, body: dict | None = None, timeout: int = 15):
+def _http_json_follow(method: str, url: str, headers: dict | None = None, body: dict | None = None, timeout: int = 15, max_redirects: int = 3):
+    """
+    Faz requisição JSON e segue redirects HTTP (301/302/303/307/308).
+    - 303: troca para GET e remove body (comportamento padrão).
+    - 301/302/307/308: mantém método e body.
+    """
     hdrs = {"Content-Type": "application/json"}
     if headers:
         hdrs.update(headers)
+
     data = None
     if body is not None:
         data = json.dumps(body).encode("utf-8")
-    req = ulreq.Request(url, data=data, headers=hdrs, method=method.upper())
-    with ulreq.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
-        return resp.getcode(), (json.loads(raw) if raw.strip().startswith("{") else raw)
+
+    cur_method = method.upper()
+    cur_url = url
+    cur_data = data
+    redirects = 0
+
+    while True:
+        req = ulreq.Request(cur_url, data=cur_data, headers=hdrs, method=cur_method)
+        try:
+            with ulreq.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                # Tenta JSON, senão retorna string bruta
+                parsed = json.loads(raw) if raw.strip().startswith("{") else raw
+                return resp.getcode(), parsed
+        except HTTPError as e:
+            # Se não for redirect, propaga
+            if e.code not in (301, 302, 303, 307, 308):
+                raise
+            if redirects >= max_redirects:
+                raise
+
+            loc = e.headers.get("Location")
+            if not loc:
+                raise
+
+            # Normaliza URL destino (pode ser relativo)
+            next_url = urljoin(cur_url, loc)
+
+            # Regra 303 → GET sem body
+            if e.code == 303:
+                cur_method = "GET"
+                cur_data = None
+            # Demais mantém método/body
+
+            cur_url = next_url
+            redirects += 1
+            continue
+        except URLError:
+            raise
 
 def _forward_auth_headers():
     auth = request.headers.get("Authorization", "")
@@ -42,14 +84,14 @@ def send_verification_email_pretty():
     # 1) Gera link assinado usando o endpoint já existente (fonte da verdade)
     base = _internal_base()
     try:
-        code, resp = _http_json(
+        code, resp = _http_json_follow(
             "POST",
-            f"{base}/api/auth/send-verification",
+            f"{base}/api/auth/send-verification",   # sem barra final; seguiremos 307/308 se houver
             headers=_forward_auth_headers(),
             body={}
         )
         if code != 200 or not isinstance(resp, dict) or not resp.get("ok"):
-            return jsonify({"ok": False, "error": "send_verification_failed", "detail": resp}), 500
+            return jsonify({"ok": False, "error": "send_verification_failed", "detail": resp, "status": code}), 500
         verification_link = resp.get("verificationLink") or resp.get("link")
         if not verification_link:
             return jsonify({"ok": False, "error": "missing_verification_link"}), 500
@@ -60,14 +102,14 @@ def send_verification_email_pretty():
 
     # 2) Obtém e-mail do usuário via whoami (robusto e já existente)
     try:
-        code, who = _http_json(
+        code, who = _http_json_follow(
             "GET",
             f"{base}/api/auth/whoami",
             headers=_forward_auth_headers(),
             body=None
         )
         if code != 200 or not isinstance(who, dict) or not who.get("ok"):
-            return jsonify({"ok": False, "error": "whoami_failed", "detail": who}), 500
+            return jsonify({"ok": False, "error": "whoami_failed", "detail": who, "status": code}), 500
         to_email = (who.get("email") or "").strip().lower()
         if not to_email:
             return jsonify({"ok": False, "error": "missing_email_from_whoami"}), 500
@@ -109,7 +151,7 @@ def send_verification_email_pretty():
         payload["reply_to"] = {"email": reply_to}
 
     try:
-        code, _ = _http_json(
+        code, _ = _http_json_follow(
             "POST",
             SENDGRID_API_URL,
             headers={"Authorization": f"Bearer {sg_key}"},
