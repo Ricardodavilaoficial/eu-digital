@@ -1,0 +1,59 @@
+<!-- templates/email_verification.html -->
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <title>Confirme seu e-mail — MEI Robô</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      /* Estilos inline-friendly para maior compatibilidade */
+      body { margin:0; padding:0; background:#0b0f14; }
+      .wrap { width:100%; background:#0b0f14; padding:24px 0; }
+      .card {
+        max-width:560px; margin:0 auto; background:#10151c; border-radius:12px;
+        padding:28px; font-family: Arial, Helvetica, sans-serif; color:#e6eef7;
+        box-shadow: 0 6px 24px rgba(0,0,0,.35);
+      }
+      .logo { text-align:center; margin-bottom:16px; }
+      .logo img { width:64px; height:64px; border-radius:12px; display:inline-block; }
+      h1 { font-size:20px; margin:16px 0 8px; color:#e6eef7; text-align:center; }
+      p { font-size:14px; line-height:1.5; color:#c9d7e3; }
+      .cta {
+        text-align:center; margin:24px 0 8px;
+      }
+      .btn {
+        display:inline-block; text-decoration:none; font-weight:bold;
+        padding:12px 20px; border-radius:10px; background:#22c55e; color:#07240f;
+      }
+      .muted { font-size:12px; color:#8ea2b5; text-align:center; margin-top:16px; }
+      .hr { height:1px; background:#1a2230; border:0; margin:24px 0; }
+      .link-fallback { word-break: break-all; font-size:12px; color:#9fb3c7; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <div class="logo">
+          <img src="https://www.meirobo.com.br/assets/icon-512.png" alt="MEI Robô">
+        </div>
+        <h1>Confirme seu e-mail para continuar</h1>
+        <p>Olá! Clique no botão abaixo para confirmar seu e-mail e seguir com a ativação do seu <strong>MEI Robô</strong>.</p>
+
+        <div class="cta">
+          <a class="btn" href="{{ verificationLink }}" target="_blank" rel="noopener">Confirmar e-mail</a>
+        </div>
+
+        <hr class="hr">
+
+        <p class="muted">
+          Se o botão não funcionar, copie e cole este link no navegador:
+        </p>
+        <p class="link-fallback">{{ verificationLink }}</p>
+
+        <p class="muted">
+          Se você não se cadastrou, pode ignorar este e-mail.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

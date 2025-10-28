@@ -208,6 +208,14 @@ try:
     print("[bp] Registrado: auth_bp (/api/auth/*)")
 except Exception as e:
     print("[bp][warn] auth_bp:", e)
+
+# 🔸 NOVO (1/2): import do blueprint de e-mail bonito
+try:
+    from routes.auth_email_bp import auth_email_bp
+    app.register_blueprint(auth_email_bp, url_prefix="/api/auth")
+    print("[bp] Registrado: auth_email_bp (/api/auth/send-verification-email)")
+except Exception as e:
+    print("[bp][warn] auth_email_bp:", e)
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 from routes.verify_email_link_bp import verify_email_link_bp
@@ -820,6 +828,7 @@ def __routes():
             "endpoint": rule.endpoint,
             "methods": methods,
         })
+        # fim for
     out.sort(key=lambda x: x["rule"])
     return jsonify({"count": len(out), "routes": out}), 200
 
