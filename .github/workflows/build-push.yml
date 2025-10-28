@@ -28,5 +28,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ secrets.GHCR_USERNAME }}/mei-robo:latest
-            ghcr.io/${{ secrets.GHCR_USERNAME }}/mei-robo:${{ github.sha }}
+            ${{ secrets.IMAGE_REPO }}:latest
+            ${{ secrets.IMAGE_REPO }}:${{ github.sha }}
