@@ -608,7 +608,7 @@ def api_cupons_ativar_legado():
 # =====================================
 # Cadastro / ativar-cliente + CNPJ availability (ajustado)
 # =====================================
-from services.mailer import send_verification_email
+# REMOVIDO: from services.mailer import send_verification_email  ← caminho B desligado
 try:
     from services.firebase_admin_init import ensure_firebase_admin
     from firebase_admin import auth as fb_auth
@@ -705,7 +705,10 @@ def api_cadastro():
     - valida payload,
     - se houver Bearer: usa uid do token (idempotente),
     - se não houver Bearer: cria usuário no Firebase Auth (se disponível),
-      envia e-mail de verificação e cria doc do profissional.
+      cria doc do profissional.
+    - 🚫 (Mudança) NÃO envia e-mail pelo mailer legado aqui. O envio deve ser feito
+      via rota bonita /api/auth/send-verification-email pelo frontend (ou internamente
+      por função equivalente), evitando caminho B.
     """
     if request.method == "OPTIONS":
         return ("", 204)
@@ -749,11 +752,9 @@ def api_cadastro():
         if uid:
             # Caminho idempotente autenticado (front já criou user via SDK)
             _ensure_profissional_doc(uid, nome, email, cnpj)
-            try:
-                send_verification_email(email, continue_url=os.getenv("VERIFY_CONTINUE_URL","https://www.meirobo.com.br/verify-email.html"))
-            except Exception as e:
-                app.logger.warning("cadastro(auth): falha ao enviar verificação: %s", e)
-            return jsonify({"ok": True, "created": True, "uid": uid, "mode": "auth"}), 201
+            # 🚫 Não enviar por mailer legado (evitar caminho B)
+            app.logger.info("[cadastro] skip legacy mailer; send_via=frontend_sendgrid_pretty; uid=%s", uid)
+            return jsonify({"ok": True, "created": True, "uid": uid, "mode": "auth", "next": "frontend_should_call_send_verification_email"}), 201
 
         # Caminho público (sem token): criar usuário se Admin SDK disponível
         if ensure_firebase_admin and fb_auth:
@@ -779,16 +780,13 @@ def api_cadastro():
         if not uid:
             # Se não conseguimos criar/descobrir UID (p.ex. sem Admin SDK),
             # devolve 202 para o front completar via SDK e refazer chamada autenticada
-            return jsonify({"ok": True, "created": False, "mode": "client_sdk_required"}), 202
+            return jsonify({"ok": True, "created": False, "mode": "client_sdk_required", "next": "frontend_should_signin_and_call_send_verification_email"}), 202
 
-        # Criar doc do profissional e enviar verificação
+        # Criar doc do profissional (sem enviar verificação aqui)
         _ensure_profissional_doc(uid, nome, email, cnpj)
-        try:
-            send_verification_email(email, continue_url=os.getenv("VERIFY_CONTINUE_URL","https://www.meirobo.com.br/verify-email.html"))
-        except Exception as e:
-            app.logger.warning("cadastro(public): falha ao enviar verificação: %s", e)
+        app.logger.info("[cadastro] created profissional; skip legacy mailer; send_via=frontend_sendgrid_pretty; uid=%s", uid)
 
-        return jsonify({"ok": True, "created": True, "uid": uid, "mode": "public"}), 201
+        return jsonify({"ok": True, "created": True, "uid": uid, "mode": "public", "next": "frontend_should_call_send_verification_email"}), 201
 
     except Exception as e:
         app.logger.exception("cadastro: erro inesperado")

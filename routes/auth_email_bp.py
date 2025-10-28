@@ -81,27 +81,44 @@ def send_verification_email_pretty():
     if not auth_hdr.lower().startswith("bearer "):
         return jsonify({"ok": False, "error": "unauthenticated"}), 401
 
-    # 1) Gera link assinado usando o endpoint já existente (fonte da verdade)
+    body_in = request.get_json(silent=True) or {}
+    # pass-through opcional: se front mandar { cont: "/pages/configuracao.html" } repassamos
+    cont = (body_in.get("cont") or "").strip()
+
     base = _internal_base()
+
+    # 1) Gera link assinado usando o endpoint já existente (fonte da verdade)
     try:
+        gen_body = {}
+        if cont:
+            # Só repassamos se vier — endpoint pode ignorar sem quebrar
+            gen_body["cont"] = cont
+
+        current_app.logger.info("[auth_email] generating link via /api/auth/send-verification (send_via=sendgrid_pretty)")
         code, resp = _http_json_follow(
             "POST",
-            f"{base}/api/auth/send-verification",   # sem barra final; seguiremos 307/308 se houver
+            f"{base}/api/auth/send-verification",
             headers=_forward_auth_headers(),
-            body={}
+            body=gen_body
         )
         if code != 200 or not isinstance(resp, dict) or not resp.get("ok"):
+            current_app.logger.warning("[auth_email] send-verification failed status=%s resp=%s", code, str(resp)[:300])
             return jsonify({"ok": False, "error": "send_verification_failed", "detail": resp, "status": code}), 500
+
         verification_link = resp.get("verificationLink") or resp.get("link")
         if not verification_link:
+            current_app.logger.error("[auth_email] missing verificationLink in response")
             return jsonify({"ok": False, "error": "missing_verification_link"}), 500
     except (HTTPError, URLError) as e:
+        current_app.logger.exception("[auth_email] send_verification_http_error")
         return jsonify({"ok": False, "error": "send_verification_http_error", "detail": str(e)}), 500
     except Exception as e:
+        current_app.logger.exception("[auth_email] send_verification_exception")
         return jsonify({"ok": False, "error": "send_verification_exception", "detail": str(e)}), 500
 
     # 2) Obtém e-mail do usuário via whoami (robusto e já existente)
     try:
+        current_app.logger.info("[auth_email] fetching whoami (send_via=sendgrid_pretty)")
         code, who = _http_json_follow(
             "GET",
             f"{base}/api/auth/whoami",
@@ -109,11 +126,14 @@ def send_verification_email_pretty():
             body=None
         )
         if code != 200 or not isinstance(who, dict) or not who.get("ok"):
+            current_app.logger.warning("[auth_email] whoami_failed status=%s resp=%s", code, str(who)[:300])
             return jsonify({"ok": False, "error": "whoami_failed", "detail": who, "status": code}), 500
         to_email = (who.get("email") or "").strip().lower()
         if not to_email:
+            current_app.logger.error("[auth_email] missing email from whoami")
             return jsonify({"ok": False, "error": "missing_email_from_whoami"}), 500
     except Exception as e:
+        current_app.logger.exception("[auth_email] whoami_exception")
         return jsonify({"ok": False, "error": "whoami_exception", "detail": str(e)}), 500
 
     # 3) Renderiza HTML (template simples com {{ verificationLink }})
@@ -125,11 +145,13 @@ def send_verification_email_pretty():
             "Se você não se cadastrou, ignore este e-mail."
         )
     except Exception as e:
+        current_app.logger.exception("[auth_email] template_render_error")
         return jsonify({"ok": False, "error": "template_render_error", "detail": str(e)}), 500
 
     # 4) Envia via SendGrid
     sg_key = os.getenv("SENDGRID_API_KEY", "").strip()
     if not sg_key:
+        current_app.logger.error("[auth_email] missing SENDGRID_API_KEY")
         return jsonify({"ok": False, "error": "missing_sendgrid_api_key"}), 500
 
     from_name = os.getenv("EMAIL_FROM_NAME", "MEI Robô")
@@ -151,6 +173,7 @@ def send_verification_email_pretty():
         payload["reply_to"] = {"email": reply_to}
 
     try:
+        current_app.logger.info("[auth_email] sending via SendGrid (send_via=sendgrid_pretty) to=%s", to_email)
         code, _ = _http_json_follow(
             "POST",
             SENDGRID_API_URL,
@@ -159,10 +182,13 @@ def send_verification_email_pretty():
             timeout=20
         )
         if code not in (200, 202):
+            current_app.logger.warning("[auth_email] sendgrid_not_accepted status=%s", code)
             return jsonify({"ok": False, "error": "sendgrid_not_accepted", "status": code}), 502
     except HTTPError as e:
+        current_app.logger.exception("[auth_email] sendgrid_http_error")
         return jsonify({"ok": False, "error": "sendgrid_http_error", "status": getattr(e, 'code', None), "detail": str(e)}), 502
     except Exception as e:
+        current_app.logger.exception("[auth_email] sendgrid_exception")
         return jsonify({"ok": False, "error": "sendgrid_exception", "detail": str(e)}), 502
 
     return jsonify({"ok": True, "sent": True}), 200
