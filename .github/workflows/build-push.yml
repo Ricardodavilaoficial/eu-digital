@@ -28,5 +28,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ secrets.IMAGE_REPO }}:latest
-            ${{ secrets.IMAGE_REPO }}:${{ github.sha }}
+            ghcr.io/ricardodavilaoficial/mei-robo:latest
+            ghcr.io/ricardodavilaoficial/mei-robo:${{ github.sha }} 
