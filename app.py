@@ -218,8 +218,13 @@ except Exception as e:
     print("[bp][warn] auth_email_bp:", e)
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-from routes.verify_email_link_bp import verify_email_link_bp
-_register_bp(verify_email_link_bp, "verify_email_link_bp")
+# 🔸 NOVO (2/2): geração de link via Admin SDK com o MESMO prefixo
+try:
+    from routes.verify_email_link_bp import verify_email_link_bp
+    app.register_blueprint(verify_email_link_bp, url_prefix="/api/auth")
+    print("[bp] Registrado: verify_email_link_bp (/api/auth/generate-verification-link)")
+except Exception as e:
+    print("[bp][warn] verify_email_link_bp:", e)
 
 # ================================
 # Blueprints opcionais (flags)
