@@ -37,7 +37,9 @@
     ],
     "rewrites": [
       { "source": "/api/**", "run": { "serviceId": "mei-robo-prod-ghcr", "region": "southamerica-east1" } },
-      { "source": "/health",  "run": { "serviceId": "mei-robo-prod-ghcr", "region": "southamerica-east1" } }
+      { "source": "/health", "run": { "serviceId": "mei-robo-prod-ghcr", "region": "southamerica-east1" } },
+      { "source": "/__routes", "run": { "serviceId": "mei-robo-prod-ghcr", "region": "southamerica-east1" } },
+      { "source": "/__env_safe", "run": { "serviceId": "mei-robo-prod-ghcr", "region": "southamerica-east1" } }
     ]
   }
 }
