@@ -1,0 +1,81 @@
+﻿{
+    "atualizadoEm":  "2025-10-11T03:00:00.000Z",
+    "cnaePrincipal":  {
+                          "codigo":  "6202300",
+                          "descricao":  "Desenvolvimento e licenciamento de programas de computador customizáveis"
+                      },
+    "cnaesSecundarios":  [
+                             {
+                                 "codigo":  "2621300",
+                                 "descricao":  "Fabricação de equipamentos de informática"
+                             },
+                             {
+                                 "codigo":  "2790299",
+                                 "descricao":  "Fabricação de outros equipamentos e aparelhos elétricos não especificados anteriormente"
+                             },
+                             {
+                                 "codigo":  "4321500",
+                                 "descricao":  "Instalação e manutenção elétrica"
+                             },
+                             {
+                                 "codigo":  "4669999",
+                                 "descricao":  "Comércio atacadista de outras máquinas e equipamentos não especificados anteriormente; partes e peças"
+                             },
+                             {
+                                 "codigo":  "4759899",
+                                 "descricao":  "Comércio varejista de outros artigos de uso doméstico não especificados anteriormente"
+                             },
+                             {
+                                 "codigo":  "6203100",
+                                 "descricao":  "Desenvolvimento e licenciamento de programas de computador não customizáveis"
+                             },
+                             {
+                                 "codigo":  "7112000",
+                                 "descricao":  "Serviços de engenharia"
+                             },
+                             {
+                                 "codigo":  "9511800",
+                                 "descricao":  "Reparação e manutenção de computadores e de equipamentos periféricos"
+                             }
+                         ],
+    "cnpj":  "48495357000114",
+    "dataAbertura":  "2022-11-03",
+    "endereco":  {
+                     "bairro":  "PARTENON",
+                     "cep":  "90619900",
+                     "complemento":  "BLOCO 94                  SALA  102",
+                     "logradouro":  "IPIRANGA",
+                     "municipio":  {
+                                       "ibge_id":  4314902,
+                                       "id":  4932,
+                                       "nome":  "Porto Alegre",
+                                       "siafi_id":  "8801"
+                                   },
+                     "numero":  "6681",
+                     "uf":  {
+                                "ibge_id":  43,
+                                "id":  23,
+                                "nome":  "Rio Grande do Sul",
+                                "sigla":  "RS"
+                            }
+                 },
+    "fonte":  "cnpj.ws_publica",
+    "nomeFantasia":  null,
+    "razaoSocial":  "FUJICA SYSTEM DO BRASIL LTDA",
+    "simples":  {
+                    "dataOpcaoMei":  null,
+                    "dataOpcaoSimples":  null,
+                    "mei":  null,
+                    "optante":  null
+                },
+    "situacao":  null,
+    "socios":  [
+                   {
+                       "nome":  "EDSON RICARDO D AVILA DA SILVA",
+                       "qualificacao":  {
+                                            "descricao":  "Sócio-Administrador ",
+                                            "id":  49
+                                        }
+                   }
+               ]
+}

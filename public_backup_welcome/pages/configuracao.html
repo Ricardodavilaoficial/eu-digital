@@ -1,0 +1,797 @@
+<!doctype html> 
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Configuração de comunicação — MEI Robô</title>
+
+  <link rel="canonical" href="https://www.meirobo.com.br/pages/configuracao.html" />
+  <meta property="og:url" content="https://www.meirobo.com.br/pages/configuracao.html" />
+  <meta name="twitter:url" content="https://www.meirobo.com.br/pages/configuracao.html" />
+
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <script defer src="/assets/layout.js?v=2025-09-06-07"></script>
+
+  <style>
+    :root { --input-h: 48px; --input-br: 10px; --hint: .92rem; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    @media (max-width: 900px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+    .mt-6{margin-top:6px}.mt-8{margin-top:8px}.mt-12{margin-top:12px}.mt-16{margin-top:16px}.mt-20{margin-top:20px}.mt-24{margin-top:24px}
+    .w-100{width:100%}.hint{font-size:var(--hint);opacity:.9} form section{margin-top:18px} form label{display:block;margin:8px 0}
+
+    :root {
+      --bg-input: rgba(255,255,255,0.06);
+      --bd-input: #374151;
+      --fg-input: #e5e7eb;
+      --ph-input: 0.55;
+      --fg-display: #e5e7eb;
+    }
+
+    input[type="text"],input[type="email"],input[type="tel"],select{
+      width:100%;height:var(--input-h);
+      border:1px solid var(--bd-input);
+      border-radius:var(--input-br);
+      padding:0 12px;color:var(--fg-input);
+      outline:none;box-sizing:border-box;background:var(--bg-input);
+    }
+    input::placeholder{opacity:var(--ph-input)}
+
+    .display-value{display:block;padding:10px 0 2px;font-weight:600;color:var(--fg-display);letter-spacing:.2px}
+    .btn{padding:10px 14px;border:0;border-radius:8px;cursor:pointer}
+    .btn.primary{background:#25D366;color:#fff}
+    .btn.outline{background:transparent;border:1px solid var(--bd-input);color:var(--fg-input)}
+    .btn[disabled]{opacity:.6;cursor:not-allowed}
+    .card + .card{margin-top:16px}
+    .pill{display:inline-block;font-size:.76rem;line-height:1;padding:5px 8px;border-radius:999px;vertical-align:middle;margin-left:8px}
+    .pill-pending{background:#fff7e6;color:#8a5a00;border:1px solid #f5d08a}
+    .pill-prov{background:#eef5ff;color:#0b63c9;border:1px solid #cfe0ff}
+    .pill-active{background:#e8fff2;color:#116a3d;border:1px solid #25D366}
+    .pill-failed{background:#feecec;color:#9b1c1c;border:1px solid #fecaca}
+    .branding-options { display:grid; gap:10px; }
+    .branding-option { display:flex; align-items:flex-start; gap:10px; padding:10px; border:1px solid var(--bd-input); border-radius:10px; background:rgba(255,255,255,0.03); }
+    .branding-option small { opacity:.8 }
+    .soft{opacity:.8}
+
+    /* UI de voz (apenas nesta página) */
+    .upload-area{
+      border:1px dashed var(--bd-input);
+      border-radius:12px;
+      padding:16px;
+      background:rgba(255,255,255,0.03);
+    }
+    .upload-actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:8px }
+    .file-list{ list-style:none; padding:0; margin:12px 0 0 }
+    .file-item{ display:flex; align-items:center; justify-content:space-between; gap:10px; background:rgba(255,255,255,0.04); border:1px solid var(--bd-input); border-radius:10px; padding:8px 12px; margin:6px 0 }
+    .file-meta{ font-size:.95rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#e9f4f1 }
+    .remove-btn{ background:transparent; border:1px solid #8a3a3a; color:#ffbdbd; border-radius:999px; padding:6px 10px; font-weight:800; cursor:pointer }
+    .progress-wrap{ margin-top:8px }
+    .progress{ width:100%; height:8px; background:rgba(255,255,255,0.08); border-radius:999px; overflow:hidden }
+    .progress > span{ display:block; height:100%; width:0% }
+
+    /* status topo (auth/loading) */
+    #authStatus { margin:8px 0 0; font-size:.9rem; opacity:.85 }
+  </style>
+  
+  <script>
+    /* API base */
+    window.API_BASE = "https://mei-robo-prod.onrender.com";
+  </script>
+
+  <!-- script de autofill do CNPJ -->
+  <script src="/assets/js/configuracao.cnpj.js" defer></script>
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="container">
+    <div class="card">
+      <h2>Configuração de comunicação</h2>
+      <p id="authStatus" class="hint"></p>
+      <p class="hint">Como você fala com as pessoas no WhatsApp. Capriche aqui: isso aumenta respostas, orçamentos e fechamentos.</p>
+      <p class="hint mt-8">Este é o <strong>padrão geral</strong>. Depois dá pra ajustar por contato.</p>
+
+      <form id="config-form" class="mt-16" novalidate>
+        <section id="sec-waba">
+          <h3>WhatsApp Business - Conta comercial com MEI Robô - <span id="waba-badge" class="pill pill-pending">em validação</span></h3>
+          <p id="waba-fixed" class="hint mt-6">
+            Você receberá um <strong>número novo do WhatsApp Business</strong> (virtual, <strong>sem chip</strong>), adequado para conta comercial.
+            Você pode manter seus números atuais, <strong>acrescentando o novo número e mantendo a mesma forma que você já utiliza</strong>;
+            o robô usará este número quando estiver <strong>Ativo</strong>. A liberação acontece após a <strong>configuração e implantação pelo MEI Robô</strong>,
+            em até <strong>7 dias úteis</strong>.
+          </p>
+          <p id="waba-note" class="hint"></p>
+          <p id="waba-eta" class="hint"></p>
+        </section>
+
+        <section class="mt-20">
+          <h3>Dados da conta</h3>
+          <div class="grid-2">
+            <div>
+              <label>Nome</label>
+              <span id="disp-nome" class="display-value">—</span>
+              <input type="hidden" name="nome" id="hid-nome" />
+            </div>
+            <div>
+              <label>E-mail</label>
+              <span id="disp-email" class="display-value">—</span>
+              <input type="hidden" name="email" id="hid-email" />
+            </div>
+
+            <label>Seu WhatsApp (para notificações)
+              <input type="tel" name="telefone" autocomplete="tel" placeholder="Ex.: +55 11 91234-5678" />
+              <span class="hint">Usaremos este número para avisos e testes. O número do MEI Robô será configurado depois.</span>
+            </label>
+
+            <div>
+              <label>CNPJ</label>
+              <span id="disp-cnpj" class="display-value">—</span>
+              <input type="hidden" name="cnpj" id="hid-cnpj" />
+              <span class="hint soft">CNPJ vinculado à conta. Para alterar, fale com o suporte.</span>
+            </div>
+          </div>
+
+          <div class="grid-2 mt-12">
+            <div>
+              <label>Razão Social (legal)</label>
+              <span id="disp-legalname" class="display-value">—</span>
+              <input type="hidden" name="legal_name" id="hid-legalname" />
+            </div>
+            <div>
+              <label>Nome Fantasia</label>
+              <span id="disp-tradename" class="display-value">—</span>
+              <input type="hidden" name="trade_name" id="hid-tradename" />
+            </div>
+          </div>
+
+          <p id="cnpj-vinculo-hint" class="hint mt-8"></p>
+        </section>
+
+        <section>
+          <h3>Como seu negócio deve aparecer para os clientes?</h3>
+          <div class="branding-options" id="branding-options">
+            <label class="branding-option">
+              <input type="radio" name="branding_choice" value="trade_name" />
+              <div>
+                <div><strong>Usar Nome Fantasia</strong> <small>(se existir)</small></div>
+                <div class="hint">Aparece em mensagens, orçamentos e materiais.</div>
+              </div>
+            </label>
+
+            <label class="branding-option">
+              <input type="radio" name="branding_choice" value="legal_name" />
+              <div>
+                <div><strong>Usar Razão Social</strong></div>
+                <div class="hint">Opção conservadora, costuma bater com cadastros oficiais.</div>
+              </div>
+            </label>
+
+            <label class="branding-option">
+              <input type="radio" name="branding_choice" value="custom" />
+              <div class="w-100">
+                <div><strong>Definir um nome personalizado</strong></div>
+                <input type="text" name="public_brand" id="public_brand" placeholder="Ex.: Ed Barba" class="mt-8" />
+                <div class="hint mt-6">Esse nome aparece para seus clientes. Documentos fiscais continuam com a Razão Social.</div>
+              </div>
+            </label>
+          </div>
+        </section>
+
+        <section>
+          <h3>Segmento profissional</h3>
+          <div class="grid-2">
+            <div>
+              <label>Segmento (CNAE)</label>
+              <span id="disp-segmento" class="display-value">—</span>
+              <input type="hidden" name="segmento" id="hid-segmento" />
+            </div>
+            <label>Área que você mais atua
+              <input type="text" name="esp1" placeholder="Ex.: Pneus / Corte masculino / Direito trabalhista" />
+            </label>
+            <label>Outra área de atuação (opcional)
+              <input type="text" name="esp2" placeholder="Ex.: Troca de óleo / Barba / Contratos" />
+            </label>
+          </div>
+        </section>
+
+        <section>
+          <h3>Seu jeito de falar</h3>
+          <p class="hint">Defina o estilo que você costuma usar com a maioria dos clientes. Depois dá pra personalizar por contato.</p>
+
+          <div class="grid-3">
+            <label>Formalidade
+              <select name="formalidade">
+                <option value="alta">Alta — “Prezado Sr. João…”</option>
+                <option value="media" selected>Média — “Olá, João, tudo bem?”</option>
+                <option value="baixa">Baixa — “E aí, João, beleza?”</option>
+              </select>
+            </label>
+            <label>Usa emojis?
+              <select name="emojis">
+                <option value="sim" selected>Sim</option>
+                <option value="as_vezes">Às vezes</option>
+                <option value="nao">Não</option>
+              </select>
+            </label>
+            <label>Saudação preferida
+              <input type="text" name="saudacao" placeholder="Ex.: Olá! Tudo bem? / Bom dia! Como vai?" />
+            </label>
+          </div>
+
+          <div class="grid-2 mt-12">
+            <label>Como você costuma ser chamado?
+              <input type="text" name="display_name" placeholder="Ex.: Ricardo / Ricardo — Barbeiro / Dr. Ricardo / Ricardão 😎" />
+              <span class="hint">Esse é o nome que aparece nas mensagens, quando necessário. Você pode mudar por contato depois.</span>
+            </label>
+            <label>Fechamento de conversa (opcional)
+              <input type="text" name="closing_text" placeholder="Ex.: Abraço. Ricardo / Obrigado! Ricardo" />
+              <span class="hint">Usado só quando fizer sentido.</span>
+            </label>
+          </div>
+
+          <div class="grid-2 mt-12">
+            <label>Horário de resposta padrão
+              <select name="janela_resposta" id="janela_resposta">
+                <option value="24x7" selected>Sempre disponível (24/7 — padrão do MEI Robô)</option>
+                <option value="comercial">Horário comercial (Seg–Sex, 9h–18h)</option>
+                <option value="estendido">Estendido (Seg–Sáb, 8h–20h)</option>
+                <option value="custom">Personalizado…</option>
+              </select>
+            </label>
+          </div>
+          <div id="custom-horario" class="mt-8" style="display:none">
+            <label>Informe seu horário (livre)
+              <input type="text" name="janela_resposta_custom" placeholder="Ex.: Respondo das 9h às 18h e, às vezes, até 22h" />
+            </label>
+          </div>
+        </section>
+
+        <!-- ====== Voz (upload/gravação + progresso + polling) ====== -->
+        <section class="mt-24" id="sec-voz">
+          <h3>Sua voz (obrigatório)</h3>
+          <p class="hint">Envie até <strong>5 áudios</strong> (WAV/MP3/M4A/OGG/WEBM). A soma deve ter pelo menos <strong>1 minuto</strong> (ideal 10–30min). Grave em local silencioso.</p>
+
+          <div class="upload-area" id="uploadArea">
+            <div class="upload-actions">
+              <input id="voiceFiles" type="file" accept=".wav,.mp3,.m4a,.ogg,.webm,audio/*" multiple hidden />
+              <button type="button" class="btn outline" id="btnChooseFiles">Escolher arquivos</button>
+
+              <button type="button" class="btn outline" id="btnStartRec">Gravar</button>
+              <button type="button" class="btn outline" id="btnStopRec" disabled>Parar</button>
+
+              <button type="button" class="btn outline" id="btnClearFiles">Limpar</button>
+              <button type="button" class="btn primary" id="btnEnviar" disabled>Enviar & Processar</button>
+            </div>
+
+            <ul id="fileList" class="file-list"></ul>
+
+            <div class="progress-wrap">
+              <div class="progress" aria-hidden="true"><span id="uploadBar"></span></div>
+              <div id="vozMsg" class="hint mt-6"></div>
+            </div>
+
+            <label class="inline mt-8" style="gap:8px">
+              <input type="checkbox" id="aceiteVoz" />
+              <span class="hint">
+                Autorizo o uso da minha voz <strong>somente</strong> na minha conta,
+                conforme o <a href="/consentimento-voz.html" target="_blank" rel="noopener noreferrer">Consentimento de Voz</a>,
+                a <a href="/privacidade.html" target="_blank" rel="noopener noreferrer">Política de Privacidade</a> e os
+                <a href="/termos.html" target="_blank" rel="noopener noreferrer">Termos de Uso</a>.
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <div class="mt-24">
+          <button id="btn-salvar" type="submit" class="btn primary" disabled>Salvar e continuar</button>
+          <span id="config-feedback" class="hint mt-8" style="margin-left:8px;"></span>
+        </div>
+      </form>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <!-- CNPJ: auto-preenchimento via /api/configuracao -> /api/cnpj/<cnpj> -->
+  <script src="/assets/js/configuracao.cnpj.js?v=1"></script>
+
+  <script>
+    const API_BASE = (localStorage.getItem('apiBase') || 'https://mei-robo-prod.onrender.com').replace(/\/+$/, '');
+
+    /* ===== Gatekeeper robusto ===== */
+    const authStatus = document.getElementById('authStatus');
+
+    function setAuthMsg(t){ authStatus.textContent = t || ''; }
+
+    function waitForFirebaseAuthReady(timeoutMs=12000){
+      return new Promise(res=>{
+        const start=Date.now();
+        (function loop(){
+          const ok = !!(window.firebase && firebase.apps && firebase.apps.length && firebase.auth);
+          if (ok) return res(true);
+          if (Date.now()-start > timeoutMs) return res(false);
+          setTimeout(loop, 60);
+        })();
+      });
+    }
+
+    function waitForUser(timeoutMs=12000){
+      return new Promise(res=>{
+        const auth = firebase.auth();
+        const u = auth.currentUser;
+        if (u) return res(u);
+        let done=false;
+        const t = setTimeout(()=>{ if(!done){ done=true; unsub(); res(null); } }, timeoutMs);
+        const unsub = auth.onAuthStateChanged(async user=>{
+          if (done) return;
+          done=true; clearTimeout(t); unsub();
+          res(user||null);
+        });
+      });
+    }
+
+    async function refreshTokenSafe(user){
+      try { await user.getIdToken(true); } catch(_) {}
+    }
+
+    async function ensureVerifiedOrSendBack(){
+      const okSdk = await waitForFirebaseAuthReady();
+      if (!okSdk){ setAuthMsg('Serviço de autenticação indisponível. Recarregue a página.'); return false; }
+
+      let user = firebase.auth().currentUser;
+      if (!user){
+        setAuthMsg('Conectando…');
+        user = await waitForUser(8000);
+      }
+
+      if (!user){
+        // evita “pula pra login” imediato — dá mais uma chance
+        setAuthMsg('Sessão não encontrada. Redirecionando ao login…');
+        location.href = '/pages/login.html?next=' + encodeURIComponent('/pages/configuracao.html');
+        return false;
+      }
+
+      // pós-verify: força reload + refresh do token
+      try { await user.reload(); } catch(_) {}
+      await refreshTokenSafe(user);
+
+      if (!user.emailVerified){
+        // volta pra verificação, mantendo referência de retorno
+        location.href = '/verify-email.html?cont=' + encodeURIComponent('/pages/configuracao.html');
+        return false;
+      }
+
+      setAuthMsg('');
+      return true;
+    }
+
+    /* ===== Utilitários ===== */
+    function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[s])); }
+    function formatDateBR(iso){ try { const d=new Date(iso); return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}` } catch(_){ return iso; } }
+    function onlyDigits(s){ return String(s||'').replace(/\D+/g,''); }
+
+    const form = document.getElementById('config-form');
+    const cfgFeedback = document.getElementById('config-feedback');
+    const btnSalvar = document.getElementById('btn-salvar');
+
+    const dNome  = document.getElementById('disp-nome');
+    const dEmail = document.getElementById('disp-email');
+    const dCnpj  = document.getElementById('disp-cnpj');
+    const dSeg   = document.getElementById('disp-segmento');
+    const dLegal = document.getElementById('disp-legalname');
+    const dTrade = document.getElementById('disp-tradename');
+
+    const hNome  = document.getElementById('hid-nome');
+    const hEmail = document.getElementById('hid-email');
+    const hCnpj  = document.getElementById('hid-cnpj');
+    const hSeg   = document.getElementById('hid-segmento');
+    const hLegal = document.getElementById('hid-legalname');
+    const hTrade = document.getElementById('hid-tradename');
+
+    const fTel   = form.querySelector('input[name="telefone"]');
+    const fEsp1  = form.querySelector('input[name="esp1"]');
+    const fEsp2  = form.querySelector('input[name="esp2"]');
+    const fFormal= form.querySelector('select[name="formalidade"]');
+    const fEmojis= form.querySelector('select[name="emojis"]');
+    const fSaud  = form.querySelector('input[name="saudacao"]');
+    const fDisp  = form.querySelector('input[name="display_name"]');
+    const fClose = form.querySelector('input[name="closing_text"]');
+    const fJanela= document.getElementById('janela_resposta');
+    const wrapCustom = document.getElementById('custom-horario');
+    const fJanelaCustom = form.querySelector('input[name="janela_resposta_custom"]');
+
+    const brandingOptions = document.getElementsByName('branding_choice');
+    const fPublicBrand = document.getElementById('public_brand');
+
+    const wabaBadge = document.getElementById('waba-badge');
+    const wabaNote  = document.getElementById('waba-note');
+    const wabaEta   = document.getElementById('waba-eta');
+
+    const cnpjVinculoHint = document.getElementById('cnpj-vinculo-hint');
+
+    fJanela.addEventListener('change', () => {
+      wrapCustom.style.display = (fJanela.value === 'custom') ? 'block' : 'none';
+    });
+
+    function selectBranding(choice){
+      for (const r of brandingOptions) r.checked = (r.value === choice);
+      if (choice === 'custom') fPublicBrand.removeAttribute('disabled');
+      else fPublicBrand.setAttribute('disabled','disabled');
+    }
+
+    function initBranding(data){
+      const legal = data.legal_name || '';
+      const trade = data.trade_name || '';
+      hLegal.value = legal; dLegal.textContent = legal || '—';
+      hTrade.value = trade; dTrade.textContent = trade || '—';
+
+      const choice = data.branding_choice || (trade ? 'trade_name' : 'legal_name');
+      const custom = data.public_brand || '';
+      selectBranding(choice);
+      if (custom) fPublicBrand.value = custom;
+      if (choice !== 'custom') fPublicBrand.value = custom || '';
+    }
+
+    async function getAuthContext() {
+      let idToken = null;
+      let uid = null;
+      if (window.firebase && firebase.auth && firebase.auth().currentUser) {
+        const user = firebase.auth().currentUser;
+        uid = user.uid;
+        try { idToken = await user.getIdToken(true); } catch(_) {}
+      }
+      return { uid, idToken };
+    }
+
+    /* ===== Voz: estado “pronta” para habilitar salvar ===== */
+    const voiceEls = {
+      area: document.getElementById('uploadArea'),
+      input: document.getElementById('voiceFiles'),
+      btnChoose: document.getElementById('btnChooseFiles'),
+      btnClear: document.getElementById('btnClearFiles'),
+      btnEnviar: document.getElementById('btnEnviar'),
+      list: document.getElementById('fileList'),
+      msg: document.getElementById('vozMsg'),
+      bar: document.getElementById('uploadBar'),
+      aceite: document.getElementById('aceiteVoz'),
+      recStart: document.getElementById('btnStartRec'),
+      recStop: document.getElementById('btnStopRec'),
+    };
+    const voiceState = { files: [], uploading:false, polling:null, media:{rec:null, chunks:[]}, ready:false };
+
+    function setVoiceMsg(text, isError=false){ voiceEls.msg.textContent = text || ''; voiceEls.msg.className = isError ? 'hint error' : 'hint'; }
+    function setUploadPct(pct){ voiceEls.bar.style.width = Math.max(0, Math.min(100, pct)) + '%'; }
+    function enableVoiceControls(on){
+      const d = !on;
+      voiceEls.btnChoose.disabled = d;
+      voiceEls.btnClear.disabled = d;
+      voiceEls.btnEnviar.disabled = d;
+      voiceEls.recStart.disabled = d;
+      voiceEls.recStop.disabled = d || !voiceState.media.rec;
+      voiceEls.input.disabled = d;
+    }
+    function renderFileList(){
+      voiceEls.list.innerHTML='';
+      voiceState.files.forEach((f,idx)=>{
+        const li=document.createElement('li'); li.className='file-item';
+        const meta=document.createElement('div'); meta.className='file-meta'; meta.textContent=`${f.name} (${Math.round(f.size/1024)} KB)`;
+        const rm=document.createElement('button'); rm.className='remove-btn'; rm.textContent='Remover';
+        rm.addEventListener('click',()=>{ voiceState.files.splice(idx,1); renderFileList(); validateVoiceReady(); });
+        li.appendChild(meta); li.appendChild(rm); voiceEls.list.appendChild(li);
+      });
+    }
+    function addFiles(list){
+      const extsOK = ['.wav','.mp3','.m4a','.ogg','.webm'];
+      const isAudio = f => (f.type||'').toLowerCase().startsWith('audio/') || extsOK.some(ext => (f.name||'').toLowerCase().endsWith(ext));
+      for(const f of list){
+        if(voiceState.files.length>=5){ setVoiceMsg('Limite de 5 arquivos atingido.', true); break; }
+        if(!isAudio(f)){ setVoiceMsg('Arquivo rejeitado: extensão não reconhecida como áudio.', true); continue; }
+        voiceState.files.push(f);
+      }
+      renderFileList(); validateVoiceReady();
+    }
+    function validateVoiceReady(){
+      setVoiceMsg('');
+      if (voiceState.files.length===0){ setVoiceMsg('Nenhum arquivo selecionado. Envie pelo menos 1 áudio, com duração mínima de 1 minuto.'); voiceEls.btnEnviar.disabled = true; return; }
+      voiceEls.btnEnviar.disabled = !voiceEls.aceite.checked;
+    }
+    async function startRec(){
+      try{
+        const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+        const rec = new MediaRecorder(stream);
+        voiceState.media.rec = rec;
+        voiceState.media.chunks = [];
+        rec.ondataavailable = (e)=>{ if(e.data && e.data.size) voiceState.media.chunks.push(e.data); };
+        rec.onstop = ()=>{
+          try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
+          const blob = new Blob(voiceState.media.chunks, { type: 'audio/webm' });
+          const file = new File([blob], `gravacao_${Date.now()}.webm`, { type: 'audio/webm' });
+          addFiles([file]);
+          voiceEls.recStop.disabled = true;
+          voiceEls.recStart.disabled = false;
+        };
+        rec.start();
+        voiceEls.recStart.disabled = true;
+        voiceEls.recStop.disabled = false;
+        setVoiceMsg('Gravando… clique em Parar para finalizar.');
+      } catch(e){
+        setVoiceMsg('Não foi possível acessar o microfone.', true);
+      }
+    }
+    function stopRec(){ try{ voiceState.media.rec?.stop(); }catch(_){ } setVoiceMsg('Gravação finalizada. Arquivo adicionado.'); }
+    async function uploadAndProcess(uid, idToken){
+      if (!voiceEls.aceite.checked){ setVoiceMsg('Confirme a autorização de uso da voz para continuar.', true); return; }
+      if (voiceState.files.length===0){ setVoiceMsg('Selecione/grave pelo menos 1 áudio.', true); return; }
+      voiceState.uploading = true; enableVoiceControls(false); setUploadPct(0); setVoiceMsg('Enviando áudio com segurança…');
+      const fd = new FormData(); voiceState.files.forEach((f)=> fd.append('voice', f, f.name));
+      const url = `${API_BASE}/api/voz/process?uid=${encodeURIComponent(uid)}`;
+      try{
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url, true);
+        if (idToken) xhr.setRequestHeader('Authorization','Bearer ' + idToken);
+        xhr.upload.onprogress = (e)=>{ if(e.lengthComputable){ setUploadPct(Math.round(e.loaded/e.total*100)); } };
+        xhr.onreadystatechange = function(){
+          if (xhr.readyState === 4){
+            if (xhr.status >=200 && xhr.status <300){
+              setVoiceMsg('Upload concluído. Processando a voz…'); setUploadPct(100); startPolling(uid, idToken);
+            } else {
+              setVoiceMsg('Falha no envio. Tente novamente.', true); voiceState.uploading = false; enableVoiceControls(true);
+            }
+          }
+        };
+        xhr.send(fd);
+      } catch(e){
+        setVoiceMsg('Erro inesperado no envio.', true); voiceState.uploading = false; enableVoiceControls(true);
+      }
+    }
+    async function fetchLast(uid, idToken){
+      const headers = {}; if (idToken) headers['Authorization'] = 'Bearer ' + idToken;
+      const r = await fetch(`${API_BASE}/api/voz/last?uid=${encodeURIComponent(uid)}`, { headers, cache:'no-store' });
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    }
+    function startPolling(uid, idToken){
+      clearInterval(voiceState.polling);
+      voiceState.polling = setInterval(async ()=>{
+        try{
+          const data = await fetchLast(uid, idToken);
+          const st = (data && data.status || '').toLowerCase();
+          if (st === 'ready'){
+            clearInterval(voiceState.polling);
+            setVoiceMsg('✅ Voz pronta para uso.');
+            voiceState.ready = true;
+            enableVoiceControls(true);
+            voiceState.uploading = false;
+            btnSalvar.disabled = false; // libera salvar
+          } else if (st === 'failed'){
+            clearInterval(voiceState.polling);
+            setVoiceMsg('❌ O processamento falhou. Tente reenviar os áudios.', true);
+            voiceState.ready = false;
+            enableVoiceControls(true);
+            voiceState.uploading = false;
+          } else {
+            setVoiceMsg('Processando… aguarde mais um pouco.');
+          }
+        } catch(_){}
+      }, 4000);
+    }
+    function setupVoice(uid, idToken){
+      voiceEls.btnChoose.addEventListener('click',()=> voiceEls.input.click());
+      voiceEls.input.addEventListener('change',(e)=>{ const files=e.target?.files; if(files) addFiles(files); voiceEls.input.value=''; });
+      voiceEls.btnClear.addEventListener('click',()=>{ voiceState.files=[]; renderFileList(); validateVoiceReady(); setUploadPct(0); setVoiceMsg(''); });
+      voiceEls.recStart.addEventListener('click', startRec);
+      voiceEls.recStop.addEventListener('click', stopRec);
+      voiceEls.aceite.addEventListener('change', validateVoiceReady);
+      voiceEls.btnEnviar.addEventListener('click', ()=> uploadAndProcess(uid, idToken));
+      renderFileList(); validateVoiceReady();
+      (async ()=>{
+        try{
+          const data = await fetchLast(uid, idToken);
+          if (data && data.status){
+            const st = String(data.status).toLowerCase();
+            if (st === 'ready'){ setVoiceMsg('✅ Sua voz já está pronta para uso.'); voiceState.ready = true; btnSalvar.disabled = false; }
+            else if (st === 'processing'){ setVoiceMsg('Processando voz anterior…'); startPolling(uid, idToken); }
+          }
+        }catch(_){}
+      })();
+    }
+
+    /* ===== Inicialização ===== */
+    (async function gatekeeper(){
+      const ok = await ensureVerifiedOrSendBack();
+      if (!ok) return;
+      init(); // só segue após login + email verificado
+    })();
+
+    async function init() {
+      const { uid, idToken } = await getAuthContext();
+      if (!uid) { location.href = '/pages/login.html?next=' + encodeURIComponent('/pages/configuracao.html'); return; }
+
+      try {
+        const headers = {}; if (idToken) headers['Authorization'] = 'Bearer ' + idToken;
+        const resp = await fetch(`${API_BASE}/api/configuracao`, { method: 'GET', headers });
+        let payload = null;
+
+        if (resp.status === 404) {
+          // Primeiro acesso: segue sem redirecionar (antes redirecionava)
+          payload = {};
+        } else if (resp.status === 401) {
+          location.href = '/pages/login.html?next=' + encodeURIComponent('/pages/configuracao.html'); return;
+        } else if (resp.status === 403 || resp.status === 428) {
+          location.href = '/verify-email.html?cont=' + encodeURIComponent('/pages/configuracao.html'); return;
+        } else if (!resp.ok) {
+          // outras falhas: permanece aqui para tentar novamente, evitando “loop”
+          payload = {};
+        } else {
+          payload = await resp.json();
+        }
+
+        const data = (payload && payload.data) ? payload.data : (payload || {});
+
+        // Preenche mínimos a partir do Auth se precisar
+        let user = firebase.auth().currentUser;
+        try { await user?.reload(); } catch(_){}
+        const authEmail = user?.email || '';
+        const authName = user?.displayName || (data.nome || '');
+
+        // CNPJ pode vir vazio no 1º acesso; a UI guarda oculto para POST
+        const cnpjDigits = onlyDigits(data?.cnpj || '');
+
+        if (authName)  { dNome.textContent = authName; hNome.value = authName; }
+        if (authEmail) { dEmail.textContent = authEmail; hEmail.value = authEmail; }
+        dCnpj.textContent = cnpjDigits || '—'; hCnpj.value = cnpjDigits || '';
+
+        if (data.segmento)   { dSeg.textContent = data.segmento; hSeg.value = data.segmento; }
+        if (data.legal_name) { dLegal.textContent = data.legal_name; hLegal.value = data.legal_name; }
+        if (data.trade_name) { dTrade.textContent = data.trade_name; hTrade.value = data.trade_name; }
+
+        if (data.telefone) fTel.value = data.telefone;
+        if (data.esp1) fEsp1.value = data.esp1;
+        if (data.esp2) fEsp2.value = data.esp2;
+        if (data.formalidade) fFormal.value = data.formalidade;
+        if (data.emojis) fEmojis.value = data.emojis;
+        if (data.saudacao) fSaud.value = data.saudacao;
+        if (data.display_name) fDisp.value = data.display_name;
+        if (data.closing_text) fClose.value = data.closing_text;
+        if (data.janela_resposta) {
+          fJanela.value = data.janela_resposta;
+          wrapCustom.style.display = (fJanela.value === 'custom') ? 'block' : 'none';
+        }
+        if (data.janela_resposta_custom) fJanelaCustom.value = data.janela_resposta_custom;
+
+        initBranding(data);
+
+        // (Opcional) checagem de vínculo exibe apenas um ok visual
+        tryCheckCnpjVinculo(cnpjDigits, authName || '');
+
+        // Voz / WABA
+        setupVoice(uid, idToken);
+        await loadWabaStatus(uid, idToken);
+
+      } catch(e) {
+        // Permanece na tela; usuário pode tentar novamente
+      }
+    }
+
+    async function tryCheckCnpjVinculo(cnpj14, nomeBusca){
+      try {
+        if (!cnpj14) return;
+        const u = `${API_BASE}/integracoes/cnpj/${encodeURIComponent(cnpj14)}?nome=${encodeURIComponent(nomeBusca||'')}`;
+        const r = await fetch(u, { credentials: "include" });
+        if (!r.ok) return;
+        const j = await r.json();
+        const v = j && j.vinculoNome && j.vinculoNome.avaliacao;
+        if (v === 'EXATO' || v === 'PROVAVEL') {
+          cnpjVinculoHint.textContent = '✅ Vínculo ao CNPJ: ok.';
+        }
+      } catch(_){}
+    }
+
+    async function loadWabaStatus(uid, idToken){
+      try {
+        if (!uid) { setWabaUI('UNKNOWN'); return; }
+        const headers = {}; if (idToken) headers['Authorization'] = 'Bearer ' + idToken;
+        const r = await fetch(`${API_BASE}/api/waba/status?uid=${encodeURIComponent(uid)}`, { headers });
+        if (!r.ok) { setWabaUI('UNKNOWN'); return; }
+        const data = await r.json();
+        setWabaUI(String(data.status || 'UNKNOWN').toUpperCase(), data);
+        if (data.status && !/ACTIVE|FAILED/i.test(data.status)) {
+          setTimeout(() => loadWabaStatus(uid, idToken), 60000);
+        }
+      } catch(e){
+        setWabaUI('UNKNOWN');
+      }
+    }
+
+    function setWabaUI(status, data){
+      const s = (status || '').toUpperCase();
+      const badge = document.getElementById('waba-badge');
+      const note = document.getElementById('waba-note');
+      const eta  = document.getElementById('waba-eta');
+      badge.className = 'pill'; eta.textContent = ''; note.textContent = '';
+
+      if (s === 'ACTIVE') {
+        badge.classList.add('pill-active'); badge.textContent = 'ativo';
+        const num = (data && data.numberE164) ? data.numberE164 : '';
+        note.innerHTML = 'Número virtual <strong>ativado</strong> ' + (num ? '(' + escapeHtml(num) + ')' : '') + '. Tudo pronto para atender.';
+      } else if (s === 'PROVISIONING') {
+        badge.classList.add('pill-prov'); badge.textContent = 'ativando…';
+        note.innerHTML = 'Estamos ativando seu número virtual.';
+        if (data && data.eta) eta.textContent = 'Entrega prevista até: ' + formatDateBR(data.eta);
+      } else if (s === 'PENDING') {
+        badge.classList.add('pill-pending'); badge.textContent = 'em validação';
+        note.innerHTML = 'Aguardando validação e implantação.';
+        if (data && data.eta) eta.textContent = 'Entrega prevista até: ' + formatDateBR(data.eta) + ' (até 7 dias úteis).';
+        else eta.textContent = 'Entrega prevista: até 7 dias úteis.';
+      } else if (s === 'FAILED') {
+        badge.classList.add('pill-failed'); badge.textContent = 'falhou';
+        note.textContent = 'Não foi possível ativar o número. Verifique a documentação e tente novamente.';
+      } else {
+        badge.classList.add('pill-pending'); badge.textContent = 'em validação';
+        note.textContent = 'Estamos verificando o status do seu número virtual.';
+      }
+    }
+
+    /* ===== Submit da configuração ===== */
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      cfgFeedback.textContent = '';
+
+      // Gate: exige voz pronta
+      if (!voiceState.ready){
+        cfgFeedback.textContent = '⚠️ Envie e processe a sua voz primeiro. O botão será liberado quando ficar “✅ pronta”.';
+        return;
+      }
+
+      btnSalvar.disabled = true;
+      btnSalvar.textContent = 'Enviando…';
+
+      try {
+        let idToken = null;
+        if (window.firebase && firebase.auth && firebase.auth().currentUser) {
+          try { idToken = await firebase.auth().currentUser.getIdToken(true); } catch(_) {}
+        }
+
+        const fd = new FormData(form);
+        if (fd.get('janela_resposta') !== 'custom') fd.delete('janela_resposta_custom');
+        fd.set('cnpj', document.getElementById('hid-cnpj').value || '');
+        fd.set('segmento', document.getElementById('hid-segmento').value || '');
+        fd.set('legal_name', document.getElementById('hid-legalname').value || '');
+        fd.set('trade_name', document.getElementById('hid-tradename').value || '');
+
+        const brandingChoice = (fd.get('branding_choice') || '').trim();
+        if (brandingChoice !== 'custom') fd.set('public_brand', '');
+
+        const headers = {}; if (idToken) headers['Authorization'] = 'Bearer ' + idToken;
+        const resp = await fetch(`${API_BASE}/api/configuracao`, { method: 'POST', headers, body: fd });
+
+        let payload; const ct = resp.headers.get('content-type') || '';
+        if (ct.includes('application/json')) payload = await resp.json();
+        else payload = { message: await resp.text() };
+
+        if (!resp.ok) {
+          cfgFeedback.textContent = '❌ Falha ao salvar: ' + (payload?.message || JSON.stringify(payload));
+          btnSalvar.disabled = false; btnSalvar.textContent = 'Salvar e continuar';
+          return;
+        }
+
+        cfgFeedback.textContent = '✅ Configuração salva. Continuando…';
+        setTimeout(() => { window.location.href = '/pages/dashboard.html'; }, 600);
+      } catch (err) {
+        cfgFeedback.textContent = '❌ Erro ao comunicar com o servidor.';
+        btnSalvar.disabled = false;
+        btnSalvar.textContent = 'Salvar e continuar';
+      }
+    });
+
+    for (const r of document.getElementsByName('branding_choice')) {
+      r.addEventListener('change', () => {
+        const choice = r.value;
+        for (const x of document.getElementsByName('branding_choice')) x.checked = (x.value === choice);
+        if (choice === 'custom') document.getElementById('public_brand').removeAttribute('disabled');
+        else document.getElementById('public_brand').setAttribute('disabled','disabled');
+      });
+    }
+  </script>
+</body>
+</html>

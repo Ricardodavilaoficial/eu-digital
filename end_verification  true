@@ -1,0 +1,6 @@
+[35mapp.py[m[36m:[m[32m611[m[36m:[mfrom services.mailer import [1;31msend_verification_email[m
+[35mapp.py[m[36m:[m[32m753[m[36m:[m                [1;31msend_verification_email[m(email, continue_url=os.getenv("VERIFY_CONTINUE_URL","https://www.meirobo.com.br/verify-email.html"))
+[35mapp.py[m[36m:[m[32m787[m[36m:[m            [1;31msend_verification_email[m(email, continue_url=os.getenv("VERIFY_CONTINUE_URL","https://www.meirobo.com.br/verify-email.html"))
+[35mapp.py.bak-20251014-101117[m[36m:[m[32m22[m[36m:[mfrom services.mailer import [1;31msend_verification_email[m
+[35mroutes/auth_email_bp.py[m[36m:[m[32m74[m[36m:[mdef [1;31msend_verification_email[m_pretty():
+[35mservices/mailer.py[m[36m:[m[32m188[m[36m:[mdef [1;31msend_verification_email[m(user_email: str, verify_url: str | None = None, *, continue_url: str = "https://www.meirobo.com.br/verify-email.html") -> bool:

@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "mei-robo-prod"
-  }
+  },
+  "targets": {
+    "mei-robo-prod": {
+      "hosting": {
+        "prod": [
+          "mei-robo-prod"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

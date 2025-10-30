@@ -1,0 +1,15 @@
+{
+  "kind": "identitytoolkit#SetAccountInfoResponse",
+  "localId": "zeRNmwkXYVeQ2v2nAWvYjlWL4Kt2",
+  "email": "ricardodavilaoficial@gmail.com",
+  "providerUserInfo": [
+    {
+      "providerId": "password",
+      "federatedId": "ricardodavilaoficial@gmail.com",
+      "email": "ricardodavilaoficial@gmail.com",
+      "rawId": "ricardodavilaoficial@gmail.com"
+    }
+  ],
+  "passwordHash": "UkVEQUNURUQ=",
+  "emailVerified": true
+}
