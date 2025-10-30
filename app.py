@@ -226,6 +226,43 @@ try:
 except Exception as e:
     print("[bp][warn] verify_email_link_bp:", e)
 
+# --- SHIM: gerar link de verificação (Admin SDK) ---
+# Expondo GET/POST /api/auth/generate-verification-link para o front usar,
+# sem depender do verify_email_link_bp original.
+from flask import request as _req
+
+@app.route("/api/auth/generate-verification-link", methods=["GET", "POST", "OPTIONS"])
+def _auth_generate_verification_link():
+    if _req.method == "OPTIONS":
+        return ("", 204)
+    try:
+        if ensure_firebase_admin is None or fb_auth is None:
+            return jsonify({"ok": False, "error": "admin_sdk_unavailable"}), 500
+
+        data = _req.get_json(silent=True) or {}
+        email = (_req.args.get("email") or data.get("email") or "").strip().lower()
+        continue_url = (
+            _req.args.get("continueUrl")
+            or data.get("continueUrl")
+            or (os.getenv("FRONTEND_BASE", "https://www.meirobo.com.br").rstrip("/") + "/pages/verify-email.html")
+        ).strip()
+
+        if not email:
+            return jsonify({"ok": False, "error": "missing_email"}), 400
+
+        ensure_firebase_admin()
+        acs = fb_auth.ActionCodeSettings(
+            url=continue_url,
+            handle_code_in_app=False
+        )
+        link = fb_auth.generate_email_verification_link(email, acs)
+        return jsonify({"ok": True, "verification_link": link, "continueUrl": continue_url}), 200
+
+    except Exception as e:
+        app.logger.exception("generate_verification_link: erro")
+        return jsonify({"ok": False, "error": "link_generate_failed", "detail": str(e)}), 500
+# --- FIM SHIM ---
+
 # ================================
 # Blueprints opcionais (flags)
 # ================================
