@@ -125,15 +125,23 @@ def voz_diag():
 
 @voz_upload_bp.route("/api/voz/last", methods=["GET"])
 def voz_last():
-    """Lê vozClonada do Firestore para o UID informado."""
+    """Lê vozClonada do Firestore para o UID informado (fonte canônica: configuracao/{uid})."""
     uid = (request.args.get("uid") or "").strip()
     if not uid:
         return jsonify({"ok": False, "error": "missing_uid"}), 400
     try:
         from services.gcp_creds import get_firestore_client
         db = get_firestore_client()
-        doc = db.collection("profissionais").document(uid).get()
-        data = doc.to_dict() or {}
+
+        # fonte canônica (onde o processo de clonagem escreve)
+        doc_cfg = db.collection("configuracao").document(uid).get()
+        if doc_cfg.exists:
+            data = doc_cfg.to_dict() or {}
+        else:
+            # fallback legado (algumas versões guardavam em profissionais/{uid})
+            doc_prof = db.collection("profissionais").document(uid).get()
+            data = (doc_prof.to_dict() or {}) if doc_prof.exists else {}
+
         return jsonify({
             "ok": True,
             "uid": uid,
