@@ -1,4 +1,4 @@
-# routes/media.py
+﻿# routes/media.py
 # Blueprint: geração de Signed URL v4 (upload/download) em sandbox seguro
 # Rotas:
 #   POST /media/signed-url
@@ -37,36 +37,30 @@ _ALLOWED_MIME = {
     "video/mp4": ".mp4",
 }
 
-def _normalize_to_appspot(name: str) -> str:
+def _normalize_bucket(name: str) -> str:
     """
-    Aceita tanto <proj>.firebasestorage.app quanto <proj>.appspot.com
-    e retorna SEMPRE no formato <proj>.appspot.com (usado pelas APIs do GCS).
+    Mantém o bucket exatamente como informado.
+    Aceita *.firebasestorage.app ou *.appspot.com sem conversão.
     """
-    name = (name or "").strip()
-    if not name:
-        return ""
-    if name.endswith(".firebasestorage.app"):
-        return name.replace(".firebasestorage.app", ".appspot.com")
-    return name
+    return (name or "").strip()
 
 def _resolve_bucket_from_env() -> str:
     """
-    Resolve o bucket GCS a partir do ambiente, SEM fallback para nomes arbitrários.
+    Resolve o bucket GCS a partir do ambiente, sem converter domínios.
       Ordem:
         1) STORAGE_GCS_BUCKET
         2) FIREBASE_STORAGE_BUCKET ou STORAGE_BUCKET
-        3) FIREBASE_PROJECT_ID/GOOGLE_CLOUD_PROJECT -> <proj>.appspot.com
-      Todos normalizados para .appspot.com
+        3) FIREBASE_PROJECT_ID/GOOGLE_CLOUD_PROJECT -> <proj>.firebasestorage.app
     """
     b = (os.getenv("STORAGE_GCS_BUCKET") or "").strip()
     if b:
-        return _normalize_to_appspot(b)
+        return _normalize_bucket(b)
     b2 = (os.getenv("FIREBASE_STORAGE_BUCKET") or os.getenv("STORAGE_BUCKET") or "").strip()
     if b2:
-        return _normalize_to_appspot(b2)
+        return _normalize_bucket(b2)
     proj = (os.getenv("FIREBASE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "").strip()
     if proj:
-        return f"{proj}.appspot.com"
+        return f"{proj}.firebasestorage.app"
     raise RuntimeError("Bucket não configurado. Defina STORAGE_GCS_BUCKET ou FIREBASE_STORAGE_BUCKET/STORAGE_BUCKET ou FIREBASE_PROJECT_ID.")
 
 def _safe_filename(name: str) -> str:
@@ -90,7 +84,7 @@ def create_signed_url():
         "contentType": "audio/mpeg",              # obrigatório e dentro da allowlist
         "filename": "voz_teste.mp3",              # opcional se "path" for enviado
         "path": "profissionais/<uid>/voz/...",    # opcional; se ausente, geramos um canônico em sandbox/
-        "bucket": "<proj>.firebasestorage.app"    # opcional; normalizamos para <proj>.appspot.com
+        "bucket": "<proj>.firebasestorage.app",   # opcional; usado literalmente, sem conversão de domínio
         "public": true                            # (ignorado aqui; upload assinado não precisa)
       }
 
@@ -107,10 +101,10 @@ def create_signed_url():
         if content_type not in _ALLOWED_MIME:
             return jsonify({"ok": False, "error": "content_type_not_allowed"}), 400
 
-        # Bucket: do body (normalizado) OU do ambiente (normalizado)
+        # Bucket: do body (pass-through) OU do ambiente (pass-through)
         requested_bucket = (data.get("bucket") or "").strip()
         if requested_bucket:
-            bucket_name = _normalize_to_appspot(requested_bucket)
+            bucket_name = _normalize_bucket(requested_bucket)
         else:
             bucket_name = _resolve_bucket_from_env()
 
