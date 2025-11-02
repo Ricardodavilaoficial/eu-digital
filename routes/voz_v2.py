@@ -231,16 +231,18 @@ def voz_last():
                 except Exception as _e:
                     logging.warning("[voz-last] upsert object_key failed (uid=%s): %s", uid, _e)
 
-        # 2) Se tiver object_key, sempre re-assina URL (V4, ~900s)
+        # 2) Se tiver object_key, sempre re-assina URL (V4, TTL via env ou 900s)
         arquivo_url = None
         if object_key:
             try:
                 bucket = _bucket_literal()  # ex.: mei-robo-prod.firebasestorage.app
+                expires = int(os.getenv("SIGNED_URL_EXPIRES_SECONDS", "900"))
+                # AJUSTE: usar assinatura correta do helper (bucket_name/inline)
                 arquivo_url = sign_v4_read_url(
-                    bucket=bucket,
+                    bucket_name=bucket,
                     object_key=object_key,
-                    content_type=mime,
-                    expires_seconds=900
+                    expires_seconds=expires,
+                    inline=True,
                 )
             except Exception as e:
                 logging.warning("[voz-last] sign_v4_read_url failed (uid=%s, key=%s): %s", uid, object_key, e)
