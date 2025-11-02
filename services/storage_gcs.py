@@ -99,3 +99,32 @@ def upload_bytes_and_get_url(uid: str, filename: str, buf: bytes, mimetype: str)
         except Exception as e2:
             logging.exception("[gcs] generate_signed_url falhou para '%s/%s': %s", bucket_name, gcs_path, e2)
             raise
+
+
+# === NOVO HELPER: assinatura V4 on-demand para leitura ===
+def sign_v4_read_url(bucket_name: str, object_key: str, expires_seconds: int = None, inline: bool = True) -> str:
+    """
+    Gera Signed URL (V4) de leitura para um objeto no GCS.
+    - bucket_name: ex.: 'mei-robo-prod.firebasestorage.app' (SEM .appspot.com)
+    - object_key : ex.: 'voices/<UID>/voz_teste.mp3'
+    - expires_seconds: segundos de validade (default: SIGNED_SECS)
+    - inline: True para sugerir abertura inline no navegador
+    """
+    if not bucket_name:
+        raise RuntimeError("bucket_name ausente em sign_v4_read_url")
+    if not object_key:
+        raise RuntimeError("object_key ausente em sign_v4_read_url")
+
+    client = _get_client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(object_key)
+
+    params = {
+        "version": "v4",
+        "expiration": timedelta(seconds=(expires_seconds or SIGNED_SECS)),
+        "method": "GET",
+    }
+    if inline:
+        params["response_disposition"] = "inline"
+
+    return blob.generate_signed_url(**params)
