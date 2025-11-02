@@ -5,11 +5,12 @@
 #   POST /api/voz/upload/     (mesma função; evita redirect 308/405)
 #   GET  /api/voz/ping        (sanidade)
 #   GET  /api/voz/diag        (diagnóstico rápido)
-#   GET  /api/voz/last        (retorna vozClonada do Firestore)
+#   GET  /api/voz/last        (retorna vozClonada do Firestore, SEMPRE reassinando a URL de leitura)
 #   POST /api/voz/gcs_diag_write  (teste de escrita no bucket)
 
 from flask import Blueprint, request, jsonify
-import time, logging, importlib
+import time, logging, importlib, os, re
+from urllib.parse import urlparse
 
 from services.voice_validation import (
     ensure_audio_present,
@@ -18,12 +19,73 @@ from services.voice_validation import (
     probe_duration,
     sanitize_filename,
 )
+
+# upload util (já existente)
 from services.storage_gcs import upload_bytes_and_get_url
+
+# assinatura V4 de leitura (util canônico; deve existir no projeto)
+# se o nome da função no seu projeto for diferente, ajuste esta importação:
+from services.storage_gcs import sign_v4_read_url
+
 from services.voice_metadata import record_last_voice_url
 
 voz_upload_bp = Blueprint("voz_upload_v2", __name__)
 
 _MIN_SECONDS = 30  # recomendado (>=60s ideal)
+
+# ---------------------------------------
+# Helpers locais para o /api/voz/last
+# ---------------------------------------
+
+_BUCKET_FALLBACK = "mei-robo-prod.firebasestorage.app"
+
+def _bucket_literal():
+    # Nunca converter para .appspot.com
+    return os.environ.get("STORAGE_BUCKET", _BUCKET_FALLBACK)
+
+def _extract_object_key_from_url(url: str) -> str | None:
+    """
+    Extrai o object_key a partir de uma URL completa do GCS:
+    Ex.: https://storage.googleapis.com/mei-robo-prod.firebasestorage.app/voices/UID/voz.mp3?X-Goog-...
+          -> voices/UID/voz.mp3
+    """
+    if not url:
+        return None
+    try:
+        # Caminho típico: /<bucket>/<object_key>
+        # Ex.: /mei-robo-prod.firebasestorage.app/voices/... -> queremos a parte depois do bucket
+        parsed = urlparse(url)
+        path = parsed.path or ""
+        # remove prefixo leading slash
+        if path.startswith("/"):
+            path = path[1:]
+        # tenta separar "<bucket>/<key>"
+        parts = path.split("/", 1)
+        if len(parts) == 2 and parts[0] == _bucket_literal():
+            key = parts[1]
+        else:
+            # fallback: procurar explicitamente pelo bucket dentro da string
+            token = _bucket_literal() + "/"
+            if token in url:
+                key = url.split(token, 1)[-1]
+            else:
+                return None
+        # corta querystring se houver
+        key = key.split("?", 1)[0]
+        return key or None
+    except Exception:
+        return None
+
+def _best_content_type(meta: dict | None) -> str:
+    # Honra mime salvo; senão assume audio/mpeg
+    if not meta:
+        return "audio/mpeg"
+    mt = (meta.get("mime") or meta.get("contentType") or "").strip().lower()
+    return mt or "audio/mpeg"
+
+# ---------------------------------------
+# Upload
+# ---------------------------------------
 
 def _do_upload():
     req_id = f"cfg-voz-{int(time.time()*1000)}"
@@ -125,7 +187,10 @@ def voz_diag():
 
 @voz_upload_bp.route("/api/voz/last", methods=["GET"])
 def voz_last():
-    """Lê vozClonada do Firestore para o UID informado (fonte canônica: configuracao/{uid})."""
+    """
+    Lê vozClonada do Firestore para o UID informado (fonte canônica: configuracao/{uid}).
+    Sempre re-assina a URL de leitura (V4) a partir do object_key, evitando link expirado.
+    """
     uid = (request.args.get("uid") or "").strip()
     if not uid:
         return jsonify({"ok": False, "error": "missing_uid"}), 400
@@ -133,7 +198,7 @@ def voz_last():
         from services.gcp_creds import get_firestore_client
         db = get_firestore_client()
 
-        # fonte canônica (onde o processo de clonagem escreve)
+        # Fonte canônica (onde o processo de clonagem escreve)
         doc_cfg = db.collection("configuracao").document(uid).get()
         if doc_cfg.exists:
             data = doc_cfg.to_dict() or {}
@@ -142,12 +207,63 @@ def voz_last():
             doc_prof = db.collection("profissionais").document(uid).get()
             data = (doc_prof.to_dict() or {}) if doc_prof.exists else {}
 
+        voz = dict(data.get("vozClonada") or {})
+        status = voz.get("status") or "pending"
+        provider = voz.get("provider")
+        voice_id = voz.get("voiceId") or voz.get("voice_id")
+        mime = _best_content_type(voz)
+
+        # 1) object_key é a verdade. Se não existir, tenta extrair de arquivoUrl legado.
+        object_key = (voz.get("object_key") or voz.get("objectKey") or "").strip()
+        if not object_key:
+            legacy_url = (voz.get("arquivoUrl") or "").strip()
+            extracted = _extract_object_key_from_url(legacy_url)
+            if extracted:
+                object_key = extracted
+                # grava para as próximas chamadas (best-effort)
+                try:
+                    db.collection("configuracao").document(uid).set({
+                        "vozClonada": {
+                            **voz,
+                            "object_key": object_key
+                        }
+                    }, merge=True)
+                except Exception as _e:
+                    logging.warning("[voz-last] upsert object_key failed (uid=%s): %s", uid, _e)
+
+        # 2) Se tiver object_key, sempre re-assina URL (V4, ~900s)
+        arquivo_url = None
+        if object_key:
+            try:
+                bucket = _bucket_literal()  # ex.: mei-robo-prod.firebasestorage.app
+                arquivo_url = sign_v4_read_url(
+                    bucket=bucket,
+                    object_key=object_key,
+                    content_type=mime,
+                    expires_seconds=900
+                )
+            except Exception as e:
+                logging.warning("[voz-last] sign_v4_read_url failed (uid=%s, key=%s): %s", uid, object_key, e)
+                arquivo_url = None  # mantém None; front pode tentar novamente
+
+        payload = {
+            "provider": provider,
+            "status": status,
+            "voiceId": voice_id,
+            "object_key": object_key or None,
+            "arquivoUrl": arquivo_url,  # sempre novo quando object_key existir
+            "mime": mime,
+            "updatedAt": voz.get("updatedAt") or time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
+        }
+
         return jsonify({
             "ok": True,
             "uid": uid,
-            "vozClonada": data.get("vozClonada") or None
+            "vozClonada": payload
         }), 200
+
     except Exception as e:
+        logging.exception("[voz-last] firestore_error: %s", e)
         return jsonify({"ok": False, "error": "firestore_error", "detail": str(e)}), 500
 
 @voz_upload_bp.route("/api/voz/gcs_diag_write", methods=["POST"])
