@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 # App + CORS (whitelist apenas /api/*)
 # =====================================
 app = Flask(__name__, static_folder="public", static_url_path="/")
-CORS(app)
+# REMOVIDO: CORS(app)  ← evitamos abrir tudo por engano
 
 # or CORS(app, resources={r"/api/*": {"origins": "*"}})
 
@@ -70,6 +70,39 @@ def _handle_webhook_challenge():
             return Response(challenge, status=200, mimetype="text/plain; charset=utf-8")
         return Response("Forbidden", status=403)
     return None
+
+# =========================================================
+# (B) Helper global de publicação SSE (opcional, seguro como no-op)
+# =========================================================
+# Pode ser movido para services/pubsub.py se preferir.
+import redis  # depende de REDIS_URL; se não houver, fica no-op
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+SSE_ENABLED = os.getenv("SSE_ENABLED", "0") == "1"
+
+_pub_redis = None
+def _get_pub_redis():
+    global _pub_redis
+    if _pub_redis is None and REDIS_URL:
+        try:
+            _pub_redis = redis.from_url(REDIS_URL, decode_responses=True)
+        except Exception:
+            _pub_redis = None
+    return _pub_redis
+
+def publish_email_verified(uid: str):
+    """Publica no canal do usuário. Safe no-op se desativado."""
+    if not (SSE_ENABLED and REDIS_URL and uid):
+        return False
+    r = _get_pub_redis()
+    if not r:
+        return False
+    ch = f"user:{uid}:email_verified"
+    payload = json.dumps({"verified": True})
+    try:
+        r.publish(ch, payload)
+        return True
+    except Exception:
+        return False
 
 # =========================================================
 # BYPASS PÚBLICO ANTECIPADO (signup/CNPJ/health/captcha)
@@ -219,49 +252,81 @@ except Exception as e:
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 # 🔸 NOVO (2/2): geração de link via Admin SDK com o MESMO prefixo
+_gen_link_bp_ok = False
 try:
     from routes.verify_email_link_bp import verify_email_link_bp
     app.register_blueprint(verify_email_link_bp, url_prefix="/api/auth")
     print("[bp] Registrado: verify_email_link_bp (/api/auth/generate-verification-link)")
+    _gen_link_bp_ok = True
 except Exception as e:
     print("[bp][warn] verify_email_link_bp:", e)
 
+# --- (A) Registrar blueprint SSE ---
+try:
+    from routes.sse_bp import sse_bp  # ADICIONADO
+    _register_bp(sse_bp, "sse_bp")    # ADICIONADO
+except Exception as e:
+    print("[bp][warn] sse_bp:", e)
+# --- FIM (A) ---
+
 # --- SHIM: gerar link de verificação (Admin SDK) ---
-# Expondo GET/POST /api/auth/generate-verification-link para o front usar,
-# sem depender do verify_email_link_bp original.
-from flask import request as _req
+# Só cria o SHIM se o blueprint NÃO entrou
+if not _gen_link_bp_ok:
+    from flask import request as _req
 
-@app.route("/api/auth/generate-verification-link", methods=["GET", "POST", "OPTIONS"])
-def _auth_generate_verification_link():
-    if _req.method == "OPTIONS":
-        return ("", 204)
-    try:
-        if ensure_firebase_admin is None or fb_auth is None:
-            return jsonify({"ok": False, "error": "admin_sdk_unavailable"}), 500
+    @app.route("/api/auth/generate-verification-link", methods=["GET", "POST", "OPTIONS"])
+    def _auth_generate_verification_link():
+        if _req.method == "OPTIONS":
+            return ("", 204)
+        try:
+            if ensure_firebase_admin is None or fb_auth is None:
+                return jsonify({"ok": False, "error": "admin_sdk_unavailable"}), 500
 
-        data = _req.get_json(silent=True) or {}
-        email = (_req.args.get("email") or data.get("email") or "").strip().lower()
-        continue_url = (
-            _req.args.get("continueUrl")
-            or data.get("continueUrl")
-            or (os.getenv("FRONTEND_BASE", "https://www.meirobo.com.br").rstrip("/") + "/pages/verify-email.html")
-        ).strip()
+            data = _req.get_json(silent=True) or {}
+            email = (_req.args.get("email") or data.get("email") or "").strip().lower()
+            continue_url = (
+                _req.args.get("continueUrl")
+                or data.get("continueUrl")
+                or (os.getenv("FRONTEND_BASE", "https://www.meirobo.com.br").rstrip("/") + "/pages/verify-email.html")
+            ).strip()
 
-        if not email:
-            return jsonify({"ok": False, "error": "missing_email"}), 400
+            if not email:
+                return jsonify({"ok": False, "error": "missing_email"}), 400
 
-        ensure_firebase_admin()
-        acs = fb_auth.ActionCodeSettings(
-            url=continue_url,
-            handle_code_in_app=False
-        )
-        link = fb_auth.generate_email_verification_link(email, acs)
-        return jsonify({"ok": True, "verification_link": link, "continueUrl": continue_url}), 200
+            ensure_firebase_admin()
+            acs = fb_auth.ActionCodeSettings(url=continue_url, handle_code_in_app=False)
+            link = fb_auth.generate_email_verification_link(email, acs)
+            return jsonify({"ok": True, "verification_link": link, "continueUrl": continue_url}), 200
 
-    except Exception as e:
-        app.logger.exception("generate_verification_link: erro")
-        return jsonify({"ok": False, "error": "link_generate_failed", "detail": str(e)}), 500
+        except Exception as e:
+            app.logger.exception("generate_verification_link: erro")
+            return jsonify({"ok": False, "error": "link_generate_failed", "detail": str(e)}), 500
 # --- FIM SHIM ---
+
+# =========================================================
+# (C) Hook pós-resposta para publicar evento quando check-verification confirmar
+# =========================================================
+@app.after_request
+def _maybe_publish_email_verified(resp):
+    try:
+        if request.path == "/api/auth/check-verification" and resp.status_code == 200:
+            # Tenta ler JSON e detectar "verified": true
+            ct = (resp.headers.get("Content-Type") or "").lower()
+            if "application/json" in ct:
+                import json as _json
+                data = _json.loads(resp.get_data(as_text=True) or "{}")
+                verified = bool(data.get("verified")) or bool(data.get("isVerified")) or (data.get("ok") and data.get("status") == "verified")
+                if verified:
+                    # extrai uid do bearer e publica
+                    uid = _uid_from_bearer() if 'Authorization' in request.headers else None
+                    if uid:
+                        try:
+                            publish_email_verified(uid)
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+    return resp
 
 # ================================
 # Blueprints opcionais (flags)
@@ -590,7 +655,7 @@ def api_cupons_ativar():
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
         if not codigo: return jsonify({"erro": "Código do cupom é obrigatório"}), 400
-        uid = _uid_from_authorization() or (data.get("uid") or "").strip()
+        uid = _uid_from_bearer() or (data.get("uid") or "").strip()  # ← TROCA aplicada
         if not uid: return jsonify({"erro": "Não autenticado"}), 401
 
         cupom = find_cupom_by_codigo(codigo)
@@ -930,3 +995,4 @@ def __adc_debug():
 # =====================================
 # EOF
 # =====================================
+
