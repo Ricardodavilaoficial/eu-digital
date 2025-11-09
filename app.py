@@ -287,7 +287,7 @@ if not _gen_link_bp_ok:
             continue_url = (
                 _req.args.get("continueUrl")
                 or data.get("continueUrl")
-                or (os.getenv("FRONTEND_BASE", "https://www.meirobo.com.br").rstrip("/") + "/pages/verify-email.html")
+                or (os.getenv("FRONTEND_BASE", "https://www.meirobo.com.br").rstrip("/") + "/verify-email.html")
             ).strip()
 
             if not email:
