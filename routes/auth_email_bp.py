@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify, current_app, render_template
 import json, os
 from urllib import request as ulreq
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 
 auth_email_bp = Blueprint("auth_email_bp", __name__)
 
@@ -73,8 +73,8 @@ def _forward_auth_headers():
 @auth_email_bp.route("/send-verification-email", methods=["POST"])
 def send_verification_email_pretty():
     """
-    Gera o verificationLink via /api/auth/send-verification
-    e envia e-mail HTML com logo + botão (SendGrid).
+    Envia e-mail HTML (SendGrid) com link direto para verify-email.html,
+    eliminando o hop do /api/auth/send-verification. Mantém o restante inalterado.
     """
     # 0) Segurança: requer Bearer (mesma política do /api/auth/*)
     auth_hdr = request.headers.get("Authorization", "").strip()
@@ -82,41 +82,12 @@ def send_verification_email_pretty():
         return jsonify({"ok": False, "error": "unauthenticated"}), 401
 
     body_in = request.get_json(silent=True) or {}
-    # pass-through opcional: se front mandar { cont: "/pages/configuracao.html" } repassamos
+    # pass-through opcional: se front mandar { cont: "/pages/configuracao.html" } usamos, senão default
     cont = (body_in.get("cont") or "").strip()
 
     base = _internal_base()
 
-    # 1) Gera link assinado usando o endpoint já existente (fonte da verdade)
-    try:
-        gen_body = {}
-        if cont:
-            # Só repassamos se vier — endpoint pode ignorar sem quebrar
-            gen_body["cont"] = cont
-
-        current_app.logger.info("[auth_email] generating link via /api/auth/send-verification (send_via=sendgrid_pretty)")
-        code, resp = _http_json_follow(
-            "POST",
-            f"{base}/api/auth/send-verification",
-            headers=_forward_auth_headers(),
-            body=gen_body
-        )
-        if code != 200 or not isinstance(resp, dict) or not resp.get("ok"):
-            current_app.logger.warning("[auth_email] send-verification failed status=%s resp=%s", code, str(resp)[:300])
-            return jsonify({"ok": False, "error": "send_verification_failed", "detail": resp, "status": code}), 500
-
-        verification_link = resp.get("verificationLink") or resp.get("link")
-        if not verification_link:
-            current_app.logger.error("[auth_email] missing verificationLink in response")
-            return jsonify({"ok": False, "error": "missing_verification_link"}), 500
-    except (HTTPError, URLError) as e:
-        current_app.logger.exception("[auth_email] send_verification_http_error")
-        return jsonify({"ok": False, "error": "send_verification_http_error", "detail": str(e)}), 500
-    except Exception as e:
-        current_app.logger.exception("[auth_email] send_verification_exception")
-        return jsonify({"ok": False, "error": "send_verification_exception", "detail": str(e)}), 500
-
-    # 2) Obtém e-mail do usuário via whoami (robusto e já existente)
+    # 1) Obtém e-mail do usuário via whoami (robusto e já existente)
     try:
         current_app.logger.info("[auth_email] fetching whoami (send_via=sendgrid_pretty)")
         code, who = _http_json_follow(
@@ -135,6 +106,16 @@ def send_verification_email_pretty():
     except Exception as e:
         current_app.logger.exception("[auth_email] whoami_exception")
         return jsonify({"ok": False, "error": "whoami_exception", "detail": str(e)}), 500
+
+    # 2) Monta LINK DIRETO (sem hop) para verify-email.html com email + cont
+    try:
+        frontend = os.getenv("FRONTEND_BASE", "https://www.meirobo.com.br").rstrip("/")
+        cont_final = cont or "/pages/configuracao.html"
+        verification_link = f"{frontend}/verify-email.html?email={quote(to_email)}&cont={quote(cont_final)}"
+        current_app.logger.info("[auth_email] using direct verification link (no-hop): %s", verification_link)
+    except Exception as e:
+        current_app.logger.exception("[auth_email] direct_link_build_error")
+        return jsonify({"ok": False, "error": "direct_link_build_error", "detail": str(e)}), 500
 
     # 3) Renderiza HTML (template simples com {{ verificationLink }})
     try:
@@ -190,7 +171,7 @@ def send_verification_email_pretty():
         )
         if code not in (200, 202):
             current_app.logger.warning("[auth_email] sendgrid_not_accepted status=%s", code)
-            return jsonify({"ok": False, "error": "sendgrid_not_accepted", "status": code}), 502
+            return jsonify({"ok": False, {"error": "sendgrid_not_accepted", "status": code}}), 502
     except HTTPError as e:
         current_app.logger.exception("[auth_email] sendgrid_http_error")
         return jsonify({"ok": False, "error": "sendgrid_http_error", "status": getattr(e, 'code', None), "detail": str(e)}), 502
@@ -199,3 +180,4 @@ def send_verification_email_pretty():
         return jsonify({"ok": False, "error": "sendgrid_exception", "detail": str(e)}), 502
 
     return jsonify({"ok": True, "sent": True}), 200
+
