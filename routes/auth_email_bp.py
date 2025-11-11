@@ -172,6 +172,13 @@ def send_verification_email_pretty():
     if reply_to:
         payload["reply_to"] = {"email": reply_to}
 
+    # >>> DEBUG TEMP (REMOVER DEPOIS) <<<
+    sg_key_raw = os.getenv("SENDGRID_API_KEY", "")
+    from_env_dbg = os.getenv("EMAIL_SENDER") or os.getenv("EMAIL_FROM") or os.getenv("EMAIL_FROM_ADDR") or ""
+    current_app.logger.warning("[auth_email][dbg] using SENDGRID_API_KEY(len)=%s EMAIL_FROM/SENDER=%s",
+                               len(sg_key_raw), from_env_dbg)
+    # <<< DEBUG TEMP <<<
+
     try:
         current_app.logger.info("[auth_email] sending via SendGrid (send_via=sendgrid_pretty) to=%s", to_email)
         code, _ = _http_json_follow(
