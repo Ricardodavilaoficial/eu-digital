@@ -243,7 +243,9 @@ def _confirm_email_core(vt: str):
 
 # === (B) Backend — endpoint público de confirmação via VT ===
 @auth_email_bp.route("/confirm-email", methods=["GET", "POST", "OPTIONS"])   
-@auth_email_bp.route("/api/auth/confirm-email", methods=["GET", "POST", "OPTIONS"])def confirm_email():
+@auth_email_bp.route("/api/auth/confirm-email", methods=["GET", "POST", "OPTIONS"])
+def confirm_email():
+
     try:
         if request.method == "OPTIONS":
             return ("", 204)
@@ -260,7 +262,8 @@ def _confirm_email_core(vt: str):
 
 # Alias legado para compatibilidade
 @auth_email_bp.route("/confirm", methods=["GET", "POST", "OPTIONS"])         
-@auth_email_bp.route("/api/auth/confirm", methods=["GET", "POST", "OPTIONS"])def confirm_email_alias():
+@auth_email_bp.route("/api/auth/confirm", methods=["GET", "POST", "OPTIONS"])
+def confirm_email_alias():
     return confirm_email()
 
 
