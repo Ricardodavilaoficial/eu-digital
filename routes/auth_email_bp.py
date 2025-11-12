@@ -1,12 +1,25 @@
 from flask import Blueprint, request, jsonify, current_app, render_template
-import json, os
+import json, os, uuid, time
 from urllib import request as ulreq
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, quote
+import urllib.parse as uparse
+import redis
 
 auth_email_bp = Blueprint("auth_email_bp", __name__)
 
 SENDGRID_API_URL = "https://api.sendgrid.com/v3/mail/send"
+
+# === Redis setup for VT and verified flags ===
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+_r = redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
+
+def _set_vt(uid: str, email: str, ttl: int = 24 * 3600) -> str:
+    """Generate a verification token (VT) and store in Redis with TTL."""
+    vt = uuid.uuid4().hex
+    if _r:
+        _r.setex(f"verif:{vt}", ttl, json.dumps({"uid": uid, "email": email, "ts": int(time.time())}))
+    return vt
 
 def _internal_base():
     # Usa o host atual (https://<render-domain>/)
@@ -74,8 +87,7 @@ def _forward_auth_headers():
 @auth_email_bp.route("/send-verification-email", methods=["GET", "POST", "OPTIONS"])
 def send_verification_email_pretty():
     """
-    Envia e-mail HTML (SendGrid) com link direto para verify-email.html,
-    eliminando o hop do /api/auth/send-verification. Mantém o restante inalterado.
+    Envia e-mail HTML (SendGrid) com link direto para verify-email.html com VT (verification token).
     Aceita GET/POST/OPTIONS (mesmo tratamento para GET e POST).
     """
 
@@ -83,6 +95,11 @@ def send_verification_email_pretty():
     if request.method == "OPTIONS":
         # Deixe o middleware de CORS completar os headers; aqui só respondemos vazio.
         return ("", 204)
+
+    # Requer Redis para VT
+    if not _r:
+        current_app.logger.error("[auth_email] missing REDIS_URL for VT generation")
+        return jsonify({"ok": False, "error": "missing_redis"}), 500
 
     # 0) Segurança: requer Bearer (mesma política do /api/auth/*)
     auth_hdr = request.headers.get("Authorization", "").strip()
@@ -101,9 +118,9 @@ def send_verification_email_pretty():
 
     base = _internal_base()
 
-    # 2) Obtém e-mail do usuário via whoami (robusto e já existente)
+    # 2) Obtém e-mail e uid do usuário via whoami (robusto e já existente)
     try:
-        current_app.logger.info("[auth_email] fetching whoami (send_via=sendgrid_pretty)")
+        current_app.logger.info("[auth_email] fetching whoami (send_via=sendgrid_pretty_vt)")
         code, who = _http_json_follow(
             "GET",
             f"{base}/api/auth/whoami",
@@ -118,22 +135,29 @@ def send_verification_email_pretty():
             current_app.logger.error("[auth_email] whoami_bad_status code=%s", code)
             return jsonify({"ok": False, "error": "whoami_exception", "detail": f"status_{code}"}), 500
         to_email = (who.get("email") or "").strip().lower()
-        if not to_email:
-            current_app.logger.error("[auth_email] missing email from whoami")
-            return jsonify({"ok": False, "error": "missing_email_from_whoami"}), 500
+        uid = (who.get("uid") or "").strip()
+        if not to_email or not uid:
+            current_app.logger.error("[auth_email] missing email or uid from whoami")
+            return jsonify({"ok": False, "error": "missing_email_or_uid_from_whoami"}), 500
     except Exception as e:
         current_app.logger.exception("[auth_email] whoami_exception")
         return jsonify({"ok": False, "error": "whoami_exception", "detail": str(e)}), 500
 
-    # 3) Monta LINK DIRETO (sem hop) para verify-email.html com email + cont
+    # 3) Monta LINK com VT → verify-email.html?vt=...&email=...&cont=/pages/configuracao.html
     try:
         frontend = os.getenv("FRONTEND_BASE", "https://www.meirobo.com.br").rstrip("/")
         cont_final = cont or "/pages/configuracao.html"
-        verification_link = f"{frontend}/verify-email.html?email={quote(to_email)}&cont={quote(cont_final)}"
-        current_app.logger.info("[auth_email] using direct verification link (no-hop): %s", verification_link)
+        vt = _set_vt(uid, to_email)
+        params = {
+            "vt": vt,
+            "email": to_email,
+            "cont": cont_final,
+        }
+        verification_link = f"{frontend}/verify-email.html?{uparse.urlencode(params)}"
+        current_app.logger.info("[auth_email] using VT verification link: %s", verification_link)
     except Exception as e:
-        current_app.logger.exception("[auth_email] direct_link_build_error")
-        return jsonify({"ok": False, "error": "direct_link_build_error", "detail": str(e)}), 500
+        current_app.logger.exception("[auth_email] vt_link_build_error")
+        return jsonify({"ok": False, "error": "vt_link_build_error", "detail": str(e)}), 500
 
     # 4) Renderiza HTML (template simples com {{ verificationLink }})
     try:
@@ -179,7 +203,7 @@ def send_verification_email_pretty():
     # <<< DEBUG TEMP <<<
 
     try:
-        current_app.logger.info("[auth_email] sending via SendGrid (send_via=sendgrid_pretty) to=%s", to_email)
+        current_app.logger.info("[auth_email] sending via SendGrid (send_via=sendgrid_pretty_vt) to=%s", to_email)
         code, _ = _http_json_follow(
             "POST",
             SENDGRID_API_URL,
@@ -198,4 +222,68 @@ def send_verification_email_pretty():
         return jsonify({"ok": False, "error": "sendgrid_exception", "detail": str(e)}), 502
 
     return jsonify({"ok": True, "sent": True}), 200
+
+
+# === (B) Backend — endpoint público de confirmação via VT ===
+@auth_email_bp.post("/api/auth/confirm-email")
+def confirm_email():
+    try:
+        body = request.get_json(silent=True) or {}
+        vt = (body.get("vt") or "").strip()
+        if not vt or not _r:
+            return jsonify({"ok": False, "error": "missing_vt_or_redis"}), 400
+
+        raw = _r.get(f"verif:{vt}")
+        if not raw:
+            return jsonify({"ok": False, "error": "invalid_or_expired"}), 400
+
+        data = json.loads(raw)
+        uid = data.get("uid")
+        email = data.get("email")
+
+        # >>> Fonte canônica de verificação (aqui: Redis). Troque para Firestore/DB se já tiver.
+        _r.set(f"verified:{uid}", "1", ex=30 * 24 * 3600)
+
+        _r.delete(f"verif:{vt}")
+        current_app.logger.info("[auth_email] email confirmed via VT; uid=%s email=%s", uid, email)
+        return jsonify({"ok": True, "verified": True})
+    except Exception as e:
+        current_app.logger.exception("[auth_email] confirm_email_exception")
+        return jsonify({"ok": False, "error": "confirm_email_exception", "detail": str(e)}), 500
+
+
+# === (C) Backend — check-verification lê a mesma fonte canônica ===
+@auth_email_bp.get("/api/auth/check-verification")
+def check_verification():
+    try:
+        verified = False
+        uid = None
+
+        # Preferir derivar via Bearer (whoami); fallback: uid via query
+        auth_hdr = request.headers.get("Authorization", "").strip()
+        if auth_hdr.lower().startswith("bearer "):
+            base = _internal_base()
+            code, who = _http_json_follow(
+                "GET",
+                f"{base}/api/auth/whoami",
+                headers={
+                    "Authorization": auth_hdr,
+                    "Accept": "application/json",
+                },
+                body=None,
+                timeout=7,
+            )
+            if code == 200 and isinstance(who, dict) and who.get("ok"):
+                uid = (who.get("uid") or "").strip()
+
+        if not uid:
+            uid = (request.args.get("uid") or "").strip()
+
+        if _r and uid:
+            verified = _r.get(f"verified:{uid}") == "1"
+
+        return jsonify({"ok": True, "verified": bool(verified)})
+    except Exception as e:
+        current_app.logger.exception("[auth_email] check_verification_exception")
+        return jsonify({"ok": False, "error": "check_verification_exception", "detail": str(e)}), 500
 
