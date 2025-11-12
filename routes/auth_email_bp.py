@@ -1,4 +1,3 @@
-# routes/auth_email_bp.py
 from flask import Blueprint, request, jsonify, current_app, render_template
 import json, os
 from urllib import request as ulreq
@@ -67,6 +66,8 @@ def _http_json_follow(method: str, url: str, headers: dict | None = None, body: 
             raise
 
 def _forward_auth_headers():
+    # Mantida para compatibilidade, mas evitamos usá-la para garantir que o Bearer
+    # validado seja exatamente o que vamos repassar (sem logs do token).
     auth = request.headers.get("Authorization", "")
     return {"Authorization": auth} if auth else {}
 
@@ -77,6 +78,7 @@ def send_verification_email_pretty():
     eliminando o hop do /api/auth/send-verification. Mantém o restante inalterado.
     Aceita GET/POST/OPTIONS (mesmo tratamento para GET e POST).
     """
+
     # Pré-flight simples
     if request.method == "OPTIONS":
         # Deixe o middleware de CORS completar os headers; aqui só respondemos vazio.
@@ -85,7 +87,8 @@ def send_verification_email_pretty():
     # 0) Segurança: requer Bearer (mesma política do /api/auth/*)
     auth_hdr = request.headers.get("Authorization", "").strip()
     if not auth_hdr.lower().startswith("bearer "):
-        return jsonify({"ok": False, "error": "unauthenticated"}), 401
+        current_app.logger.warning("[auth_email] missing bearer on client request")
+        return jsonify({"ok": False, "error": "missing_bearer"}), 401
 
     # 1) Entrada: GET/POST tratados igual
     payload = request.get_json(silent=True) or {}
@@ -104,12 +107,16 @@ def send_verification_email_pretty():
         code, who = _http_json_follow(
             "GET",
             f"{base}/api/auth/whoami",
-            headers=_forward_auth_headers(),
-            body=None
+            headers={
+                "Authorization": auth_hdr,  # repasse 1:1 do Bearer do cliente
+                "Accept": "application/json",
+            },
+            body=None,
+            timeout=7,
         )
         if code != 200 or not isinstance(who, dict) or not who.get("ok"):
-            current_app.logger.warning("[auth_email] whoami_failed status=%s resp=%s", code, str(who)[:300])
-            return jsonify({"ok": False, "error": "whoami_failed", "detail": who, "status": code}), 500
+            current_app.logger.error("[auth_email] whoami_bad_status code=%s", code)
+            return jsonify({"ok": False, "error": "whoami_exception", "detail": f"status_{code}"}), 500
         to_email = (who.get("email") or "").strip().lower()
         if not to_email:
             current_app.logger.error("[auth_email] missing email from whoami")
