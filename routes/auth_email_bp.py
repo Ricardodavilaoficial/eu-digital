@@ -242,10 +242,28 @@ def _confirm_email_core(vt: str):
     return jsonify({"ok": True, "verified": True})
 
 # === (B) Backend — endpoint público de confirmação via VT ===
-@auth_email_bp.route("/confirm-email", methods=["GET", "POST", "OPTIONS"])   
+def _confirm_email_core(vt: str):
+    if not vt or not _r:
+        return jsonify({"ok": False, "error": "missing_vt_or_redis"}), 400
+
+    raw = _r.get(f"verif:{vt}")
+    if not raw:
+        return jsonify({"ok": False, "error": "invalid_or_expired"}), 400
+
+    data = json.loads(raw)
+    uid = data.get("uid")
+    email = data.get("email")
+
+    # >>> Fonte canônica de verificação (aqui: Redis). Troque para Firestore/DB se já tiver.
+    _r.set(f"verified:{uid}", "1", ex=30 * 24 * 3600)
+
+    _r.delete(f"verif:{vt}")
+    current_app.logger.info("[auth_email] email confirmed via VT; uid=%s email=%s", uid, email)
+    return jsonify({"ok": True, "verified": True})
+
+@auth_email_bp.route("/confirm-email", methods=["GET", "POST", "OPTIONS"])
 @auth_email_bp.route("/api/auth/confirm-email", methods=["GET", "POST", "OPTIONS"])
 def confirm_email():
-
     try:
         if request.method == "OPTIONS":
             return ("", 204)
@@ -261,7 +279,7 @@ def confirm_email():
         return jsonify({"ok": False, "error": "confirm_email_exception", "detail": str(e)}), 500
 
 # Alias legado para compatibilidade
-@auth_email_bp.route("/confirm", methods=["GET", "POST", "OPTIONS"])         
+@auth_email_bp.route("/confirm", methods=["GET", "POST", "OPTIONS"])
 @auth_email_bp.route("/api/auth/confirm", methods=["GET", "POST", "OPTIONS"])
 def confirm_email_alias():
     return confirm_email()
