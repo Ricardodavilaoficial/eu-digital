@@ -70,24 +70,35 @@ def _forward_auth_headers():
     auth = request.headers.get("Authorization", "")
     return {"Authorization": auth} if auth else {}
 
-@auth_email_bp.route("/send-verification-email", methods=["POST"])
+@auth_email_bp.route("/send-verification-email", methods=["GET", "POST", "OPTIONS"])
 def send_verification_email_pretty():
     """
     Envia e-mail HTML (SendGrid) com link direto para verify-email.html,
     eliminando o hop do /api/auth/send-verification. Mantém o restante inalterado.
+    Aceita GET/POST/OPTIONS (mesmo tratamento para GET e POST).
     """
+    # Pré-flight simples
+    if request.method == "OPTIONS":
+        # Deixe o middleware de CORS completar os headers; aqui só respondemos vazio.
+        return ("", 204)
+
     # 0) Segurança: requer Bearer (mesma política do /api/auth/*)
     auth_hdr = request.headers.get("Authorization", "").strip()
     if not auth_hdr.lower().startswith("bearer "):
         return jsonify({"ok": False, "error": "unauthenticated"}), 401
 
-    body_in = request.get_json(silent=True) or {}
-    # pass-through opcional: se front mandar { cont: "/pages/configuracao.html" } usamos, senão default
-    cont = (body_in.get("cont") or "").strip()
+    # 1) Entrada: GET/POST tratados igual
+    payload = request.get_json(silent=True) or {}
+    if request.method == "GET":
+        # permitir /send-verification-email?cont=/pages/configuracao.html
+        if "cont" not in payload:
+            payload["cont"] = (request.args.get("cont") or "").strip()
+
+    cont = (payload.get("cont") or "").strip()
 
     base = _internal_base()
 
-    # 1) Obtém e-mail do usuário via whoami (robusto e já existente)
+    # 2) Obtém e-mail do usuário via whoami (robusto e já existente)
     try:
         current_app.logger.info("[auth_email] fetching whoami (send_via=sendgrid_pretty)")
         code, who = _http_json_follow(
@@ -107,7 +118,7 @@ def send_verification_email_pretty():
         current_app.logger.exception("[auth_email] whoami_exception")
         return jsonify({"ok": False, "error": "whoami_exception", "detail": str(e)}), 500
 
-    # 2) Monta LINK DIRETO (sem hop) para verify-email.html com email + cont
+    # 3) Monta LINK DIRETO (sem hop) para verify-email.html com email + cont
     try:
         frontend = os.getenv("FRONTEND_BASE", "https://www.meirobo.com.br").rstrip("/")
         cont_final = cont or "/pages/configuracao.html"
@@ -117,7 +128,7 @@ def send_verification_email_pretty():
         current_app.logger.exception("[auth_email] direct_link_build_error")
         return jsonify({"ok": False, "error": "direct_link_build_error", "detail": str(e)}), 500
 
-    # 3) Renderiza HTML (template simples com {{ verificationLink }})
+    # 4) Renderiza HTML (template simples com {{ verificationLink }})
     try:
         html_body = render_template("email_verification.html", verificationLink=verification_link)
         text_body = (
@@ -129,7 +140,7 @@ def send_verification_email_pretty():
         current_app.logger.exception("[auth_email] template_render_error")
         return jsonify({"ok": False, "error": "template_render_error", "detail": str(e)}), 500
 
-    # 4) Envia via SendGrid
+    # 5) Envia via SendGrid
     sg_key = os.getenv("SENDGRID_API_KEY", "").strip()
     if not sg_key:
         current_app.logger.error("[auth_email] missing SENDGRID_API_KEY")
@@ -171,7 +182,7 @@ def send_verification_email_pretty():
         )
         if code not in (200, 202):
             current_app.logger.warning("[auth_email] sendgrid_not_accepted status=%s", code)
-            return jsonify({"ok": False, {"error": "sendgrid_not_accepted", "status": code}}), 502
+            return jsonify({"ok": False, "error": "sendgrid_not_accepted", "status": code}), 502
     except HTTPError as e:
         current_app.logger.exception("[auth_email] sendgrid_http_error")
         return jsonify({"ok": False, "error": "sendgrid_http_error", "status": getattr(e, 'code', None), "detail": str(e)}), 502
