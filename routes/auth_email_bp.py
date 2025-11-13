@@ -225,7 +225,7 @@ def send_verification_email_pretty():
 
 
 # === (B) Backend — endpoint público de confirmação via VT ===
-@auth_email_bp.post("/api/auth/confirm-email")
+@auth_email_bp.post("/confirm-email")
 def confirm_email():
     try:
         body = request.get_json(silent=True) or {}
