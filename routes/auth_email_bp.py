@@ -253,7 +253,7 @@ def confirm_email():
 
 
 # === (C) Backend — check-verification lê a mesma fonte canônica ===
-@auth_email_bp.get("/api/auth/check-verification")
+@auth_email_bp.get("/check-verification")
 def check_verification():
     try:
         verified = False

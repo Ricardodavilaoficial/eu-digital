@@ -77,7 +77,7 @@ def whoami():
         return jsonify({"ok": False, "error": str(e)}), 401
 
 
-@auth_bp.route("/check-verification", methods=["GET"])
+@auth_bp.route("/check-verification-legacy", methods=["GET"])
 def check_verification():
     """
     Retorna se o e-mail está verificado e, se sim, garante/atualiza profissionais/{uid}
