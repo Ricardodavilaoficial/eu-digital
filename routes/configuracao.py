@@ -1,12 +1,12 @@
 # routes/configuracao.py
 # Rota de configuração inicial do MEI (onboarding)
-# - POST /api/configuracao (multipart): salva dados + upload de áudio (voz)
+# - POST /api/configuracao (multipart): salva dados + (opcional) upload de áudio (voz)
 # - GET  /api/configuracao (somente leitura): retorna dados achatados p/ front
 #
 # Extras:
 # - Blindagem de CNPJ: não permite alterar CNPJ salvo sem override admin.
 # - Suporte a FIREBASE_ADMIN_CREDENTIALS ou GOOGLE_APPLICATION_CREDENTIALS_JSON (inline)
-# - Devolve vozClonada no GET p/ player do front.
+# - Devolve vozClonada no GET p/ player do front (se estiver em profissionais/{uid}).
 
 from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
@@ -18,7 +18,7 @@ from firebase_admin import auth as fb_auth, firestore, credentials
 # GCS helper oficial do projeto
 from services.storage_gcs import upload_bytes_and_get_url
 
-# DB service usado para salvar a config (mantém compat compatível com teu serviço)
+# DB service usado para salvar a config (mantém compat com teu serviço)
 from services import db as dbsvc
 
 config_bp = Blueprint('config', __name__)
@@ -77,6 +77,24 @@ def _resolve_uid_for_read():
             pass  # cai no fallback
     qs_uid = (request.args.get("uid") or "").strip()
     return qs_uid or None
+
+def _resolve_uid_for_write():
+    """
+    Resolve o uid para escrita:
+      1) Firebase ID Token (Authorization: Bearer) — fluxo normal
+      2) Fallback: form uid= — apenas para testes manuais
+    """
+    token = _get_bearer_token()
+    if token:
+        try:
+            decoded = fb_auth.verify_id_token(token)
+            uid = decoded.get("uid")
+            if uid:
+                return uid
+        except Exception:
+            pass
+    uid_form = (request.form.get("uid") or "").strip()
+    return uid_form or None
 
 def _first_non_empty(*vals):
     """Retorna o primeiro valor não vazio/não None, já com strip() se for string."""
@@ -144,7 +162,7 @@ def ler_configuracao():
       - nome, email, telefone, cnpj
       - segmento
       - legal_name, trade_name
-      - vozClonada (url + meta) se existir
+      - vozClonadaUrl (se existir em profissionais/{uid}.vozClonada.arquivoUrl)
     """
     uid = _resolve_uid_for_read()
     if not uid:
@@ -186,7 +204,7 @@ def ler_configuracao():
             "trade_name": trade_nm or "",
             # player no front:
             "vozClonadaUrl": (voz_clonada.get("arquivoUrl") or ""),
-            "vozClonada": voz_clonada or None,  # devolve estrutura inteira se quiserem
+            "vozClonada": voz_clonada or None,
         }
 
         return jsonify({"ok": True, "data": flat}), 200
@@ -199,6 +217,11 @@ def ler_configuracao():
 
 @config_bp.route('/api/configuracao', methods=['POST'], strict_slashes=False)
 def salvar_configuracao():
+    # -------- Resolve UID --------
+    uid = _resolve_uid_for_write()
+    if not uid:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
     # -------- Campos do form --------
     nome       = (request.form.get('nome') or "").strip()
     email      = (request.form.get('email') or "").strip()
@@ -213,9 +236,14 @@ def salvar_configuracao():
     formalidade = (request.form.get('formalidade') or "media").strip()
     emojis      = (request.form.get('emojis') or "sim").strip()
     saudacao    = (request.form.get('saudacao') or "").strip()
+    closing     = (request.form.get('closing_text') or "").strip()
+    display_nm  = (request.form.get('display_name') or "").strip()
 
-    # UID provisório para testes (frontend guarda em localStorage)
-    uid = (request.form.get('uid') or "demo").strip()
+    janela_resp = (request.form.get('janela_resposta') or "").strip()
+    janela_custom = (request.form.get('janela_resposta_custom') or "").strip()
+
+    branding_choice = (request.form.get('branding_choice') or "").strip()
+    public_brand    = (request.form.get('public_brand') or "").strip()
 
     # -------- BLINDAGEM CNPJ (antes de subir áudio) --------
     try:
@@ -234,26 +262,28 @@ def salvar_configuracao():
     except Exception as e:
         return jsonify({"ok": False, "error": "internal_error", "detail": f"Falha ao validar CNPJ: {e}"}), 500
 
-    # -------- Áudio obrigatório --------
+    # -------- Áudio (AGORA OPCIONAL NESTE ENDPOINT) --------
     voz_file = request.files.get('voz')
-    if not voz_file:
-        return ("Áudio de voz é obrigatório.", 400)
+    voz_url = None
 
-    content_type = (voz_file.content_type or "").lower()
-    if not any(content_type.startswith(a.split('/')[0]) or content_type == a for a in ALLOWED_AUDIO_MIMES):
-        if not content_type.startswith("audio/"):
-            return (f"Tipo de áudio não suportado: {content_type}", 415)
+    if voz_file and voz_file.filename:
+        content_type = (voz_file.content_type or "").lower()
+        if not any(content_type.startswith(a.split('/')[0]) or content_type == a for a in ALLOWED_AUDIO_MIMES):
+            if not content_type.startswith("audio/"):
+                return (f"Tipo de áudio não suportado: {content_type}", 415)
 
-    # Nome seguro
-    filename = secure_filename(voz_file.filename or "voz.wav")
+        # Nome seguro
+        filename = secure_filename(voz_file.filename or "voz.wav")
 
-    # -------- Upload para GCS (usa helper do projeto) --------
-    try:
-        buf = voz_file.read()
-        url, bucket, path, access = upload_bytes_and_get_url(uid, filename, buf, content_type or "audio/wav")
-        voz_url = url
-    except Exception as e:
-        return (f"Falha no upload da voz: {e}", 500)
+        # -------- Upload para GCS (usa helper do projeto) --------
+        try:
+            buf = voz_file.read()
+            # usa content_type se vier; fallback para audio/wav
+            ctype = content_type or "audio/wav"
+            url, bucket, path, access = upload_bytes_and_get_url(uid, filename, buf, ctype)
+            voz_url = url
+        except Exception as e:
+            return (f"Falha no upload da voz: {e}", 500)
 
     # -------- Documento para Firestore --------
     doc = {
@@ -271,18 +301,35 @@ def salvar_configuracao():
             "formalidade": formalidade,
             "usaEmojis": (emojis == "sim"),
             "saudacao": saudacao,
+            "closing_text": closing,
+            "display_name": display_nm,
+            "janela_resposta": janela_resp,
+            "janela_resposta_custom": janela_custom,
         },
-        "vozClonada": {
-            "arquivoUrl": voz_url,
-            "status": "pendente"  # depois que processar na ElevenLabs -> 'pronto'
+        "branding": {
+            "branding_choice": branding_choice,
+            "public_brand": public_brand,
         },
+        # Mantemos um status genérico; ativação real depende de pagamento + voz processada
         "statusAtivacao": "aguardando-voz",
     }
 
+    # Só inclui vozClonada se um novo áudio foi enviado neste POST
+    if voz_url:
+        doc["vozClonada"] = {
+            "arquivoUrl": voz_url,
+            "status": "pendente",  # depois que processar na ElevenLabs -> 'ready'
+        }
+
     # -------- Persistência --------
     try:
+        # Implementação do dbsvc deve usar set(..., merge=True) ou equivalente
         dbsvc.salvar_config_profissional(uid, doc)
     except Exception as e:
         return (f"Erro ao salvar no Firestore: {e}", 500)
 
-    return jsonify({"status": "ok", "uid": uid, "vozUrl": voz_url})
+    resp = {"status": "ok", "uid": uid}
+    if voz_url:
+        resp["vozUrl"] = voz_url
+
+    return jsonify(resp), 200
