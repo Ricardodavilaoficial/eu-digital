@@ -36,7 +36,7 @@ cors_resources = {
             "cf-turnstile-response", "x-turnstile-token",
             "X-Submit-Nonce"  # ← ADICIONADO: permite nonce de submissão para rastreio
         ],
-        "supports_credentials": False,
+        "supports_credentials": True,
     }
 } if _allowed else {}
 CORS(app, resources=cors_resources, always_send=False)
@@ -995,4 +995,3 @@ def __adc_debug():
 # =====================================
 # EOF
 # =====================================
-
