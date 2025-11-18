@@ -79,7 +79,7 @@ def api_stripe_checkout():
         line_items = [{
             "price_data": {
                 "currency": "brl",
-                "unit_amount": 2900,  # R$ 29,00 (centavos)
+                "unit_amount": 8900,  # R$ 89,00 (centavos)
                 "product_data": {
                     "name": "MEI Robô - Assinatura",
                     "description": "Plano inicial (Cliente Zero)",
@@ -117,3 +117,4 @@ def api_stripe_checkout():
     except Exception as e:
         # Não vazar detalhes sensíveis em produção
         return jsonify({"error": "Não foi possível iniciar a assinatura."}), 500
+
