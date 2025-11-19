@@ -1,10 +1,10 @@
 # routes/stripe_checkout.py
 import os
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
 import stripe
 
-# Soft-auth (não exige login; tenta identificar via Authorization: Bearer)
-from services.auth import get_verified_uid_from_request
+# Auth forte: exige login e popula g.user (uid, email, etc.)
+from services.auth import auth_required
 
 # Firestore wrapper (mesmo usado em routes/cupons.py)
 from services.db import db
@@ -58,6 +58,7 @@ def _has_free_coupon(uid: str) -> bool:
         return False
 
 @stripe_checkout_bp.route("/api/stripe/checkout", methods=["GET"])
+@auth_required
 def api_stripe_checkout():
     """
     Cria uma sessão de Checkout e devolve { checkoutUrl: "https://checkout.stripe.com/..." }
@@ -67,28 +68,34 @@ def api_stripe_checkout():
     cancel_url:  /pages/ativar-cliente.html (Frontend)
     """
     try:
-        # 1) BYPASS: se usuário com cupom NOSSO já aplicado → pular Stripe
-        uid = get_verified_uid_from_request()
-        if uid and _has_free_coupon(uid):
+        # 1) Recupera UID do usuário autenticado
+        user = getattr(g, "user", None)
+        uid = getattr(user, "uid", None)
+
+        if not uid:
+            # em teoria o auth_required já barrou antes, mas deixamos fail-safe
+            return jsonify({"error": "Não autenticado"}), 401
+
+        # 2) BYPASS: se usuário com cupom NOSSO já aplicado → pular Stripe
+        if _has_free_coupon(uid):
             # redireciona direto para a tela de boas-vindas/ativação
             return jsonify({
                 "checkoutUrl": _abs_url("/pages/ativar-config.html?free=1")
             }), 200
 
-        # 2) Caso contrário, segue o fluxo normal do Stripe
+        # 3) Caso contrário, segue o fluxo normal do Stripe
         stripe.api_key = _get_secret_key()
         price_id = _get_price_id()
 
         success_url = _abs_url("/pages/ativar-config.html?session_id={CHECKOUT_SESSION_ID}")
         cancel_url  = _abs_url("/pages/ativar-cliente.html?cancel=1")
 
-        # Produto/Preço: assinatura mensal via STRIPE_PRICE_ID (PRICE já definido na Stripe)
         line_items = [{
             "price": price_id,
             "quantity": 1,
         }]
 
-        # 3) Promotion Code do Stripe via ?cupom= (opcional, só para quem NÃO tem cupom nosso)
+        # Promotion Code do Stripe via ?cupom= (opcional, só para quem NÃO tem cupom nosso)
         cupom = (request.args.get("cupom") or "").strip()
         discounts = None
         if cupom:
@@ -99,7 +106,7 @@ def api_stripe_checkout():
                 discounts = None  # deixa campo visível no checkout para digitar manualmente
 
         params = {
-            "mode": "subscription",                     # assinatura mensal
+            "mode": "subscription",
             "line_items": line_items,
             "success_url": success_url,
             "cancel_url": cancel_url,
