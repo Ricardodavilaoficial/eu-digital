@@ -27,6 +27,12 @@ def _get_secret_key():
         raise RuntimeError("STRIPE_SECRET_KEY ausente no ambiente")
     return key
 
+def _get_price_id():
+    price = os.getenv("STRIPE_PRICE_ID")
+    if not price:
+        raise RuntimeError("STRIPE_PRICE_ID ausente no ambiente")
+    return price
+
 def _has_free_coupon(uid: str) -> bool:
     """
     Retorna True se o profissional já tem licença ativa proveniente de CUPOM "nosso".
@@ -71,22 +77,14 @@ def api_stripe_checkout():
 
         # 2) Caso contrário, segue o fluxo normal do Stripe
         stripe.api_key = _get_secret_key()
+        price_id = _get_price_id()
 
         success_url = _abs_url("/pages/ativar-config.html?session_id={CHECKOUT_SESSION_ID}")
         cancel_url  = _abs_url("/pages/ativar-cliente.html?cancel=1")
 
-        # Produto/Preço (exemplo PAYMENT único; ajuste conforme seu plano)
+        # Produto/Preço: assinatura mensal via STRIPE_PRICE_ID (PRICE já definido na Stripe)
         line_items = [{
-            "price_data": {
-                "currency": "brl",
-                "unit_amount": 8900,  # R$ 89,00 (centavos)
-                "product_data": {
-                    "name": "MEI Robô - Assinatura",
-                    "description": "Plano inicial (Cliente Zero)",
-                },
-                # Para assinatura mensal, troque para:
-                # "recurring": {"interval": "month"}
-            },
+            "price": price_id,
             "quantity": 1,
         }]
 
@@ -101,7 +99,7 @@ def api_stripe_checkout():
                 discounts = None  # deixa campo visível no checkout para digitar manualmente
 
         params = {
-            "mode": "payment",                          # ou "subscription", se aplicável
+            "mode": "subscription",                     # assinatura mensal
             "line_items": line_items,
             "success_url": success_url,
             "cancel_url": cancel_url,
@@ -117,4 +115,5 @@ def api_stripe_checkout():
     except Exception as e:
         # Não vazar detalhes sensíveis em produção
         return jsonify({"error": "Não foi possível iniciar a assinatura."}), 500
+
 
