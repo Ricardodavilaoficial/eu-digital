@@ -7,7 +7,7 @@ import os, io, struct, json, logging, traceback, re, hashlib, importlib, types, 
 from datetime import datetime, timedelta, timezone
 from typing import List, Tuple
 from urllib import request as ulreq, parse as ulparse
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, g
 from flask_cors import CORS
 from uuid import uuid4  # <-- usado no req_id do /api/cadastro
 
@@ -141,6 +141,29 @@ def _public_allowlist_early_bypass():
         if path.startswith(pref):
             return
     # Outras rotas seguem o fluxo normal
+
+# ------------------------------------------------------------------
+# Hook global: injeta g.uid com base no Bearer para todas /api/**
+# ------------------------------------------------------------------
+@app.before_request
+def _inject_uid_from_bearer():
+    """
+    Preenche g.uid com o UID extraído do Firebase ID token (Bearer),
+    sem bloquear nada. Apenas ajuda rotas como /api/agenda/view que
+    esperam g.uid já preenchido.
+    """
+    try:
+        path = (request.path or "/").strip()
+        # Só faz sentido em rotas de API; não mexe em estáticos/HTML
+        if not path.startswith("/api/"):
+            return
+
+        uid = _uid_from_bearer()
+        if uid:
+            g.uid = uid
+    except Exception:
+        # Nunca quebra a request; no pior caso segue sem g.uid
+        pass
 
 # =====================================
 # Error handlers padrão (úteis p/ voz)
@@ -723,7 +746,7 @@ except Exception:
     ensure_firebase_admin = None
     fb_auth = None
 
-def _only_digits_public(s): return "".join(ch for ch in str(s or "") if ch.isdigit())
+def _only_digits_public(s): return "".join(ch for ch in str(s or "") if s is not None and ch.isdigit())
 
 @app.route("/api/cnpj/availability", methods=["GET", "OPTIONS"])
 def api_cnpj_availability():
