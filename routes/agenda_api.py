@@ -7,7 +7,7 @@ import os
 import logging
 from datetime import datetime, timedelta
 import pytz
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 
 # Auth helper (usa seu serviço existente)
 uid_from_bearer = None
@@ -18,8 +18,12 @@ except Exception:
     pass
 
 from services.agenda_repo import find_slots, create_event, list_events_for
+from domain.scheduling import build_agenda_view_dashboard
 
 agenda_api_bp = Blueprint("agenda_api_bp", __name__, url_prefix="/api/agenda")
+
+log = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------
 # Auth guard: Bearer em produção + fallback DEV via X-Debug-UID (ENV)
@@ -39,6 +43,70 @@ def _require_uid(req):
         if dbg:
             return dbg
     return None
+
+
+# ---------------------------------------------------------------------
+# GET /api/agenda/view
+# Visão da agenda para o mini-dashboard (Cliente Zero)
+# ---------------------------------------------------------------------
+@agenda_api_bp.route("/view", methods=["GET"])
+def api_agenda_view():
+    """
+    Visão da agenda para o mini-dashboard (Cliente Zero).
+
+    Auth:
+      - Preferencial: g.uid (decorator padrão do projeto)
+      - Fallback: bearer/X-Debug-UID via _require_uid(request)
+
+    Query:
+      - days (opcional, padrão 9)
+      - base (opcional, YYYY-MM-DD) → ponto de partida para "hoje"
+
+    Retorna:
+      {
+        "tz": "America/Sao_Paulo",
+        "today": "YYYY-MM-DD",
+        "hoje":   [ {hhmm, cliente, assunto, dur, status, level}, ... ],
+        "amanha": [...],
+        "semana": [...]
+      }
+    """
+    # 1) UID: tenta g.uid, cai para bearer/X-Debug-UID se não tiver
+    uid = getattr(g, "uid", None) or _require_uid(request)
+    if not uid:
+        return jsonify({
+            "error": "unauthenticated",
+            "detail": "uid ausente; envie Authorization: Bearer <token> ou habilite X-Debug-UID em ambiente de DEV."
+        }), 401
+
+    # 2) Quantidade de dias (padrão 9 = hoje + amanhã + D+2..D+8)
+    days_param = (request.args.get("days") or "").strip()
+    if not days_param:
+        days_param = "9"
+
+    try:
+        days = int(days_param)
+    except Exception:
+        days = 9
+
+    # 3) Base opcional (YYYY-MM-DD). Se ausente, domínio usa "agora" no fuso SP.
+    base_str = (request.args.get("base") or "").strip()
+    base_dt = None
+    if base_str:
+        try:
+            # Usa TZ de São Paulo; build_agenda_view_dashboard já espera datetime tz-aware
+            tz = pytz.timezone("America/Sao_Paulo")
+            naive = datetime.strptime(base_str, "%Y-%m-%d")
+            base_dt = tz.localize(naive)
+        except Exception:
+            base_dt = None
+
+    try:
+        data = build_agenda_view_dashboard(uid=uid, base_date=base_dt, days=days)
+        return jsonify(data)
+    except Exception as e:
+        log.exception("Erro ao montar agenda view para uid=%s", uid)
+        return jsonify({"error": "internal_error", "detail": str(e)}), 500
 
 
 # ---------------------------------------------------------------------
