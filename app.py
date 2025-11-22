@@ -42,6 +42,7 @@ CORS(app, resources={
     r"/api/*": _cors_common,
     r"/admin/*": _cors_common,
     "/gerar-cupom": _cors_common,
+    "/captcha/verify": _cors_common,
 })
 
 # =====================================
@@ -1163,6 +1164,17 @@ try:
     print("[bp] Registrado: captcha_bp (/api/captcha/verify)")
 except Exception as e:
     print("[bp][warn] captcha_bp:", e)
+
+# Shim legado: /captcha/verify (sem /api) usado pelo captcha_gate.js antigo
+@app.route("/captcha/verify", methods=["POST", "OPTIONS"])
+def captcha_verify_legacy():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    body = request.get_json(silent=True) or {}
+    token = (body.get("token") or body.get("cf_resp") or request.form.get("token") or "").strip()
+    if not token:
+        return jsonify({"ok": False, "error": "missing token"}), 400
+    return jsonify({"ok": _verify_turnstile_token(token)}), 200
 
 # -------------------------------------
 # Diagnóstico: lista de rotas ativas
