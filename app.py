@@ -20,36 +20,31 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__, static_folder="public", static_url_path="/")
 # REMOVIDO: CORS(app)  ← evitamos abrir tudo por engano
 
-# or CORS(app, resources={r"/api/*": {"origins": "*"}})
+# =====================================
+# CORS fino: /api/* e /admin/*
+# =====================================
+ALLOWED_ORIGINS = [
+    "https://mei-robo-prod.web.app",
+    "https://www.meirobo.com.br",
+    "https://meirobo-com-br-apex.web.app",
+    "http://localhost:5000",
+    "http://127.0.0.1:5000",
+]
+
+_cors_common = {
+    "origins": ALLOWED_ORIGINS,
+    "supports_credentials": True,
+    "allow_headers": ["Authorization", "Content-Type", "X-Requested-With"],
+    "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+}
+
+CORS(app, resources={
+    r"/api/*": _cors_common,
+    r"/admin/*": _cors_common,
+})
 
 # Limite de upload (25 MB) — importante para áudio
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
-
-_allowed = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
-cors_resources = {
-    r"/api/*": {
-        "origins": _allowed or [],
-        "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        # ✅ headers incluem os dois do Turnstile (já estavam OK)
-        "allow_headers": [
-            "Authorization", "Content-Type", "X-Requested-With",
-            "cf-turnstile-response", "x-turnstile-token",
-            "X-Submit-Nonce"  # ← ADICIONADO: permite nonce de submissão para rastreio
-        ],
-        "supports_credentials": True,
-    }
-} if _allowed else {}
-CORS(app, resources=cors_resources, always_send=False)
-
-@app.after_request
-def _strip_cors_when_no_origin(resp):
-    try:
-        if request.path.startswith("/api/") and "Origin" not in request.headers:
-            for h in ("Access-Control-Allow-Origin","Access-Control-Allow-Credentials","Vary"):
-                resp.headers.pop(h, None)
-    except Exception:
-        pass
-    return resp
 
 # ================================
 # Webhook GET challenge (Meta)
