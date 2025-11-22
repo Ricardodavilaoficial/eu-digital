@@ -34,7 +34,13 @@ ALLOWED_ORIGINS = [
 _cors_common = {
     "origins": ALLOWED_ORIGINS,
     "supports_credentials": True,
-    "allow_headers": ["Authorization", "Content-Type", "X-Requested-With"],
+    "allow_headers": [
+        "Authorization",
+        "Content-Type",
+        "X-Requested-With",
+        "cf-turnstile-response",  # ✅ header usado pelo Turnstile no cadastro
+        "X-Turnstile-Token",      # ✅ alias que você também aceita em _is_human_ok()
+    ],
     "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 }
 
@@ -44,6 +50,47 @@ CORS(app, resources={
     "/gerar-cupom": _cors_common,
     "/captcha/verify": _cors_common,
 })
+
+# -------------------------------------------------
+# CORS hardening específico para /api/cadastro
+# -------------------------------------------------
+@app.after_request
+def _ensure_cadastro_cors(resp):
+    try:
+        path = (request.path or "").strip()
+        # Só mexe em /api/cadastro (OPTIONS e POST)
+        if path != "/api/cadastro":
+            return resp
+
+        origin = request.headers.get("Origin", "")
+        if origin in ALLOWED_ORIGINS:
+            resp.headers["Access-Control-Allow-Origin"] = origin
+            # Garante que o browser saiba que varia por Origin
+            vary = resp.headers.get("Vary", "")
+            if "Origin" not in vary:
+                resp.headers["Vary"] = (vary + ", Origin").lstrip(", ").strip()
+
+        # Junta o que já veio do flask-cors com o que a gente precisa
+        existing = resp.headers.get("Access-Control-Allow-Headers", "")
+        items = {h.strip() for h in existing.split(",") if h.strip()}
+        items.update({
+            "Authorization",
+            "Content-Type",
+            "X-Requested-With",
+            "cf-turnstile-response",
+            "X-Turnstile-Token",
+        })
+        resp.headers["Access-Control-Allow-Headers"] = ", ".join(sorted(items))
+
+        # Garante métodos básicos na preflight (e na resposta também, não atrapalha)
+        if not resp.headers.get("Access-Control-Allow-Methods"):
+            resp.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+
+    except Exception:
+        # Nunca quebra a resposta se der algo errado aqui
+        pass
+
+    return resp
 
 # =====================================
 # Admin ping (usado pelo frontend para saber se é admin)
@@ -955,7 +1002,7 @@ def api_cupons_ativar_legado():
         }, merge=True)
         return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
     except Exception as e:
-        return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"}), 500
+        return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"), 500]
 
 # =====================================
 # Cadastro / ativar-cliente + CNPJ availability (ajustado)
