@@ -41,6 +41,7 @@ _cors_common = {
 CORS(app, resources={
     r"/api/*": _cors_common,
     r"/admin/*": _cors_common,
+    "/gerar-cupom": _cors_common,
 })
 
 # =====================================
