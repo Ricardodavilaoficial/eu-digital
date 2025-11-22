@@ -846,7 +846,8 @@ def admin_cupons_list():
         return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
 
 
-def _parse_iso_maybe_z(s: str):    if not s: return None
+def _parse_iso_maybe_z(s: str):    
+    if not s: return None
     try:
         if isinstance(s, str) and s.endswith("Z"):
             s = s[:-1] + "+00:00"
