@@ -795,8 +795,58 @@ def gerar_cupom_legacy():
         return ("", 204)
     return admin_cupons_create()
 
-def _parse_iso_maybe_z(s: str):
-    if not s: return None
+
+@app.route("/api/admin/cupons", methods=["GET", "OPTIONS"])
+def admin_cupons_list():
+    """
+    Lista cupons de ativação (uso interno do painel admin).
+    - Requer Bearer válido com UID na ADMIN_UID_ALLOWLIST.
+    - Retorna items[] já normalizados.
+    """
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    if not ADMIN_UID_ALLOWLIST:
+        return jsonify({"ok": False, "error": "admin_allowlist_empty"}), 403
+
+    uid = _ensure_admin_uid()
+    if not uid:
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    try:
+        try:
+            limit = int(request.args.get("limit", "50") or "50")
+        except Exception:
+            limit = 50
+
+        col = db.collection("cuponsAtivacao")
+        query = col.limit(limit)
+        docs = query.stream()
+
+        items = []
+        for doc in docs:
+            d = doc.to_dict() or {}
+            codigo = d.get("codigo") or doc.id
+            items.append({
+                "codigo": codigo,
+                "status": d.get("status"),
+                "expiraEm": d.get("expiraEm"),
+                "usos": d.get("usos", 0),
+                "usosMax": d.get("usosMax", 1),
+                "tipo": d.get("tipo"),
+                "escopo": d.get("escopo"),
+                "plano": d.get("plano"),
+                "origem": d.get("origem"),
+                "createdAt": d.get("createdAt"),
+            })
+
+        return jsonify({"ok": True, "items": items}), 200
+    except Exception as e:
+        app.logger.exception("admin_cupons_list: erro")
+        return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
+
+
+def _parse_iso_maybe_z(s: str):    if not s: return None
     try:
         if isinstance(s, str) and s.endswith("Z"):
             s = s[:-1] + "+00:00"
