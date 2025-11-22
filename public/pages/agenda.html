@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agenda — MEI Robô (V1.5 FINAL)</title>
+
+  <!-- Canonical WWW v1.0 placeholders (layout.js pode sobrescrever em runtime) -->
+  <link rel="canonical" href="https://www.meirobo.com.br/pages/agenda.html" />
+  <meta property="og:url" content="https://www.meirobo.com.br/pages/agenda.html" />
+  <meta name="twitter:url" content="https://www.meirobo.com.br/pages/agenda.html" />
+
+  <!-- Assets canônicos -->
+  <link rel="stylesheet" href="/assets/styles.css" />
+
+  <style>
+    :root {
+      --card-bg:#0f1513;
+      --card-br:#1d2b26;
+      --muted:#9fb0aa;
+      --soft:#cfe3dc;
+      --accent:#1fbf75;
+      --danger:#e45858;
+      --warning:#f2b84b;
+      --ok:#2ad39b;
+      --text:#e6f0ec;
+      --text-soft:#cfe3dc;
+      --daybox-minh: 620px;
+    }
+    body { background:#0b0f0e; color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', 'Noto Sans', Arial, 'Apple Color Emoji', 'Segoe UI Emoji'; }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 20px 16px 80px; }
+
+    /* Mini dashboard */
+    .mini-dashboard {
+      background: var(--card-bg);
+      border: 1px solid var(--card-br);
+      border-radius: 16px;
+      padding: 16px 18px;
+      margin: 10px auto 24px;
+      max-width: 900px;
+      box-shadow: 0 2px 14px rgba(0,0,0,.25);
+    }
+    .mini-top{
+      display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;
+    }
+    .today-date{ font-weight:800; opacity:.95; color: var(--accent); }
+    .mini-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+    .btn{
+      appearance:none; border:1px solid var(--card-br); background:#0c120f; color:var(--text);
+      padding:8px 12px; border-radius:10px; cursor:pointer; font-weight:800; text-decoration:none; display:inline-flex; align-items:center; gap:8px;
+    }
+    .btn.primary{ border-color: transparent; background: var(--accent); color:#06261a; }
+    .mini-title{
+      font-weight:800; letter-spacing:.2px; margin: 10px 0 10px; font-size: 1.05rem; color: var(--text); text-align:center;
+    }
+    .mini-line{
+      display:flex; flex-wrap:wrap; gap:14px; align-items:center; justify-content:center; font-weight:700;
+    }
+    .mini-pill{
+      padding:8px 12px; border:1px solid var(--card-br); border-radius:999px; background:#0c120f; display:inline-flex; gap:8px; align-items:center;
+    }
+    .mini-pill b{ color:var(--ok); }
+    .mini-hint{ margin-top:10px; font-size:.92rem; color: var(--text-soft); text-align:center; }
+
+    /* Títulos de seção */
+    .section-title{ font-size:1.15rem; font-weight:800; letter-spacing:.2px; margin: 24px auto 10px; max-width: 900px; color: var(--text); }
+
+    /* Caixa do dia */
+    .day-box{
+      background: var(--card-bg);
+      border: 1px solid var(--card-br);
+      border-radius: 16px;
+      padding: 0;
+      margin: 0 auto 28px;
+      max-width: 900px;
+      box-shadow: 0 2px 14px rgba(0,0,0,.25);
+      min-height: var(--daybox-minh);
+    }
+    .day-head{
+      display:flex; align-items:center; justify-content:space-between;
+      padding: 14px 16px; border-bottom:1px solid var(--card-br);
+    }
+    .day-head .h-left{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .day-head .h-right{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .badge{ display:inline-block; border:1px solid var(--card-br); background:#0c120f; color:#cfe3dc; padding:4px 10px; border-radius:999px; font-weight:800; font-size:.85rem; }
+    .day-head h3{ margin:0; font-size:1.05rem; letter-spacing:.25px; }
+    .period{ color:var(--accent); font-weight:900; }
+
+    .btn-ghost{ border:1px dashed var(--card-br); background:transparent; color:#cfe3dc; }
+
+    /* Grade de horários — 2 colunas internas */
+    .grid-2col{
+      display:grid; grid-template-columns: 1fr 1fr; gap:0;
+    }
+    .col{
+      display:block; border-right:1px solid var(--card-br);
+    }
+    .col:last-child{ border-right:none; }
+    .slot-row{
+      display:grid; grid-template-columns: 110px 1fr; align-items:stretch; border-bottom:1px dashed var(--card-br); height: 46px;
+    }
+    .slot-row:last-child{ border-bottom:none; }
+    .cell-hour{
+      display:flex; align-items:center; justify-content:flex-end; padding: 0 12px; color:#9fb0aa; font-weight:700; border-right:1px solid var(--card-br); white-space:nowrap;
+    }
+    .cell-slot{ position:relative; display:flex; align-items:center; padding: 0 12px; overflow:hidden; }
+    .slot-free{ opacity:.45; font-size:.95rem; }
+    .pill{ display:inline-flex; align-items:center; gap:10px; padding:6px 10px; border-radius:12px; border:1px solid var(--card-br); background:#0c120f; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:700; }
+    .pill .dot{ width:8px; height:8px; border-radius:999px; background:#2ad39b; }
+    .pill.warn .dot{ background:#f2b84b; }
+    .pill.danger .dot{ background:#e45858; }
+    .pill small{ opacity:.7; font-weight:600; }
+
+    /* 7 dias */
+    .week-grid{
+      display:grid; grid-template-columns: repeat(7, 1fr); gap:0;
+      overflow:auto;
+    }
+    .day-col{
+      border-right:1px solid var(--card-br);
+    }
+    .day-col:last-child{ border-right:none; }
+    .day-col-head{
+      padding:10px 12px; border-bottom:1px solid var(--card-br); display:flex; align-items:center; justify-content:space-between; gap:8px;
+    }
+    .day-col-title{ font-weight:900; color:var(--accent); }
+    .day-col-count{ font-weight:800; color:#2ad39b; }
+    .day-col-body{ max-height: calc(var(--daybox-minh) - 56px); overflow:auto; }
+    .slot-row-mini{
+      display:grid; grid-template-columns: 1fr; border-bottom:1px dashed var(--card-br); height: 34px; align-items:center; padding:0 8px;
+    }
+    .slot-row-mini:last-child{ border-bottom:none; }
+    .slot-mini-free{ opacity:.45; font-size:.9rem; }
+    .slot-mini-pill{ display:inline-flex; gap:6px; align-items:center; padding:4px 8px; border-radius:10px; border:1px solid var(--card-br); background:#0c120f; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:700; font-size:.95rem; }
+    .slot-mini-pill .dot{ width:7px; height:7px; border-radius:999px; background:#2ad39b; }
+
+    /* Busca + filtros */
+    .search-wrap{ max-width: 900px; margin: 0 auto 14px; display:flex; gap:10px; align-items:center; justify-content:space-between; }
+    .search-left{ display:flex; align-items:center; gap:8px; flex:1; }
+    .search-wrap input{ flex:1; background:#0c120f; color:#e6f0ec; border:1px solid var(--card-br); border-radius:10px; padding:10px 12px; outline:none; }
+    .search-wrap label{ font-weight:900; color:#cfe3dc; }
+    .search-wrap .filters{ display:flex; gap:8px; flex-wrap:wrap; }
+    .chip{ padding:6px 10px; border:1px solid var(--card-br); border-radius:999px; cursor:pointer; user-select:none; background:#0c120f; font-weight:700; }
+    .chip.active{ outline: 2px solid var(--accent); }
+
+    /* Nav local */
+    .page-nav{ max-width:900px; margin:0 auto 16px; display:flex; gap:8px; justify-content:space-between; }
+    .page-nav .left, .page-nav .right{ display:flex; gap:8px; }
+
+    /* Responsivo */
+    @media (max-width: 920px){
+      .grid-2col{ grid-template-columns: 1fr; }
+      .day-box{ min-height: auto; }
+      .day-col-body{ max-height: none; }
+    }
+    @media (max-width: 720px){
+      .slot-row{ grid-template-columns: 92px 1fr; height: 44px; }
+    }
+
+    /* Fallback header/footer */
+    .app-shell{ min-height:82svh; }
+    header._fallback, footer._fallback{ max-width: 1100px; margin: 0 auto; padding: 10px 16px; opacity:.8; }
+    header._fallback{ border-bottom:1px solid var(--card-br); }
+    footer._fallback{ border-top:1px solid var(--card-br); font-size:.9rem; color:#9fb0aa; }
+  </style>
+</head>
+<body class="app-shell">
+  <!-- Header via layout.js; fallback leve abaixo -->
+  <header id="app-header"></header>
+  <noscript>
+    <header class="_fallback">
+      <strong>MEI Robô</strong>
+    </header>
+  </noscript>
+
+  <main class="container app-main">
+    <!-- Navegação local -->
+    <div class="page-nav">
+      <div class="left">
+        <a class="btn" href="/pages/dashboard.html" id="btnVoltar">← Voltar</a>
+      </div>
+      <div class="right"></div>
+    </div>
+
+    <!-- Mini dashboard -->
+    <section class="mini-dashboard" id="miniDashboard">
+      <div class="mini-top">
+        <div class="today-date" id="todayDate">Hoje</div>
+        <div class="mini-actions">
+          <a class="btn" href="#boxHoje" id="btnHoje">Hoje</a>
+          <a class="btn" href="#boxAmanha" id="btnAmanha">Amanhã</a>
+          <a class="btn" href="#boxSete" id="btnSete">Próx. 7 dias</a>
+          <a class="btn primary" href="#" id="btnNovo">Novo agendamento</a>
+        </div>
+      </div>
+      <div class="mini-title">Quantidade de agendamentos</div>
+      <div class="mini-line">
+        <span class="mini-pill">Hoje: <b id="qtdHoje">0</b></span>
+        <span class="mini-pill">Amanhã: <b id="qtdAmanha">0</b></span>
+        <span class="mini-pill">Próx. 7 dias: <b id="qtd7">0</b></span>
+      </div>
+      <div class="mini-hint" id="miniHint">Resumo automático do período selecionado.</div>
+    </section>
+
+    <!-- Busca + Filtros -->
+    <div class="search-wrap">
+      <div class="search-left">
+        <label for="busca">Pesquisar:</label>
+        <input id="busca" type="search" placeholder="cliente, assunto ou observação…" />
+      </div>
+      <div class="filters">
+        <span class="chip" data-filter="all">Todos</span>
+        <span class="chip" data-filter="ocupados">Ocupados</span>
+        <span class="chip" data-filter="livres">Livres</span>
+      </div>
+    </div>
+
+    <!-- HOJE -->
+    <h2 class="section-title">Hoje</h2>
+    <section class="day-box" id="boxHoje">
+      <div class="day-head">
+        <div class="h-left">
+          <span class="badge">08:00–18:30</span>
+          <h3 id="tituloHoje">Agenda do dia (Hoje)</h3>
+          <span class="period" id="periodHoje"></span>
+        </div>
+        <div class="h-right">
+          <button class="btn btn-ghost" id="exportHoje">Exportar CSV</button>
+          <span class="badge" id="contHoje">0 agendamentos</span>
+        </div>
+      </div>
+      <div class="grid-2col">
+        <div class="col" id="colHojeA"></div>
+        <div class="col" id="colHojeB"></div>
+      </div>
+    </section>
+
+    <!-- AMANHÃ -->
+    <h2 class="section-title">Amanhã</h2>
+    <section class="day-box" id="boxAmanha">
+      <div class="day-head">
+        <div class="h-left">
+          <span class="badge">08:00–18:30</span>
+          <h3 id="tituloAmanha">Agenda do dia (Amanhã)</h3>
+          <span class="period" id="periodAmanha"></span>
+        </div>
+        <div class="h-right">
+          <button class="btn btn-ghost" id="exportAmanha">Exportar CSV</button>
+          <span class="badge" id="contAmanha">0 agendamentos</span>
+        </div>
+      </div>
+      <div class="grid-2col">
+        <div class="col" id="colAmanhaA"></div>
+        <div class="col" id="colAmanhaB"></div>
+      </div>
+    </section>
+
+    <!-- SETE DIAS -->
+    <h2 class="section-title">Próximos 7 dias</h2>
+    <section class="day-box" id="boxSete">
+      <div class="day-head">
+        <div class="h-left">
+          <span class="badge">Resumo</span>
+          <h3>Janela de 7 dias</h3>
+          <span class="period" id="periodSete"></span>
+        </div>
+        <div class="h-right">
+          <button class="btn btn-ghost" id="exportSete">Exportar CSV</button>
+          <span class="badge" id="contSete">0 no total</span>
+        </div>
+      </div>
+      <div class="week-grid" id="weekGrid"></div>
+    </section>
+  </main>
+
+  <footer id="app-footer"></footer>
+  <noscript>
+    <footer class="_fallback">
+      © 2025 MEI Robô — Termos · Privacidade · Cookies
+    </footer>
+  </noscript>
+
+  <script>
+    // Loader canônico de header/footer
+    (function(){
+      try{
+        var s = document.createElement('script');
+        s.src = '/assets/layout.js?v=20250909z';
+        s.async = true;
+        s.onload = function(){ console.log('[layout] carregado'); };
+        s.onerror = function(){ console.warn('[layout] fallback ativo'); };
+        document.head.appendChild(s);
+      }catch(e){ console.warn('[layout] erro ao injetar', e); }
+    })();
+
+    // Fallback leve: injeta header/footer se layout.js não preencher
+    (function(){
+      function hasContent(el){ return !!(el && ((el.children && el.children.length) || (el.innerHTML && el.innerHTML.trim() !== ''))); }
+      async function inject(id, url){
+        try{
+          const host = document.getElementById(id);
+          if(!host || hasContent(host)) return;
+          const html = await fetch(url, {cache:'no-store'}).then(r=>r.ok?r.text():Promise.reject());
+          host.innerHTML = html;
+        }catch{}
+      }
+      window.addEventListener('load', function(){
+        setTimeout(function(){
+          inject('app-header','/assets/partials/header.html');
+          inject('app-footer','/assets/partials/footer.html');
+        }, 600);
+      });
+    })();
+
+    // ===== Utilidades de Agenda =====
+    const startMinutes = 8 * 60;       // 08:00
+    const endMinutes   = 18 * 60 + 30; // 18:30
+    const step = 30; // minutos
+
+    function pad(n){ return (n<10?'0':'') + n; }
+    function minutesToHHMM(m){ const h = Math.floor(m/60), mm = m%60; return pad(h)+':'+pad(mm); }
+    function buildSlots(){
+      const slots = [];
+      for(let m = startMinutes; m <= endMinutes; m += step){ slots.push(minutesToHHMM(m)); }
+      return slots;
+    }
+    function splitInTwo(arr){ return [arr.slice(0,11), arr.slice(11)]; }
+    function addDays(base, d){ const x = new Date(base); x.setDate(x.getDate()+d); return x; }
+
+    const fmtISO = (d)=> [d.getFullYear(), pad(d.getMonth()+1), pad(d.getDate())].join('-');
+
+    // Modo validação (ativa dados de exemplo quando ?validate=1)
+    const params = new URLSearchParams(location.search);
+    const validateMode = params.get('validate') === '1';
+
+    // ===== Dados de demonstração (apenas quando validate=1) =====
+    const demoHoje = [
+      { hhmm:'08:30', cliente:'João Barbeiro', assunto:'Corte masculino', dur:30, status:'agendado', level:'ok' },
+      { hhmm:'09:00', cliente:'Ana Paula', assunto:'Coloração', dur:60, status:'agendado', level:'warn' },
+      { hhmm:'10:30', cliente:'Carlos Lima', assunto:'Barba design', dur:30, status:'agendado', level:'ok' },
+      { hhmm:'11:00', cliente:'Marina', assunto:'Manicure', dur:60, status:'agendado', level:'ok' },
+      { hhmm:'13:00', cliente:'Felipe', assunto:'Sobrancelha', dur:30, status:'agendado', level:'ok' },
+      { hhmm:'14:30', cliente:'Patrícia', assunto:'Progressiva', dur:90, status:'agendado', level:'warn' },
+      { hhmm:'16:00', cliente:'Rafael', assunto:'Corte e barba', dur:60, status:'agendado', level:'ok' },
+      { hhmm:'18:00', cliente:'Silvia', assunto:'Escova', dur:30, status:'agendado', level:'ok' }
+    ];
+    const demoAmanha = [
+      { hhmm:'09:30', cliente:'Beatriz', assunto:'Hidratação', dur:30, status:'agendado', level:'ok' },
+      { hhmm:'11:30', cliente:'Diego', assunto:'Luzes', dur:60, status:'agendado', level:'warn' },
+      { hhmm:'15:00', cliente:'Fernanda', assunto:'Coloração', dur:60, status:'agendado', level:'ok' },
+      { hhmm:'16:30', cliente:'Tiago', assunto:'Corte', dur:30, status:'agendado', level:'ok' },
+      { hhmm:'17:30', cliente:'Gabi', assunto:'Escova', dur:30, status:'agendado', level:'ok' }
+    ];
+    function makeWeekDemo(baseDate){
+      const samples = [
+        { hhmm:'09:00', cliente:'André', assunto:'Corte', dur:30, status:'agendado', level:'ok' },
+        { hhmm:'10:30', cliente:'Bianca', assunto:'Coloração', dur:60, status:'agendado', level:'warn' },
+        { hhmm:'13:30', cliente:'Caio', assunto:'Barba', dur:30, status:'agendado', level:'ok' },
+        { hhmm:'15:00', cliente:'Daniela', assunto:'Hidratação', dur:60, status:'agendado', level:'ok' },
+        { hhmm:'17:00', cliente:'Edu', assunto:'Escova', dur:30, status:'agendado', level:'ok' }
+      ];
+      const week = {};
+      const slots = buildSlots();
+      for(let i=2;i<=8;i++){
+        const d = addDays(baseDate, i);
+        const key = fmtISO(d);
+        const n = Math.floor(Math.random()*4);
+        week[key] = [];
+        for(let k=0;k<n;k++){
+          const t = samples[Math.floor(Math.random()*samples.length)];
+          const hhmm = slots[Math.floor(Math.random()*slots.length)];
+          week[key].push({ ...t, hhmm });
+        }
+      }
+      return week;
+    }
+
+    function makeRow(hhmm, item){
+      const row = document.createElement('div'); row.className = 'slot-row';
+      const left = document.createElement('div'); left.className = 'cell-hour'; left.textContent = hhmm;
+      const right = document.createElement('div'); right.className = 'cell-slot';
+      if(item){
+        const pill = document.createElement('span');
+        pill.className = 'pill' + (item.level==='warn' ? ' warn' : (item.level==='danger' ? ' danger' : ''));
+        const dot = document.createElement('span'); dot.className = 'dot';
+        const text = document.createElement('span'); text.innerHTML = `${item.assunto} — <small>${item.cliente}</small>`;
+        const dur = document.createElement('small'); dur.textContent = ` ${item.dur}min`;
+        pill.appendChild(dot); pill.appendChild(text); pill.appendChild(dur);
+        right.appendChild(pill);
+      } else {
+        const free = document.createElement('span'); free.className = 'slot-free'; free.textContent = 'livre';
+        right.appendChild(free);
+      }
+      row.appendChild(left); row.appendChild(right);
+      return row;
+    }
+
+    function renderTwoCols(containerA, containerB, list){
+      containerA.innerHTML = ''; containerB.innerHTML = '';
+      const slots = buildSlots();
+      const [partA, partB] = splitInTwo(slots);
+      let count = 0;
+      function findItem(h){ return list.find(x => x.hhmm === h); }
+      partA.forEach(h => { const it = findItem(h); if(it) count++; containerA.appendChild(makeRow(h, it)); });
+      partB.forEach(h => { const it = findItem(h); if(it) count++; containerB.appendChild(makeRow(h, it)); });
+      return count;
+    }
+
+    function makeMiniRow(hhmm, item){
+      const row = document.createElement('div'); row.className = 'slot-row-mini';
+      if(item){
+        const pill = document.createElement('span'); pill.className = 'slot-mini-pill';
+        const dot = document.createElement('span'); dot.className = 'dot';
+        const text = document.createElement('span'); text.innerHTML = `${hhmm} — ${item.assunto} <small>(${item.cliente})</small>`;
+        pill.appendChild(dot); pill.appendChild(text);
+        row.appendChild(pill);
+      }else{
+        const free = document.createElement('span'); free.className = 'slot-mini-free'; free.textContent = hhmm + ' — livre';
+        row.appendChild(free);
+      }
+      return row;
+    }
+
+    function renderWeekGrid(container, baseDate, weekData, filterMode, term){
+      container.innerHTML = '';
+      const slots = buildSlots();
+      let total = 0;
+
+      for(let i=2;i<=8;i++){
+        const d = addDays(baseDate, i);
+        const key = fmtISO(d);
+        const dayList = weekData[key] || [];
+        let dayCount = 0;
+
+        const col = document.createElement('div'); col.className = 'day-col';
+
+        // head
+        const head = document.createElement('div'); head.className = 'day-col-head';
+        const title = document.createElement('div'); title.className = 'day-col-title';
+        title.textContent = new Intl.DateTimeFormat('pt-BR', { weekday:'short' }).format(d) + ' ' + new Intl.DateTimeFormat('pt-BR', { day:'2-digit', month:'2-digit' }).format(d);
+        const count = document.createElement('div'); count.className = 'day-col-count'; count.textContent = '0 ag.';
+        head.appendChild(title); head.appendChild(count);
+
+        // body
+        const body = document.createElement('div'); body.className = 'day-col-body';
+        slots.forEach(h => {
+          const it = dayList.find(x => x.hhmm === h);
+          const isBusy = !!it;
+          let visible = true;
+          if(filterMode === 'ocupados') visible = isBusy;
+          else if(filterMode === 'livres') visible = !isBusy;
+
+          if(visible && term){
+            const text = isBusy ? (it.assunto + ' ' + it.cliente).toLowerCase() : 'livre';
+            visible = text.includes(term);
+          }
+
+          if(visible){
+            if(isBusy){ dayCount++; total++; }
+            body.appendChild(makeMiniRow(h, it));
+          }
+        });
+
+        count.textContent = dayCount + ' ag.';
+        col.appendChild(head); col.appendChild(body);
+        container.appendChild(col);
+      }
+
+      // atualiza badge do topo (7 dias)
+      var contSete = document.getElementById('contSete');
+      if(contSete) contSete.textContent = total + ' no total';
+      // também o mini-pill
+      var qtd7 = document.getElementById('qtd7');
+      if(qtd7) qtd7.textContent = String(total);
+    }
+
+    function exportCSV(filename, rows){
+      const headers = ['Data','Hora','Cliente','Assunto','Duração(min)','Status'];
+      const data = [headers].concat(rows.map(r => [r.data, r.hora, r.cliente, r.assunto, r.dur, r.status]));
+      const csv = data.map(line => line.map(v => `"${(v??'').toString().replace(/"/g,'""')}"`).join(',')).join('\r\n');
+      const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+    }
+
+    function collectRowsDay(baseDate, list){
+      const rows = [];
+      const dateStr = new Intl.DateTimeFormat('pt-BR', { year:'numeric', month:'2-digit', day:'2-digit' }).format(baseDate);
+      const slots = buildSlots();
+      const byTime = Object.fromEntries(list.map(x => [x.hhmm, x]));
+      slots.forEach(h => {
+        const it = byTime[h];
+        if(it){ rows.push({ data: dateStr, hora: h, cliente: it.cliente, assunto: it.assunto, dur: it.dur, status: it.status }); }
+      });
+      return rows;
+    }
+
+    function collectRowsWeek(baseDate, weekData){
+      const rows = [];
+      for(let i=2;i<=8;i++){
+        const d = addDays(baseDate, i);
+        const key = fmtISO(d);
+        const dateStr = new Intl.DateTimeFormat('pt-BR', { year:'numeric', month:'2-digit', day:'2-digit' }).format(d);
+        const list = weekData[key] || [];
+        list.forEach(it => {
+          rows.push({ data: dateStr, hora: it.hhmm || '--:--', cliente: it.cliente, assunto: it.assunto, dur: it.dur, status: it.status });
+        });
+      }
+      return rows;
+    }
+
+    function init(){
+      const now = new Date();
+
+      // Mostrar data de hoje no topo
+      document.getElementById('todayDate').textContent = 'Hoje — ' + new Intl.DateTimeFormat('pt-BR', { weekday:'short', day:'2-digit', month:'short' }).format(now);
+
+      // Períodos exibidos ao lado dos títulos
+      const d0 = now;
+      const d1 = addDays(now, 1);
+      const d2 = addDays(now, 2);
+      const d8 = addDays(now, 8);
+      document.getElementById('periodHoje').textContent = '— ' + new Intl.DateTimeFormat('pt-BR', { weekday:'short', day:'2-digit', month:'short' }).format(d0);
+      document.getElementById('periodAmanha').textContent = '— ' + new Intl.DateTimeFormat('pt-BR', { weekday:'short', day:'2-digit', month:'short' }).format(d1);
+      document.getElementById('periodSete').textContent = '— ' + new Intl.DateTimeFormat('pt-BR', { day:'2-digit', month:'2-digit' }).format(d2) + ' a ' + new Intl.DateTimeFormat('pt-BR', { day:'2-digit', month:'2-digit' }).format(d8);
+
+      // Dados ativos (produção vazia; validação com demo)
+      const listHoje   = validateMode ? [].concat(demoHoje)   : [];
+      const listAmanha = validateMode ? [].concat(demoAmanha) : [];
+      const weekData   = validateMode ? makeWeekDemo(now)     : {};
+
+      // Render Hoje & Amanhã (duas colunas)
+      const contHoje = renderTwoCols(document.getElementById('colHojeA'), document.getElementById('colHojeB'), listHoje);
+      const contAmanha = renderTwoCols(document.getElementById('colAmanhaA'), document.getElementById('colAmanhaB'), listAmanha);
+      document.getElementById('contHoje').textContent = contHoje + (contHoje===1?' agendamento':' agendamentos');
+      document.getElementById('contAmanha').textContent = contAmanha + (contAmanha===1?' agendamento':' agendamentos');
+
+      // Atualiza mini-dashboard com os contadores reais
+      document.getElementById('qtdHoje').textContent = String(contHoje);
+      document.getElementById('qtdAmanha').textContent = String(contAmanha);
+
+      // Semana (D+2 a D+8) — grid 7 colunas; default visual 'livres'
+      renderWeekGrid(document.getElementById('weekGrid'), now, weekData, 'livres', '');
+
+      // Filtros locais (ocupados/livres/todos) + busca
+      const chips = document.querySelectorAll('.chip');
+      const busca = document.getElementById('busca');
+      let active = 'all';
+
+      function applyFilters(){
+        const term = (busca.value || '').trim().toLowerCase();
+        // Hoje & Amanhã
+        ['colHojeA','colHojeB','colAmanhaA','colAmanhaB'].forEach(id => {
+          document.querySelectorAll('#'+id+' .slot-row').forEach(row => {
+            const slot = row.querySelector('.cell-slot');
+            const isBusy = !!slot.querySelector('.pill');
+            const text = slot.textContent.toLowerCase();
+            let visible = true;
+            if(active === 'ocupados') visible = isBusy;
+            else if(active === 'livres') visible = !isBusy;
+            if(visible && term){ visible = text.includes(term); }
+            row.style.display = visible ? '' : 'none';
+          });
+        });
+        // 7 dias
+        renderWeekGrid(document.getElementById('weekGrid'), now, weekData, active, term);
+      }
+
+      chips.forEach(chip => {
+        chip.addEventListener('click', () => {
+          chips.forEach(c => c.classList.remove('active'));
+          chip.classList.add('active');
+          active = chip.dataset.filter;
+          applyFilters();
+        });
+      });
+      busca.addEventListener('input', applyFilters);
+      document.querySelector('.chip[data-filter="all"]').classList.add('active');
+
+      // Botões âncora + default de filtro
+      document.getElementById('btnHoje').addEventListener('click', ()=>{
+        chips.forEach(c => c.classList.remove('active'));
+        document.querySelector('.chip[data-filter="all"]').classList.add('active');
+        active = 'all'; applyFilters();
+      });
+      document.getElementById('btnAmanha').addEventListener('click', ()=>{
+        chips.forEach(c => c.classList.remove('active'));
+        document.querySelector('.chip[data-filter="all"]').classList.add('active');
+        active = 'all'; applyFilters();
+      });
+      document.getElementById('btnSete').addEventListener('click', ()=>{
+        chips.forEach(c => c.classList.remove('active'));
+        document.querySelector('.chip[data-filter="livres"]').classList.add('active');
+        active = 'livres'; applyFilters();
+      });
+
+      // Botão "Novo agendamento" (placeholder)
+      document.getElementById('btnNovo').addEventListener('click', (e)=>{
+        e.preventDefault();
+        alert('Ação: Novo agendamento (placeholder v1).');
+      });
+
+      // Exportações CSV
+      document.getElementById('exportHoje').addEventListener('click', ()=>{
+        const rows = collectRowsDay(d0, listHoje);
+        exportCSV('agendamentos-hoje.csv', rows);
+      });
+      document.getElementById('exportAmanha').addEventListener('click', ()=>{
+        const rows = collectRowsDay(d1, listAmanha);
+        exportCSV('agendamentos-amanha.csv', rows);
+      });
+      document.getElementById('exportSete').addEventListener('click', ()=>{
+        const rows = collectRowsWeek(now, weekData);
+        exportCSV('agendamentos-prox7dias.csv', rows);
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Verifique seu e-mail — MEI Robô</title>
+
+  <!-- Não cachear esta tela -->
+  <meta http-equiv="Cache-Control" content="no-store" />
+  <!-- Evitar indexação -->
+  <meta name="robots" content="noindex, nofollow" />
+  <!-- Referrer seguro -->
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+  <link rel="stylesheet" href="/assets/styles.css" />
+
+  <!-- Canonical **canônico** no domínio web.app -->
+  <link rel="canonical" href="https://mei-robo-prod.web.app/verify-email.html" />
+  <meta property="og:url" content="https://mei-robo-prod.web.app/verify-email.html" />
+  <meta name="twitter:url" content="https://mei-robo-prod.web.app/verify-email.html" />
+
+  <!-- Firebase Hosting: SDK compat + init automático -->
+  <script defer src="/__/firebase/9.22.2/firebase-app-compat.js"></script>
+  <script defer src="/__/firebase/9.22.2/firebase-auth-compat.js"></script>
+  <script defer src="/__/firebase/init.js?useEmulator=false"></script>
+  <script>
+    window.addEventListener('load', () => {
+      try {
+        if (window.firebase?.apps?.length) {
+          window.auth = firebase.auth();
+          try { firebase.auth().languageCode = 'pt_BR'; } catch {}
+          console.log('[verify] Firebase pronto');
+        } else {
+          console.error('[verify] Firebase não inicializou via Hosting.');
+        }
+      } catch (e) { console.error(e); }
+    });
+  </script>
+
+  <style>
+    .center{ max-width:720px; margin:0 auto; width:100%; }
+    .email-chip{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-weight: 700; padding: 2px 8px; border-radius: 8px;
+      background:#0f3b2f; color:#b9f4d8; word-break:break-all;
+    }
+    .value-soft{ color: rgba(233,237,239,.80) !important; }
+    .readonly{ opacity:.9; }
+    #email.input::placeholder{ color: rgba(233,237,239,.55) !important; opacity:1; }
+    #msg.hint{ color: rgba(255,255,255,0.85); }
+    #msg.ok{ color: #86f7c2; }
+    #msg.error{ color: #ff9c9c; }
+    .note-compact{ margin-top:8px; font-size:.95rem; opacity:.9 }
+    .actions .btn-link{ text-decoration:underline; padding:0 4px; }
+    noscript{display:block; background:#2b2f33; color:#fff; padding:10px; border-radius:8px; margin:10px 0}
+
+    /* ===== Modo Minimal fixo (sem auto-redirect) ===== */
+    .minimal-stage { text-align:center; padding:28px 20px; border-radius:14px; border:1px solid #23302e; background:#101414; }
+    .minimal-title { margin:0 0 6px; font-size:1.6rem; color:var(--wa-dark); }
+    .minimal-sub { margin:0 0 14px; color:#b6c9c3; }
+    .minimal-wrap { max-width:680px; margin:0 auto; }
+
+    /* Esconde UI antiga quando em modo minimal */
+    .is-minimal .card,
+    .is-minimal .note,
+    .is-minimal #resendForm,
+    .is-minimal .note-compact { display:none !important; }
+  </style>
+</head>
+<body class="app-shell">
+  <div id="app-header"></div>
+
+  <main class="section app-main" style="min-height:82svh">
+    <div class="container center" id="pageContainer">
+      <h1 style="color:var(--wa-dark); margin:0 0 6px">Confirme seu e-mail</h1>
+
+      <p class="note">
+        Enviamos um link de verificação para
+        <strong id="emailLabel" class="email-chip">seu_email@exemplo.com</strong>.
+        Abra sua caixa de entrada e clique no link para continuar.
+      </p>
+
+      <div class="card">
+        <h2 style="color:var(--wa-dark)">Não recebeu?</h2>
+
+        <form id="resendForm" class="form-row" action="#" method="POST" novalidate aria-describedby="form-hint">
+          <label for="email"><strong>E-mail</strong></label>
+          <input id="email" name="email" class="input value-soft" type="email"
+                 placeholder="Confirme aqui seu e-mail de validação"
+                 inputmode="email" autocomplete="email" spellcheck="false" required />
+
+          <div id="form-hint" class="hint" style="margin-top:6px">
+            Usaremos este e-mail para reenviar o link de verificação.
+          </div>
+
+          <div class="actions" style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap">
+            <button id="btnResend" class="cta" type="submit">Reenviar e-mail</button>
+            <a id="btnCheck" class="btn-secondary" href="#" role="button">Já verifiquei — continuar</a>
+            <a id="btnChange" class="btn-secondary" href="/cadastro.html" role="button" title="Voltar ao cadastro e refazer o e-mail">Trocar e-mail</a>
+          </div>
+
+          <div id="msg" class="hint" style="margin-top:8px"></div>
+          <div class="note-compact">
+            Dica: use o <strong>mesmo navegador</strong> onde você iniciou o cadastro. Se abrir o link do e-mail em outra janela/aba,
+            volte para a janela original e clique em <em>“Já verifiquei — continuar”</em>.
+          </div>
+        </form>
+      </div>
+
+      <noscript>Ative o JavaScript para verificar seu e-mail corretamente.</noscript>
+    </div>
+
+    <!-- Área do modo minimal fixo -->
+    <div class="container minimal-wrap" id="minimalMount" style="display:none">
+      <div class="minimal-stage">
+        <h1 class="minimal-title" id="minTitle">Pronto! Seu e-mail foi verificado.</h1>
+        <p class="minimal-sub" id="minSub">
+          Volte para a aba onde você estava fazendo seu cadastro e clique em <strong>“Já verifiquei — continuar”</strong>.
+        </p>
+        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap">
+          <a class="btn outline" id="minClose" href="javascript:void(0)">Fechar esta aba</a>
+          <a class="cta" id="minGoConfig" href="/pages/configuracao.html">Abrir configuração aqui</a>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <!-- IMPORTANTE: NÃO carregar /assets/firebase-init.js aqui -->
+  <script src="/assets/layout.js" defer></script>
+
+  <script>
+  (function(){
+    const BACKEND = 'https://mei-robo-prod.onrender.com';
+    const API = {
+      checkStatus: BACKEND + '/api/auth/check-verification' // protegido por Bearer
+    };
+
+    // ===== helpers de DOM =====
+    const $ = (s)=>document.querySelector(s);
+    const msg = $('#msg');
+    const emailInput = $('#email');
+    const emailLabel = $('#emailLabel');
+    const btnResend = $('#btnResend');
+    const btnCheck  = $('#btnCheck');
+    const btnChange = $('#btnChange');
+
+    const pageContainer = $('#pageContainer');
+    const minimalMount = $('#minimalMount');
+    const minTitle = $('#minTitle');
+    const minSub = $('#minSub');
+    const minClose = $('#minClose');
+    const minGoConfig = $('#minGoConfig');
+
+    let authEmail = null;
+    let initHasRunVerification = false;
+
+    // ===== comunicação com a aba original =====
+    const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('auth') : null;
+    function notifyVerified() {
+      try { localStorage.setItem('emailVerified','true'); } catch(_){}
+      try { bc && bc.postMessage({type:'email-verified'}); } catch(_){}
+      try { window.opener && window.opener.postMessage({type:'email-verified'}, '*'); } catch(_){}
+    }
+
+    // ===== util =====
+    function setMsg(text, cls){ msg.className = cls || 'hint'; msg.textContent = text || ''; }
+    function sanitizeEmail(s){ if(!s||typeof s!=='string')return''; s=s.trim().replace(/\s+/g,''); return s.replace(/[\u200B-\u200D\uFEFF]/g,''); }
+    function isValidEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s); }
+    function readQueryEmail(){ try{ const p=new URLSearchParams(location.search); return p.get('email')||''; }catch{ return ''; } }
+    function applyEmailToUI(email){
+      if(email && isValidEmail(email)){
+        emailInput.value = email;
+        emailLabel.textContent = email;
+        emailLabel.setAttribute('title', email);
+      }else{
+        emailInput.value = '';
+        emailLabel.textContent = 'seu_email@exemplo.com';
+        emailLabel.removeAttribute('title');
+      }
+    }
+    function emailsMatch(intended, actual){
+      if(!intended || !actual) return true; // sem intended, não bloqueia
+      return intended.toLowerCase() === actual.toLowerCase();
+    }
+    function blockForMismatch(intended, actual){
+      setMsg(
+        `Você está logado como ${actual} mas solicitou verificar ${intended}. ` +
+        `Clique em “Trocar e-mail” para entrar com o e-mail correto.`,
+        'error'
+      );
+      btnResend.disabled = true;
+      btnCheck.setAttribute('aria-disabled','true');
+    }
+
+    async function ensureHeaderFooter(){
+      try{
+        await new Promise(r=>setTimeout(r, 250));
+        const headerOk = document.getElementById('app-header')?.children?.length > 0;
+        const footerOk = document.getElementById('app-footer')?.children?.length > 0;
+        if(!headerOk){
+          const h = await fetch('/assets/partials/header.html').then(r=>r.text());
+          document.getElementById('app-header').innerHTML = h;
+        }
+        if(!footerOk){
+          const f = await fetch('/assets/partials/footer.html').then(r=>r.text());
+          document.getElementById('app-footer').innerHTML = f;
+        }
+      }catch(e){}
+    }
+
+    // ====== Modo Minimal (fixo, sem auto-redirect) ======
+    function showMinimalSuccess(){
+      document.body.classList.add('is-minimal');
+      pageContainer.style.display = 'none';
+      minimalMount.style.display = 'block';
+      minTitle.textContent = '✅ E-mail verificado com sucesso';
+      minSub.innerHTML = 'Volte para a aba onde você estava fazendo seu cadastro e clique em <strong>“Já verifiquei — continuar”</strong>.';
+    }
+    function showMinimalError(text, ctaText, ctaHref){
+      document.body.classList.add('is-minimal');
+      pageContainer.style.display = 'none';
+      minimalMount.style.display = 'block';
+      minTitle.textContent = '❌ Não foi possível concluir agora';
+      minSub.textContent = text || 'Tente reenviar o e-mail e tentar novamente.';
+      minGoConfig.textContent = ctaText || 'Tentar novamente';
+      minGoConfig.setAttribute('href', ctaHref || '/verify-email.html');
+    }
+
+    // botões minimal
+    minClose?.addEventListener('click', ()=> {
+      try { window.close(); } catch(_){}
+    });
+
+    // ====== Tratamento de erro do applyActionCode ======
+    function handleApplyActionCodeError(err){
+      const code = (err && err.code) || '';
+      if (code === 'auth/expired-action-code' || code === 'auth/invalid-action-code' || code === 'auth/invalid-oob-code') {
+        showMinimalError('Link de verificação inválido ou expirado.', 'Reenviar agora', '#');
+        const onReenviar = async (e)=>{
+          e.preventDefault();
+          try{
+            const user = firebase?.auth?.currentUser || null;
+            if(!user){
+              location.href = '/pages/login.html?next=/verify-email.html';
+              return;
+            }
+            await user.reload();
+            await user.sendEmailVerification({
+              url: 'https://mei-robo-prod.web.app/verify-email.html',
+              handleCodeInApp: false
+            });
+            minSub.textContent = 'Pronto! Verifique sua caixa de entrada (e Spam).';
+          }catch(_){
+            minSub.textContent = 'Não foi possível reenviar agora. Tente novamente em instantes.';
+          }
+        };
+        document.getElementById('minGoConfig')?.addEventListener('click', onReenviar, { once: true });
+        return true;
+      }
+      return false;
+    }
+
+    // ====== Reenviar (via Firebase) ======
+    document.getElementById('resendForm').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      setMsg('Enviando...', 'hint');
+
+      const email = authEmail ? authEmail : sanitizeEmail(emailInput.value || '');
+      if(!isValidEmail(email)){ setMsg('Informe um e-mail válido.', 'error'); emailInput.focus(); return; }
+
+      btnResend.disabled = true; btnCheck.setAttribute('aria-disabled','true');
+
+      try{
+        const hasFirebase = typeof window.firebase !== 'undefined' && firebase?.auth;
+        if (!hasFirebase) throw new Error('firebase_unavailable');
+
+        const user = firebase.auth().currentUser || null;
+        if (!user || !user.email) {
+          setMsg('Faça login novamente para reenviar a verificação.', 'error');
+        } else {
+          await user.reload();
+          if (user.email !== email) { applyEmailToUI(user.email); }
+          await user.sendEmailVerification({
+            url: 'https://mei-robo-prod.web.app/verify-email.html',
+            handleCodeInApp: false
+          });
+          setMsg('Pronto! Verifique sua caixa de entrada (e Spam).', 'ok');
+        }
+      }catch(err){
+        setMsg('Erro ao reenviar pelo Firebase. Tente novamente em instantes.', 'error');
+      }finally{
+        btnResend.disabled = false; btnCheck.removeAttribute('aria-disabled');
+      }
+    });
+
+    // ====== E-mail actions (oobCode) na URL ======
+    function readActionParams(){
+      try{
+        const p = new URLSearchParams(location.search);
+        return {
+          mode:     p.get('mode') || '',
+          oobCode:  p.get('oobCode') || '',
+          apiKey:   p.get('apiKey') || '',
+          cont:     p.get('continueUrl') || p.get('cont') || '',
+          lang:     p.get('lang') || ''
+        };
+      }catch{ return { mode:'', oobCode:'', apiKey:'', cont:'', lang:'' }; }
+    }
+
+    // ====== Núcleo: checar/aplicar verificação ======
+    async function postCheckVerification(intendedEmail){
+      const hasFirebase = typeof window.firebase !== 'undefined' && firebase?.auth;
+      const act = readActionParams();
+
+      // Caso: usuário abriu o link em outra janela sem sessão
+      if (!firebase?.auth?.currentUser && act.mode === 'verifyEmail' && act.oobCode) {
+        try {
+          await firebase.auth().applyActionCode(act.oobCode);
+          notifyVerified();
+          showMinimalSuccess(); // **sem redirecionar automaticamente**
+          return;
+        } catch (err) {
+          if (!handleApplyActionCodeError(err)) {
+            showMinimalError('Não foi possível verificar agora.');
+          }
+          return;
+        }
+      }
+
+      if (!hasFirebase){
+        setMsg('Serviço de login indisponível. Recarregue a página.', 'error');
+        return;
+      }
+
+      const user = firebase.auth().currentUser || null;
+      if (!user){
+        setMsg('Entre para continuar.', 'error');
+        const a = document.createElement('a');
+        a.href = '/pages/login.html';
+        a.textContent = 'Ir para login';
+        a.style.marginLeft = '6px';
+        msg.appendChild(a);
+        return;
+      }
+
+      try{
+        await user.reload();
+
+        // Checa mismatch de e-mail
+        if (!emailsMatch(intendedEmail, user.email || '')) {
+          blockForMismatch(intendedEmail, user.email || '(sem e-mail)');
+          return;
+        }
+
+        // Se veio com oobCode e ainda não marcado como verificado, aplica
+        const act2 = readActionParams();
+        if (act2.mode === 'verifyEmail' && act2.oobCode && user.emailVerified !== true){
+          try{
+            await firebase.auth().applyActionCode(act2.oobCode);
+            await user.reload();
+          }catch(err){
+            if (handleApplyActionCodeError(err)) return;
+          }
+        }
+
+        if (user.email) {
+          authEmail = user.email;
+          applyEmailToUI(user.email);
+        }
+
+        // Bearer → backend confirma e sincroniza
+        let okBackend = false;
+        try{
+          const tok = await user.getIdToken(true);
+          const res = await fetch(API.checkStatus, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + tok, 'Accept':'application/json' }
+          });
+          okBackend = res.ok;
+        }catch(_){}
+
+        if (user.emailVerified || okBackend) {
+          notifyVerified();
+          showMinimalSuccess(); // **sem auto-redirect**
+          return;
+        }
+
+        setMsg('Ainda não detectamos a verificação. Aguarde alguns segundos e tente de novo.', 'hint');
+      }catch(err){
+        setMsg('Erro ao checar verificação. Tente novamente em instantes.', 'error');
+      }
+    }
+
+    // ====== “Já verifiquei” ======
+    btnCheck.addEventListener('click', async (e)=>{
+      e.preventDefault();
+      setMsg('', 'hint');
+      btnCheck.setAttribute('aria-disabled','true'); btnResend.disabled = true;
+      const intended = sanitizeEmail(readQueryEmail());
+      await postCheckVerification(intended);
+      btnCheck.removeAttribute('aria-disabled'); btnResend.disabled = false;
+    });
+
+    // ====== Trocar e-mail → voltar ao cadastro ======
+    btnChange.addEventListener('click', async (e)=>{
+      try{
+        e.preventDefault();
+        try{ localStorage.removeItem('uid'); localStorage.removeItem('idToken'); localStorage.removeItem('isAdmin'); }catch{}
+        if(typeof window.firebase!=='undefined' && firebase?.auth){
+          try{ await firebase.auth().signOut(); }catch{}
+        }
+      }finally{
+        location.href = '/cadastro.html';
+      }
+    });
+
+    // ====== Init ======
+    (async function init(){
+      await ensureHeaderFooter();
+
+      const intended = sanitizeEmail(readQueryEmail());
+      if(intended) applyEmailToUI(intended);
+
+      try{
+        const hasFirebase = typeof window.firebase !== 'undefined' && firebase?.auth;
+        if(hasFirebase){
+          const user = firebase.auth().currentUser || null;
+
+          if(user?.email){
+            authEmail = user.email;
+            try { await user.reload(); } catch {}
+
+            if (!emailsMatch(intended, user.email || '')) {
+              blockForMismatch(intended, user.email || '(sem e-mail)');
+            } else {
+              const act = readActionParams();
+              if (act.mode === 'verifyEmail' && act.oobCode){
+                initHasRunVerification = true;
+                await postCheckVerification(intended);
+                return;
+              }
+              setMsg('Abra o e-mail e clique no link. Depois, toque em “Já verifiquei — continuar”.', 'hint');
+            }
+          } else {
+            // usuário não logado — mesmo assim permita aplicar o código e exibir sucesso fixo
+            const act = readActionParams();
+            if (act.mode === 'verifyEmail' && act.oobCode){
+              initHasRunVerification = true;
+              await postCheckVerification(intended);
+              return;
+            }
+          }
+        }
+      }catch(e){}
+
+      emailInput.addEventListener('input', ()=> setMsg('', 'hint'));
+
+      const act = readActionParams();
+      if (!initHasRunVerification) {
+        if (act.mode === 'verifyEmail' && act.oobCode){
+          setTimeout(()=> { postCheckVerification(intended); }, 150);
+        }
+      }
+    })();
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+    if(kill.some(function(k){return t.indexOf(k);})){

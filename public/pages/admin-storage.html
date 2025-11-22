@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ADMIN — Storage Tester (MEI Robô)</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <style>
+    body { padding: 16px; max-width: 960px; margin: 0 auto; }
+    .card { border: 1px solid #333; border-radius: 14px; padding: 16px; margin: 12px 0; background: #0d0f10; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    label { font-size: 14px; opacity: .9; }
+    input, select, button { padding: 8px 10px; border-radius: 10px; border: 1px solid #333; background: #141719; color: #eee; }
+    button { cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border-bottom: 1px solid #222; padding: 8px; text-align: left; }
+    .muted { opacity: .75; font-size: 13px; }
+    .ok { color: #8ef58e; }
+    .warn { color: #ffd166; }
+    .err { color: #ff6b6b; }
+    .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid #333; }
+    .actions button { margin-right: 6px; }
+    .small { font-size: 12px; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; border: 1px solid #2a2a2a; background: #121416; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @media(min-width: 720px){ .grid { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main>
+    <h1>ADMIN — Storage Tester</h1>
+    <p class="muted">Página de administração para listar arquivos de um usuário, gerar <em>Signed URL</em> (15min) e validar thumbs/cota.</p>
+
+    <div class="card">
+      <div class="row">
+        <label for="uid">UID</label>
+        <input id="uid" placeholder="Cole o UID do usuário" style="min-width: 260px;">
+        <button id="useMyUid">Usar meu UID</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label for="year">Ano</label>
+        <select id="year"></select>
+        <label for="month">Mês</label>
+        <select id="month"></select>
+        <label for="day">Dia</label>
+        <select id="day"></select>
+        <button id="listBtn">Listar arquivos</button>
+      </div>
+      <p id="status" class="muted"></p>
+    </div>
+
+    <div class="card">
+      <h3>Arquivos</h3>
+      <table>
+        <thead>
+          <tr><th>Nome</th><th>Tamanho</th><th class="small">Caminho</th><th>Ações</th></tr>
+        </thead>
+        <tbody id="filesTbody">
+          <tr><td colspan="4" class="muted">Nenhum arquivo listado ainda.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Como funciona</h3>
+      <ol class="small">
+        <li>Selecione <b>UID</b> (ou clique em “Usar meu UID”).</li>
+        <li>Escolha <b>ano/mês/dia</b> para listar <code>users/{uid}/media/AAAA/MM/DD/</code>.</li>
+        <li>Clique em <b>Listar arquivos</b>.</li>
+        <li>Use <b>Abrir</b> para gerar uma <em>Signed URL</em> temporária e abrir em nova aba.</li>
+      </ol>
+      <p class="muted">Endpoints tentados: <code>/api/storage/signed-url</code> e fallback para <code>/storage/signed-url</code>.</p>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <!-- SDKs Firebase (compat) — precisam vir ANTES do firebase-init -->
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
+
+  <!-- Firebase init do projeto (usa os SDKs acima) -->
+  <script src="/assets/firebase-init.js"></script>
+
+  <!-- Layout (header/footer) -->
+  <script src="/assets/layout.js"></script>
+
+  <!-- Página -->
+  <script src="/assets/admin-storage.js"></script>
+</body>
+</html>

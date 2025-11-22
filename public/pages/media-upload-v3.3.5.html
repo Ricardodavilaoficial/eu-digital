@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MEI Robô — Mídia (v3.3.5)</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#0b0f14;
+      --card:#0f1720;
+      --muted:#9aa4b2;
+      --accent:#16a34a;
+      --danger:#ef4444;
+      --glass: rgba(255,255,255,0.03);
+      --input-border: rgba(255,255,255,0.06);
+      --file-bg:#0b1620;
+    }
+    html,body{height:100%}
+    body{background:var(--bg); color:#e6edf3; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; -webkit-font-smoothing:antialiased; margin:0}
+    .container{max-width:570px; margin:0 auto; padding:18px; box-sizing:border-box;}
+    @media (max-width: 640px) { .container { max-width:95%; padding:12px; } }
+    .card{background:var(--card); border:1px solid rgba(255,255,255,0.04); border-radius:12px; padding:14px}
+    .muted{color:var(--muted); font-size:0.93rem}
+    .label{font-size:0.95rem; color:#e6edf3; margin-bottom:6px; display:block}
+    .input, select, .text-small{background:var(--glass); border:1px solid var(--input-border); padding:10px 12px; border-radius:8px; color:#e6edf3; width:100%; box-sizing:border-box}
+    select.input { appearance:none; -webkit-appearance:none; -moz-appearance:none; padding-right:38px; color:#e6edf3; background:var(--glass) !important; }
+    select.input option { background: var(--card); color: #e6edf3; }
+    .btn{background:var(--accent); color:white; padding:10px 14px; border-radius:8px; border:none; cursor:pointer; font-weight:600}
+    .btn-ghost{background:transparent; border:1px solid rgba(255,255,255,0.06); color:#e6edf3; padding:8px 10px; border-radius:8px; cursor:pointer}
+    .row{display:flex; gap:12px; align-items:center}
+    .col{display:flex; flex-direction:column}
+    .file-wrap{display:flex; gap:10px; align-items:center}
+    .file-name{max-width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:0.95rem; color:#dbe7d9}
+    @media (max-width:640px){ .file-name{max-width:120px} .row{flex-direction:column; align-items:stretch} }
+    .path-preview{max-width:100%; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--muted); font-size:0.9rem}
+    .error{color:var(--danger); font-size:0.95rem}
+    .hint{color:var(--muted); font-size:0.88rem}
+    .quota-box{background:rgba(255,255,255,0.02); padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.03)}
+    .file-select-btn{background:var(--file-bg); color:#cfeee2; border:1px solid rgba(255,255,255,0.04); padding:10px 14px; border-radius:8px; cursor:pointer; display:inline-flex; gap:8px; align-items:center}
+    .file-select-btn:hover{background:#0f2229}
+    .file-select-icon{width:18px; height:18px; display:inline-block; transform:translateY(-1px)}
+    .subtle{color:var(--muted); font-size:13px}
+    .sr-only{position:absolute; left:-10000px; top:auto; width:1px; height:1px; overflow:hidden;}
+    .support-link{color:#9ad7c4; text-decoration:underline; cursor:pointer}
+    .actions-row{display:flex; gap:8px; align-items:center}
+    .small-ghost{padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,0.04); background:transparent; color:#e6edf3; cursor:pointer; font-size:13px}
+    .modal-backdrop{position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:1000}
+    .modal{background:var(--card); padding:18px; border-radius:10px; max-width:520px; width:100%; border:1px solid rgba(255,255,255,0.04)}
+    .modal h3{margin:0 0 8px 0}
+    .placeholder-box{border:1px dashed rgba(255,255,255,0.04); padding:12px; border-radius:8px; color:var(--muted); font-size:0.95rem}
+    .thumb{width:96px; height:96px; border-radius:8px; object-fit:cover; border:1px solid rgba(255,255,255,0.06)}
+    /* fundo quadriculado sutil p/ miniaturas escuras/transparências */
+    .thumb, img[data-signed-src] {
+    background:
+    conic-gradient(#111 25%, transparent 0 50%, #111 0 75%, transparent 0) 0 0/16px 16px,
+    #0b0f14;
+}
+
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div id="root"></div>
+  </div>
+
+  <script type="text/babel">
+  const { useState, useEffect, useMemo } = React;
+
+  const CANARY_UID = 'V4eFP2bNdXNtQz2Eh4PxpwHNLOP2'; // canário local (validate mode)
+  const ALLOWED_MIMES = ['image/jpeg','image/png','image/webp','image/gif','application/pdf','video/mp4'];
+  const LIMITS = { default: 15 * 1024 * 1024, mp4: 25 * 1024 * 1024 };
+
+  function isValidateMode(){ try{ return new URLSearchParams(window.location.search).has('validate') }catch{ return false } }
+  function slugify(text){ return text.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,''); }
+  function shortId(len=6){ return Math.random().toString(36).slice(2, 2+len); }
+  function todayPath(){ const d=new Date(); const yyyy=d.getFullYear(); const mm=String(d.getMonth()+1).padStart(2,'0'); const dd=String(d.getDate()).padStart(2,'0'); return `${yyyy}/${mm}/${dd}`; }
+  function formatBytes(b){ if (!b && b!==0) return '0 B'; const u=['B','KB','MB','GB']; let i=0, val=b; while(val>=1024 && i<u.length-1){ val/=1024; i++; } const fixed = val>=100?0: val>=10?1:2; return `${val.toFixed(fixed)} ${u[i]}`; }
+
+  const DEFAULT_SERVICES = [
+    { slug: 'corte', name: 'Corte' },
+    { slug: 'luzes', name: 'Luzes' },
+    { slug: 'morena-luminosa', name: 'Morena Luminosa' },
+    { slug: 'barba', name: 'Barba' },
+    { slug: 'pintura-parede', name: 'Pintura de parede' },
+    { slug: 'mecanica-troca-oleo', name: 'Troca de óleo (mecânico)' }
+  ];
+
+  function MediaUploadV335(){
+    const validate = isValidateMode();
+    const [user] = useState(validate ? { uid: CANARY_UID, name: 'Canário (preview)' } : null);
+    const [services] = useState(DEFAULT_SERVICES);
+    const [title, setTitle] = useState('');
+    const [service, setService] = useState('');
+    const [file, setFile] = useState(null);
+    const [error, setError] = useState(null);
+    const [progress, setProgress] = useState(0);
+    const [recent, setRecent] = useState([]);
+    const [quota, setQuota] = useState({ limitBytes: 2147483648, bytesUsed: Math.floor(2147483648*0.65), filesCount: 128 });
+
+    const [editModalOpen, setEditModalOpen] = useState(false);
+    const [editingItem, setEditingItem] = useState(null);
+    const [replaceTarget, setReplaceTarget] = useState(null);
+
+    useEffect(()=>{ if (validate && !localStorage.getItem('MEDIA_V1')) localStorage.setItem('MEDIA_V1','on'); },[]);
+    const canUse = useMemo(()=> { if (!user) return false; const flag = localStorage.getItem('MEDIA_V1') === 'on'; return flag && user.uid === CANARY_UID; }, [user]);
+
+    function validateFile(f){
+      if (!f) return 'Selecione um arquivo';
+      if (!ALLOWED_MIMES.includes(f.type)) return 'Tipo não permitido. Use imagem (jpg/png/webp/gif), PDF ou vídeo MP4.';
+      const limit = f.type === 'video/mp4' ? LIMITS.mp4 : LIMITS.default;
+      if (f.size > limit) return `Arquivo maior que o permitido (${formatBytes(limit)}).`;
+      if (quota.bytesUsed >= quota.limitBytes) return 'Cota completa — apague arquivos antigos ou atualize o plano.';
+      return null;
+    }
+
+    function handleChooseRaw(e){
+      setError(null);
+      const f = e.target.files?.[0] || null;
+      if (!f){ setFile(null); return; }
+      const v = validateFile(f);
+      if (v){ setError(v); setFile(null); return; }
+      setFile(f);
+    }
+
+    function handleTriggerChoose(){ const inp = document.getElementById('hiddenFileInput'); if (inp) inp.click(); }
+
+    function suggestedPathFor(titleVal, originalName){
+      const slug = slugify(titleVal || originalName || 'sem-nome');
+      const id = shortId(6);
+      const ext = (originalName && originalName.split('.').pop()) || 'jpg';
+      return `users/${CANARY_UID}/media/${todayPath()}/${slug}-${id}.${ext}`;
+    }
+
+    function mockUpload(file, onProgress){
+      return new Promise((resolve)=>{
+        const total = file.size || (1024*500);
+        let uploaded = 0;
+        const step = Math.max(1024*40, Math.round(total/40));
+        const t = setInterval(()=>{
+          uploaded += step;
+          if (uploaded > total) uploaded = total;
+          onProgress(Math.round((uploaded/total)*100));
+          if (uploaded >= total){
+            clearInterval(t);
+            setTimeout(()=> resolve({ ok:true }), 120);
+          }
+        }, 50);
+      });
+    }
+
+    async function refreshSignedThumbs(){
+      try {
+        if (window.__initSignedPreviews) {
+          await window.__initSignedPreviews(document);
+        }
+      } catch (e) {
+        console.debug('signed previews refresh:', e?.message || e);
+      }
+    }
+    useEffect(()=>{ refreshSignedThumbs(); }, [recent]);
+
+    async function handleUpload(){
+      setError(null);
+      if (!title?.trim()) { setError('Preencha o título, ex.: Morena Luminosa — antes'); return; }
+      if (!service) { setError('Escolha o serviço relacionado'); return; }
+      if (!file) { setError('Selecione um arquivo'); return; }
+      const v = validateFile(file);
+      if (v){ setError(v); return; }
+
+      try {
+        setProgress(1);
+        const slug = slugify(title);
+               const id = shortId(6);
+        const ext = (file.name.split('.').pop() || 'jpg');
+        const storagePath = `users/${(user?.uid)||CANARY_UID}/media/${todayPath()}/${slug}-${id}.${ext}`;
+
+        await mockUpload(file, p=> setProgress(p));
+        setQuota(q => ({ ...q, bytesUsed: q.bytesUsed + file.size, filesCount: q.filesCount + 1 }));
+        const newItem = { id: shortId(8), name: file.name, path: storagePath, size: file.size, title: title.trim(), service, createdAt: new Date().toISOString() };
+        setRecent(r=> [newItem, ...r]);
+        setFile(null); setProgress(0); setTitle(''); setService('');
+      } catch(err){
+        console.error(err); setError('Erro no upload'); setProgress(0);
+      }
+    }
+
+    function openEdit(item){ setEditingItem({...item}); setEditModalOpen(true); }
+    function saveEdit(){
+      if (!editingItem.title?.trim()){ alert('Título não pode ficar vazio'); return; }
+      setRecent(r => r.map(it => it.id === editingItem.id ? {...it, title: editingItem.title, service: editingItem.service} : it));
+      setEditModalOpen(false); setEditingItem(null);
+    }
+
+    function handleDelete(item){
+      if (!confirm('Tem certeza? Apagar remove o arquivo do seu armazenamento (não dá para desfazer).')) return;
+      setRecent(r => r.filter(x=> x !== item));
+      setQuota(q => ({ ...q, filesCount: Math.max(0, q.filesCount-1), bytesUsed: Math.max(0, q.bytesUsed - item.size) }));
+    }
+
+    function triggerReplace(itemId){
+      setReplaceTarget(itemId);
+      const inp = document.getElementById('replaceFileInput');
+      if (inp) inp.click();
+    }
+    async function handleReplaceRaw(e){
+      const f = e.target.files?.[0] || null;
+      if (!f) return;
+      const v = validateFile(f);
+      if (v){ alert(v); return; }
+      const targetId = replaceTarget;
+      if (!targetId){ alert('Target not found'); return; }
+      try {
+        await mockUpload(f, ()=>{});
+        setRecent(r => r.map(it => {
+          if (it.id !== targetId) return it;
+          const slug = slugify(it.title || it.name);
+          const id = shortId(6);
+          const ext = (f.name.split('.').pop() || 'jpg');
+          const newPath = `users/${(user?.uid)||CANARY_UID}/media/${todayPath()}/${slug}-${id}.${ext}`;
+          return {...it, name: f.name, path: newPath, size: f.size, createdAt: new Date().toISOString()};
+        }));
+        setQuota(q => ({ ...q, bytesUsed: q.bytesUsed + f.size, filesCount: q.filesCount }));
+        alert('Arquivo substituído (preview)');
+      } catch(err){
+        console.error(err); alert('Falha ao substituir (preview)');
+      } finally {
+        setReplaceTarget(null);
+        const inp = document.getElementById('replaceFileInput');
+        if (inp) inp.value = '';
+      }
+    }
+
+    function copyPathForSupport(item){
+      const ok = confirm('Mostrar caminho técnico? Só faça isto se for suporte.');
+      if (!ok) return;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(item.path).then(()=> alert('Caminho copiado (compartilhe apenas com suporte).'));
+      } else alert(item.path);
+    }
+
+    return (
+      <div className="space-y-4">
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+          <div>
+            <h2 style={{margin:0, fontSize:'1.15rem'}}>Configuração → Mídia</h2>
+            <div className="muted" style={{marginTop:6}}>Envie imagens, PDFs ou vídeos curtos. Dê um título fácil de achar.</div>
+          </div>
+          <div className="muted">Preview seguro</div>
+        </div>
+
+        {!user && (
+          <div className="card">
+            <div style={{fontWeight:600}}>Faça login</div>
+            <div className="muted" style={{marginTop:6}}>
+              Para ver as miniaturas seguras, entre com sua conta. O preview usa URL assinada com expiração curta.
+            </div>
+          </div>
+        )}
+
+        {user && (
+          <>
+            {(!canUse) && (
+              <div className="card">
+                <div style={{fontWeight:600}}>Recurso em teste (canário)</div>
+                <div className="muted" style={{marginTop:6}}>Ative no console: <code>localStorage.setItem('MEDIA_V1','on')</code></div>
+              </div>
+            )}
+
+            {canUse && (
+              <div className="card">
+                <div style={{display:'grid', gridTemplateColumns:'1fr 200px', gap:12}}>
+                  <div>
+                    <label className="label">Título <span className="muted" style={{fontSize:12}}> (como quer achar depois)</span></label>
+                    <input className="input" value={title} onChange={e=> setTitle(e.target.value)} placeholder="Ex.: Morena Luminosa — antes" />
+                  </div>
+
+                  <div>
+                    <label className="label">Serviço</label>
+                    <select className="input" value={service} onChange={e=> setService(e.target.value)}>
+                      <option value="">— escolha —</option>
+                      {services.map(s=> <option key={s.slug} value={s.slug}>{s.name}</option>)}
+                    </select>
+                    <div className="subtle" style={{marginTop:8}}>Não encontrou o serviço? Abra a tela "Preços" e clique em "Adicionar serviço". Depois volte aqui.</div>
+                  </div>
+                </div>
+
+                <div style={{marginTop:12}} className="file-wrap">
+                  <div style={{display:'flex', gap:12, alignItems:'center', flex:1}}>
+                    <button type="button" className="file-select-btn" onClick={handleTriggerChoose} aria-haspopup="dialog">
+                      <svg className="file-select-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 3v10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M5 12l7-9 7 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M21 21H3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      <span style={{fontWeight:600}}>Arquivo</span>
+                    </button>
+
+                    <div className="file-name" title={file ? file.name : ''}>{ file ? file.name : 'Nenhum arquivo selecionado' }</div>
+                    <input id="hiddenFileInput" className="sr-only" type="file" onChange={handleChooseRaw} />
+                  </div>
+
+                  <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                    <button className="btn" onClick={handleUpload}>Enviar</button>
+                  </div>
+                </div>
+
+                {file && (
+                  <div style={{marginTop:10}}>
+                    <div className="quota-box">
+                      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                        <div style={{fontSize:14}}><strong>{file.name}</strong></div>
+                        <div className="muted">{formatBytes(file.size)}</div>
+                      </div>
+                      <div style={{marginTop:8, height:8, background:'rgba(255,255,255,0.04)', borderRadius:6, overflow:'hidden'}}>
+                        <div style={{height:8, background:'#0ea5a0', width: (progress>0?progress:0) + '%', transition:'width .2s'}}></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {error && <div style={{marginTop:8}} className="error">{error}</div>}
+
+                <div style={{marginTop:12}} className="muted">Dica: nomeie a foto com o serviço. Ex.: “Morena Luminosa — antes”. Tipos: jpg, png, webp, gif, pdf, mp4. Máx: imagens/PDF 15MB, vídeo MP4 25MB.</div>
+              </div>
+            )}
+          </>
+        )}
+
+        <div className="card">
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <div>
+              <div style={{fontWeight:600}}>Quota</div>
+              <div className="muted" style={{marginTop:6}}>Usado: {formatBytes(quota.bytesUsed)} / {formatBytes(quota.limitBytes)} • arquivos: {quota.filesCount}</div>
+            </div>
+            <div><button className="btn-ghost" onClick={()=> alert('Logs de upload (preview)')}>Ver logs</button></div>
+          </div>
+        </div>
+
+        <div>
+          <h3 style={{marginBottom:6}}>Uploads recentes (preview)</h3>
+          {recent.length === 0 ? (
+            <div className="placeholder-box">Nenhum arquivo enviado ainda. Clique em <strong>Arquivo</strong> para anexar foto, PDF ou vídeo curto.</div>
+          ) : (
+            <div style={{display:'grid', gap:8}}>
+              {recent.map((r)=> (
+                <div key={r.id} className="card row" style={{justifyContent:'space-between', alignItems:'center'}}>
+                  {/* MINIATURA SEGURA (Signed URL) */}
+                  <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:6}}>
+                    <img className="thumb"
+                         data-signed-src={r.path}
+                         alt="miniatura do arquivo" />
+                    <div className="subtle">Se a miniatura não aparecer, clique em “Abrir imagem”.</div>
+                  </div>
+
+                  <div style={{minWidth:0, flex:1}}>
+                    <div style={{display:'flex', alignItems:'center', gap:8}}>
+                      <div style={{fontWeight:700, minWidth:0}}>{r.title}</div>
+                      <div className="muted" style={{fontSize:12}}>{r.name}</div>
+                    </div>
+                    <div className="muted" style={{marginTop:6}}>{new Date(r.createdAt).toLocaleString()} • {formatBytes(r.size)}</div>
+
+                    {/* Link seguro para abrir (o script converte data-signed-src em href) */}
+                    <div style={{marginTop:8, display:'flex', gap:8}}>
+                      <a className="small-ghost" data-signed-src={r.path} target="_blank" rel="noopener">🔎 Abrir imagem</a>
+                    </div>
+                  </div>
+
+                  <div className="actions-row" style={{marginLeft:8}}>
+                    <button className="small-ghost" title="Editar título/serviço" onClick={()=> openEdit(r)}>✏️ Editar</button>
+                    <button className="small-ghost" title="Substituir arquivo" onClick={()=> triggerReplace(r.id)}>🔁 Trocar</button>
+                    <button className="small-ghost" title="Copiar caminho técnico (apenas suporte)" onClick={()=> copyPathForSupport(r)}>🔗 Copiar caminho</button>
+                    <button className="small-ghost" title="Apagar" onClick={()=> handleDelete(r)} style={{color:'#f97373'}}>🗑️ Apagar</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <input id="replaceFileInput" className="sr-only" type="file" onChange={handleReplaceRaw} />
+
+        {editModalOpen && editingItem && (
+          <div className="modal-backdrop" onClick={()=> { setEditModalOpen(false); setEditingItem(null); }}>
+            <div className="modal" onClick={e=> e.stopPropagation()}>
+              <h3>Editar detalhes do arquivo</h3>
+              <div style={{marginTop:8}}>
+                <label className="label">Título</label>
+                <input className="input" value={editingItem.title} onChange={e=> setEditingItem({...editingItem, title: e.target.value})} />
+              </div>
+              <div style={{marginTop:8}}>
+                <label className="label">Serviço</label>
+                <select className="input" value={editingItem.service} onChange={e=> setEditingItem({...editingItem, service: e.target.value})}>
+                  <option value="">— escolha —</option>
+                  {services.map(s=> <option key={s.slug} value={s.slug}>{s.name}</option>)}
+                </select>
+              </div>
+
+              <div style={{display:'flex', justifyContent:'flex-end', gap:8, marginTop:12}}>
+                <button className="btn-ghost" onClick={()=> { setEditModalOpen(false); setEditingItem(null); }}>Cancelar</button>
+                <button className="btn" onClick={saveEdit}>Salvar</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<MediaUploadV335 />);
+  </script>
+
+  <!-- Liga o resolvedor de Signed URLs -->
+  <script type="module">
+    import { initSignedPreviews } from "/js/signed-url.js";
+    window.__initSignedPreviews = initSignedPreviews;
+    document.addEventListener("DOMContentLoaded", () => initSignedPreviews());
+  </script>
+</body>
+</html>

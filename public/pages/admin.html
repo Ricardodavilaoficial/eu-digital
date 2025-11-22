@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Administrador — MEI Robô (v1.0.4)</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=2025-09-10T133807" />
+  <meta http-equiv="Cache-Control" content="no-store, max-age=0, must-revalidate" />
+  <style>
+    :root{
+      --card-bg:#0f1513; --card-br:#1d2b26; --muted:#9fb0aa; --soft:#cfe3dc; --accent:#00a884;
+      --danger:#d9534f; --ok:#2ecc71; --warn:#f1c40f;
+    }
+    body{background:#0b1210;color:#f0f6f4;font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";}
+    .container{max-width:1100px;margin:0 auto;padding:16px 16px 64px;}
+    h1{font-size:1.6rem;margin:10px 0 6px;}
+    .subtitle{color:var(--muted);font-size:.95rem;margin-bottom:16px;line-height:1.45}
+    .grid{display:grid;gap:12px;}
+    @media(min-width:640px){.grid{grid-template-columns:repeat(2,1fr);}}
+    @media(min-width:1100px){.grid{grid-template-columns:repeat(3,1fr);}}
+    .card{background:var(--card-bg);border:1px solid var(--card-br);border-radius:16px;padding:14px;box-shadow:0 2px 12px rgba(0,0,0,.25);min-height:120px;display:flex;flex-direction:column;justify-content:space-between}
+    .card h3{font-size:1.05rem;margin:2px 0 8px;}
+    .kpis{display:flex;gap:10px;flex-wrap:wrap}
+    .kpi{background:#0a1a16;border:1px solid #17332c;border-radius:12px;padding:10px 12px;min-width:110px;flex:1}
+    .kpi .label{font-size:.8rem;color:var(--muted);}
+    .kpi .value{font-size:1.1rem;margin-top:4px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .btn{appearance:none;border:1px solid #1d2b26;background:#0a1a16;color:#e9fffa;border-radius:12px;padding:9px 12px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:8px;font-size:.95rem}
+    .btn:hover{filter:brightness(1.1)}
+    .btn-primary{background:var(--accent);border-color:#0c8d6e;color:#03241f}
+    .btn.disabled,[data-disabled="true"]{opacity:.6;cursor:not-allowed;pointer-events:none}
+    .badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:.75rem;border:1px solid #2a3a35;background:#0a1a16;color:#cfe3dc}
+    .badge.ok{border-color:#20563f;color:#bff1d8;background:#0e2a22}
+    .badge.warn{border-color:#6a5f20;color:#fff3b0;background:#2a260e}
+    .badge.off{border-color:#5c3a3a;color:#ffd4d4;background:#2a0e0e}
+    .footer-note{margin-top:18px;color:#9fb0aa;font-size:.85rem}
+    .admin-chip{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #1d2b26;background:#0a1310;position:sticky;top:0;z-index:40}
+    .is-admin-shell .only-public{display:none !important}
+    .is-admin-shell .only-admin{display:inherit !important}
+  </style>
+  <script>
+    // Força loader de layout a recarregar parciais (caderno #46)
+    window.__forceLayout = true;
+  </script>
+  <script src="/assets/layout.js?v=2025-09-10T133807" defer></script>
+</head>
+<body class="app-shell">
+  <!-- Fallbacks mínimos -->
+  <div id="fallback-header" style="display:none;padding:10px 12px;border-bottom:1px solid #1d2b26;background:#0a1310">
+    <strong>MEI Robô</strong> — Cabeçalho (fallback)
+  </div>
+
+  <main class="app-main">
+    <div class="admin-chip" id="admin-chip" style="display:none">
+      <span class="badge">Admin</span>
+      <span style="color:#9fb0aa;font-size:.85rem">Navegação filtrada para administrador.</span>
+    </div>
+
+    <div class="container">
+      <h1>Administrador</h1>
+      <p class="subtitle">Acompanhe números básicos do sistema e ative ações simples. Estados vazios são normais no início.</p>
+
+      <section class="card" id="card-health">
+        <div>
+          <h3>Saúde do Sistema</h3>
+          <div class="kpis">
+            <div class="kpi"><div class="label">Backend (Render)</div><div class="value"><span id="health-backend" class="badge">Em validação</span></div></div>
+            <div class="kpi"><div class="label">Firestore (ping)</div><div class="value"><span id="health-fs" class="badge">Em validação</span></div></div>
+            <div class="kpi"><div class="label">Webhook (WABA)</div><div class="value"><span id="health-webhook" class="badge">Em validação</span></div></div>
+          </div>
+        </div>
+        <div style="color:#9fb0aa;font-size:.8rem">Sinal leve, sem backend novo. Futuro: /healthz real com dependências.</div>
+      </section>
+
+      <div class="section">
+        <div class="grid">
+          <section class="card" id="card-users">
+            <div>
+              <h3>Usuários</h3>
+              <div class="kpis">
+                <div class="kpi"><div class="label">Ativos</div><div class="value" id="users-ativos">—</div></div>
+                <div class="kpi"><div class="label">Novos (7 dias)</div><div class="value" id="users-novos">—</div></div>
+                <div class="kpi"><div class="label">Inativos (14 dias)</div><div class="value" id="users-inativos">—</div></div>
+                <div class="kpi"><div class="label">Cancelados</div><div class="value" id="users-cancelados">—</div></div>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="btn" id="btn-export-users" data-disabled="true" title="Em breve: exportar para CSV direto no navegador.">Exportar CSV</button>
+            </div>
+          </section>
+
+          <section class="card" id="card-usage">
+            <div>
+              <h3>Uso (aprox.)</h3>
+              <div class="kpis">
+                <div class="kpi"><div class="label">Mensagens (hoje)</div><div class="value" id="usage-msgs-hoje">—</div></div>
+                <div class="kpi"><div class="label">DAU</div><div class="value" id="usage-dau">—</div></div>
+                <div class="kpi"><div class="label">WAU</div><div class="value" id="usage-wau">—</div></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card" id="card-coupons">
+            <div>
+              <h3>Cupons</h3>
+              <div class="kpis">
+                <div class="kpi"><div class="label">Emitidos</div><div class="value" id="cup-emitidos">—</div></div>
+                <div class="kpi"><div class="label">Ativos</div><div class="value" id="cup-ativos">—</div></div>
+                <div class="kpi"><div class="label">Resgatados</div><div class="value" id="cup-resgatados">—</div></div>
+              </div>
+            </div>
+            <div class="actions">
+              <a class="btn btn-primary" href="/pages/admin-cupons.html">Abrir Admin de Cupons</a>
+              <a class="btn" href="/pages/admin-cupons.html#gerar">Gerar Cupom</a>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Atalhos rápidos</h3>
+        <div class="actions">
+          <a class="btn" href="/pages/admin-cupons.html">Cupons</a>
+          <a class="btn" href="/pages/dashboard.html">Dashboard (usuário)</a>
+          <a class="btn" href="/pages/agenda.html">Agenda</a>
+          <a class="btn only-admin" href="https://dashboard.render.com/" target="_blank" rel="noopener">Render Logs</a>
+          <a class="btn only-admin" href="https://console.firebase.google.com/" target="_blank" rel="noopener">Firestore Console</a>
+          <a class="btn only-admin" href="/" target="_blank" rel="noopener">Backend (Onrender)</a>
+        </div>
+      </div>
+
+      <p class="footer-note">Estados vazios são esperados no início. Assim que os primeiros usuários entrarem, os números aparecem aqui.</p>
+    </div>
+  </main>
+
+  <div id="fallback-footer" style="display:none;padding:10px 12px;border-top:1px solid #1d2b26;background:#0a1310;color:#9fb0aa;text-align:center">
+    Rodapé (fallback) — © 2025 MEI Robô
+  </div>
+
+  <!-- Firebase/App init (existentes no projeto) -->
+  <script src="/assets/firebase-init.js?v=2025-09-10T133807"></script>
+  <script src="/assets/backend-patch.js?v=2025-09-10T133807"></script>
+
+  <script type="module">
+    /*
+      Diretriz: manter o que funciona; segurança por padrão; validar admin no backend; no-store.
+    */
+    const qs = new URLSearchParams(location.search);
+    const isValidateMode = qs.get('validate') === '1';
+    const $ = (id)=> document.getElementById(id);
+    const setText = (id, v) => { const n = $(id); if(n) n.textContent = v; };
+
+    // --- Header/Footer fallback (caderno #46) ---
+    const headerSelectors = ['header','#app-header','[data-header]','[role="banner"]'];
+    const footerSelectors = ['footer','#app-footer','[data-footer]','[role="contentinfo"]'];
+    function findAny(selectors) { for (const sel of selectors) { const el = document.querySelector(sel); if (el) return el; } return null; }
+    async function fetchPartial(url) {
+      try {
+        const res = await fetch(url, { cache:'no-store' });
+        if(!res.ok) return null;
+        return await res.text();
+      } catch { return null; }
+    }
+    async function injectFallbacks() {
+      const TS = '2025-09-10T133807';
+      // Header
+      if(!findAny(headerSelectors)) {
+        const html = await fetchPartial(`/partials/header.html?v=${TS}`);
+        if(html) {
+          const div = document.createElement('div'); div.innerHTML = html;
+          const node = div.firstElementChild || div;
+          document.body.insertAdjacentElement('afterbegin', node);
+          const fb = document.getElementById('fallback-header'); if(fb) fb.style.display='none';
+        } else {
+          const fb = document.getElementById('fallback-header'); if(fb) fb.style.display='block';
+        }
+      }
+      // Footer
+      if(!findAny(footerSelectors)) {
+        const html = await fetchPartial(`/partials/footer.html?v=${TS}`);
+        if(html) {
+          const div = document.createElement('div'); div.innerHTML = html;
+          const node = div.firstElementChild || div;
+          document.body.insertAdjacentElement('beforeend', node);
+          const ff = document.getElementById('fallback-footer'); if(ff) ff.style.display='none';
+        } else {
+          const ff = document.getElementById('fallback-footer'); if(ff) ff.style.display='block';
+        }
+      }
+    }
+    setTimeout(injectFallbacks, 1200);
+    const mo = new MutationObserver(() => {
+      const h = findAny(headerSelectors);
+      const f = findAny(footerSelectors);
+      if(h) { const fb = document.getElementById('fallback-header'); if(fb) fb.style.display='none'; }
+      if(f) { const ff = document.getElementById('fallback-footer'); if(ff) ff.style.display='none'; }
+    });
+    mo.observe(document.documentElement, { childList:true, subtree:true });
+
+    // --- Admin shell toggle (UI) ---
+    function applyAdminShellToggle() {
+      const isAdmin = (localStorage.getItem('isAdmin') === '1');
+      const inAdminPage = location.pathname.includes('/pages/admin');
+      if(isValidateMode || (isAdmin && inAdminPage)) {
+        document.documentElement.classList.add('is-admin-shell');
+        const chip = $('admin-chip'); if(chip) chip.style.display = 'flex';
+      }
+    }
+
+    // --- Elevação automática visual (se admins/{uid} existir) ---
+    function elevateAdminFromFirestore() {
+      const FNS = window.firebase && window.firebase.firestore;
+      const auth = window.firebase && window.firebase.auth && window.firebase.auth();
+      if(!FNS || !window.db || !auth) return;
+
+      auth.onAuthStateChanged(async (user) => {
+        if(!user) return;
+        const uid = user.uid;
+        try {
+          const snap = FNS.getDoc ? await FNS.getDoc(FNS.doc(window.db, 'admins', uid)) : null;
+          if(snap && (snap.exists ? snap.exists() : snap.exists)) {
+            localStorage.setItem('isAdmin','1');
+            localStorage.setItem('uid', uid);
+            applyAdminShellToggle();
+          }
+        } catch {}
+      });
+    }
+
+    function requireAdminOrRedirect(){
+      if(isValidateMode) return true;
+      try {
+        const isAdmin = (localStorage.getItem('isAdmin') === '1');
+        const uid = localStorage.getItem('uid');
+        if(!isAdmin || !uid) { location.href = '/pages/login.html'; return false; }
+        return true;
+      } catch(e) { location.href = '/pages/login.html'; return false; }
+    }
+
+    // --- NOVO: Validação forte no backend (/admin/ping) ---
+    async function verifyAdminWithBackend(){
+      if(isValidateMode) return true; // modo demo
+      const backend = (window.BACKEND_BASE_URL || 'https://mei-robo-prod.onrender.com').replace(/\/+$/,'');
+      try {
+        // backend-patch.js já anexa Authorization: Bearer <idToken>
+        const r = await fetch(`${backend}/admin/ping`, { method:'GET', credentials:'include' });
+        if (r.ok) return true;
+        // 401/403 → login
+        location.href = '/pages/login.html';
+        return false;
+      } catch {
+        // Falha de rede: mantém requireAdminOrRedirect como salvaguarda
+        return requireAdminOrRedirect();
+      }
+    }
+
+    // --- Validate demo data ---
+    async function loadValidateData(){
+      setText('users-ativos', '8'); setText('users-novos', '3'); setText('users-inativos', '1'); setText('users-cancelados', '0');
+      setText('usage-msgs-hoje', '41'); setText('usage-dau', '6'); setText('usage-wau', '14');
+      setText('cup-emitidos', '11'); setText('cup-ativos', '5'); setText('cup-resgatados', '3');
+      const b1 = $('#health-backend'); b1?.classList.add('ok'); b1.textContent = 'Online (demo)';
+      const b2 = $('#health-fs'); b2?.classList.add('ok'); b2.textContent = 'OK (demo)';
+      const b3 = $('#health-webhook'); b3?.classList.add('warn'); b3.textContent = 'Sem eventos (demo)';
+      console.info('Header/Footer OK (validate)');
+    }
+
+    // --- Saúde leve ---
+    async function loadHealthLight(){
+      try {
+        const backendURL = (window.BACKEND_BASE_URL || '/');
+        const ctl = new AbortController(); const t = setTimeout(()=>ctl.abort(), 2500);
+        let label='Em validação', css=null;
+        try { await fetch(backendURL, {method:'GET', mode:'no-cors', signal:ctl.signal}); label='Respondendo'; css='ok'; }
+        catch(e) { label='Offline/Timeout'; css='off'; }
+        finally { clearTimeout(t); }
+        const b = $('#health-backend'); if(b) { b.textContent = label; if(css) b.classList.add(css); }
+      }catch{}
+
+      try {
+        if(window.db && window.firebase?.firestore) {
+          const F = window.firebase.firestore;
+          const t0 = performance.now();
+          let label='Em validação', css=null;
+          try {
+            const cRef = F.collection(window.db, 'profissionais');
+            await F.getCountFromServer(cRef);
+            const dt = performance.now()-t0;
+            if(dt<1500) { label='OK'; css='ok'; }
+            else if(dt<4000) { label='Lento'; css='warn'; }
+            else { label='Muito lento'; css='off'; }
+          } catch { label='Sem acesso'; css='off'; }
+          const b2 = $('#health-fs'); if(b2) { b2.textContent = label; if(css) b2.classList.add(css); }
+        }
+      }catch{}
+
+      try {
+        if(window.db && window.firebase?.firestore) {
+          const F = window.firebase.firestore;
+          const audits = F.collection(window.db,'audits');
+          const since = new Date(Date.now()-24*60*60*1000);
+          const q = F.query(audits, F.where('ts','>=', F.Timestamp.fromDate(since)));
+          let css='warn', label='Sem eventos recentes';
+          try { const n=(await F.getCountFromServer(q)).data().count||0; if(n>0) { css='ok'; label='OK (últimas 24h)'; } } catch {}
+          const b3 = $('#health-webhook'); if(b3) { b3.textContent = label; b3.classList.add(css); }
+        }
+      }catch{}
+    }
+
+    // --- KPIs (read-only) ---
+    async function loadKPIs(){
+      if(!window.firebase || !window.db || !window.firebase.firestore) return;
+      const DB = window.db, F = window.firebase.firestore;
+      const ts = (d)=>F.Timestamp.fromDate(d);
+      const now = new Date(); const daysAgo=(n)=>ts(new Date(now.getTime()-n*86400000));
+      try {
+        const profRef = F.collection(DB,'profissionais');
+        try { setText('users-ativos', String((await F.getCountFromServer(F.query(profRef, F.where('status','==','ativo')))).data().count ?? '—')); } catch {}
+        try { setText('users-novos', String((await F.getCountFromServer(F.query(profRef, F.where('createdAt','>=', daysAgo(7))))).data().count ?? '—')); } catch {}
+        try { setText('users-inativos', String((await F.getCountFromServer(F.query(profRef, F.where('lastActiveAt','<=', daysAgo(14))))).data().count ?? '—')); } catch {}
+        try { setText('users-cancelados', String((await F.getCountFromServer(F.query(profRef, F.where('status','in',['cancelado','cancelled'])))).data().count ?? '—')); } catch {}
+      } catch {} 
+      try {
+        const auditsRef = F.collection(DB,'audits');
+        try { 
+          const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          const end = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1);
+          setText('usage-msgs-hoje', String((await F.getCountFromServer(F.query(auditsRef, F.where('event','in',['sent','queued']), F.where('ts','>=', ts(start)), F.where('ts','<', ts(end))))).data().count ?? '—'));
+        } catch {} 
+        try { setText('usage-dau', String((await F.getCountFromServer(F.query(auditsRef, F.where('ts','>=', daysAgo(1))))).data().count ?? '—')); } catch {} 
+        try { setText('usage-wau', String((await F.getCountFromServer(F.query(auditsRef, F.where('ts','>=', daysAgo(7))))).data().count ?? '—')); } catch {} 
+      } catch {} 
+      try {
+        const cupRef = F.collection(DB,'cuponsAtivacao');
+        try { setText('cup-emitidos', String((await F.getCountFromServer(cupRef)).data().count ?? '—')); } catch {} 
+        try { setText('cup-ativos', String((await F.getCountFromServer(F.query(cupRef, F.where('validUntil','>=', ts(now))))).data().count ?? '—')); } catch {} 
+        try { setText('cup-resgatados', String((await F.getCountFromServer(F.query(cupRef, F.where('status','==','resgatado')))).data().count ?? '—')); } catch {} 
+      } catch {} 
+    }
+
+    (async function start(){
+      // UI: elevação visual e toggle (não é segurança)
+      elevateAdminFromFirestore();
+      applyAdminShellToggle();
+
+      // Gate leve de storage + validação forte no backend
+      if(!requireAdminOrRedirect()) return;
+      const ok = await verifyAdminWithBackend();
+      if(!ok) return; // já redirecionou
+
+      try {
+        if(isValidateMode) { await loadValidateData(); }
+        else { await loadKPIs(); await loadHealthLight(); }
+      } catch(e) { console.error('Admin: erro ao carregar', e); }
+    })();
+  </script>
+</body>
+</html>

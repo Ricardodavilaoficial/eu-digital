@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Contatos e Consentimento — MEI Robô</title>
+
+  <link rel="stylesheet" href="/assets/styles.css" />
+
+  <!-- Firebase SDK v8 — ORDEM IMPORTA (carregar no <head>) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
+
+  <!-- Inicialização DEFAULT do projeto (sem defer para estar pronto no load) -->
+  <script src="/assets/firebase-init.js"></script>
+
+  <style>
+    :root{
+      --text-strong: rgba(255,255,255,.92);
+      --text-soft: rgba(255,255,255,.80);
+      --placeholder: rgba(255,255,255,.55);
+      --card-bg: rgba(255,255,255,.04);
+      --card-bd: rgba(255,255,255,.08);
+      --ok:#1bbb6e; --warn:#efb417; --bad:#ff5d5d;
+      --brand:#25D366; --green:#1db954;
+      --bg:#0b141a; --input-bg:#0e1a21; --input-bd:#1f2a30;
+    }
+    body.app-shell{color:var(--text-strong);background:var(--bg);}
+    .container{max-width:1120px;margin:0 auto;padding:16px;}
+    @media(min-width:960px){.container{padding:20px 24px}}
+    main.app-main{min-height:82svh}
+    h1{font-size:1.6rem;margin:6px 0 2px}
+    .sub{color:var(--text-soft);font-size:.95rem;margin-bottom:16px}
+    .card{background:var(--card-bg);border:1px solid var(--card-bd);border-radius:14px;padding:14px}
+    label{display:block;margin-bottom:6px;font-weight:600}
+    input[type="text"],input[type="email"],input[type="tel"],select,textarea{
+      background:var(--input-bg);border:1px solid var(--input-bd);border-radius:10px;
+      padding:10px 12px;width:100%;color:var(--text-strong);font-size:.98rem;outline:none
+    }
+    input::placeholder,textarea::placeholder{color:var(--placeholder)}
+    .hint{font-size:.85rem;color:var(--text-soft);margin-top:6px}
+    .value-soft{color:var(--text-soft)}
+    .table{width:100%;border-collapse:collapse;font-size:.95rem}
+    .table th,.table td{padding:10px 8px;border-bottom:1px solid #1f2a30;text-align:left}
+    .table th{color:var(--text-soft);font-weight:600}
+    .chip{display:inline-block;padding:3px 9px;border-radius:999px;font-size:.82rem;border:1px solid #2a3a3f}
+    .chip.ok{border-color:#195a44;background:rgba(27,187,110,.08);color:#65e0a8}
+    .chip.warn{border-color:#4a3b16;background:rgba(239,180,23,.10);color:#ffd36a}
+    .chip.bad{border-color:#522525;background:rgba(255,93,93,.10);color:#ff9b9b}
+    .btn{cursor:pointer;border:1px solid #2a3a3f;background:#0f1e23;color:#dff3ea;border-radius:12px;padding:10px 14px;font-weight:700}
+    .btn:hover{filter:brightness(1.05)}
+    .btn.primary{border-color:#1f6c3e;background:var(--green);color:#06130d}
+    .btn.ghost{background:transparent;color:var(--text-soft)}
+    .btn.small{padding:6px 10px;font-weight:600;border-radius:10px}
+    .btn.block{width:100%}
+    .actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .nav-bottom{display:flex;align-items:center;margin-top:16px}
+    .nav-bottom .left{flex:1}
+    .nav-bottom .right{flex:1;display:flex;justify-content:flex-end}
+    .grid-2{display:grid;gap:10px;grid-template-columns:1fr}
+    @media(min-width:760px){.grid-2{grid-template-columns:1fr 1fr}}
+    .empty{border:1px dashed #2a3a3f;border-radius:14px;padding:18px;text-align:center;color:var(--text-soft)}
+    dialog{border:1px solid #274048;background:#0b141a;color:var(--text-strong);border-radius:16px;padding:0;width:min(860px,96vw)}
+    dialog .modal-header{padding:14px 16px;border-bottom:1px solid #1f2a30;font-weight:800}
+    dialog .modal-body{padding:14px 16px}
+    dialog .modal-footer{padding:12px 16px;border-top:1px solid #1f2a30;display:flex;gap:10px;justify-content:flex-end}
+    /* Finos (colapsável) */
+    details.finos>summary{cursor:pointer;list-style:none}
+    details.finos>summary::-webkit-details-marker{display:none}
+    details.finos summary{padding:8px 0;font-weight:700}
+    .muted{color:var(--text-soft)}
+    .list-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:6px 0 8px}
+    .list-actions .spacer{flex:1}
+    .note{font-size:.85rem;color:var(--text-soft)}
+    .bar{height:8px;background:#0f1e23;border:1px solid #2a3a3f;border-radius:999px;overflow:hidden}
+    .bar>span{display:block;height:100%;background:#1db954;width:0%}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #2a3a3f;font-size:.78rem}
+
+    /* Microfrase importante ao lado do título da lista */
+    .micro-important{
+      display:inline-block;
+      padding:6px 10px;
+      border-radius:10px;
+      background: rgba(37,211,102,0.12);
+      border:1px solid #1f6c3e;
+      color:#d4ffe9;
+      font-weight:700;
+      font-size:.9rem;
+    }
+    /* Estado desativado para vitrine */
+    .disabled-all *{ pointer-events:none !important; }
+    .disabled-all input,.disabled-all select,.disabled-all textarea,.disabled-all button{ opacity:.7 }
+  </style>
+</head>
+<body class="app-shell">
+  <div id="app-header"></div>
+
+  <main class="app-main">
+    <div class="container">
+      <h1>Fale do seu jeito com cada contato</h1>
+      <p class="sub">
+        Aqui você ajusta como o MEI Robô fala com cada pessoa. Esta é uma conta comercial do WhatsApp:
+        quando te chamarem, você pode responder dentro de <b>24 horas</b> — e o robô usa o <b>seu jeito</b> que você definiu aqui.
+        Para <b>chamar primeiro</b>, é preciso a <b>autorização</b> da pessoa (uma única vez) e usar uma <b>mensagem pronta aprovada pela Meta</b> para abrir a conversa.
+      </p>
+
+      <!-- 1) ADICIONAR NOVO CONTATO -->
+      <section class="card" aria-labelledby="nc_title">
+        <strong id="nc_title">Adicionar novo contato</strong>
+        <p class="value-soft" style="margin:6px 0 12px;">Capriche nos detalhes: seu MEI Robô vai conversar como você, <b>como se fosse você</b>.</p>
+
+        <form id="formNewContact" class="grid-2" autocomplete="off">
+          <div>
+            <label for="n_nome">Nome do contato</label>
+            <input id="n_nome" name="nome" type="text" placeholder="Maria da Silva" required />
+            <div class="hint">O nome completo que você sabe ou como aparece no seu WhatsApp.</div>
+          </div>
+          <div>
+            <label for="n_como">Como você chama essa pessoa?</label>
+            <input id="n_como" name="comoChama" type="text" placeholder="Dona Mia, Dona Mariazinha" />
+            <div class="hint">Ajuda o robô a falar do seu jeito.</div>
+          </div>
+
+          <div>
+            <label for="n_categoria">Categoria</label>
+            <select id="n_categoria" name="categoria">
+              <option value="">Selecione…</option>
+              <option value="cliente">Cliente</option>
+              <option value="fornecedor">Fornecedor</option>
+              <option value="colega">Colega</option>
+              <option value="concorrente">Concorrente</option>
+              <option value="colaborador">Colaborador</option>
+              <option value="amigo">Amigo</option>
+              <option value="parente">Parente</option>
+              <option value="outro">Outro</option>
+            </select>
+          </div>
+          <div>
+            <label for="n_tom">Tom de conversa</label>
+            <select id="n_tom" name="tom">
+              <option value="equilibrado">Equilibrado</option>
+              <option value="formal">Bem formal</option>
+              <option value="informal">Bem informal</option>
+            </select>
+            <div class="hint">Como o robô deve falar com esta pessoa.</div>
+          </div>
+
+          <!-- Telefone / Email -->
+          <div>
+            <label for="n_tel">Telefone (WhatsApp)</label>
+            <input id="n_tel" name="telefone" type="tel" inputmode="tel" placeholder="+55 (11) 91234-5678" />
+            <div class="hint">Formato Brasil com DDI. Ex.: +55 (11) 9XXXX-XXXX</div>
+          </div>
+          <div>
+            <label for="n_email">Email</label>
+            <input id="n_email" name="email" type="email" placeholder="nome@exemplo.com" />
+            <div class="hint">Usamos apenas quando fizer sentido.</div>
+          </div>
+
+          <!-- Ajustes finos (opcional) -->
+          <div style="grid-column:1/-1">
+            <details class="finos">
+              <summary>Ajustes finos (opcional) <span class="muted">— isso aparece <b>de vez em quando</b>, quando fizer sentido. Não é toda hora.</span></summary>
+              <div class="grid-2" style="margin-top:8px">
+                <div>
+                  <label for="n_slang">Gírias</label>
+                  <select id="n_slang">
+                    <option value="0">Não usar — fala limpa</option>
+                    <option value="1" selected>De leve — só uma ou outra</option>
+                    <option value="2">Pode usar — bem solto</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="n_humor">Humor</label>
+                  <select id="n_humor">
+                    <option value="0">Nada — direto ao ponto</option>
+                    <option value="1" selected>Leve quando combinar</option>
+                    <option value="2">Pode usar — pode brincar mais</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="n_anedotas">Anedotas</label>
+                  <select id="n_anedotas">
+                    <option value="nunca" selected>Desativadas — sem historinhas</option>
+                    <option value="rara">De vez em quando — curtinhas, no assunto</option>
+                  </select>
+                  <div class="hint">No máximo <b>1 frase</b>, só se combinar com o papo.</div>
+                </div>
+                <div style="align-self:end">
+                  <label><input type="checkbox" id="n_ptbr" checked> Português certinho — sem erro e sem abreviação</label>
+                </div>
+              </div>
+            </details>
+          </div>
+
+          <div>
+            <label for="n_emojis">Emojis</label>
+            <select id="n_emojis" name="emojis">
+              <option value="poucos" selected>Poucos emojis</option>
+              <option value="sem">Sem emojis</option>
+              <option value="pode">Pode usar emojis</option>
+            </select>
+          </div>
+          <div>
+            <label for="n_tamanho">Tamanho das suas respostas</label>
+            <select id="n_tamanho" name="tamanhoMsg">
+              <option value="curtas" selected>Curtas</option>
+              <option value="medias">Médias</option>
+              <option value="detalhadas">Detalhadas</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="n_audio_rule">Preferência de áudio</label>
+            <select id="n_audio_rule">
+              <option value="off">Prefiro só texto</option>
+              <option value="match" selected>Usar áudio quando receber áudio (padrão)</option>
+              <option value="sometime">Áudio às vezes (quando fizer sentido)</option>
+            </select>
+            <div class="hint">Para combinar <b>horário</b>, <b>preço</b> ou <b>endereço</b>, usamos <b>texto</b> para ficar claro. Se a pessoa mandar áudio e <b>pedir por escrito</b>, a resposta vai em <b>texto</b>.</div>
+          </div>
+          <div>
+            <label for="n_speech_rate">Velocidade do áudio</label>
+            <select id="n_speech_rate">
+              <option value="slow">Mais devagar</option>
+              <option value="normal" selected>Ritmo normal</option>
+              <option value="fast">Um pouco mais rápido</option>
+            </select>
+            <div class="hint">Escolha o ritmo mais parecido com o seu. Em mensagens sensíveis, evitamos muito rápido.</div>
+            <div style="margin-top:6px">
+              <label><input type="checkbox" id="n_clear_pauses" checked> Pausas claras — para não soar corrido</label>
+            </div>
+          </div>
+
+          <div class="grid-2" style="grid-column: 1 / -1;">
+            <div>
+              <label for="n_resumo">Resumo do relacionamento</label>
+              <textarea id="n_resumo" name="resumoRelacionamento" rows="2" maxlength="200" placeholder="Ex.: Desde 2018. Cliente de manutenção. Prefere mensagens objetivas."></textarea>
+              <div class="hint">Até 200 caracteres.</div>
+            </div>
+            <div>
+              <label for="n_obs">Observações</label>
+              <textarea id="n_obs" name="observacoes" rows="2" placeholder="Ex.: Gosta de ser chamada de 'Maria'. Evitar áudio à noite."></textarea>
+            </div>
+          </div>
+
+          <div style="grid-column:1/-1; display:flex; justify-content:flex-end; gap:10px">
+            <button class="btn primary" id="btnSaveNew" type="submit">Salvar contato</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- 2) LISTA DE CONTATOS -->
+      <section class="card" style="margin-top:14px;">
+        <div class="list-actions">
+          <strong>Seus contatos</strong>
+          <span id="totalSpan" class="value-soft"></span>
+
+          <span class="micro-important">
+            IMPORTANTE: para <b>INICIAR A CONVERSA</b>, peça pelo seu WhatsApp pessoal para a pessoa mandar um “Oi” para o número do seu <b>MEI Robô</b>. Depois use o botão: <b>Autorização (WhatsApp)</b>.
+          </span>
+
+          <div class="list-actions spacer"></div>
+          <input id="searchBox" type="text" placeholder="Pesquisar contatos" style="max-width:260px" />
+        </div>
+
+        <div id="emptyState" class="empty" style="display:none;margin-top:12px;">
+          Você ainda não cadastrou contatos. Preencha acima e clique em <b>Salvar contato</b>.
+        </div>
+
+        <div style="overflow:auto;margin-top:8px;">
+          <table class="table" id="contactsTable" aria-label="Tabela de contatos">
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>Categoria</th>
+                <th>Autorização (WhatsApp)</th>
+                <th>Última interação</th>
+                <th style="min-width:360px;">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="contactsBody"></tbody>
+          </table>
+        </div>
+
+        <div class="hint" style="margin-top:10px;">
+          <b>Importante:</b> se a pessoa falar com você (mesmo que não esteja nos seus contatos), você pode responder em até <b>24 horas</b>.
+          Para <b>iniciar</b> a conversa (ou falar <b>depois de 24h</b>), use <b>mensagem pronta aprovada pela Meta</b> e tenha a <b>autorização</b> da pessoa.
+        </div>
+      </section>
+
+      <!-- 3) IMPORTAR CONTATOS -->
+      <section class="card" style="margin-top:14px;">
+        <strong>Importar contatos (opcional)</strong>
+        <p class="value-soft" style="margin:8px 0 10px;">
+          Tem seus contatos numa planilha? Exporte como <b>CSV</b> e importe aqui.
+        </p>
+        <div class="actions">
+          <button class="btn" id="btnImport">Importar arquivo (.CSV)</button>
+          <a class="btn ghost" id="btnCsvSample" href="/assets/samples/contatos-modelo.csv" download>Baixar modelo (.CSV)</a>
+          <input type="file" id="csvInput" accept=".csv,text/csv" style="display:none" />
+        </div>
+        <div class="hint">Se sua planilha tiver colunas a mais, tudo bem — a gente ignora o que não usar.</div>
+      </section>
+
+      <div class="nav-bottom">
+        <div class="left"><a class="btn primary" href="/pages/precos.html">Voltar</a></div>
+        <div class="right"><a class="btn primary" href="/pages/dashboard.html">Próximo</a></div>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <!-- MODAL: Editar contato -->
+  <dialog id="modalContact">
+    <div class="modal-header">Editar contato</div>
+    <form id="formContact" class="modal-body">
+      <div class="grid-2">
+        <div>
+          <label for="c_nome">Nome do contato</label>
+          <input id="c_nome" type="text" placeholder="Maria da Silva" required />
+          <div class="hint">O nome completo que você sabe ou como aparece no seu WhatsApp.</div>
+        </div>
+        <div>
+          <label for="c_como">Como você chama essa pessoa?</label>
+          <input id="c_como" type="text" placeholder="Dona Mia, Dona Mariazinha" />
+          <div class="hint">Ajuda o robô a falar do seu jeito.</div>
+        </div>
+
+        <div>
+          <label for="c_categoria">Categoria</label>
+          <select id="c_categoria">
+            <option value="">Selecione…</option>
+            <option value="cliente">Cliente</option>
+            <option value="fornecedor">Fornecedor</option>
+            <option value="colega">Colega</option>
+            <option value="concorrente">Concorrente</option>
+            <option value="colaborador">Colaborador</option>
+            <option value="amigo">Amigo</option>
+            <option value="parente">Parente</option>
+            <option value="outro">Outro</option>
+          </select>
+        </div>
+        <div>
+          <label for="c_tom">Tom de conversa</label>
+          <select id="c_tom">
+            <option value="equilibrado">Equilibrado</option>
+            <option value="formal">Bem formal</option>
+            <option value="informal">Bem informal</option>
+          </select>
+        </div>
+
+        <!-- Telefone / Email -->
+        <div>
+          <label for="c_tel">Telefone (WhatsApp)</label>
+          <input id="c_tel" type="tel" inputmode="tel" placeholder="+55 (11) 91234-5678" />
+        </div>
+        <div>
+          <label for="c_email">Email</label>
+          <input id="c_email" type="email" placeholder="nome@exemplo.com" />
+        </div>
+
+        <!-- Finos dentro do modal -->
+        <div>
+          <label for="c_slang">Gírias</label>
+          <select id="c_slang">
+            <option value="0">Não usar — fala limpa</option>
+            <option value="1">De leve — só uma ou outra</option>
+            <option value="2">Pode usar — bem solto</option>
+          </select>
+        </div>
+        <div>
+          <label for="c_humor">Humor</label>
+          <select id="c_humor">
+            <option value="0">Nada — direto ao ponto</option>
+            <option value="1">Leve quando combinar</option>
+            <option value="2">Pode usar — pode brincar mais</option>
+          </select>
+        </div>
+        <div>
+          <label for="c_anedotas">Anedotas</label>
+          <select id="c_anedotas">
+            <option value="nunca">Desativadas</option>
+            <option value="rara">De vez em quando</option>
+          </select>
+          <div class="hint">No máximo 1 frase, só se combinar com o papo.</div>
+        </div>
+        <div style="align-self:end">
+          <label><input type="checkbox" id="c_ptbr"> Português certinho — sem erro e sem abreviação</label>
+        </div>
+
+        <div>
+          <label for="c_emojis">Emojis</label>
+          <select id="c_emojis">
+            <option value="poucos">Poucos emojis</option>
+            <option value="sem">Sem emojis</option>
+            <option value="pode">Pode usar emojis</option>
+          </select>
+        </div>
+        <div>
+          <label for="c_tamanho">Tamanho das suas respostas</label>
+          <select id="c_tamanho">
+            <option value="curtas">Curtas</option>
+            <option value="medias">Médias</option>
+            <option value="detalhadas">Detalhadas</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="c_audio_rule">Preferência de áudio</label>
+          <select id="c_audio_rule">
+            <option value="off">Prefiro só texto</option>
+            <option value="match">Usar áudio quando receber áudio (padrão)</option>
+            <option value="sometime">Áudio às vezes (quando fizer sentido)</option>
+          </select>
+          <div class="hint">Para horário, preço ou endereço, usamos <b>texto</b>. Se pedirem “por escrito”, a resposta vai em <b>texto</b>.</div>
+        </div>
+        <div>
+          <label for="c_speech_rate">Velocidade do áudio</label>
+          <select id="c_speech_rate">
+            <option value="slow">Mais devagar</option>
+            <option value="normal">Ritmo normal</option>
+            <option value="fast">Um pouco mais rápido</option>
+          </select>
+          <div style="margin-top:6px">
+            <label><input type="checkbox" id="c_clear_pauses"> Pausas claras — para não soar corrido</label>
+          </div>
+        </div>
+
+        <div>
+          <label for="c_resumo">Resumo do relacionamento</label>
+          <textarea id="c_resumo" rows="2" maxlength="200" placeholder="Ex.: Desde 2018. Cliente de manutenção. Prefere mensagens objetivas."></textarea>
+        </div>
+        <div>
+          <label for="c_obs">Observações</label>
+          <textarea id="c_obs" rows="2" placeholder="Ex.: Gosta de ser chamada de 'Maria'. Evitar áudio à noite."></textarea>
+        </div>
+      </div>
+      <input type="hidden" id="c_id" value="" />
+    </form>
+    <div class="modal-footer">
+      <button class="btn ghost" id="btnCancelContact" type="button">Cancelar</button>
+      <button class="btn primary" id="btnSaveContact" type="button">Salvar</button>
+    </div>
+  </dialog>
+
+  <!-- MODAL: Autorização (atualizado: sem QR, linguagem MEI) -->
+  <dialog id="modalConsent">
+    <div class="modal-header">Autorização (WhatsApp)</div>
+    <div class="modal-body">
+      <section class="card" style="margin-bottom:10px;">
+        <strong>Como liberar este contato para receber seus avisos</strong>
+        <ol class="value-soft" style="margin-top:8px; line-height:1.5;">
+          <li>O cliente manda um <b>“Oi”</b> para o seu número comercial.</li>
+          <li>Aqui na plataforma, clique em <b>Pedir autorização agora</b>.</li>
+          <li>Ele responde <b>SIM</b> no WhatsApp.</li>
+          <li>Você clica em <b>Confirmar autorização</b>.</li>
+        </ol>
+        <div class="hint" style="margin-top:6px;">
+          Pronto: esse contato recebe lembretes e avisos. Para parar, ele manda <b>SAIR</b>.
+        </div>
+      </section>
+
+      <div id="consentInfo" class="value-soft" style="margin-bottom:8px;">Carregando…</div>
+
+      <div class="actions" style="margin-top:8px; flex-wrap:wrap;">
+        <button class="btn small" id="btnGenLink">Gerar link do WhatsApp</button>
+        <button class="btn small" id="btnRequestOptin" disabled>Pedir autorização agora</button>
+        <button class="btn small" id="btnSendConfirmation" disabled>Confirmar autorização</button>
+        <button class="btn small" id="btnMarkExternal">Marcar autorização externa</button>
+      </div>
+
+      <div class="hint" id="linkArea" style="display:none; margin-top:8px;">
+        Link para abrir o seu WhatsApp: <a id="waLink" href="#" target="_blank" rel="noopener" class="badge">abrir</a>
+        <button class="btn small" id="btnCopyLink" type="button">Copiar link</button>
+        <div style="margin-top:6px;">Toque no link. Seu WhatsApp abre. Peça para a pessoa mandar um <b>“Oi”</b>.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn primary" id="btnCloseConsent" type="button">Fechar</button>
+    </div>
+  </dialog>
+
+  <!-- MODAL: Acervo do contato -->
+  <dialog id="modalAcervo">
+    <div class="modal-header">Acervo do contato</div>
+    <div class="modal-body">
+      <div class="grid-2">
+        <div>
+          <label for="a_notes">Anotações rápidas</label>
+          <textarea id="a_notes" rows="3" maxlength="500" placeholder="Serviços feitos, preferências, combinados…"></textarea>
+          <div class="hint">Até 500 caracteres. O robô usa só o necessário, quando fizer sentido.</div>
+        </div>
+        <div>
+          <label for="a_tags">Tags</label>
+          <input id="a_tags" type="text" placeholder="Ex.: revisão anual; corte social; manual" />
+          <div class="hint">Separe com ponto e vírgula (;). Máx. 10 tags.</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:10px;">
+        <strong>Arquivos (imagens/PDF)</strong>
+        <div class="actions" style="margin:8px 0;">
+          <input type="file" id="a_file" accept="image/*,.pdf" multiple />
+          <button class="btn small" id="btnUpload">Enviar</button>
+          <span class="value-soft" id="a_limit">Limite: 5 MB por arquivo · 25 MB por contato</span>
+        </div>
+        <div class="bar" aria-label="Progresso do upload" style="margin:6px 0 10px;display:none;"><span id="upProg"></span></div>
+        <div id="filesList" class="value-soft">Carregando arquivos…</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn ghost" id="btnCloseAcervo" type="button">Fechar</button>
+      <button class="btn primary" id="btnSaveAcervo" type="button">Salvar anotações</button>
+    </div>
+  </dialog>
+
+  <script src="/assets/layout.js" defer></script>
+  <script src="/assets/backend-patch.js" defer></script>
+
+  <script>
+  (function(){
+    
+    // --- SANDBOX UID via query (?uid=demo_uid) ---
+    const _qp = new URLSearchParams(location.search);
+    const SANDBOX_UID = _qp.get('uid') || 'demo_uid';
+    window.MEI_ROBO = window.MEI_ROBO || {};
+    window.MEI_ROBO.DEMO_UID = SANDBOX_UID;
+const $ = (q)=>document.querySelector(q);
+
+    /* ====== Refs ====== */
+    const formNew = $("#formNewContact");
+    const btnSaveNew = $("#btnSaveNew");
+    const NC = {
+      nome: $("#n_nome"), comoChama: $("#n_como"), categoria: $("#n_categoria"),
+      tom: $("#n_tom"),
+      slang: $("#n_slang"), humor: $("#n_humor"), anedotas: $("#n_anedotas"), ptbr: $("#n_ptbr"),
+      emojis: $("#n_emojis"), tamanho: $("#n_tamanho"),
+      audioRule: $("#n_audio_rule"), speechRate: $("#n_speech_rate"), clearPauses: $("#n_clear_pauses"),
+      telefone: $("#n_tel"), email: $("#n_email"),
+      resumoRelacionamento: $("#n_resumo"), observacoes: $("#n_obs")
+    };
+
+    const tableBody = $("#contactsBody");
+    const emptyState = $("#emptyState");
+    const totalSpan = $("#totalSpan");
+    const searchBox = $("#searchBox");
+
+    const btnImport = $("#btnImport");
+    const csvInput = $("#csvInput");
+
+    const modalContact = $("#modalContact");
+    const C = {
+      id: $("#c_id"), nome: $("#c_nome"), comoChama: $("#c_como"), categoria: $("#c_categoria"),
+      tom: $("#c_tom"), slang: $("#c_slang"), humor: $("#c_humor"), anedotas: $("#c_anedotas"), ptbr: $("#c_ptbr"),
+      emojis: $("#c_emojis"), tamanho: $("#c_tamanho"),
+      audioRule: $("#c_audio_rule"), speechRate: $("#c_speech_rate"), clearPauses: $("#c_clear_pauses"),
+      telefone: $("#c_tel"), email: $("#c_email"),
+      resumoRelacionamento: $("#c_resumo"), observacoes: $("#c_obs"),
+      btnCancel: $("#btnCancelContact"), btnSave: $("#btnSaveContact")
+    };
+
+    const modalConsent = $("#modalConsent");
+    const consentInfo = $("#consentInfo");
+    const btnGenLink = $("#btnGenLink");
+    const btnRequestOptin = $("#btnRequestOptin");
+    const theBtnSendConfirmation = $("#btnSendConfirmation");
+    const btnMarkExternal = $("#btnMarkExternal");
+    const btnCloseConsent = $("#btnCloseConsent");
+    const linkArea = $("#linkArea");
+    const waLink = $("#waLink");
+    const btnCopyLink = $("#btnCopyLink");
+
+    const modalAcervo = $("#modalAcervo");
+    const a_notes = $("#a_notes"), a_tags = $("#a_tags");
+    const a_file = $("#a_file"), btnUpload = $("#btnUpload");
+    const filesList = $("#filesList");
+    const upBar = document.querySelector(".bar"); const upProg = $("#upProg");
+    const btnSaveAcervo = $("#btnSaveAcervo"); const btnCloseAcervo = $("#btnCloseAcervo");
+
+    /* ====== Estado ====== */
+    let CURRENT_USER = null;
+    let CURRENT_ROWS = [];
+    let CURRENT_EDIT_ID = null;
+    let CURRENT_CONSENT_ID = null;
+    let CURRENT_ACERVO_ID = null;
+    const LIMITS = { fileMax: 5 * 1024 * 1024, contactMax: 25 * 1024 * 1024 };
+
+    /* ====== Utils ====== */
+    function isValidateMode(){ try{ return new URLSearchParams(location.search).has('validate'); }catch{ return false; } }
+    function escapeHtml(s){ return String(s??"").replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39'}[m])); }
+    function formatWhen(ts){
+      if(!ts) return "—";
+      try{
+        if(typeof ts==='object' && ts && 'seconds' in ts) return new Date(ts.seconds*1000).toLocaleString();
+        if(typeof ts==='number') return new Date(ts).toLocaleString();
+        return "—";
+      }catch{return "—";}
+    }
+    function within24h(ts){
+      try{
+        const t = ts?.seconds ? ts.seconds*1000 : (typeof ts==='number' ? ts : 0);
+        if(!t) return false;
+        return (Date.now() - t) <= (24*60*60*1000);
+      }catch{return false;}
+    }
+    function showEmpty(b){ emptyState.style.display = b ? "block":"none"; }
+
+    function fs(){ return (window.firebase?.firestore) ? firebase.firestore(): null; }
+    function st(){ return (window.firebase?.storage) ? firebase.storage(): null; }
+    function pathClientes(){ return fs().collection('profissionais').doc(SANDBOX_UID).collection('clientes'); }
+
+    function styleCodeFrom(d){
+      const T = d.tom==='informal'?'INF':(d.tom==='formal'?'FOR':'EQ');
+      const G = String(d.slang ?? 1);
+      const H = String(d.humor ?? 1);
+      const AN = (d.anecdotesAllow?1:0);
+      const F = d.anecdotesFreq==='rara'?'RARA':'NUNCA';
+      const PT = d.ptBrStrict?1:0;
+      const E = d.emojis==='sem'?'SEM':(d.emojis==='poucos'?'POU':'POD');
+      const L = d.tamanhoMsg==='detalhadas'?'D':(d.tamanhoMsg==='medias'?'M':'C');
+      const AR = d.audioRule==='off'?'OFF':(d.audioRule==='sometime'?'SM':'MT');
+      const SR = d.speechRate==='fast'?'FS':(d.speechRate==='slow'?'SL':'NM');
+      const CP = d.clearPauses?1:0;
+      return `T=${T};G=${G};H=${H};AN=${AN};F=${F};PT=${PT};E=${E};L=${L};AR=${AR};SR=${SR};CP=${CP}`;
+    }
+
+    function normalizeAudioLegacy(doc){
+      if(doc.audioRule) return doc.audioRule;
+      const legacy = doc.preferenciaAudio;
+      if(legacy==='texto') return 'off';
+      if(legacy==='permitido') return 'match';
+      return 'match';
+    }
+
+    /* ====== Máscaras & validações básicas ====== */
+    const phoneRegex = /^\+55\s?\(?\d{2}\)?\s?9?\d{4}-?\d{4}$/;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
+    function maskPhoneInput(el){
+      el.addEventListener('input', ()=>{
+        let v = el.value.replace(/\D/g,'');
+        if(!v.startsWith('55')) v = '55' + v;
+        if(v.length > 13) v = v.slice(0,13); // 55 + 2 DDD + 9 + 8
+        // Formatar: +55 (11) 91234-5678
+        const ddi = '+55';
+        const ddd = v.slice(2,4);
+        const nine = v.slice(4,5);
+        const part1 = v.slice(5,9);
+        const part2 = v.slice(9,13);
+        el.value = ddd ? `${ddi} (${ddd}) ${nine}${part1}-${part2}`.trim() : `${ddi} `;
+      });
+    }
+
+    /* ====== Render ====== */
+    function renderRows(filter=""){
+      tableBody.innerHTML=""; const term = filter.trim().toLowerCase(); let c=0;
+      for(const {id,data} of CURRENT_ROWS){
+        const status = (data.consentimento && data.consentimento.status) || "pendente";
+        const categoria = data.categoria || ""; const nome = data.nome || "";
+        if(term){ const hay=(nome+" "+categoria+" "+status).toLowerCase(); if(!hay.includes(term)) continue; }
+        c++;
+        const chipClass = status==='consentido'?'ok':(status==='negado'?'bad':'warn');
+        const ultima = formatWhen(data.ultimaInteracaoEm);
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${escapeHtml(nome||"—")}</td>
+          <td><span class="chip">${escapeHtml(categoria||"—")}</span></td>
+          <td><span class="chip ${chipClass}">${escapeHtml(status)}</span></td>
+          <td class="value-soft">${ultima}</td>
+          <td>
+            <div class="actions">
+              <button class="btn small" data-edit="${id}">Editar</button>
+              <button class="btn small" data-acervo="${id}">Acervo</button>
+              <button class="btn small" data-consent="${id}" title="Autorize aqui para poder chamar primeiro.">Autorização (WhatsApp)</button>
+            </div>
+          </td>`;
+        tableBody.appendChild(tr);
+      }
+      totalSpan.textContent = c ? `(${c})` : '';
+      showEmpty(!c);
+    }
+
+    async function loadContacts(){
+      const db = fs(); if(!db || !CURRENT_USER) return;
+      CURRENT_ROWS = [];
+      const snap = await pathClientes().orderBy('nome','asc').get().catch(e=>{
+        console.error('[contatos] loadContacts', e); return {empty:true, forEach:()=>{}};
+      });
+      if(!snap.empty){
+        snap.forEach(doc=> CURRENT_ROWS.push({id:doc.id, data:doc.data()}));
+      }
+      renderRows(searchBox.value);
+    }
+
+    function demoPopulate(){
+      CURRENT_ROWS = [
+        {id:'demo-1', data:{ nome:'Maria da Silva', categoria:'cliente',   consentimento:{status:'consentido'},  ultimaInteracaoEm: Date.now()-86400000 }},
+        {id:'demo-2', data:{ nome:'Seu João Mecânico', categoria:'fornecedor', consentimento:{status:'pendente'}, ultimaInteracaoEm: Date.now()-3600*1000*5 }},
+        {id:'demo-3', data:{ nome:'Tia Ana', categoria:'parente', consentimento:{status:'negado'}, ultimaInteracaoEm:null }},
+      ];
+      renderRows("");
+    }
+
+    async function ensureAuth(){
+      if(!window.firebase || !firebase?.auth){ return null; }
+      try{
+        await firebase.auth().signInAnonymously();
+        CURRENT_USER = { uid: SANDBOX_UID };
+        return CURRENT_USER;
+      }catch(e){
+        console.error('[contatos] ensureAuth', e);
+        return null;
+      }
+    }; }
+        setTimeout(()=>location.href='/pages/login.html',150);
+        return null;
+      }
+      const user = await new Promise(r=>{
+        const off=firebase.auth().onAuthStateChanged(u=>{off(); r(u||null);});
+      });
+      if(!user){
+        if(isValidateMode()){ demoPopulate(); return {demo:true}; }
+        location.href='/pages/login.html'; return null;
+      }
+      CURRENT_USER=user;
+      return user;
+    }
+
+    function disableForVitrine(){
+      if(!isValidateMode()) return;
+      document.body.classList.add('disabled-all');
+    }
+
+    /* ====== CRUD ====== */
+    // --- Telefone BR: normalização para msisdn/waKey ---
+    function _digits(s){ return String(s||'').replace(/\D+/g,''); }
+    function normalizeBRPhone(input){
+      let raw = _digits(input);
+      raw = raw.replace(/^55/, '') || raw;
+      const ddd = raw.slice(0,2);
+      let base = raw.slice(2);
+      const cand = new Set();
+      if(base.length === 9){
+        cand.add(`55${ddd}${base}`);
+        if(base.startsWith('9')) cand.add(`55${ddd}${base.slice(1)}`);
+      } else if(base.length === 8){
+        cand.add(`55${ddd}${base}`);
+        cand.add(`55${ddd}9${base}`);
+      } else {
+        cand.add(`55${raw}`);
+      }
+      let msisdn = null;
+      for(const c of cand){ if(c.length===13){ msisdn=c; break; } }
+      if(!msisdn) msisdn=[...cand][0];
+      const without55 = msisdn.replace(/^55/, '');
+      const wDDD = without55.slice(0,2);
+      const rest = without55.slice(2);
+      const with9 = rest.length===9 ? rest : (rest.length===8 ? ('9'+rest) : rest);
+      const no9  = with9.startsWith('9') ? with9.slice(1) : with9;
+      const waKey = `br:${wDDD}:${no9}:${with9}`;
+      return { raw: input, msisdn, waKey };
+    }
+
+    async function upsertContact(data, id){
+      const db=fs(); if(!db || !CURRENT_USER) return;
+      const col=pathClientes();
+      const payload={
+        nome:data.nome||'', comoChama:data.comoChama||'', categoria:data.categoria||'',
+        tom:data.tom||'equilibrado',
+        slang: Number(data.slang ?? 1),
+        humor: Number(data.humor ?? 1),
+        anecdotesAllow: data.anecdotesAllow===true || data.anedotas==='rara',
+        anecdotesFreq: data.anecdotesFreq || (data.anedotas==='rara'?'rara':'nunca'),
+        ptBrStrict: !!data.ptBrStrict,
+        emojis: data.emojis||'poucos',
+        tamanhoMsg: data.tamanhoMsg||'curtas',
+        audioRule: data.audioRule||'match',
+        speechRate: data.speechRate||'normal',
+        clearPauses: !!data.clearPauses,
+        telefone: (data.telefone||'').trim(),
+        email: (data.email||'').trim(),
+        resumoRelacionamento: (data.resumoRelacionamento||'').slice(0,200),
+        observacoes: data.observacoes||'',
+      };
+      payload.preferenciaAudio = (payload.audioRule==='off')?'texto':'permitido';
+      payload.styleCode = styleCodeFrom(payload);
+      try { const tn = normalizeBRPhone(payload.telefone); payload.telefone_v2 = { raw: payload.telefone, msisdn: tn.msisdn, waKey: tn.waKey }; } catch{}_;
+
+      if(id){ await col.doc(id).set(payload,{merge:true}); }
+      else { await col.add(payload); }
+    }
+
+    async function setConsentExternal(contatoId){
+      const db=fs(); if(!db || !CURRENT_USER) return;
+      const ref=pathClientes().doc(contatoId);
+      const now = (firebase.firestore.FieldValue.serverTimestamp?.() || new Date());
+      await ref.set({ consentimento:{ status:'consentido', origem:'externo', atualizadoEm: now }, consent: { status:'consentido', source:'externo', timestamp: now } }, {merge:true});
+    }
+
+    /* ====== New form ====== */
+    function readNewForm(){
+      return {
+        nome: NC.nome.value.trim(),
+        comoChama: NC.comoChama?.value?.trim() || "",
+        categoria: NC.categoria.value || "",
+        tom: NC.tom.value || "equilibrado",
+        slang: Number(NC.slang.value||1),
+        humor: Number(NC.humor.value||1),
+        anecdotesAllow: (NC.anedotas.value==='rara'),
+        anecdotesFreq: NC.anedotas.value,
+        ptBrStrict: !!NC.ptbr.checked,
+        emojis: NC.emojis.value || "poucos",
+        tamanhoMsg: NC.tamanho.value || "curtas",
+        audioRule: NC.audioRule.value || "match",
+        speechRate: NC.speechRate.value || "normal",
+        clearPauses: !!NC.clearPauses.checked,
+        telefone: NC.telefone?.value?.trim() || "",
+        email: NC.email?.value?.trim() || "",
+        resumoRelacionamento: NC.resumoRelacionamento.value.trim(),
+        observacoes: NC.observacoes.value.trim()
+      };
+    }
+    function resetNewForm(){
+      formNew.reset();
+      NC.tom.value="equilibrado";
+      NC.slang.value="1"; NC.humor.value="1"; NC.anedotas.value="nunca"; NC.ptbr.checked=true;
+      NC.emojis.value="poucos"; NC.tamanho.value="curtas";
+      NC.audioRule.value="match"; NC.speechRate.value="normal"; NC.clearPauses.checked=true;
+    }
+
+    formNew?.addEventListener('submit', async (ev)=>{
+      ev.preventDefault();
+      if(isValidateMode()) return;
+      const data=readNewForm();
+      if(!data.nome){ alert('Informe o nome do contato.'); return; }
+      if(data.email && !emailRegex.test(data.email)){ alert('Email inválido.'); return; }
+      if(data.telefone && !phoneRegex.test(data.telefone)){ alert('Telefone inválido. Use +55 (DD) 9XXXX-XXXX'); return; }
+      btnSaveNew.disabled=true;
+      try{
+        await upsertContact(data,null);
+        resetNewForm();
+        await loadContacts();
+        alert('Contato salvo.');
+      }catch(e){
+        console.error('[contatos] salvar novo', e);
+        alert('Não foi possível salvar. Tente novamente.');
+      }finally{ btnSaveNew.disabled=false; }
+    });
+
+    /* ====== Import CSV ====== */
+    btnImport?.addEventListener('click',()=>{ if(isValidateMode())return; csvInput.click(); });
+    csvInput?.addEventListener('change', ()=>{
+      if(isValidateMode()){ csvInput.value=''; return; }
+      const file=csvInput.files?.[0]; if(!file) return;
+      const reader=new FileReader();
+      reader.onload=async (e)=>{
+        const rows=parseCSV(e.target.result);
+        if(!rows.length){ alert('Arquivo vazio.'); return; }
+        try{
+          for(const r of rows){
+            await upsertContact({
+              nome:r.nome||'', comoChama:r.comoChama||'', categoria:r.categoria||'',
+              tom:r.tom||'equilibrado',
+              slang: num(r.slang,1), humor: num(r.humor,1),
+              anecdotesAllow: (r.anedotas==='rara'), anecdotesFreq: (r.anedotas==='rara'?'rara':'nunca'),
+              ptBrStrict: bool(r.ptBrStrict,true),
+              emojis:r.emojis||'poucos',
+              tamanhoMsg:r.tamanhoMsg||'curtas',
+              audioRule: (r.audioRule||'match'),
+              speechRate: (r.speechRate||'normal'),
+              clearPauses: bool(r.clearPauses,true),
+              telefone:r.telefone||'', email:r.email||'',
+              resumoRelacionamento:r.resumoRelacionamento||'',
+              observacoes:r.observacoes||''
+            }, null);
+          }
+          await loadContacts(); alert('Importação concluída.');
+        }catch(e){
+          console.error('[contatos] importar CSV', e);
+          alert('Falha ao importar. Verifique o arquivo.');
+        }finally{ csvInput.value=''; }
+      };
+      reader.readAsText(file,'utf-8');
+    });
+    function parseCSV(text){
+      const lines=text.split(/\r?\n/).filter(l=>l.trim().length);
+      if(!lines.length) return [];
+      let header=lines.shift(); const sep=header.includes(';')?';':',';
+      const keys=header.split(sep).map(s=>s.trim()); const out=[];
+      for(const line of lines){
+        const cols=line.split(sep); const obj={};
+        keys.forEach((k,i)=> obj[k]=(cols[i]||'').trim());
+        out.push(obj);
+      }
+      return out;
+    }
+    function num(v,def){ const n=Number(v); return Number.isFinite(n)?n:def; }
+    function bool(v,def){ if(v===true||v==='true'||v==='1')return true; if(v===false||v==='false'||v==='0')return false; return def; }
+
+    /* ====== Tabela ações ====== */
+    tableBody?.addEventListener('click', async (ev)=>{
+      const t=ev.target;
+      const idEdit = t?.getAttribute?.('data-edit');
+      const idCons = t?.getAttribute?.('data-consent');
+      const idAcervo = t?.getAttribute?.('data-acervo');
+
+      if(idEdit){ await openEdit(idEdit); return; }
+      if(idCons){ await openConsent(idCons); return; }
+      if(idAcervo){ await openAcervo(idAcervo); return; }
+    });
+
+    async function openEdit(id){
+      CURRENT_EDIT_ID=id;
+      if(isValidateMode()){
+        $("#c_id").value = id;
+        C.nome.value = 'Maria da Silva'; C.comoChama.value='Dona Maria';
+        C.categoria.value = 'cliente';
+        C.tom.value = 'equilibrado';
+        C.telefone.value = '+55 (11) 91234-5678';
+        C.email.value = 'maria@exemplo.com';
+        C.slang.value = "1"; C.humor.value="1"; C.anedotas.value='nunca'; C.ptbr.checked=true;
+        C.emojis.value='poucos'; C.tamanho.value='curtas';
+        C.audioRule.value='match'; C.speechRate.value='normal'; C.clearPauses.checked=true;
+        C.resumoRelacionamento.value='Desde 2018. Cliente de manutenção.';
+        C.observacoes.value="Evitar áudio à noite.";
+        if(!modalContact.open) modalContact.showModal();
+        return;
+      }
+      try{
+        const doc=await pathClientes().doc(id).get();
+        const c=doc.data()||{};
+        $("#c_id").value = id;
+        C.nome.value = c.nome||""; C.comoChama.value=c.comoChama||"";
+        C.categoria.value = c.categoria||"";
+        C.tom.value = c.tom||"equilibrado";
+        C.telefone.value = c.telefone||"";
+        C.email.value = c.email||"";
+        C.slang.value = String(c.slang ?? 1);
+        C.humor.value = String(c.humor ?? 1);
+        C.anedotas.value = c.anecdotesAllow?'rara':(c.anecdotesFreq||'nunca');
+        C.ptbr.checked = !!c.ptBrStrict;
+        C.emojis.value = c.emojis||"poucos";
+        C.tamanho.value = c.tamanhoMsg||"curtas";
+        C.audioRule.value = normalizeAudioLegacy(c);
+        C.speechRate.value = c.speechRate||"normal";
+        C.clearPauses.checked = !!c.clearPauses;
+        C.resumoRelacionamento.value = c.resumoRelacionamento||"";
+        C.observacoes.value = c.observacoes||"";
+        if(!modalContact.open) modalContact.showModal();
+      }catch(e){ console.error('[contatos] abrir edição', e); alert('Não foi possível abrir este contato.'); }
+    }
+
+    C.btnSave?.addEventListener('click', async ()=>{
+      if(isValidateMode()) return;
+      const data={
+        id: $("#c_id").value||undefined,
+        nome: C.nome.value.trim(),
+        comoChama: C.comoChama.value.trim(),
+        categoria: C.categoria.value||"",
+        tom: C.tom.value||"equilibrado",
+        slang: Number(C.slang.value||1),
+        humor: Number(C.humor.value||1),
+        anecdotesAllow: (C.anedotas.value==='rara'),
+        anecdotesFreq: C.anedotas.value,
+        ptBrStrict: !!C.ptbr.checked,
+        emojis: C.emojis.value||"poucos",
+        tamanhoMsg: C.tamanho.value||"curtas",
+        audioRule: C.audioRule.value||"match",
+        speechRate: C.speechRate.value||"normal",
+        clearPauses: !!C.clearPauses.checked,
+        telefone: C.telefone.value.trim(),
+        email: C.email.value.trim(),
+        resumoRelacionamento: C.resumoRelacionamento.value.trim(),
+        observacoes: C.observacoes.value.trim()
+      };
+      if(!data.nome){ alert('Informe o nome do contato.'); return; }
+      if(data.email && !emailRegex.test(data.email)){ alert('Email inválido.'); return; }
+      if(data.telefone && !phoneRegex.test(data.telefone)){ alert('Telefone inválido. Use +55 (DD) 9XXXX-XXXX'); return; }
+      C.btnSave.disabled=true;
+      try{
+        await upsertContact(data, data.id);
+        await loadContacts();
+        modalContact.close();
+      }catch(e){ console.error('[contatos] salvar edicao', e); alert('Não foi possível salvar.'); }
+      finally{ C.btnSave.disabled=false; }
+    });
+    C.btnCancel?.addEventListener('click', ()=> modalContact.close());
+
+    /* ====== Autorização (UI-only) ====== */
+    function businessPhone(){
+      return (window.APP?.businessPhone || window.APP?.wabaPhone || "").replace(/\D/g,'');
+    }
+    function buildWaLink(){
+      const phone = businessPhone();
+      const base = phone ? `https://wa.me/${phone}` : `https://wa.me/`;
+      const text = encodeURIComponent("Oi");
+      return `${base}?text=${text}`;
+    }
+
+    async function openConsent(id){
+      CURRENT_CONSENT_ID=id;
+
+      let st='pendente', updated='—', lastInbound=false;
+      if(isValidateMode()){
+        const row = CURRENT_ROWS.find(r=>r.id===id);
+        const c = row?.data || {};
+        st = (c.consentimento && c.consentimento.status) || 'pendente';
+        updated = '—';
+        lastInbound = within24h(c.ultimaInteracaoEm);
+      } else {
+        try{
+          const doc=await pathClientes().doc(id).get();
+          const c=doc.data()||{};
+          st=(c.consentimento&&c.consentimento.status)||'pendente';
+          updated=(c.consentimento&&c.consentimento.atualizadoEm)
+            ? formatWhen(c.consentimento.atualizadoEm.seconds?{seconds:c.consentimento.atualizadoEm.seconds}:c.consentimento.atualizadoEm)
+            : '—';
+          lastInbound = within24h(c.ultimaInteracaoEm);
+        }catch{ st='pendente'; lastInbound=false; }
+      }
+
+      consentInfo.innerHTML = `Status: <b>${escapeHtml(st)}</b> <span class="value-soft">• Atualizado: ${escapeHtml(updated)}</span> ${lastInbound ? '• <span class="chip ok">Janela 24h ativa</span>' : '• <span class="chip warn">Sem mensagem recente</span>'}`;
+
+      btnGenLink.disabled = false;
+      btnRequestOptin.disabled = !lastInbound || (st==='consentido');
+      theBtnSendConfirmation.disabled = (st!=='consentido');
+      btnMarkExternal.disabled = false;
+
+      linkArea.style.display='none';
+      if(!modalConsent.open) modalConsent.showModal();
+    }
+
+    btnGenLink?.addEventListener('click', ()=>{
+      const link = buildWaLink();
+      waLink.href = link;
+      linkArea.style.display='block';
+      if(!businessPhone()){
+        alert('Configure seu número comercial para abrir já com seu WhatsApp. Por enquanto, o link abre o WhatsApp para você começar o “Oi”.');
+      }
+    });
+
+    btnCopyLink?.addEventListener('click', async ()=>{
+      try{ await navigator.clipboard.writeText(waLink.href); alert('Link copiado.'); }catch{ alert('Não foi possível copiar.'); }
+    });
+
+    btnRequestOptin?.addEventListener('click', ()=>{
+      alert('Quando a pessoa mandar um “Oi”, você pede autorização aqui. (Envio automático será habilitado quando conectarmos ao WhatsApp comercial.)');
+    });
+
+    theBtnSendConfirmation?.addEventListener('click', ()=>{
+      alert('Depois que a pessoa responder “SIM”, você confirma aqui. (Mensagem de confirmação será habilitada quando conectarmos ao WhatsApp comercial.)');
+    });
+
+    btnMarkExternal?.addEventListener('click', async ()=>{
+      if(isValidateMode() || !CURRENT_CONSENT_ID) return;
+      try{
+        await setConsentExternal(CURRENT_CONSENT_ID);
+        await loadContacts();
+        alert('Autorização marcada.');
+      }catch(e){ console.error('[contatos] marcar externo',e); alert('Falha ao marcar.'); }
+    });
+
+    btnCloseConsent?.addEventListener('click', ()=> modalConsent.close());
+
+    /* ====== Acervo ====== */
+    async function openAcervo(id){
+      CURRENT_ACERVO_ID=id;
+      if(isValidateMode()){
+        a_notes.value=''; a_tags.value=''; filesList.textContent='Modo de validação: arquivos desativados.'; if(!modalAcervo.open) modalAcervo.showModal(); return;
+      }
+      try{
+        const doc=await pathClientes().doc(id).get();
+        const c=doc.data()||{};
+        a_notes.value = (c.acervo && c.acervo.notes) || '';
+        a_tags.value = (c.acervo && c.acervo.tags && c.acervo.tags.join('; ')) || '';
+        await refreshFilesList();
+        if(!modalAcervo.open) modalAcervo.showModal();
+      }catch(e){ console.error('[acervo] abrir', e); alert('Não foi possível abrir o acervo.'); }
+    }
+
+    function parseTagsLimited(){
+      const tags = a_tags.value.split(';').map(s=>s.trim()).filter(Boolean);
+      if(tags.length > 10){ alert('Máximo de 10 tags.'); return tags.slice(0,10); }
+      return tags;
+    }
+
+    async function refreshFilesList(){
+      filesList.textContent='Carregando…';
+      const db=fs(); if(!db || !CURRENT_USER || !CURRENT_ACERVO_ID){ filesList.textContent='Indisponível.'; return; }
+      const fileCol=pathClientes().doc(CURRENT_ACERVO_ID).collection('files');
+      const snap=await fileCol.orderBy('createdAt','desc').get().catch(e=>{console.error('[acervo] listar',e);return{empty:true,forEach:()=>{}};});
+      let html=''; let total=0;
+      if(!snap.empty){
+        snap.forEach(doc=>{
+          const f=doc.data(); total += Number(f.size||0);
+          html += `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid #1f2a30">
+            <div class="value-soft">
+              <div><b>${escapeHtml(f.name||'arquivo')}</b> <span class="muted">(${((f.size||0)/1024/1024).toFixed(2)} MB)</span></div>
+              <div class="note">${escapeHtml(f.note||'')}</div>
+            </div>
+            <div class="actions">
+              ${f.url?`<a class="btn small" href="${escapeHtml(f.url)}" target="_blank" rel="noopener">Abrir</a>`:''}
+              ${f.storagePath?`<button class="btn small" data-del="${escapeHtml(doc.id)}" data-path="${escapeHtml(f.storagePath)}">Excluir</button>`:''}
+            </div>
+          </div>`;
+        });
+      }
+      const usedMB=(total/1024/1024).toFixed(2);
+      filesList.innerHTML = (html||'<div class="value-soft">Nenhum arquivo enviado ainda.</div>') + `<div class="hint" style="margin-top:8px">Usado: <b>${usedMB} MB</b> de <b>${(LIMITS.contactMax/1024/1024).toFixed(0)} MB</b> por contato.</div>`;
+      await pathClientes().doc(CURRENT_ACERVO_ID).set({ acervo:{ usage:{ totalBytes: total, maxBytesPerContact: LIMITS.contactMax } } }, {merge:true});
+    }
+
+    filesList?.addEventListener('click', async (ev)=>{
+      const delId = ev.target?.getAttribute?.('data-del');
+      const path = ev.target?.getAttribute?.('data-path');
+      if(!delId || !path || isValidateMode()) return;
+      if(!confirm('Excluir este arquivo?')) return;
+      try{
+        await st().ref().child(path).delete();
+        await pathClientes().doc(CURRENT_ACERVO_ID).collection('files').doc(delId).delete();
+        await refreshFilesList();
+      }catch(e){ console.error('[acervo] excluir',e); alert('Falha ao excluir.'); }
+    });
+
+    btnUpload?.addEventListener('click', async ()=>{
+      if(isValidateMode() || !CURRENT_ACERVO_ID) return;
+      const files = Array.from(a_file.files||[]);
+      if(!files.length){ alert('Escolha um arquivo.'); return; }
+      try{
+        const doc=await pathClientes().doc(CURRENT_ACERVO_ID).get();
+        let used = ((doc.data()?.acervo?.usage?.totalBytes)||0);
+
+        const storage=st(); const db=fs(); if(!storage || !db){ alert('Storage indisponível.'); return; }
+
+        upBar.style.display='block'; upProg.style.width='0%';
+        let sent=0;
+        for(const file of files){
+          if(file.size > LIMITS.fileMax){ alert(`Arquivo ${file.name} maior que 5 MB.`); continue; }
+          if(used + file.size > LIMITS.contactMax){ alert('Limite por contato atingido. Exclua algo ou mude de plano.'); break; }
+          const ext = (file.name.split('.').pop()||'').toLowerCase();
+          const isImg = file.type.startsWith('image/');
+          const isPdf = ext==='pdf' || file.type==='application/pdf';
+          if(!isImg && !isPdf){ alert('Apenas imagens ou PDF.'); continue; }
+
+          const path=`sandbox/${SANDBOX_UID}/contatos/${CURRENT_ACERVO_ID}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
+          const ref=storage.ref().child(path);
+
+          await new Promise((resolve,reject)=>{
+            const task=ref.put(file);
+            task.on('state_changed', snap=>{
+              const pct = (snap.bytesTransferred/snap.totalBytes)*100;
+              upProg.style.width = pct.toFixed(0)+'%';
+            }, reject, resolve);
+          });
+
+          const url = await ref.getDownloadURL();
+          const meta = {
+            name:file.name,type:file.type,size:file.size,storagePath:path,url,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp?.() || new Date()
+          };
+          await pathClientes().doc(CURRENT_ACERVO_ID).collection('files').add(meta);
+          used += file.size; sent++;
+        }
+        upBar.style.display='none'; a_file.value='';
+        if(sent>0) await refreshFilesList();
+      }catch(e){ console.error('[acervo] upload',e); alert('Falha no upload.'); upBar.style.display='none'; }
+    });
+
+    btnSaveAcervo?.addEventListener('click', async ()=>{
+      if(isValidateMode() || !CURRENT_ACERVO_ID) return;
+      const notes = a_notes.value.slice(0,500);
+      const tags = parseTagsLimited();
+      try{
+        await pathClientes().doc(CURRENT_ACERVO_ID).set({ acervo:{ notes: notes, tags: tags } }, {merge:true});
+        alert('Anotações salvas.');
+      }catch(e){ console.error('[acervo] salvar',e); alert('Não foi possível salvar.'); }
+    });
+    btnCloseAcervo?.addEventListener('click', ()=> modalAcervo.close());
+
+    /* ====== Busca ====== */
+    searchBox?.addEventListener('input', ()=> renderRows(searchBox.value));
+
+    /* ====== Bootstrap ====== */
+    window.addEventListener('load', async ()=>{
+      // máscaras
+      if(NC.telefone) maskPhoneInput(NC.telefone);
+      if(C.telefone) maskPhoneInput(C.telefone);
+
+      disableForVitrine();
+
+      const u = await ensureAuth();
+      if(!u) return;
+      if(u.demo){ demoPopulate(); return; }
+      await loadContacts();
+    });
+
+  })();
+  </script>
+</body>
+</html>
+

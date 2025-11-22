@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MEI Robô — Cadastro</title>
+
+  <!-- Canonical WWW (o layout.js sobrescreve em runtime se precisar, mas já deixamos correto) -->
+  <link rel="canonical" href="https://www.meirobo.com.br/cadastro.html" />
+  <meta property="og:url" content="https://www.meirobo.com.br/cadastro.html" />
+  <meta name="twitter:url" content="https://www.meirobo.com.br/cadastro.html" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+  <!-- REMOVIDO: meta CSP inline que conflita com a CSP de servidor -->
+
+  <!-- Firebase Hosting: SDK compat + init automático -->
+  <script defer src="/__/firebase/9.22.2/firebase-app-compat.js"></script>
+  <script defer src="/__/firebase/9.22.2/firebase-auth-compat.js"></script>
+  <script defer src="/__/firebase/init.js?useEmulator=false"></script>
+  <script>
+  window.addEventListener('load', () => {
+    try {
+      if (window.firebase?.apps?.length) {
+        window.auth = firebase.auth();
+        console.log('[cadastro] Firebase pronto (Hosting init).');
+      } else {
+        console.error('[cadastro] Firebase não inicializou via Hosting.');
+      }
+    } catch (e) { console.error(e); }
+  });
+  </script>
+
+  <!-- Cloudflare Turnstile (produção) - mantido para atender o backend -->
+  <meta name="TURNSTILE_SITE_KEY" content="0x4AAAAAAB0t6kBJwJJgmsr3">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+
+  <!-- reCAPTCHA v2 Invisible (fallback desativado; mantemos apenas placeholders) -->
+  <meta name="RECAPTCHA_SITE_KEY" content="">
+
+  <link rel="stylesheet" href="/assets/styles.css" />
+
+  <style>
+    .card-dark {
+      background: #101414;
+      color: #e9f4f1;
+      border: 1px solid #23302e;
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.02);
+    }
+    .card-dark .hint { color: #b6c9c3; }
+    .card-dark .input {
+      background: #141a1a;
+      border: 1px solid #23302e;
+      color: #e9f4f1;
+    }
+    .card-dark .input:focus {
+      border-color: #3a8f7c;
+      box-shadow: 0 0 0 2px rgba(31,170,133,0.12);
+      outline: 0;
+    }
+    .btn-disabled { opacity: .6; pointer-events: none; }
+
+    /* Banner aguardando verificação */
+    #verifyBanner { display:none; margin:10px 0 18px; padding:14px; align-items:flex-start; gap:12px; }
+    #verifyBanner .badge {
+      display:inline-block; padding:4px 8px; border-radius:999px;
+      background:#0f3b2f; color:#b9f4d8; font-size:.85rem; font-weight:700;
+    }
+    #verifyBanner .cta { margin-left:auto; }
+  </style>
+</head>
+<body>
+  <div id="app-header"></div>
+  <div id="header"></div>
+
+  <main class="section">
+    <div class="container form-wrap">
+      <h1 style="color:var(--wa-dark); margin:0 0 6px">Criar minha conta</h1>
+
+      <!-- Banner: aguardando verificação do e-mail -->
+      <div id="verifyBanner" class="note card-dark">
+        <div>
+          <div class="badge">Aguardando verificação</div>
+          <div class="hint" id="verifyBannerText" style="margin-top:8px">
+            Enviamos um link para o seu e-mail. Clique no link na sua caixa de entrada e depois toque em
+            <em>“Já verifiquei — continuar”</em> aqui nesta aba. Se você abriu o link em outra janela/aba,
+            vamos detectar automaticamente e continuar.
+          </div>
+          <div class="hint" id="verifyBannerEmail" style="margin-top:6px; opacity:.9"></div>
+        </div>
+        <a id="btnAlreadyVerified" class="btn-secondary" role="button" href="#">Já verifiquei — continuar</a>
+      </div>
+
+      <div class="note card-dark" style="margin:10px 0 18px; padding:14px">
+        <p class="hint" style="margin:0">
+          Sua conta é pessoal e intransferível e só será validada quando
+          <strong>vincular você ao CNPJ ou procuração da empresa</strong>.
+          Para ativar o MEI Robô, é obrigatório <strong>digitalizar sua voz</strong> para uso exclusivo na sua conta:
+          grave áudios nítidos, em local silencioso e sem eco, falando naturalmente, como numa conversa.
+          <strong>O envio de voz será feito na próxima etapa (Configuração da Conta) após verificar seu e-mail.</strong><br/>
+          Todas as informações são criptografadas e mantidas em sigilo.
+          Consulte os <a href="/termos.html" target="_blank" rel="noopener noreferrer">Termos de Uso</a>.
+        </p>
+      </div>
+
+      <div class="form-grid">
+        <form id="signupForm" class="form-card card-dark" action="#" method="POST" novalidate>
+          <div class="form-row">
+            <label for="nome"><strong>Nome completo</strong></label>
+            <input id="nome" name="name" class="input" type="text" placeholder="Ex.: Maria Silva" autocomplete="name" required />
+            <span class="hint">Use o seu nome — é quem falará com seus clientes.</span>
+          </div>
+
+          <div class="form-row">
+            <label for="email"><strong>E-mail</strong></label>
+            <input id="email" name="email" class="input" type="email" placeholder="voce@email.com"
+                   autocomplete="email" required aria-describedby="emailHelp" />
+            <span id="emailHelp" class="hint">Enviaremos um link de verificação para este endereço.</span>
+          </div>
+
+          <div class="form-row">
+            <label for="email2"><strong>Confirmar e-mail</strong></label>
+            <input id="email2" name="confirm-email" class="input" type="email" placeholder="Repita o e-mail"
+                   autocomplete="email" required aria-describedby="email2Help" />
+            <span id="email2Help" class="hint">Digite o mesmo e-mail nos dois campos.</span>
+          </div>
+
+          <div class="form-row">
+            <label for="telefone"><strong>Telefone (com DDD)</strong></label>
+            <input id="telefone" name="telefone" class="input" inputmode="tel"
+                   pattern="^\D*(\d\D*){10,11}$"
+                   title="Informe um telefone com DDD (10 ou 11 dígitos)"
+                   placeholder="Ex.: (11) 98765-4321" autocomplete="tel" required />
+            <span class="hint">Use um número seu (celular recomendável). Envie apenas os dígitos.</span>
+          </div>
+
+          <div class="form-row">
+            <label for="cnpj"><strong>CNPJ</strong></label>
+            <input id="cnpj" name="cnpj" class="input" inputmode="numeric"
+              pattern="^\d{14}$|^\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}$"
+              title="Informe um CNPJ válido (14 dígitos ou 00.000.000/0000-00)"
+              placeholder="Somente números ou 00.000.000/0000-00" autocomplete="on" required />
+            <span class="hint">
+              Checamos se já existe conta com este CNPJ. Você precisa estar vinculado ao CNPJ ou autorizado pela empresa.
+            </span>
+            <div id="cnpjStatus" class="hint" aria-live="polite" style="margin-top:6px"></div>
+            <div id="microVinculo" class="hint" style="margin-top:8px">
+              Pagamento e cupom serão liberados <strong>depois</strong> que confirmarmos seu vínculo com o CNPJ.
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label for="senha"><strong>Criar senha</strong></label>
+            <div class="inline" style="width:100%">
+              <input id="senha" name="new-password" class="input" type="password" placeholder="********"
+                     minlength="8" autocomplete="new-password" required aria-describedby="pwdRules pwdStrength" style="flex:1" />
+              <a role="button" id="togglePwd" class="btn-secondary" aria-pressed="false" aria-controls="senha">Mostrar</a>
+            </div>
+            <div id="pwdRules" class="hint">Mínimo de 8 caracteres com: maiúscula, minúscula, número e símbolo.</div>
+            <div class="meter meter-voice" aria-hidden="true"><span id="pwdBar" class="strength-1"></span></div>
+            <div id="pwdStrength" class="hint" aria-live="polite"></div>
+          </div>
+
+          <div class="form-row">
+            <label for="senha2"><strong>Confirmar senha</strong></label>
+            <input id="senha2" name="confirm-password" class="input" type="password" placeholder="Repita a senha" autocomplete="new-password" required />
+          </div>
+
+          <div class="form-row full">
+            <div class="hint" style="margin-top:4px">
+              <em>O envio de voz será feito na <strong>Configuração da Conta</strong> após confirmar o seu e-mail.</em>
+            </div>
+          </div>
+
+          <div class="form-row full">
+            <label class="inline" style="gap:8px">
+              <input type="checkbox" id="aceite" required />
+              <span class="hint">
+                Li e aceito os <a href="/termos.html" target="_blank" rel="noopener noreferrer">Termos</a> e a
+                <a href="/privacidade.html" target="_blank" rel="noopener noreferrer">Política de Privacidade</a>.
+              </span>
+            </label>
+          </div>
+
+          <div id="formMsg" class="hint"></div>
+
+          <!-- Turnstile (explícito, compacto) -->
+          <div class="form-row full" style="margin-top:8px">
+            <div id="cf-turnstile" aria-label="Validação de segurança"></div>
+            <input type="hidden" id="cf_token" name="cf_token" />
+            <span class="hint">Valide o desafio para liberar o botão Avançar.</span>
+          </div>
+
+          <div class="actions" style="margin-top:12px">
+            <button id="submitBtn" type="submit" class="cta btn-disabled" aria-disabled="true">Avançar</button>
+          </div>
+
+          <!-- reCAPTCHA invisível (DESATIVADO: mantido apenas se um dia precisar) -->
+          <div id="recaptcha" class="g-recaptcha" data-size="invisible" style="display:none"></div>
+        </form>
+
+        <aside class="side">
+          <h3>O que está incluído no plano</h3>
+          <ul>
+            <li>Até <strong>500 conversas</strong> iniciadas pelo cliente/mês.</li>
+            <li>Até <strong>250 conversas</strong> iniciadas por você.</li>
+            <li><strong>2 GB</strong> de memória segura para fotos, vídeos e catálogos.</li>
+            <li><strong>Histórico de clientes</strong> sempre acessível.</li>
+            <li>Respostas em texto e áudio com a <strong>sua voz digitalizada</strong>.</li>
+            <li><strong>Agenda inteligente</strong> com lembretes.</li>
+          </ul>
+        </aside>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+  <div id="footer"></div>
+
+  <script src="/assets/layout.js?v=20250905f" defer></script>
+
+  <!-- reCAPTCHA (invisible v2) DESATIVADO - não carregamos o script para evitar conflitos -->
+
+  <script>
+    /* ====== CONFIG do Backend ====== */
+    const API_BASE = "https://mei-robo-prod.onrender.com";
+    const API = {
+      availability: API_BASE + "/api/cnpj/availability",
+      cadastro:     API_BASE + "/api/cadastro",
+      checkVerification: API_BASE + "/api/auth/check-verification",
+    };
+
+    /* ====== UI refs ====== */
+    const form = document.getElementById('signupForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const formMsg = document.getElementById('formMsg');
+    const cnpjInput = document.getElementById('cnpj');
+    const cnpjStatus = document.getElementById('cnpjStatus');
+    const emailInput = document.getElementById('email');
+    const email2Input = document.getElementById('email2');
+    const phoneInput = document.getElementById('telefone');
+    const pwd = document.getElementById('senha');
+    const pwd2 = document.getElementById('senha2');
+    const bar = document.getElementById('pwdBar');
+    const strengthText = document.getElementById('pwdStrength');
+    const togglePwd = document.getElementById('togglePwd');
+
+    // Banner aguardando verificação
+    const verifyBanner = document.getElementById('verifyBanner');
+    const verifyBannerText = document.getElementById('verifyBannerText');
+    const verifyBannerEmail = document.getElementById('verifyBannerEmail');
+    const btnAlreadyVerified = document.getElementById('btnAlreadyVerified');
+
+    let cnpjAvailability = 'unknown';
+
+    /* ====== Turnstile (render explícito, compacto) ====== */
+    let CF_WIDGET_ID = null;
+    let CF_TOKEN = "";
+    let CF_TOKEN_TS = 0; // epoch ms do último token
+
+    function isValidateMode(){
+      try{ return new URLSearchParams(location.search).get('validate') === '1'; }catch(_){ return false; }
+    }
+
+    function enableSubmit(){
+      submitBtn.classList.remove('btn-disabled');
+      submitBtn.removeAttribute('aria-disabled');
+    }
+    function disableSubmit(){
+      submitBtn.classList.add('btn-disabled');
+      submitBtn.setAttribute('aria-disabled','true');
+    }
+
+    function renderTurnstile() {
+      try {
+        if (isValidateMode()) {
+          // Bypass de validação só no modo de validação de UI
+          CF_TOKEN = 'validate-mode';
+          CF_TOKEN_TS = Date.now();
+          const hidden = document.getElementById('cf_token');
+          if (hidden) hidden.value = CF_TOKEN;
+          enableSubmit();
+          return; // não renderiza o widget em validate=1
+        }
+
+        const meta = document.querySelector('meta[name="TURNSTILE_SITE_KEY"]');
+        const SITE_KEY = (meta?.content || '').trim();
+        if (!window.turnstile || !SITE_KEY || CF_WIDGET_ID) return;
+
+        CF_WIDGET_ID = turnstile.render('#cf-turnstile', {
+          sitekey: SITE_KEY,
+          size: 'compact',
+          callback: function(token) {
+            CF_TOKEN = token;
+            CF_TOKEN_TS = Date.now();
+            const hidden = document.getElementById('cf_token');
+            if (hidden) hidden.value = token;
+            enableSubmit();
+          },
+          'error-callback': function() {
+            CF_TOKEN = ""; CF_TOKEN_TS = 0;
+            const hidden = document.getElementById('cf_token');
+            if (hidden) hidden.value = "";
+            disableSubmit();
+          },
+          'expired-callback': function() {
+            CF_TOKEN = ""; CF_TOKEN_TS = 0;
+            const hidden = document.getElementById('cf_token');
+            if (hidden) hidden.value = "";
+            try { turnstile.reset(CF_WIDGET_ID); } catch(e) {}
+            disableSubmit();
+          }
+        });
+      } catch (e) { console.error('[turnstile] render falhou', e); }
+    }
+    window.addEventListener('load', renderTurnstile);
+
+    // Watchdog: expira token após ~115s e força re-render
+    setInterval(() => {
+      try{
+        if (isValidateMode()) return; // sem watchdog no modo de validação
+        if (!CF_TOKEN_TS) return;
+        const age = Date.now() - CF_TOKEN_TS;
+        if (age > 115000) {
+          CF_TOKEN = ""; CF_TOKEN_TS = 0;
+          const hidden = document.getElementById('cf_token');
+          if (hidden) hidden.value = "";
+          if (window.turnstile && CF_WIDGET_ID) {
+            try { turnstile.reset(CF_WIDGET_ID); } catch(_) {}
+          }
+          disableSubmit();
+        }
+      } catch(_){}
+    }, 5000);
+
+    /* ====== Helpers ====== */
+    function normalizeDigits(v){ return (v || '').replace(/\D+/g,''); }
+    function normalizeCNPJ(v){ return normalizeDigits(v); }
+    function validateCNPJ(cnpj){
+      cnpj = normalizeCNPJ(cnpj);
+      if (cnpj.length !== 14) return false;
+      if (/^(\d)\1{13}$/.test(cnpj)) return false;
+      let length = cnpj.length - 2;
+      let numbers = cnpj.substring(0, length);
+      const digits = cnpj.substring(length);
+      let sum = 0; let pos = length - 7;
+      for (let i = length; i >= 1; i--) {
+        sum += parseInt(numbers.charAt(length - i), 10) * pos--;
+        if (pos < 2) pos = 9;
+      }
+      let result = sum % 11 < 2 ? 0 : 11 - sum % 11;
+      if (result !== parseInt(digits.charAt(0), 10)) return false;
+      length = length + 1; numbers = cnpj.substring(0, length); sum = 0; pos = length - 7;
+      for (let i = length; i >= 1; i--) {
+        sum += parseInt(numbers.charAt(length - i), 10) * pos--;
+        if (pos < 2) pos = 9;
+      }
+      result = sum % 11 < 2 ? 0 : 11 - sum % 11;
+      return result === parseInt(digits.charAt(1), 10);
+    }
+    function debounce(fn,ms){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args),ms); }; }
+
+    async function checkCNPJAvailability(){
+      const raw = cnpjInput.value;
+      const digits = normalizeCNPJ(raw);
+      cnpjAvailability = 'unknown';
+      cnpjStatus.className = 'hint';
+      cnpjStatus.textContent = '';
+      if (!validateCNPJ(digits)) {
+        cnpjStatus.textContent = 'Revise o CNPJ: os números não formam um CNPJ válido.';
+        cnpjStatus.className = 'error';
+        disableSubmit();
+        return;
+      }
+      cnpjStatus.textContent = 'Verificando disponibilidade...';
+      cnpjStatus.className = 'hint';
+      try{
+        const res = await fetch(API.availability + '?cnpj=' + encodeURIComponent(digits));
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        if (data && data.available === true) {
+          cnpjAvailability = 'available';
+          cnpjStatus.textContent = 'CNPJ disponível para cadastro.';
+          cnpjStatus.className = 'ok';
+          // manter botão condicionado ao Turnstile: só libera no callback
+        } else {
+          cnpjAvailability = 'unavailable';
+          cnpjStatus.textContent = 'Este CNPJ já tem conta. Você pode recuperar o acesso ou usar outro.';
+          cnpjStatus.className = 'error';
+          disableSubmit();
+        }
+      } catch {
+        cnpjAvailability = 'unknown';
+        cnpjStatus.textContent = 'Não foi possível verificar agora. Validaremos no servidor.';
+        cnpjStatus.className = 'hint';
+        // manter regra do botão pelo Turnstile
+      }
+    }
+    const debouncedCheck = debounce(checkCNPJAvailability, 600);
+    cnpjInput.addEventListener('blur', checkCNPJAvailability);
+    cnpjInput.addEventListener('input', debouncedCheck);
+
+    function calcStrength(s){ let score=0; if(!s) return 0; if(s.length>=8)score++; if(s.length>=12)score++; if(/[a-z]/.test(s))score++; if(/[A-Z]/.test(s))score++; if(/[0-9]/.test(s))score++; if(/[^A-Za-z0-9]/.test(s))score++; return Math.min(5, Math.max(0, Math.floor(score*0.8))); }
+    function updatePwdMeter(){ const s=pwd.value||''; const st=calcStrength(s); const pct=[0,20,40,60,80,100][st]; document.getElementById('pwdBar').style.width=pct+'%'; strengthText.textContent=s?(['Muito fraca','Fraca','Razoável','Forte','Muito forte','Excelente'][st]):''; }
+    pwd.addEventListener('input', updatePwdMeter);
+    togglePwd.addEventListener('click', (e)=>{ e.preventDefault(); const visible=pwd.type==='text'; pwd.type=visible?'password':'text'; togglePwd.textContent=visible?'Mostrar':'Ocultar'; togglePwd.setAttribute('aria-pressed', String(!visible)); pwd.focus(); });
+
+    /* ====== Helpers para Auth cleanup ====== */
+    async function tryDeleteJustCreatedUser(authInst, createdNewUser){
+      try{
+        if (!createdNewUser) { try{ await authInst.signOut(); }catch(_){} return; }
+        const u = authInst.currentUser;
+        if (!u) return;
+        if (!u.emailVerified) { await u.delete(); }
+        else { await authInst.signOut(); }
+      } catch(e){
+        try{ await authInst.signOut(); }catch(_){ }
+        console.warn('[cadastro] falha ao deletar usuário recém-criado:', e?.message || e);
+      }
+    }
+
+    /* ====== Sinalização cross-aba para verificação ====== */
+    (function setupEmailVerifiedListeners(){
+      try {
+        var bc = ('BroadcastChannel' in window) ? new BroadcastChannel('auth') : null;
+        function onSignal(){
+          try { localStorage.setItem('emailVerified', 'true'); } catch(_){ }
+          advanceIfVerified(true);
+        }
+        if (bc) bc.addEventListener('message', function(ev){
+          if (ev && ev.data && ev.data.type === 'email-verified') onSignal();
+        });
+        window.addEventListener('message', function(ev){
+          if (ev && ev.data && ev.data.type === 'email-verified') onSignal();
+        });
+        window.addEventListener('email-verified', onSignal);
+
+        // Fallback de polling: se o banner estiver na tela, checa a cada 3s
+        setInterval(function(){
+          try {
+            if (verifyBanner.style.display !== 'none') advanceIfVerified(false);
+          } catch(_) {}
+        }, 3000);
+      } catch(_) {}
+    })();
+
+    async function advanceIfVerified(cameFromSignal){
+      try{
+        if (!window.firebase?.auth) return;
+        const user = firebase.auth().currentUser;
+        if (!user) return;
+        await user.reload();
+        if (user.emailVerified === true) {
+          location.href = '/pages/configuracao.html';
+        } else if (cameFromSignal) {
+          verifyBannerText.textContent = 'Quase lá! Estamos confirmando sua verificação... se não avançar automaticamente em alguns segundos, clique novamente.';
+        }
+      } catch(_) {}
+    }
+
+    function showVerifyBanner(email){
+      verifyBannerEmail.textContent = email ? ('E-mail: ' + email) : '';
+      verifyBanner.style.display = 'flex';
+    }
+    function hideVerifyBanner(){ verifyBanner.style.display = 'none'; }
+
+    btnAlreadyVerified.addEventListener('click', async (e)=>{
+      e.preventDefault();
+      await advanceIfVerified(true);
+    });
+
+    // Se o usuário já estiver logado quando abrir esta página,
+    // exibimos o banner/auto-avanço conforme o estado do e-mail.
+    document.addEventListener('DOMContentLoaded', async () => {
+      try{
+        if (!window.firebase?.auth) return;
+        const user = firebase.auth().currentUser || null;
+        if (user) {
+          try { await user.reload(); } catch(_){ }
+          if (user.emailVerified === true) {
+            location.href = '/pages/configuracao.html';
+            return;
+          } else {
+            const em = user.email || '';
+            showVerifyBanner(em);
+          }
+        }
+      } catch(_){ }
+    });
+
+    /* ====== Submit (com Turnstile obrigatório, preservando backend) ====== */
+    async function proceedSubmit(){
+      formMsg.className='hint';
+      formMsg.textContent='Enviando cadastro com segurança...';
+
+      // exige token válido antes de enviar
+      const token = (document.getElementById('cf_token').value || '').trim();
+      if (!token) {
+        formMsg.className='error';
+        formMsg.textContent='Valide o desafio de segurança para continuar.';
+        return;
+      }
+
+      disableSubmit();
+
+      let createdNewUser = false;
+      let authInst = null;
+
+      try{
+        const nome = (document.getElementById('nome').value || '').trim();
+        const email = (emailInput.value || '').trim();
+        const senha = (pwd.value || '');
+        const telefoneDigits = normalizeDigits(phoneInput.value || '');
+        const cnpjDigits = normalizeCNPJ(cnpjInput.value || '');
+
+        const getAuthCompatOrModular = () => {
+          if (window.firebase?.auth) { try { return firebase.auth(); } catch(_) {} }
+          if (window.getAuth) { try { return window.getAuth(); } catch(_) {} }
+          if (window.auth) return window.auth;
+          return null;
+        };
+        authInst = getAuthCompatOrModular();
+        if (!authInst) throw new Error('Firebase Auth não inicializado nesta página.');
+
+        async function ensureAuthenticated(email, password){
+          if (authInst.currentUser) return { user: authInst.currentUser, created: false };
+
+          if (typeof authInst.createUserWithEmailAndPassword === 'function') {
+            try {
+              const cred = await authInst.createUserWithEmailAndPassword(email, password);
+              return { user: cred.user, created: true };
+            } catch (e) {
+              if (e && (e.code === 'auth/email-already-in-use' || e.code === 'auth/email-already-exists')) {
+                const cred = await authInst.signInWithEmailAndPassword(email, password);
+                return { user: cred.user, created: false };
+              }
+              throw e;
+            }
+          }
+
+          if (window.createUserWithEmailAndPassword && window.signInWithEmailAndPassword) {
+            const inst = window.getAuth ? window.getAuth() : authInst;
+            try {
+              const cred = await window.createUserWithEmailAndPassword(inst, email, password);
+              return { user: cred.user, created: true };
+            } catch (e) {
+              if (e && (e.code === 'auth/email-already-in-use' || e.code === 'auth/email-already-exists')) {
+                const cred = await window.signInWithEmailAndPassword(inst, email, password);
+                return { user: cred.user, created: false };
+              }
+              throw e;
+            }
+          }
+
+          throw new Error('SDK do Firebase Auth indisponível para criar/entrar.');
+        }
+
+        const { user, created } = await ensureAuthenticated(email, senha);
+        createdNewUser = !!created;
+        const idToken = await user.getIdToken();
+        console.log('[cadastro] idToken len:', (idToken||'').length);
+
+        // Banner de “aguardando verificação” já com o e-mail do usuário
+        try { showVerifyBanner(user.email || email); } catch(_){ }
+
+        // Payload JSON para backend (LEADS_MODE: servidor grava em leads)
+        const payload = { email, senha, nome, telefone: telefoneDigits, cnpj: cnpjDigits, cf_token: token };
+
+        const headers = {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer ' + idToken,
+          'X-Turnstile-Token': token,              // header comum
+          'cf-turnstile-response': token           // alguns backends leem deste nome
+        };
+
+        const res = await fetch(API.cadastro, { method: 'POST', headers, body: JSON.stringify(payload) });
+        const text = await res.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch(_) { }
+
+        if (!res.ok) {
+          console.warn('[cadastro][debug]', res.status, data || text);
+
+          if (res.status === 429) {
+            // sinal típico de captcha faltando/ruim no backend
+            formMsg.className='error';
+            formMsg.textContent = 'Validação de segurança falhou. Recarregue o desafio e tente novamente.';
+            try { if (window.turnstile && CF_WIDGET_ID) turnstile.reset(CF_WIDGET_ID); } catch(_) { }
+            enableSubmit();
+            await tryDeleteJustCreatedUser(authInst, createdNewUser);
+            return;
+          }
+
+          if (res.status === 422) {
+            formMsg.className='error';
+            if (data && (data.message || data.detail)) {
+              formMsg.textContent = String(data.message || data.detail);
+            } else if (data && data.field) {
+              const map = { email:'e-mail', senha:'senha', nome:'nome', telefone:'telefone', cnpj:'CNPJ' };
+              const nice = map[data.field] || data.field;
+              formMsg.textContent = `Algum campo está inválido (${nice}). Revise e tente novamente.`;
+            } else {
+              formMsg.textContent = 'Algum campo está inválido. Revise nome, e-mail, telefone e CNPJ e tente novamente.';
+            }
+            try { if (window.turnstile && CF_WIDGET_ID) turnstile.reset(CF_WIDGET_ID); } catch(_) { }
+            enableSubmit();
+            await tryDeleteJustCreatedUser(authInst, createdNewUser);
+            return;
+          }
+
+          throw new Error('Falha no cadastro.');
+        }
+
+        // Fluxo após cadastro
+        if (data.next === 'verifyEmail') {
+          const mail = (data.email || email).trim();
+          location.href = '/verify-email.html?email=' + encodeURIComponent(mail);
+          return;
+        }
+        if (data.checkoutUrl) { location.href = data.checkoutUrl; return; }
+        location.href = '/verify-email.html';
+
+      } catch(e){
+        console.error(e);
+        formMsg.className='error';
+        formMsg.textContent='Não foi possível concluir agora. Tente novamente.';
+        try { if (window.turnstile && CF_WIDGET_ID) turnstile.reset(CF_WIDGET_ID); } catch(_) { }
+
+        if (authInst) { await tryDeleteJustCreatedUser(authInst, createdNewUser); }
+        enableSubmit();
+      }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      formMsg.className='hint'; formMsg.textContent='';
+
+      const e1 = (emailInput.value || '').trim().toLowerCase();
+      const e2 = (email2Input.value || '').trim().toLowerCase();
+      if (!e1 || !e2 || e1 !== e2) { formMsg.className='error'; formMsg.textContent='Os dois e-mails precisam ser iguais.'; email2Input.focus(); return; }
+      if (cnpjAvailability === 'unavailable') { formMsg.className='error'; formMsg.textContent='Este CNPJ já tem conta. Você pode recuperar o acesso ou usar outro.'; return; }
+      if (pwd.value !== pwd2.value) { formMsg.className='error'; formMsg.textContent='As duas senhas precisam ser iguais.'; pwd2.focus(); return; }
+      const rules=[/[a-z]/,/[A-Z]/,/[0-9]/,/[^A-Za-z0-9]/];
+      if (!(rules.every(r=>r.test(pwd.value)) && pwd.value.length>=8)) { formMsg.className='error'; formMsg.textContent='Sua senha precisa ter 8 caracteres, incluindo letras maiúsculas, minúsculas, número e símbolo.'; pwd.focus(); return; }
+      const phoneDigits = normalizeDigits(phoneInput.value || '');
+      if (!phoneDigits || phoneDigits.length < 10 || phoneDigits.length > 11) { formMsg.className='error'; formMsg.textContent='Informe um telefone com DDD (10 ou 11 dígitos).'; phoneInput.focus(); return; }
+      if (!document.getElementById('aceite').checked) { formMsg.className='error'; formMsg.textContent='Confirme que leu e aceitou os Termos e a Política de Privacidade.'; return; }
+
+      // exige token do Turnstile antes de enviar
+      const token = (document.getElementById('cf_token').value || '').trim();
+      if (!token) {
+        formMsg.className='error';
+        formMsg.textContent='Valide o desafio de segurança para liberar o envio.';
+        return;
+      }
+
+      proceedSubmit();
+    });
+  </script>
+</body>
+</html>

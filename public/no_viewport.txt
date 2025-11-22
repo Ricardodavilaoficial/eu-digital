@@ -1,0 +1,5 @@
+C:\Users\Ricardo d'Avila\Desktop\meu-servico-cliente\Fontend GPT\public\assets\partials\footer.html
+C:\Users\Ricardo d'Avila\Desktop\meu-servico-cliente\Fontend GPT\public\assets\partials\header.html
+C:\Users\Ricardo d'Avila\Desktop\meu-servico-cliente\Fontend GPT\public\partials\footer.html
+C:\Users\Ricardo d'Avila\Desktop\meu-servico-cliente\Fontend GPT\public\partials\header.backup.html
+C:\Users\Ricardo d'Avila\Desktop\meu-servico-cliente\Fontend GPT\public\partials\header.html

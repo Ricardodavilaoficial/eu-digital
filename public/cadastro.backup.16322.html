@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MEI Robô — Cadastro</title>
+
+  <!-- PRODUÇÃO: defina sua SITE KEY do reCAPTCHA v2 Invisible -->
+  <meta name="RECAPTCHA_SITE_KEY" content="">
+
+  <link rel="stylesheet" href="/assets/styles.css" />
+
+  <style>
+    :root {
+      --mr-green: #1faa85;
+      --mr-green-2: #158f72;
+      --mr-green-3: #0d715a;
+      --mr-green-soft: rgba(31,170,133,0.12);
+      --mr-dark: #101414;
+      --mr-dark-2: #141a1a;
+      --mr-border: #23302e;
+      --mr-text: #e9f4f1;
+      --mr-muted: #b6c9c3;
+    }
+    /* Dark, sóbrio e elegante com acentos verdes */
+    .card-dark {
+      background: var(--mr-dark);
+      color: var(--mr-text);
+      border: 1px solid var(--mr-border);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.02);
+    }
+    .card-dark .hint { color: var(--mr-muted); }
+    .card-dark .input {
+      background: var(--mr-dark-2);
+      border: 1px solid var(--mr-border);
+      color: var(--mr-text);
+    }
+    .card-dark .input:focus {
+      border-color: var(--mr-green-2);
+      box-shadow: 0 0 0 2px var(--mr-green-soft);
+      outline: 0;
+    }
+    /* Links padrão verdinhos do site */
+    a, .btn-secondary { color: var(--mr-green); }
+    a:hover, .btn-secondary:hover { color: #23bd97; }
+    a:focus, button:focus { outline: 2px solid var(--mr-green-2); outline-offset: 2px; }
+
+    /* CTA destaca em verde, mantendo sobriedade */
+    .cta {
+      background: var(--mr-green);
+      border: 1px solid var(--mr-green-2);
+      color: #06241d;
+      font-weight: 800;
+    }
+    .cta:hover { background: #23bd97; border-color: #23bd97; }
+
+    /* Upload em caixa grande com instruções */
+    .upload-area{
+      border:2px dashed var(--mr-border);
+      border-radius:12px;
+      padding:20px;
+      cursor:pointer;
+      background: var(--mr-dark-2);
+    }
+    .upload-area:hover{ background: #0e1413; }
+    .upload-title{ font-weight:700; margin:0 0 6px }
+    .upload-sub{ margin:0 0 10px }
+    .upload-actions{ display:flex; gap:10px; flex-wrap:wrap }
+    .btn-mini{
+      cursor:pointer;
+      border-radius:999px;
+      padding:8px 14px;
+      font-weight:800;
+      border:1px solid var(--mr-border);
+      background:#0c1211;
+      color: var(--mr-text);
+    }
+    .btn-mini:hover{ border-color: var(--mr-green-2); box-shadow: 0 0 0 2px var(--mr-green-soft); }
+    .file-list{ list-style:none; padding:0; margin:12px 0 0 }
+    .file-item{ display:flex; align-items:center; justify-content:space-between; gap:10px; background:#0c1211; border:1px solid var(--mr-border); border-radius:10px; padding:8px 12px; margin:6px 0 }
+    .file-meta{ font-size:.95rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color: var(--mr-text) }
+    .remove-btn{ background:#0c1211; border:1px solid #8a3a3a; color:#ffbdbd; border-radius:999px; padding:6px 10px; font-weight:800; cursor:pointer }
+    .meter-voice{ margin-top:8px }
+    #voiceBar{ display:block; height:6px; background: var(--mr-green); border-radius: 999px; transition: width .25s ease }
+    .btn-disabled{ opacity:.55; pointer-events:none }
+    .price-line s { color:#6b7f79; opacity:.6; text-decoration: line-through; }
+  </style>
+</head>
+<body>
+  <div id="app-header"></div>
+  <div id="header"></div>
+
+  <main class="section">
+    <div class="container form-wrap">
+      <h1 style="color:var(--wa-dark); margin:0 0 6px">Criar minha conta</h1>
+
+      <!-- Texto explicativo completo (restaurado) -->
+      <div class="note card-dark" style="margin:10px 0 18px; padding:14px">
+        <p class="hint" style="margin:0">
+          Sua conta é pessoal e intransferível e só será validada quando
+          <strong>vincular você ao CNPJ ou procuração da empresa</strong>.
+          Para ativar o MEI Robô, é obrigatório <strong>digitalizar sua voz</strong> para uso exclusivo na sua conta:
+          grave áudios nítidos, em local silencioso e sem eco, falando naturalmente, como numa conversa.
+          Envie até <strong>5 áudios</strong>, cada um com pelo menos <strong>1 minuto</strong>; o ideal é que, somados,
+          tenham entre <strong>10 e 30 minutos</strong>. Todas as informações são criptografadas e mantidas em sigilo.
+          Consulte os <a href="/termos.html" target="_blank" rel="noopener noreferrer">Termos de Uso</a>.
+        </p>
+      </div>
+
+      <div class="form-grid">
+        <form id="signupForm" class="form-card card-dark" action="#" method="POST" novalidate>
+          <div class="form-row">
+            <label for="nome"><strong>Nome completo</strong></label>
+            <input id="nome" name="name" class="input" type="text" placeholder="Ex.: Maria Silva" autocomplete="name" required />
+            <span class="hint">Use o seu nome — é quem falará com seus clientes.</span>
+          </div>
+
+          <div class="form-row">
+            <label for="email"><strong>E-mail</strong></label>
+            <input id="email" name="email" class="input" type="email" placeholder="voce@email.com"
+                   autocomplete="email" required aria-describedby="emailHelp" />
+            <span id="emailHelp" class="hint">Enviaremos um link de verificação para este endereço.</span>
+          </div>
+
+          <div class="form-row">
+            <label for="email2"><strong>Confirmar e-mail</strong></label>
+            <input id="email2" name="confirm-email" class="input" type="email" placeholder="Repita o e-mail"
+                   autocomplete="email" required aria-describedby="email2Help" />
+            <span id="email2Help" class="hint">Digite o mesmo e-mail nos dois campos.</span>
+          </div>
+
+          <div class="form-row">
+            <label for="cnpj"><strong>CNPJ</strong></label>
+            <input id="cnpj" name="cnpj" class="input" inputmode="numeric"
+              pattern="^\d{14}$|^\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}$"
+              title="Informe um CNPJ válido (14 dígitos ou 00.000.000/0000-00)"
+              placeholder="Somente números ou 00.000.000/0000-00" autocomplete="on" required />
+            <span class="hint">Ex.: 12.345.678/0001-90 — checamos se já existe conta com este CNPJ.</span>
+            <div id="cnpjStatus" class="hint" aria-live="polite" style="margin-top:6px"></div>
+            <div id="microVinculo" class="hint" style="margin-top:8px">
+              Pagamento e cupom serão liberados <strong>depois</strong> que confirmarmos seu vínculo com o CNPJ.
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label for="senha"><strong>Criar senha</strong></label>
+            <div class="inline" style="width:100%">
+              <input id="senha" name="new-password" class="input" type="password" placeholder="********"
+                     minlength="8" autocomplete="new-password" required aria-describedby="pwdRules pwdStrength" style="flex:1" />
+              <a role="button" id="togglePwd" class="btn-secondary" aria-pressed="false" aria-controls="senha">Mostrar</a>
+            </div>
+            <div id="pwdRules" class="hint">Mínimo de 8 caracteres com: maiúscula, minúscula, número e símbolo.</div>
+            <div class="meter meter-voice" aria-hidden="true"><span id="pwdBar" class="strength-1"></span></div>
+            <div id="pwdStrength" class="hint" aria-live="polite"></div>
+          </div>
+
+          <div class="form-row">
+            <label for="senha2"><strong>Confirmar senha</strong></label>
+            <input id="senha2" name="confirm-password" class="input" type="password" placeholder="Repita a senha" autocomplete="new-password" required />
+          </div>
+
+          <!-- Upload (caixa grande com texto instrucional padrão) -->
+          <div class="form-row full">
+            <label><strong>Envio de voz (obrigatório)</strong></label>
+            <div id="uploadArea" class="upload-area" tabindex="0" role="button" aria-label="Enviar arquivos de áudio por clique ou arraste">
+              <p class="upload-title">Envio de voz (obrigatório)</p>
+              <p class="upload-sub">
+                Clique para selecionar <em>(ou arraste)</em> até <strong>5 áudios</strong> (WAV/MP3/M4A/OGG/WEBM) somando ≥ <strong>1 minuto</strong>.<br/>
+                <strong>Grave em silêncio absoluto</strong>, sem eco e sem ruídos distantes.
+              </p>
+              <div class="upload-actions">
+                <input id="voiceFiles" type="file" accept=".wav,.mp3,.m4a,.ogg,.webm,audio/*" multiple hidden />
+                <button type="button" class="btn-mini" id="btnChooseFiles">Escolher arquivos</button>
+                <button type="button" class="btn-mini" id="btnClearFiles">Limpar</button>
+              </div>
+              <ul id="fileList" class="file-list"></ul>
+              <div id="voiceMsg" class="hint" style="margin-top:6px"></div>
+            </div>
+
+            <div class="meter-voice" aria-hidden="true"><span id="voiceBar" style="width:0%"></span></div>
+
+            <label class="inline" style="gap:8px;margin-top:10px">
+              <input type="checkbox" id="aceiteVoz" required />
+              <span class="hint">
+                Autorizo o uso da minha voz <strong>somente</strong> na minha conta,
+                conforme o <a href="/consentimento-voz.html" target="_blank" rel="noopener noreferrer">Consentimento de Voz</a>,
+                a <a href="/privacidade.html" target="_blank" rel="noopener noreferrer">Política de Privacidade</a> e os
+                <a href="/termos.html" target="_blank" rel="noopener noreferrer">Termos de Uso</a>.
+              </span>
+            </label>
+          </div>
+
+          <div class="form-row full">
+            <label class="inline" style="gap:8px">
+              <input type="checkbox" id="aceite" required />
+              <span class="hint">
+                Li e aceito os <a href="/termos.html" target="_blank" rel="noopener noreferrer">Termos</a> e a
+                <a href="/privacidade.html" target="_blank" rel="noopener noreferrer">Política de Privacidade</a>.
+              </span>
+            </label>
+          </div>
+
+          <div id="formMsg" class="hint"></div>
+
+          <div class="actions" style="margin-top:12px">
+            <button id="submitBtn" type="submit" class="cta">Avançar</button>
+          </div>
+
+          <p class="hint" style="margin-top:10px">
+            Já tem conta? <a href="/pages/login.html">Entrar</a>
+          </p>
+
+          <!-- reCAPTCHA invisível -->
+          <div id="recaptcha" class="g-recaptcha" data-size="invisible"></div>
+        </form>
+
+        <aside class="side">
+          <h3>O que está incluído no plano</h3>
+          <ul>
+            <li>Até <strong>500 conversas</strong> iniciadas pelo cliente/mês.</li>
+            <li>Até <strong>250 conversas</strong> iniciadas por você.</li>
+            <li><strong>2 GB</strong> de memória segura para fotos, vídeos e catálogos.</li>
+            <li><strong>Histórico de clientes</strong> sempre acessível.</li>
+            <li>Respostas em texto e áudio com a <strong>sua voz digitalizada</strong>.</li>
+            <li><strong>Agenda inteligente</strong> com lembretes.</li>
+          </ul>
+        </aside>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+  <div id="footer"></div>
+
+  <script src="/assets/layout.js?v=20250905f" defer></script>
+
+  <!-- reCAPTCHA (invisible v2, explicit render) -->
+  <script>
+    let recaptchaWidgetId = null;
+    let pendingSubmit = null;
+    function onRecaptchaLoad(){
+      try{
+        const meta = document.querySelector('meta[name="RECAPTCHA_SITE_KEY"]');
+        const RECAPTCHA_SITE_KEY = meta?.content?.trim();
+        if (!window.grecaptcha || !RECAPTCHA_SITE_KEY) return;
+        recaptchaWidgetId = grecaptcha.render('recaptcha', {
+          sitekey: RECAPTCHA_SITE_KEY,
+          size: 'invisible',
+          callback: onRecaptchaSuccess,
+          'error-callback': onRecaptchaError,
+          'expired-callback': onRecaptchaExpired
+        });
+      } catch(e){ console.error(e); }
+    }
+    function onRecaptchaSuccess(token){
+      if (pendingSubmit) pendingSubmit(token);
+      pendingSubmit = null;
+      try{ grecaptcha.reset(recaptchaWidgetId); }catch(_){}
+    }
+    function onRecaptchaError(){
+      const msg = document.getElementById('formMsg');
+      msg.className='error';
+      msg.textContent='Falha no reCAPTCHA. Atualize a página e tente novamente.';
+      pendingSubmit = null;
+    }
+    function onRecaptchaExpired(){}
+    window.onRecaptchaLoad = onRecaptchaLoad;
+  </script>
+  <script src="https://www.google.com/recaptcha/api.js?onload=onRecaptchaLoad&render=explicit" async defer></script>
+
+  <script>
+    /* ====== CONFIG do Backend ====== */
+    const API_BASE = "https://mei-robo-prod.onrender.com";
+    const API = {
+      availability: API_BASE + "/api/cnpj/availability",
+      cadastro:     API_BASE + "/api/cadastro",
+    };
+
+    /* ====== UI refs ====== */
+    const form = document.getElementById('signupForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const formMsg = document.getElementById('formMsg');
+    const cnpjInput = document.getElementById('cnpj');
+    const cnpjStatus = document.getElementById('cnpjStatus');
+    const emailInput = document.getElementById('email');
+    const email2Input = document.getElementById('email2');
+    const pwd = document.getElementById('senha');
+    const pwd2 = document.getElementById('senha2');
+    const bar = document.getElementById('pwdBar');
+    const strengthText = document.getElementById('pwdStrength');
+    const togglePwd = document.getElementById('togglePwd');
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('voiceFiles');
+    const btnChooseFiles = document.getElementById('btnChooseFiles');
+    const btnClearFiles = document.getElementById('btnClearFiles');
+    const fileList = document.getElementById('fileList');
+    const voiceMsg = document.getElementById('voiceMsg');
+    const voiceBar = document.getElementById('voiceBar');
+    const aceiteVoz = document.getElementById('aceiteVoz');
+    const voiceState={ files:[], totalSec:0 };
+    let cnpjAvailability = 'unknown';
+
+    /* ====== Helpers ====== */
+    function normalizeCNPJ(v){ return (v || '').replace(/\D+/g,''); }
+    function validateCNPJ(cnpj){
+      cnpj = normalizeCNPJ(cnpj);
+      if (cnpj.length !== 14) return false;
+      if (/^(\d)\1{13}$/.test(cnpj)) return false;
+      let length = cnpj.length - 2;
+      let numbers = cnpj.substring(0, length);
+      const digits = cnpj.substring(length);
+      let sum = 0; let pos = length - 7;
+      for (let i = length; i >= 1; i--) {
+        sum += parseInt(numbers.charAt(length - i), 10) * pos--;
+        if (pos < 2) pos = 9;
+      }
+      let result = sum % 11 < 2 ? 0 : 11 - sum % 11;
+      if (result !== parseInt(digits.charAt(0), 10)) return false;
+      length = length + 1; numbers = cnpj.substring(0, length); sum = 0; pos = length - 7;
+      for (let i = length; i >= 1; i--) {
+        sum += parseInt(numbers.charAt(length - i), 10) * pos--;
+        if (pos < 2) pos = 9;
+      }
+      result = sum % 11 < 2 ? 0 : 11 - sum % 11;
+      return result === parseInt(digits.charAt(1), 10);
+    }
+    function debounce(fn,ms){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args),ms); }; }
+
+    async function checkCNPJAvailability(){
+      const raw = cnpjInput.value;
+      const digits = normalizeCNPJ(raw);
+      cnpjAvailability = 'unknown';
+      cnpjStatus.className = 'hint';
+      cnpjStatus.textContent = '';
+      if (!validateCNPJ(digits)) {
+        cnpjStatus.textContent = 'Revise o CNPJ: os números não formam um CNPJ válido.';
+        cnpjStatus.className = 'error';
+        submitBtn.classList.add('btn-disabled'); submitBtn.setAttribute('aria-disabled','true'); return;
+      }
+      cnpjStatus.textContent = 'Verificando disponibilidade...';
+      cnpjStatus.className = 'hint';
+      try{
+        const res = await fetch(API.availability + '?cnpj=' + encodeURIComponent(digits), { credentials:'include' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        if (data && data.available === true) {
+          cnpjAvailability = 'available';
+          cnpjStatus.textContent = 'CNPJ disponível para cadastro.';
+          cnpjStatus.className = 'ok';
+          submitBtn.classList.remove('btn-disabled'); submitBtn.removeAttribute('aria-disabled');
+        } else {
+          cnpjAvailability = 'unavailable';
+          cnpjStatus.textContent = 'Este CNPJ já tem conta. Você pode recuperar o acesso ou usar outro.';
+          cnpjStatus.className = 'error';
+          submitBtn.classList.add('btn-disabled'); submitBtn.setAttribute('aria-disabled','true');
+        }
+      } catch {
+        cnpjAvailability = 'unknown';
+        cnpjStatus.textContent = 'Não foi possível verificar agora. Validaremos no servidor.';
+        cnpjStatus.className = 'hint';
+        submitBtn.classList.remove('btn-disabled'); submitBtn.removeAttribute('aria-disabled');
+      }
+    }
+    const debouncedCheck = debounce(checkCNPJAvailability, 600);
+    cnpjInput.addEventListener('blur', checkCNPJAvailability);
+    cnpjInput.addEventListener('input', debouncedCheck);
+
+    /* Força da senha */
+    function calcStrength(s){ let score=0; if(!s) return 0; if(s.length>=8)score++; if(s.length>=12)score++; if(/[a-z]/.test(s))score++; if(/[A-Z]/.test(s))score++; if(/[0-9]/.test(s))score++; if(/[^A-Za-z0-9]/.test(s))score++; return Math.min(5, Math.max(0, Math.floor(score*0.8))); }
+    function updatePwdMeter(){ const s=pwd.value||''; const st=calcStrength(s); const pct=[0,20,40,60,80,100][st]; voiceBar.style.width='0%'; bar.style.width=pct+'%'; strengthText.textContent=s?(['Muito fraca','Fraca','Razoável','Forte','Muito forte','Excelente'][st]):''; }
+    pwd.addEventListener('input', updatePwdMeter);
+    togglePwd.addEventListener('click', (e)=>{ e.preventDefault(); const visible=pwd.type==='text'; pwd.type=visible?'password':'text'; togglePwd.textContent=visible?'Mostrar':'Ocultar'; togglePwd.setAttribute('aria-pressed', String(!visible)); pwd.focus(); });
+
+    /* Submit + reCAPTCHA */
+    async function proceedSubmit(recaptchaToken){
+      formMsg.className='hint';
+      formMsg.textContent='Enviando cadastro com segurança...';
+
+      const fd = new FormData();
+      fd.append('nome',  (document.getElementById('nome').value || '').trim());
+      fd.append('email', (emailInput.value || '').trim());
+      fd.append('cnpj',  (cnpjInput.value || '').trim());
+      fd.append('aceitarTermos', 'true');
+      fd.append('aceitarVoz', 'true');
+      fd.append('vozTotalSegundos', String(Math.round(voiceState.totalSec)));
+      if (recaptchaToken) fd.append('recaptchaToken', recaptchaToken);
+      voiceState.files.forEach((file)=> fd.append('voice', file, file.name));
+
+      try{
+        const res = await fetch(API.cadastro, { method:'POST', body: fd, credentials:'include' });
+        if (!res.ok) throw new Error('Falha no cadastro: HTTP '+res.status);
+        const data = await res.json().catch(()=>({}));
+        if (data.next === 'verifyEmail') {
+          const mail = (data.email || (emailInput.value||'')).trim();
+          location.href = '/verify-email.html?email=' + encodeURIComponent(mail);
+          return;
+        }
+        if (data.checkoutUrl) { location.href = data.checkoutUrl; return; }
+        location.href = '/verify-email.html';
+      } catch(e){
+        console.error(e);
+        formMsg.className='error';
+        formMsg.textContent='Não foi possível concluir agora. Tente novamente.';
+      }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      formMsg.className='hint'; formMsg.textContent='';
+
+      const e1 = (emailInput.value || '').trim().toLowerCase();
+      const e2 = (email2Input.value || '').trim().toLowerCase();
+      if (!e1 || !e2 || e1 !== e2) { formMsg.className='error'; formMsg.textContent='Os dois e-mails precisam ser iguais.'; email2Input.focus(); return; }
+      if (cnpjAvailability === 'unavailable') { formMsg.className='error'; formMsg.textContent='Este CNPJ já tem conta. Você pode recuperar o acesso ou usar outro.'; return; }
+      if (pwd.value !== pwd2.value) { formMsg.className='error'; formMsg.textContent='As duas senhas precisam ser iguais.'; return; }
+      const rules=[/[a-z]/,/[A-Z]/,/[0-9]/,/[^A-Za-z0-9]/];
+      if (!(rules.every(r=>r.test(pwd.value)) && pwd.value.length>=8)) { formMsg.className='error'; formMsg.textContent='Sua senha precisa ter 8 caracteres, incluindo letras maiúsculas, minúsculas, número e símbolo.'; return; }
+
+      if (voiceState.files.length===0) { formMsg.className='error'; formMsg.textContent='Envie pelo menos 1 áudio, com duração mínima de 1 minuto.'; return; }
+      if (!voiceState.totalSec || voiceState.totalSec<60) { formMsg.className='error'; formMsg.textContent='A soma dos áudios deve ter no mínimo 1 minuto.'; return; }
+      if (voiceState.totalSec>1800) { formMsg.className='error'; formMsg.textContent='O limite é de 30 minutos no total de áudios.'; return; }
+      if (!aceiteVoz.checked) { formMsg.className='error'; formMsg.textContent='Confirme a autorização de uso da sua voz para continuar.'; return; }
+      if (!document.getElementById('aceite').checked) { formMsg.className='error'; formMsg.textContent='Confirme que leu e aceitou os Termos e a Política de Privacidade.'; return; }
+
+      if (typeof grecaptcha !== 'undefined' && typeof grecaptcha.execute === 'function' && recaptchaWidgetId !== null) {
+        formMsg.textContent='Validando segurança...';
+        pendingSubmit = (token)=> proceedSubmit(token);
+        grecaptcha.execute(recaptchaWidgetId);
+      } else {
+        proceedSubmit(null);
+      }
+    });
+
+    /* Upload helpers */
+    function formatTime(sec){ const m=Math.floor(sec/60), s=Math.floor(sec%60); return `${m}m ${String(s).padStart(2,'0')}s`; }
+    function renderFileList(){
+      fileList.innerHTML='';
+      voiceState.files.forEach((f,idx)=>{
+        const li=document.createElement('li'); li.className='file-item';
+        const meta=document.createElement('div'); meta.className='file-meta'; meta.textContent=`${f.name} (${Math.round(f.size/1024)} KB)`;
+        const rm=document.createElement('button'); rm.className='remove-btn'; rm.textContent='Remover';
+        rm.addEventListener('click',()=>{ voiceState.files.splice(idx,1); renderFileList(); updateVoiceDurations(); });
+        li.appendChild(meta); li.appendChild(rm); fileList.appendChild(li);
+      });
+      if(voiceState.files.length===0){
+        voiceMsg.textContent='Nenhum arquivo selecionado. Envie pelo menos 1 áudio, com duração mínima de 1 minuto.';
+        voiceBar.style.width='0%';
+      }
+    }
+    function addFiles(list){
+      for(const f of list){
+        if(voiceState.files.length>=5){ formMsg.className='error'; formMsg.textContent='Limite de 5 arquivos de voz atingido.'; break; }
+        if(!(f.type||'').startsWith('audio/')){ formMsg.className='error'; formMsg.textContent='Apenas arquivos de áudio são aceitos.'; continue; }
+        voiceState.files.push(f);
+      }
+      renderFileList(); updateVoiceDurations();
+    }
+    function getDuration(file){
+      return new Promise((resolve)=>{
+        const a=document.createElement('audio'); a.preload='metadata';
+        a.onloadedmetadata=function(){ const d=isFinite(a.duration)?a.duration:0; URL.revokeObjectURL(a.src); resolve(d); };
+        a.onerror=()=>resolve(0);
+        a.src=URL.createObjectURL(file);
+      });
+    }
+    async function updateVoiceDurations(){
+      if(voiceState.files.length===0){ voiceState.totalSec=0; return; }
+      const durations=await Promise.all(voiceState.files.map(getDuration));
+      const total=durations.reduce((acc,d)=>acc+(d||0),0); voiceState.totalSec=total;
+      const pct=Math.min(100, Math.max(0, Math.round((total/1800)*100)));
+      voiceBar.style.width=pct+'%';
+      voiceMsg.textContent=`Duração total: ${formatTime(total)} — mínimo 1m00s, máximo 30m00s.`;
+    }
+    document.getElementById('btnChooseFiles').addEventListener('click',()=>fileInput.click());
+    document.getElementById('btnClearFiles').addEventListener('click',()=>{ voiceState.files=[]; renderFileList(); updateVoiceDurations(); });
+    uploadArea.addEventListener('click',(e)=>{ const t=e.target; if(t && t.closest && t.closest('.btn-mini')) return; fileInput.click(); });
+    uploadArea.addEventListener('dragover',(e)=>{ e.preventDefault(); });
+    uploadArea.addEventListener('drop',(e)=>{ e.preventDefault(); addFiles(e.dataTransfer.files); });
+    fileInput.addEventListener('change',(e)=>{ const files=e.target && e.target.files?e.target.files:null; if(files) addFiles(files); fileInput.value=''; });
+
+    document.addEventListener('DOMContentLoaded', () => { /* inicia barras/meters */ });
+  </script>
+</body>
+</html>

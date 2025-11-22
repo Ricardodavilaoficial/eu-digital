@@ -1,0 +1,413 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MEI Robô — Vendas pelo WhatsApp, sem complicar</title>
+  <meta name="description" content="MEI Robô: responda no WhatsApp com sua voz e seu jeito. Envie preços, faça orçamentos e marque horários — tudo no tema WhatsApp-like, simples e direto." />
+  <!-- FAVICONS (quadrado arredondado, robô + balãozinho) -->
+  <!-- Favicons / PWA -->
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/icon-16.png?v=3">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon-32.png?v=3">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/icon-180.png?v=3">
+  <link rel="shortcut icon" href="/assets/favicon.ico?v=3">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0f1113">
+
+  <!-- CSS global (mesmo padrão das outras páginas) -->
+  <link rel="stylesheet" href="/assets/styles.css">
+  <style>
+    :root{
+      --bg:#0f1113;
+      --bg-hero:#0f1113;
+      --card:#15181b;
+      --muted:#9aa1a8;
+      --text:#e8eaed;
+      --accent:#23d366;
+      --accent-press:#1cbc59;
+      --border:#23272b;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --radius: 18px;
+    }
+    html,body{background:var(--bg); color:var(--text);}
+    a{color:var(--accent); text-decoration:none}
+    a:hover{opacity:.92}
+    .container{max-width:1120px; margin:0 auto; padding:20px; box-sizing:border-box;}
+    .grid{display:grid; gap:22px;}
+    .grid-2{grid-template-columns:1.1fr .9fr;}
+    .grid-2b{grid-template-columns:1fr 1fr;}
+    @media (max-width:900px){.grid-2,.grid-2b{grid-template-columns:1fr;}}
+
+    /* Hero */
+    .hero{
+      padding:38px 0 16px;
+      background: radial-gradient(1200px 420px at 20% -10%, rgba(35,211,102,.12), transparent 60%), var(--bg-hero);
+    }
+    .brand-icon{width:72px;height:72px; margin-bottom:12px; opacity:.95}
+    .headline{font-size: clamp(26px,3.6vw,36px); line-height:1.15; font-weight:700; margin:0 0 10px}
+    .sub{font-size: clamp(16px,2.1vw,18px); color:var(--muted); margin:0 0 4px}
+    .punch{font-weight:600; margin:4px 0 14px}
+    .cta-row{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:12px 0 10px}
+    .hero-note{margin-top:4px; font-size:14px; line-height:1.45; color:#cfd6dc}
+    .hero-note b{font-size: clamp(18px,2.4vw,22px); color:var(--text)}
+    .fine{display:block; font-size:12px; color:var(--muted); margin-top:4px}
+    .btn{padding:12px 16px; border-radius:12px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; border:1px solid transparent; cursor:pointer; transition:transform .05s ease, background .2s;}
+    .btn:active{transform:translateY(1px)}
+    .btn-primary{background:var(--accent); color:#0a0a0a}
+    .btn-primary:hover{background:var(--accent-press)}
+    .btn-ghost{border-color:var(--border); background:transparent; color:var(--text)}
+    .trust{font-size:13px; color:var(--muted); margin-top:2px}
+    .divider{height:2px; width:60px; background:var(--accent); margin:16px 0 10px;}
+
+    /* Phone mock */
+    .phone{width:min(360px,90%); height:690px; background:#0b0c0d; border:1px solid #1f2428; border-radius:28px; box-shadow: var(--shadow); margin:0 auto; display:flex; flex-direction:column; overflow:hidden; animation: rise .6s ease both}
+    @keyframes rise{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:translateY(0)}}
+    .phone-top{height:54px; background:#0f1417; border-bottom:1px solid #1f2428; display:flex; align-items:center; justify-content:center; color:#c9d1d9; font-weight:600; font-size:14px}
+    .chat{flex:1; padding:14px; display:flex; gap:8px; flex-direction:column; overflow:auto}
+    .b{align-self:flex-start; background:#1b2125; color:#e8eaed}
+    .m{align-self:flex-end; background:#005c4b; color:#e6f7ee}
+    .bubble{max-width:86%; padding:10px 12px; border-radius:16px; box-shadow: 0 2px 8px rgba(0,0,0,.2); font-size:14px; line-height:1.35}
+    /* imagem dentro da bolha */
+    .bubble img{max-width:100%; height:auto; border-radius:12px; display:block}
+    .caption{font-size:12px; opacity:.9; margin-top:6px}
+
+    .audio{display:flex; align-items:center; gap:8px}
+    .audio .dot{width:10px; height:10px; border-radius:50%; background:#c4f2df; opacity:.85; animation: pulse 1.8s infinite ease-in-out}
+    .audio .bar{flex:1; height:6px; background:#0c3a31; border-radius:999px; position:relative}
+    .audio .time{font-size:12px; opacity:.8}
+    @keyframes pulse{0%{opacity:.4}50%{opacity:1}100%{opacity:.4}}
+
+    .options{display:flex; gap:8px; margin-top:2px}
+    .opt{font-size:12px; padding:8px 10px; background:#163c33; color:#c4f2df; border-radius:999px}
+    .phone-bottom{padding:10px; border-top:1px solid #1f2428; background:#0f1417; display:flex; gap:8px}
+    .input{flex:1; background:#0c0f12; border:1px solid #1e2428; border-radius:999px; height:40px}
+
+    /* Sections */
+    section{padding:46px 0}
+    .card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px}
+    .section-title{font-size: clamp(22px,3vw,28px); font-weight:700; margin:0 0 10px}
+    .muted{color:var(--muted)}
+    .steps{display:grid; gap:12px; grid-template-columns:repeat(4,1fr)}
+    @media (max-width:900px){.steps{grid-template-columns:1fr;}.phone{height:620px}}
+    .step{background:var(--card); border:1px solid var(--border); border-radius:16px; padding:14px}
+    .chip{display:inline-flex; align-items:center; justify-content:center; min-width:26px; height:26px; border-radius:999px; background:#0d904f; color:#07130d; font-weight:700; margin-bottom:6px}
+    .benefits{display:grid; gap:12px; grid-template-columns:repeat(3,1fr)}
+    @media (max-width:900px){.benefits{grid-template-columns:1fr}}
+    .benefit{background:var(--card); border:1px solid var(--border); border-radius:16px; padding:14px}
+
+    /* Pricing two-column */
+    .pricing-grid{display:grid; gap:16px; grid-template-columns:1.1fr .9fr;}
+    @media (max-width:900px){.pricing-grid{grid-template-columns:1fr}}
+    .price-card{display:flex; flex-direction:column; gap:10px}
+    .included{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px}
+    .included h3{margin:0 0 8px; font-size:18px}
+    .included ul{margin:6px 0 0 18px; color:var(--muted)}
+    .included li{margin:4px 0}
+
+    .center{text-align:center}
+    .logo-large{width:112px; height:112px; margin:0 auto 10px; opacity:.95}
+    .faq{display:grid; gap:10px}
+    details{background:var(--card); border:1px solid var(--border); border-radius:14px; padding:10px}
+    summary{cursor:pointer; font-weight:600}
+
+    /* Footer note destacada */
+    .footer-hero{
+      text-align:center;
+      margin-top:18px;
+      font-size:clamp(18px,2.2vw,22px);
+      font-weight:700;
+      letter-spacing:.2px;
+    }
+
+    /* Pricing emphasis */
+    .price-highlight{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap}
+    .price-main{font-size: clamp(26px,3.2vw,34px); font-weight:800; color:var(--text)}
+    .price-badge{font-size:12px; background:#113c2e; color:#a8f3cf; padding:6px 8px; border-radius:999px; border:1px solid #1e5b46}
+    .price-note{font-size:12px; color:var(--muted)}
+    
+    /* Cookie banner (discreto, rodapé, não bloqueante) */
+    #cookie-banner{
+      position:fixed;
+      inset:auto 12px 12px 12px;
+      z-index:9999;
+      display:none;
+      background:var(--card);
+      color:var(--text);
+      border:1px solid var(--border);
+      border-radius:12px;
+      box-shadow: var(--shadow);
+      padding:12px 14px;
+    }
+    #cookie-banner .row{display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap}
+    #cookie-banner p{margin:0; font-size:14px; color:var(--muted)}
+    #cookie-banner a{text-decoration:underline}
+  </style>
+</head>
+<body>
+  <div id="site-header"></div>
+
+  <main>
+    <!-- HERO -->
+    <section class="hero">
+      <div class="container grid grid-2" id="topo">
+        <div>
+          <!-- Ícone ilustrativo: mascote oficial (mesmo arquivo dos favicons) -->
+          <img class="brand-icon" src="/assets/icon-512.png?v=3" alt="Mascote MEI Robô sorrindo" width="72" height="72" loading="eager" decoding="async">
+
+          <h1 class="headline">Tenha um WhatsApp que responde sozinho às mensagens, sem você precisar de outro chip.</h1>
+          <p class="sub">O MEI Robô fala com seus clientes usando sua voz e jeito, o dia inteiro.</p>
+          <p class="punch">Seus clientes vão até achar que é você!</p>
+
+          <div class="cta-row">
+            <a href="/cadastro.html" class="btn btn-primary">Criar minha conta</a>
+            <a href="#precos" class="btn btn-ghost">Plano Starter</a>
+          </div>
+          <p class="hero-note"><b>Por apenas R$ 89,00*</b> por mês, você tem um assistente 24 horas no WhatsApp: controla sua agenda de serviços, tira dúvidas, envia fotos e catálogos, dá preços, faz orçamentos e responde por texto ou áudio com a sua voz. <span class="fine">*Promoção válida por 12 meses.</span></p>
+
+          <div class="trust">Seguro • Feito para WhatsApp • Comece quando quiser</div>
+
+          <div class="divider"></div>
+          <p><strong>Com o MEI Robô, você ganha tempo para o que importa.</strong> Ele prepara suas vendas de forma organizada — como se fosse você mesmo falando.</p>
+        </div>
+
+        <!-- Mockup do celular -->
+        <div aria-hidden="true">
+          <div class="phone">
+            <div class="phone-top">Cliente • WhatsApp</div>
+            <div class="chat">
+              <!-- >>>>> INÍCIO: roteiro final morena iluminada (com legenda corrigida) <<<<< -->
+              <div class="bubble b">Oi, bom dia! Queria dar uma clareada, um brilho na frente, perto do rosto. Você faz? Quanto fica?</div>
+              <div class="bubble m">Olá, bom dia! Faço sim 😊 Esse efeito chamamos de <strong>morena iluminada</strong>. Vou te mandar uma foto pra ver se é isso. Qual seu nome?</div>
+              <div class="bubble b">Pode mandar, sou Ana.</div>
+              <div class="bubble m">
+                <img src="/assets/img/mock/morena-iluminada.jpg" alt="Exemplo morena iluminada no salão">
+                <div class="caption">Exemplo de morena iluminada que fazemos aqui 😉</div>
+              </div>
+              <div class="bubble b">Isso mesmo, meu cabelo é parecido.</div>
+              <div class="bubble m">Legal, Ana! Pra você faço um valor especial: <strong>R$ 490,00</strong>. O serviço leva em torno de 3h. Amanhã tenho horários às 10:30, 14:00 e 18:15.</div>
+              <div class="bubble b">Ótimo, quero amanhã às 14:00.</div>
+              <div class="bubble m">Combinado! Vou te mandar um áudio curtinho explicando como chegar.</div>
+              <div class="bubble m">
+                <div class="audio">
+                  <div class="dot"></div>
+                  <div class="bar"></div>
+                  <div class="time">0:12</div>
+                </div>
+              </div>
+              <div class="bubble b">Fechado então, amanhã às 14:00! Obrigada.</div>
+              <div class="bubble m"><strong>Agendado, Ana!</strong> Amanhã <strong>14:00</strong> com a <strong>Júlia ✂️✨</strong>. Te mando um lembrete aqui um pouco antes 😉</div>
+              <!-- >>>>> FIM: roteiro final morena iluminada <<<<< -->
+            </div>
+            <div class="phone-bottom">
+              <div class="input"></div>
+              <div class="btn btn-primary" style="padding:0 14px; height:40px; display:flex; align-items:center;">Enviar</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- COMO FUNCIONA -->
+    <section id="como-funciona">
+      <div class="container">
+        <h2 class="section-title">Como funciona</h2>
+        <p class="muted" style="margin-bottom:10px">Quatro passos simples para começar a vender melhor pelo WhatsApp.</p>
+        <div class="steps">
+          <div class="step">
+            <div class="chip">1</div>
+            <strong>Crie sua conta</strong>
+            <p class="muted">Com o CNPJ da sua empresa, grave um áudio curto, abra sua conta <strong>e aproveite o desconto especial</strong>.</p>
+          </div>
+          <div class="step">
+            <div class="chip">2</div>
+            <strong>Configure o seu jeito</strong>
+            <p class="muted">Cadastre seus contatos, serviços, preços e regras de agenda para deixar o MEI Robô com a sua cara.</p>
+          </div>
+          <div class="step">
+            <div class="chip">3</div>
+            <strong>Ativação do WhatsApp digital</strong>
+            <p class="muted">Em até <strong>7 dias úteis</strong>, você recebe seu novo número de WhatsApp digital. <strong>Você continuará normalmente com os números de WhatsApp que já tem.</strong></p>
+            <p class="muted" style="font-size:13px">Para iniciar conversas sem o cliente chamar, o MEI Robô usa <strong>mensagens prontas</strong>, já aprovadas para esse tipo de conta comercial.</p>
+          </div>
+          <div class="step">
+            <div class="chip">4</div>
+            <strong>Pronto para vender</strong>
+            <p class="muted">O MEI Robô responde por você com textos e áudios no seu tom, tirando dúvidas, enviando preços, <strong>marcando compromissos e organizando sua agenda</strong>.</p>
+          </div>
+        </div>
+
+        <!-- CTA adicional após "Como funciona" -->
+        <div class="center" style="margin-top:18px">
+          <a href="#precos" class="btn btn-primary">Ver detalhes do Plano Starter</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- BENEFÍCIOS -->
+    <section id="beneficios">
+      <div class="container">
+        <h2 class="section-title">Benefícios</h2>
+        <div class="benefits">
+          <div class="benefit">Tira dúvidas simples sobre o seu serviço.</div>
+          <div class="benefit">Envia preços e faz orçamentos na hora.</div>
+          <div class="benefit">Marca horários e organiza a sua agenda.</div>
+          <div class="benefit">Receba um WhatsApp novo e continue com os que já tem.</div>
+          <div class="benefit">Aumente suas vendas com mais tempo livre e organização.</div>
+          <div class="benefit">O MEI Robô guarda históricos, tabelas, fotos e muito mais, sempre à mão com memória rápida.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PLANO STARTER -->
+    <section id="precos">
+      <div class="container">
+        <h2 class="section-title">Plano Starter</h2>
+
+        <div class="pricing-grid">
+          <div class="card price-card">
+            <div class="price-highlight">
+              <span class="price-badge">Promo</span>
+              <span class="price-main">Por apenas <strong>R$ 89/mês</strong></span>
+            </div>
+            <div class="price-note">Sem fidelidade: você pode cancelar quando quiser.</div>
+            <div class="price-note">Configuração promocional: de <s>R$ 399</s> por <strong>R$ 250</strong> (pagamento único).</div>
+
+            <ul class="muted" style="margin:6px 0 6px 18px">
+              <li>Atende no WhatsApp (texto e áudio)</li>
+              <li>Tabela de preços básica</li>
+              <li>Propostas de horário (agenda simples)</li>
+              <li>Memória rápida para histórico</li>
+            </ul>
+
+            <div class="cta-row">
+              <a href="/cadastro.html" class="btn btn-primary">Criar minha conta</a>
+              <!-- Troca solicitada: "Voltar ao topo" -> "Perguntas Frequentes" -->
+              <a href="#faq" class="btn btn-ghost">Perguntas Frequentes</a>
+            </div>
+          </div>
+
+          <div class="included">
+            <h3>Incluso no plano</h3>
+            <ul>
+              <li><strong>Até 500 conversas iniciadas pelo cliente por mês</strong></li>
+              <li><strong>Até 250 conversas iniciadas por você</strong> (com mensagens prontas)</li>
+              <li><strong>2 GB</strong> de memória segura para fotos, vídeos e catálogos</li>
+              <li>Histórico de clientes sempre acessível</li>
+              <li>Respostas em texto e áudio com a sua voz</li>
+              <li>Agenda inteligente com lembretes</li>
+              <!-- Ajuste solicitado: remover "por e-mail" -->
+              <li>Suporte</li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- SEGURANÇA & PARCEIROS -->
+    <section id="seguranca">
+      <div class="container center">
+        <!-- Mascote oficial grande (mesmo arquivo dos favicons) -->
+        <img class="logo-large" src="/assets/icon-512.png?v=3" alt="Mascote MEI Robô" width="112" height="112" loading="lazy" decoding="async">
+
+        <h2 class="section-title">Segurança & Parceiros</h2>
+        <p class="muted">O MEI Robô é o seu assistente de vendas no WhatsApp.</p>
+        <p class="muted">Cuidamos dos seus dados e dos seus clientes. Acesso seguro, hospedagem confiável e integrações oficiais planejadas. Você foca no trabalho; a gente garante o resto.</p>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq">
+      <div class="container">
+        <h2 class="section-title">Perguntas frequentes</h2>
+        <div class="faq">
+          <details><summary>Preciso trocar meu número?</summary><p class="muted">Não. Você continua com o seu WhatsApp. O número digital chega após ativação e convive com os seus.</p></details>
+          <details><summary>Funciona só no celular?</summary><p class="muted">Funciona bem no celular e no computador.</p></details>
+          <details><summary>O MEI Robô responde só em texto ou também em áudio?</summary><p class="muted">Responde nos dois formatos: texto escrito e áudios com a sua voz digital. Você escolhe quais situações usar para cada um de seus contatos.</p></details>
+          <details><summary>Posso mandar mensagens antes do cliente falar?</summary>
+            <p class="muted">Sim. Para iniciar conversas no WhatsApp, o MEI Robô usa <strong>mensagens prontas</strong> aprovadas. Exemplos:</p>
+            <ul class="muted" style="margin:6px 0 0 18px">
+              <li>“Olá João, posso te enviar uma promoção especial?”</li>
+              <li>“Oi Maria, temos horário amanhã, quer reservar já?”</li>
+              <li>“Bom dia, Carlos, lembrando do seu agendamento hoje às 14h.”</li>
+            </ul>
+          </details>
+          <details><summary>Posso mudar meus preços?</summary><p class="muted">Sim, é simples e rápido.</p></details>
+        </div>
+
+        <div class="footer-hero">Feito sob medida para quem atende clientes todos os dias pelo WhatsApp.</div>
+      </div>
+    </section>
+  </main>
+
+  <div id="site-footer"></div>
+
+  <!-- Smooth scroll (fechado corretamente) -->
+  <script>
+    (function(){
+      const links = document.querySelectorAll('a[href^="#"]');
+      for (const a of links){
+        a.addEventListener('click', function(e){
+          e.preventDefault();
+          const id = this.getAttribute('href').substring(1);
+          const el = document.getElementById(id);
+          if(el){ el.scrollIntoView({behavior:"smooth", block:"start"}); }
+        });
+      }
+    })();
+  </script>
+
+  <!-- Loader principal dos parciais -->
+  <script defer src="/assets/layout.js?v=5"></script>
+
+  <!-- Fallback leve (1s): injeta header/footer manualmente se o loader falhar -->
+  <script>
+    (function(){
+      function inject(elId, url){
+        const host = document.getElementById(elId);
+        if(!host) return;
+        fetch(url, {cache: "no-store"})
+          .then(r => r.ok ? r.text() : Promise.reject())
+          .then(html => { host.innerHTML = html; })
+          .catch(() => {});
+      }
+      window.addEventListener('load', function(){
+        setTimeout(function(){
+          const headerOK = document.getElementById('site-header')?.children?.length > 0;
+          const footerOK = document.getElementById('site-footer')?.children?.length > 0;
+          if(!headerOK) inject('site-header','/assets/partials/header.html');
+          if(!footerOK) inject('site-footer','/assets/partials/footer.html');
+        }, 1000);
+      });
+    })();
+  </script>
+
+  <!-- Banner de Cookies (discreto, rodapé) -->
+  <div id="cookie-banner" role="region" aria-label="Aviso de cookies">
+    <div class="row">
+      <p>Usamos cookies técnicos essenciais para o site funcionar. Veja a <a href="/privacidade.html">Política de Privacidade</a>.</p>
+      <button id="cookie-accept" class="btn btn-primary" type="button" aria-label="Entendi e aceitar cookies">Entendi</button>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      try {
+        var KEY = 'cookie_consent_v1';
+        var accepted = localStorage.getItem(KEY) === 'true';
+        var banner = document.getElementById('cookie-banner');
+        var btn = document.getElementById('cookie-accept');
+        if (!accepted && banner && btn){
+          banner.style.display = 'block';
+          btn.addEventListener('click', function(){
+            try { localStorage.setItem(KEY, 'true'); } catch(e){}
+            banner.remove();
+          });
+        }
+      } catch(e){
+        // Em caso de bloqueio a localStorage, mantemos o banner visível sem quebrar a navegação.
+      }
+    })();
+  </script>
+</body>
+</html>

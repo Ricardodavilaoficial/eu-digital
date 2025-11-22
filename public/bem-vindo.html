@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bem-vindo — MEI Robô</title>
+  <link rel="stylesheet" href="./assets/styles.css" />
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="section">
+    <div class="container form-wrap">
+      <h1 style="color:var(--wa-dark); margin:0 0 6px">Bem-vindo ao MEI Robô</h1>
+      <!-- Steps -->
+      <div class="steps" aria-label="Progresso de assinatura">
+        <div class="step step--done"><div class="step__dot">1</div><div class="step__label">Dados</div></div>
+        <div class="step step--done"><div class="step__dot">2</div><div class="step__label">Pagamento</div></div>
+        <div class="step step--active"><div class="step__dot">3</div><div class="step__label">Bem-vindo</div></div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h2 style="color:var(--wa-dark)">Próximos passos (5 minutos)</h2>
+          <ol>
+            <li><strong>Defina seu perfil público</strong> (nome, horários, localidade).</li>
+            <li><strong>Adicione 3–5 contatos principais</strong> (VIPs, parceiros) — serão usados para personalizar o tom.</li>
+            <li><strong>Personalize o estilo por contato</strong> (tom, formalidade, emojis, saudações).</li>
+            <li><strong>(Opcional) Autorize a sua voz</strong> para respostas em áudio com clonagem.</li>
+            <li><strong>Provisionamento do número dedicado</strong> — nós guiamos a ativação junto ao parceiro.</li>
+          </ol>
+          <p class="note">Dica: envie uma mensagem de teste para validar respostas e ajustes.</p>
+
+          <p style="margin-top:12px">
+            <a class="cta" href="#">Ir para o painel</a>
+            <a class="btn-secondary" href="./index.html">Voltar à página inicial</a>
+          </p>
+        </div>
+
+        <div class="card">
+          <h2 style="color:var(--wa-dark)">Precisa de ajuda?</h2>
+          <p class="note">
+            Suporte: <a href="mailto:contato@fujicadobrasil.com.br">contato@fujicadobrasil.com.br</a><br/>
+            WhatsApp: <a href="https://wa.me/5551985648608" target="_blank" rel="noopener">+55 51 98564-8608</a>
+          </p>
+          <p class="note">
+            Lembrete: siga as políticas do WhatsApp Business durante a ativação e o uso do número dedicado.
+          </p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+  <script src="./assets/layout.js"></script>
+</body>
+</html>

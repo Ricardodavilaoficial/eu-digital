@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="pt-BR">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Minhas Fotos — MEI Robô</title>
+<style>
+  :root{
+    --bg:#0b0f14; --card:#0f1720; --muted:#9aa4b2; --accent:#16a34a; --grid: 140px;
+  }
+  html,body{height:100%}
+  body{background:var(--bg); color:#e6edf3; font-family:system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin:0}
+  a { color: #9ad7c4; text-decoration: none }
+  .container{max-width:980px; margin:0 auto; padding:18px}
+  .card{background:var(--card); border:1px solid rgba(255,255,255,0.06); border-radius:12px; padding:14px}
+  .muted{color:var(--muted); font-size:0.93rem}
+  .row{display:flex; gap:12px; align-items:center; flex-wrap:wrap}
+  .input{background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); color:#e6edf3; padding:10px 12px; border-radius:8px}
+  .btn{background:var(--accent); color:white; padding:10px 14px; border-radius:8px; border:none; cursor:pointer; font-weight:600}
+  .btn-ghost{background:transparent; border:1px solid rgba(255,255,255,.12); border-radius:8px; padding:8px 10px; color:#e6edf3; cursor:pointer}
+  .grid{display:grid; grid-template-columns: repeat(auto-fill, minmax(var(--grid),1fr)); gap:12px}
+  .tile{background:#0c131a; border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px}
+  .thumb{width:100%; aspect-ratio:1/1; border-radius:8px; object-fit:cover; border:1px solid rgba(255,255,255,0.06);
+    background: conic-gradient(#111 25%, transparent 0 50%, #111 0 75%, transparent 0) 0 0/16px 16px, #0b0f14;}
+  .small{font-size:12px; color:var(--muted)}
+  .link{display:inline-block; padding:6px 8px; border:1px solid rgba(255,255,255,.12); border-radius:8px; color:#e6edf3; text-decoration:none}
+  .header{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px}
+  .back{display:inline-flex; align-items:center; gap:6px; padding:8px 10px; border:1px solid rgba(255,255,255,.12); border-radius:8px}
+  .empty{border:1px dashed rgba(255,255,255,.08); border-radius:10px; padding:14px; text-align:center; color:var(--muted)}
+</style>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <a href="/" class="back">← Voltar</a>
+      <div class="muted">Minhas Fotos</div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <div style="font-weight:700">Suas fotos deste mês</div>
+          <div class="muted" style="margin-top:4px">Toque em <b>Mostrar</b> e veja as miniaturas. Toque na foto para abrir.</div>
+        </div>
+        <div class="row">
+          <select id="year" class="input"></select>
+          <select id="month" class="input"></select>
+          <button id="loadBtn" class="btn">Mostrar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="out" style="margin-top:12px"></div>
+
+    <div class="row" style="margin-top:10px; justify-content:flex-end">
+      <a class="btn-ghost" href="/pages/media-upload-v3.3.5.html">Enviar novas fotos</a>
+    </div>
+  </div>
+
+  <script type="module">
+    // 1) Inicializa Firebase (usa config do Hosting)
+    const { initializeApp, getApps } = await import("https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js");
+    const { getAuth } = await import("https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js");
+    const { getStorage, ref, list, listAll } = await import("https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js");
+    const { initSignedPreviews, getSignedUrl } = await import("/js/signed-url.js");
+
+    let app = getApps()[0];
+    if (!app) {
+      const init = await fetch("/__/firebase/init.json").then(r=>r.json());
+      app = initializeApp(init.firebaseConfig || init);
+    }
+    const auth = getAuth(app);
+    const storage = getStorage(app);
+
+    // garante login antes de listar
+    await new Promise(r => { const off = auth.onAuthStateChanged(u => { off(); r(); }); });
+    if (!auth.currentUser) {
+      document.getElementById('out').innerHTML = `<div class="card empty">Entre na sua conta para ver suas fotos.</div>`;
+      throw new Error("not_logged_in");
+    }
+    const uid = auth.currentUser.uid;
+
+    // 2) UI de ano/mês com padrão no mês atual
+    const yearSel = document.getElementById('year');
+    const monthSel = document.getElementById('month');
+    const now = new Date();
+    const yy = now.getFullYear();
+    const mm = now.getMonth() + 1;
+
+    for (let y = yy; y >= yy - 2; y--) {
+      const opt = document.createElement('option');
+      opt.value = String(y);
+      opt.textContent = String(y);
+      if (y === yy) opt.selected = true;
+      yearSel.appendChild(opt);
+    }
+    const monthNames = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+    monthNames.forEach((m,i)=>{
+      const opt = document.createElement('option');
+      opt.value = m; opt.textContent = m;
+      if (i+1 === mm) opt.selected = true;
+      monthSel.appendChild(opt);
+    });
+
+    // 3) Lista TODOS os dias do mês escolhido e agrega arquivos (sem pedir caminho)
+    async function listMonth(year, month) {
+      const base = `users/${uid}/media/${year}/${month}/`; // ex.: users/UID/media/2025/09/
+      const monthRef = ref(storage, base);
+
+      // pega as subpastas (dias) se existirem
+      let dayPrefixes = [];
+      try {
+        const l = await list(monthRef, { maxResults: 1000 });
+        dayPrefixes = l.prefixes || [];
+      } catch {
+        // se a estrutura não tiver dias (arquivos direto no mês), seguimos sem dias
+      }
+
+      const items = [];
+
+      // (A) arquivos direto no mês
+      try {
+        const direct = await list(monthRef, { maxResults: 1000 });
+        for (const it of (direct.items || [])) {
+          const name = it.name || it._location?.path || '';
+          if (!name) continue;
+          if (name.includes('/_thumbs/')) continue; // pula thumbs
+          items.push(name);
+        }
+      } catch {}
+
+      // (B) arquivos por dia
+      for (const dayPrefix of dayPrefixes) {
+        try {
+          // listAll para simplificar aqui; se crescer muito, trocar por paginação com list()
+          const dayAll = await listAll(dayPrefix);
+          for (const it of dayAll.items) {
+            const name = it.name || it._location?.path || '';
+            if (!name) continue;
+            if (name.includes('/_thumbs/')) continue; // pula thumbs
+            items.push(name);
+          }
+        } catch {}
+      }
+
+      // ordena do mais recente pro mais antigo (pelo caminho)
+      items.sort((a,b)=> a < b ? 1 : -1);
+      return { base, items };
+    }
+
+    // 4) Renderização — tenta thumbnail; se não tiver, cai pro original
+    async function renderGallery(year, month) {
+      const out = document.getElementById('out');
+      out.innerHTML = `<div class="card">Carregando suas fotos…</div>`;
+      const { base, items } = await listMonth(year, month);
+
+      if (!items.length) {
+        out.innerHTML = `<div class="card empty">Nenhuma foto encontrada neste período.</div>`;
+        return;
+      }
+
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+      grid.innerHTML = items.map(fullName => {
+        const file = fullName.substring(fullName.lastIndexOf('/')+1);
+        const baseNoExt = file.replace(/\.[^.]+$/, '');
+        const thumb = fullName.replace(/\/([^/]+)$/, '/_thumbs/$1').replace(/\.[^.]+$/, '.thumb.jpg');
+        return `
+          <div class="tile">
+            <img class="thumb" data-signed-src="${thumb}" alt="${file}">
+            <a class="link" data-signed-src="${fullName}" target="_blank" rel="noopener">Abrir</a>
+            <div class="small" title="${file}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${file}</div>
+          </div>
+        `;
+      }).join('');
+
+      out.innerHTML = "";
+      out.appendChild(grid);
+
+      await initSignedPreviews(grid);
+
+      // fallback pro original se a thumb falhar
+      const tiles = grid.querySelectorAll('.tile');
+      for (const tile of tiles) {
+        const img = tile.querySelector('img[data-signed-src]');
+        const err = img?.dataset?.signedError;
+        if (err && err !== '0' && err !== '1') {
+          const open = tile.querySelector('a.link');
+          if (open) {
+            try {
+              const url = await getSignedUrl(open.getAttribute('data-signed-src'));
+              img.src = url; img.removeAttribute('data-signed-error');
+            } catch {}
+          }
+        }
+      }
+    }
+
+    // 5) Ações
+    document.getElementById('loadBtn').addEventListener('click', ()=>{
+      renderGallery(yearSel.value, monthSel.value);
+    });
+
+    // auto-carregar mês atual na entrada da página
+    renderGallery(String(yy), monthNames[mm-1]);
+  </script>
+</body>
+</html>

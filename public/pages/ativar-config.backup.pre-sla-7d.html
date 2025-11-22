@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Primeiros passos — MEI Robô</title>
+
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <link rel="icon" href="data:,">
+  <script src="/assets/firebase-init.js"></script>
+  <script src="/assets/backend-patch.js"></script>
+  <script defer src="/assets/layout.js"></script>
+  <style>
+    .wrap { max-width:900px; margin:24px auto; padding:0 12px; }
+    .card-dark { background:#101414; color:#e9f4f1; border:1px solid #23302e; border-radius:14px; padding:16px; }
+    .muted { color:#b6c9c3; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#0f1413; border:1px solid #23302e; font-size:12px; margin-right:6px }
+    .badge { padding:2px 8px; border:1px solid #23302e; border-radius:999px; font-size:12px; }
+    .ok { border-color:#2f6; } .warn { border-color:#fd6; } .err { border-color:#f88; }
+    .grid { display:grid; gap:10px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .field { background:#0c1211; border:1px solid #23302e; border-radius:10px; padding:10px; }
+    .field .label { font-size:12px; color:#b6c9c3; margin-bottom:4px }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+    .cta { font-weight:800; }
+    .list { margin:0; padding-left:18px; }
+  </style>
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="wrap">
+    <div class="card-dark">
+      <h2 style="margin:0 0 6px">Boas-vindas! Vamos deixar tudo pronto.</h2>
+      <p id="introText" class="muted" style="margin:0 0 10px">
+        Confirmamos sua assinatura. Confira abaixo os dados da sua empresa (já pré-preenchidos)
+        e avance para as configurações iniciais.
+      </p>
+
+      <div id="status" class="badge muted">carregando…</div>
+
+      <div id="empresa" class="section" style="margin-top:12px"></div>
+
+      <details style="margin-top:10px">
+        <summary>O que faremos em seguida?</summary>
+        <ul class="list">
+          <li>Ativar sua voz digital (seus áudios já enviados).</li>
+          <li>Configurar agenda inteligente e mensagens iniciais.</li>
+          <li>Revisar catálogos e atalhos de atendimento.</li>
+        </ul>
+      </details>
+
+      <div class="actions">
+        <a id="btnContinuar" class="cta" href="/pages/dashboard.html">Salvar e continuar</a>
+        <a class="btn-secondary" href="/pages/ativar-cliente.html">Voltar</a>
+      </div>
+      <p id="docsHint" class="muted" style="display:none;margin-top:6px">Percebemos uma pendência de vínculo. Se necessário, <a href="/pages/vinculo.html">envie seus documentos aqui</a>.</p>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script>
+  (function(){
+    const API_BASE = "https://mei-robo-prod.onrender.com";
+    const API = {
+      status:  API_BASE + "/api/conta/status",
+      vinculo: API_BASE + "/api/verificacao/autoridade/status"
+    };
+
+    const $status   = document.getElementById('status');
+    const $empresa  = document.getElementById('empresa');
+    const $docsHint = document.getElementById('docsHint');
+
+    // MOCK de preview: ?mock=ok | missing | error
+    const qs = new URLSearchParams(location.search);
+    const mock = (qs.get('mock')||'').toLowerCase();
+    const isFree = qs.get('free') === '1';
+    const hasStripeSession = qs.has('session_id');
+    let arrivedMsg = null;
+
+    function pill(text, cls){ $status.textContent = text; $status.className = 'badge ' + (cls || 'muted'); }
+    function html(parts){ return parts.filter(Boolean).join(''); }
+
+    // Escapa HTML para evitar XSS em dados vindos do backend
+    function esc(s){
+      return String(s)
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#39;');
+    }
+    // Texto com placeholder seguro
+    function t(v){ return (v===null||v===undefined||v==='') ? "<span class='muted'>—</span>" : esc(String(v)); }
+
+    // Normaliza formatos alternativos de resposta
+    function normalizeConta(body){
+      if (!body || typeof body !== 'object') return { empresa:{}, vinculo:{} };
+      const empresa = body.empresa || {
+        cnpj: body.cnpj || body.CNPJ || null,
+        razaoSocial: body.razaoSocial || body.razao || null,
+        nomeFantasia: body.nomeFantasia || body.fantasia || null,
+        endereco: body.endereco || null,
+        cnaePrincipal: body.cnaePrincipal || body.cnae_principal || body.CNAE || null
+      };
+      const vinculo = body.vinculo || {
+        stripe_enabled: !!(body.stripe_enabled || body.stripeEnabled || body.assinatura_ativa),
+        needs_docs: !!(body.needs_docs || body.needsDocs || body.docs_pendentes)
+      };
+      return { empresa, vinculo };
+    }
+
+    // Mapeia um CNAE (código/descrição) para um rótulo amigável
+    function mapSegmento(cnae){
+      const base = cnae || {};
+      const txt = String(base.descricao || base.codigo || '').toLowerCase();
+      if (!txt) return { segmento: null, cnae: base };
+
+      const M = [
+        { key: /cabeleire|est(é|e)t(ica|ético)|manicure|sal(ã|a)o/, seg: "Beleza e estética" },
+        { key: /restaurante|lanchonete|bar|pizzaria|food|delivery|sandu/i, seg: "Alimentação" },
+        { key: /constr|reforma|obras|pedreiro|pintor|hidra|el[eé]tric/i, seg: "Construção e serviços" },
+        { key: /com[eé]rcio|varejo|loja|e-?commerce|market/i, seg: "Comércio e e-commerce" },
+        { key: /saúde|cl[ií]nica|odont|fisiot|psic|nutri/i, seg: "Saúde e bem-estar" },
+        { key: /auto|mec[aâ]n|oficina|detailing|lava/i, seg: "Automotivo" },
+        { key: /educa|curso|aula|treina|coach/i, seg: "Educação e cursos" },
+      ];
+      const f = M.find(m => m.key.test(txt));
+      return { segmento: f ? f.seg : "Outros", cnae: base };
+    }
+
+    function setArrivalHeader(){
+      const h2 = document.querySelector('h2');
+      const p  = document.getElementById('introText');
+
+      if (isFree) {
+        if (h2) h2.textContent = 'Boas-vindas! Seu cupom foi aplicado.';
+        if (p)  p.innerHTML = 'Cupom validado e licença ativada. Confira os dados da sua empresa e avance para as configurações iniciais.';
+        arrivedMsg = 'cupom aplicado';
+      } else if (hasStripeSession) {
+        if (h2) h2.textContent = 'Boas-vindas! Pagamento confirmado.';
+        /* >>> TEXTO AJUSTADO (SLA 7 dias úteis) <<< */
+        if (p)  p.innerHTML = 'Seu número de WhatsApp com o MEI Robô chega em até 7 dias úteis. Siga com as configurações para habilitá-lo.';
+        arrivedMsg = 'pagamento confirmado';
+      }
+    }
+
+    function renderEmpresa(data){
+      const norm = normalizeConta(data);
+      const emp  = norm.empresa || {};
+      const vinc = norm.vinculo || {};
+      const cnae = emp.cnaePrincipal || {};
+      const seg  = mapSegmento(cnae);
+
+      const pills = html([
+        emp.cnpj ? `<span class="pill mono">${t(emp.cnpj)}</span>` : '',
+        seg.segmento ? `<span class="pill">${t(seg.segmento)}</span>` : '',
+        (cnae.descricao || cnae.codigo) ? `<span class="pill">${t(cnae.descricao || cnae.codigo)}</span>` : ''
+      ]);
+
+      const endereco = emp.endereco || {};
+      const loc = [endereco.municipio, endereco.uf].filter(Boolean).map(esc).join(' / ');
+
+      $empresa.innerHTML = html([
+        `<div class="grid">`,
+          `<div class="field"><div class="label">Razão social</div><div>${t(emp.razaoSocial)}</div></div>`,
+          `<div class="field"><div class="label">Nome fantasia</div><div>${t(emp.nomeFantasia)}</div></div>`,
+          `<div class="field"><div class="label">Segmento</div><div>${t(seg.segmento)}</div></div>`,
+          `<div class="field"><div class="label">CNAE principal</div><div>${t(cnae.descricao || cnae.codigo)}</div></div>`,
+          `<div class="field"><div class="label">Município/UF</div><div>${loc || "<span class='muted'>—</span>"}</div></div>`,
+        `</div>`,
+        pills ? `<div style="margin-top:10px">${pills}</div>` : '',
+        vinc.stripe_enabled ? `<p class="muted" style="margin:10px 0 0">Assinatura ativa ✔</p>` : ''
+      ]);
+
+      if (vinc.needs_docs) {
+        $docsHint.style.display = 'block';
+      }
+    }
+
+    // MOCK objects
+    function mockData(){
+      if (mock === 'ok') {
+        return {
+          empresa: {
+            cnpj: "12.345.678/0001-90",
+            razaoSocial: "Exemplo Serviços Ltda",
+            nomeFantasia: "Exemplo",
+            endereco: { municipio: "Porto Alegre", uf: "RS" },
+            cnaePrincipal: { codigo: "9602-5/01", descricao: "Cabeleireiros, manicure e pedicure" }
+          },
+          vinculo: { stripe_enabled: true, needs_docs: false, pending_review: false }
+        };
+      }
+      if (mock === 'missing') { return { empresa: {}, vinculo: { stripe_enabled: true } }; }
+      if (mock === 'error') return null;
+      return null;
+    }
+
+    async function fetchJSON(url){
+      const r = await fetch(url, { credentials:'include' });
+      const ct = r.headers.get('content-type') || '';
+      const body = ct.includes('application/json') ? await r.json() : await r.text();
+      return { ok: r.ok, status: r.status, body };
+    }
+
+    async function load(){
+      setArrivalHeader(); // atualiza header conforme origem (cupom/stripe)
+      try{
+        // mock shortcut
+        const mk = mockData();
+        if (mk) {
+          pill('dados carregados ✔', 'ok');
+          renderEmpresa(mk);
+          safeCheckDocs();
+          return;
+        }
+
+        pill('carregando…', 'muted');
+        const r = await fetchJSON(API.status).catch(()=>null);
+
+        if (!r || !r.ok || !r.body) {
+          if (r && r.status === 401) {
+            pill('entre para continuar', 'warn');
+            $empresa.innerHTML = '<p class="muted">Faça login para ver seus dados.</p><p><a class="btn-secondary" href="/pages/login.html">Entrar</a></p>';
+          } else {
+            /* >>> AJUSTE: não exibir “erro” no estado feliz pós-Stripe/cupom <<< */
+            if (hasStripeSession || isFree) {
+              pill('dados pendentes', 'muted');
+              $empresa.innerHTML = '<p class="muted">Você pode seguir com as configurações iniciais; os dados da empresa serão carregados em breve.</p>';
+            } else {
+              pill('não foi possível carregar agora', 'err');
+              $empresa.innerHTML = '<p class="muted">Tente novamente em alguns instantes. Se persistir, fale com o suporte.</p>';
+            }
+          }
+          return;
+        }
+
+        pill('dados carregados ✔', 'ok');
+        renderEmpresa(r.body);
+        safeCheckDocs();
+      } catch (e){
+        /* >>> AJUSTE: silenciar erro visual no pós-Stripe/cupom <<< */
+        if (hasStripeSession || isFree) {
+          pill('dados pendentes', 'muted');
+          $empresa.innerHTML = '<p class="muted">Você pode seguir com as configurações iniciais; os dados da empresa serão carregados em breve.</p>';
+        } else {
+          pill('não foi possível carregar agora', 'err');
+          $empresa.innerHTML = '<p class="muted">Tente novamente em alguns instantes. Se persistir, fale com o suporte.</p>';
+        }
+      }
+    }
+
+    async function safeCheckDocs(){
+      try{
+        const r = await fetchJSON(API.vinculo);
+        if (r && r.ok && r.body) {
+          const needs = !!(r.body.needs_docs || r.body.needsDocs || r.body.docs_pendentes);
+          if (needs) $docsHint.style.display = 'block';
+        }
+      } catch(e){ /* opcional */ }
+    }
+
+    document.addEventListener('DOMContentLoaded', load);
+  })();
+  </script>
+</body>
+</html>

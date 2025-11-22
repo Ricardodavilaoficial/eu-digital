@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MEI Robô — Mídia (Passo 2/4: Upload)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style> body { background:#0b0f14; color:#e5e7eb } .container { max-width:900px; margin:0 auto; } </style>
+</head>
+<body>
+  <div class="container p-4">
+    <div class="mb-3 rounded-xl border border-yellow-600/40 bg-yellow-900/20 p-3 text-sm">
+      Preview seguro: abra com <code>?validate=1</code>. Nada será gravado no seu Firebase real quando em modo preview.
+    </div>
+
+    <div id="root"></div>
+  </div>
+
+  <script type="text/babel">
+  const { useEffect, useState, useMemo } = React;
+
+  // CONFIGS
+  const CANARY_UID = 'V4eFP2bNdXNtQz2Eh4PxpwHNLOP2';
+  const ALLOWED_MIMES = ['image/jpeg','image/png','image/webp','image/gif','application/pdf','video/mp4'];
+  // Limits (bytes)
+  const LIMITS = { default: 15 * 1024 * 1024, mp4: 25 * 1024 * 1024 }; // 15MB images/pdf, 25MB mp4
+  const STORAGE_PREFIX = 'users'; // path: users/{uid}/media/yyyy/mm/dd/name
+
+  function isValidateMode(){ try { return new URLSearchParams(window.location.search).has('validate') } catch { return false } }
+  function isMediaV1EnabledFor(uid){ const flagLocal = window.localStorage?.getItem('MEDIA_V1') === 'on'; return uid === CANARY_UID && flagLocal; }
+  function formatBytes(b){ if (!b) return '0 B'; const u=['B','KB','MB','GB']; let i=0,val=b; while(val>=1024 && i<u.length-1){val/=1024;i++} return `${val.toFixed(val>=100?0: val>=10?1:2)} ${u[i]}` }
+  function todayPath(){ const d = new Date(); const yyyy=d.getFullYear(); const mm=String(d.getMonth()+1).padStart(2,'0'); const dd=String(d.getDate()).padStart(2,'0'); return `${yyyy}/${mm}/${dd}` }
+
+  // MOCK helpers for preview
+  function mockUpload(file, onProgress){ return new Promise((resolve,reject)=>{ const total = file.size; let uploaded=0; const step = Math.max(1024*50, Math.floor(total/50)); const t = setInterval(()=>{ uploaded += step; if (uploaded>total) uploaded=total; onProgress(Math.round((uploaded/total)*100)); if (uploaded>=total){ clearInterval(t); setTimeout(()=> resolve({ path: `${STORAGE_PREFIX}/${CANARY_UID}/media/${todayPath()}/${file.name}` }),300) } }, 60) }) }
+
+  // MAIN
+  function MediaUpload() {
+    const validate = isValidateMode();
+    const [user] = useState(validate ? { uid: CANARY_UID, displayName: 'Canário (preview)' } : null);
+    const [flagOk, setFlagOk] = useState(false);
+    const [quota, setQuota] = useState({ limitBytes:2147483648, bytesUsed: Math.floor(2147483648 * 0.65), filesCount: 128 });
+    const [file, setFile] = useState(null);
+    const [error, setError] = useState(null);
+    const [progress, setProgress] = useState(0);
+    const [recentUploads, setRecentUploads] = useState([]); // list of {path,name,size}
+
+    useEffect(()=> {
+      setFlagOk(isMediaV1EnabledFor(user?.uid || ''));
+    }, [user]);
+
+    // validation
+    function validateFile(f){
+      setError(null);
+      if (!f) return 'Nenhum arquivo selecionado';
+      if (!ALLOWED_MIMES.includes(f.type)) return `Tipo não permitido: ${f.type}`;
+      const limit = (f.type === 'video/mp4') ? LIMITS.mp4 : LIMITS.default;
+      if (f.size > limit) return `Arquivo maior que o limite permitido (${formatBytes(limit)})`;
+      return null;
+    }
+
+    async function handleChoose(e){
+      const f = e.target.files[0];
+      setFile(null); setProgress(0); setError(null);
+      const v = validateFile(f);
+      if (v){ setError(v); return; }
+      setFile(f);
+    }
+
+    async function handleUpload(){
+      setError(null);
+      if (!file){ setError('Escolha um arquivo primeiro'); return; }
+      // Prevent uploading if quota full
+      if (quota.bytesUsed >= quota.limitBytes){ setError('Cota completa — novos uploads estão bloqueados'); return; }
+
+      try {
+        setProgress(1);
+        // In production here: upload via Firebase Storage SDK to path:
+        // const storagePath = `users/${user.uid}/media/${yyyy}/${mm}/${dd}/${file.name}`
+        // const uploadTask = uploadBytesResumable(ref(storage, storagePath), file); and observe progress
+        // after success: call backend or update Firestore quota (prefer backend endpoint that updates profissional/{uid}/quota/current)
+        // but in this preview we mock the upload:
+        const res = await mockUpload(file, (p)=> setProgress(p));
+        // after success update local quota mock:
+        const newBytes = quota.bytesUsed + file.size;
+        setQuota(q=>{
+          return { ...q, bytesUsed: newBytes, filesCount: q.filesCount + 1 }
+        });
+        // add to recent list
+        setRecentUploads(r => [{ path: res.path, name: file.name, size: file.size, createdAt: new Date().toISOString() }, ...r]);
+        setFile(null); setProgress(0);
+      } catch (err){
+        console.error(err);
+        setError('Falha no upload');
+        setProgress(0);
+      }
+    }
+
+    return (
+      <div className="max-w-3xl mx-auto space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold">Upload — Passo 2/4</h2>
+          <p className="text-sm text-gray-300">Selecione e envie arquivos compatíveis. Nada será gravado em modo preview.</p>
+        </div>
+
+        {!user && (
+          <div className="p-3 rounded border bg-gray-900">Faça login para usar a mídia.</div>
+        )}
+
+        {user && !flagOk && (
+          <div className="p-3 rounded border bg-gray-900 text-sm">
+            Recurso em teste — ative: <code>localStorage.setItem('MEDIA_V1','on')</code> e recarregue.
+          </div>
+        )}
+
+        {user && flagOk && (
+          <div className="rounded border bg-gray-900 p-4 space-y-3">
+            <div className="text-sm text-gray-300">Sugestão de tamanhos: imagens até 2–3 MB; vídeos curtos até 16 MB; PDFs até 10–15 MB.</div>
+
+            <div className="flex gap-2 items-center">
+              <input id="file" type="file" onChange={handleChoose} className="text-sm"/>
+              <button onClick={handleUpload} className="px-3 py-1 rounded bg-green-600 text-white">Enviar arquivo</button>
+              <div className="text-xs text-gray-400">Destino: <code>users/{CANARY_UID}/media/{todayPath()}/&lt;nome&gt;</code></div>
+            </div>
+
+            {file && (
+              <div className="p-2 rounded bg-gray-800 text-sm">
+                <div><strong>{file.name}</strong> • {formatBytes(file.size)} • {file.type}</div>
+                <div className="w-full bg-gray-700 h-3 rounded mt-2">
+                  <div className="bg-blue-500 h-3 rounded" style={{width: progress + '%'}}></div>
+                </div>
+              </div>
+            )}
+
+            {progress>0 && progress<100 && (
+              <div className="text-sm text-gray-300">Upload: {progress}%</div>
+            )}
+
+            {error && <div className="text-sm text-red-400">{error}</div>}
+
+            <div className="pt-3 border-t border-gray-800">
+              <div className="text-xs text-gray-400">Quota atual: {formatBytes(quota.bytesUsed)} / {formatBytes(quota.limitBytes)} ({Math.round((quota.bytesUsed/quota.limitBytes)*100)}%) • arquivos: {quota.filesCount}</div>
+            </div>
+
+            <div className="mt-4">
+              <h4 className="text-sm font-medium">Uploads recentes</h4>
+              {recentUploads.length===0 ? <div className="text-gray-500 text-sm">Nenhum ainda</div> :
+                <ul className="space-y-2 mt-2">
+                  {recentUploads.map((u,i)=> (
+                    <li key={i} className="flex items-center justify-between bg-gray-900 p-2 rounded text-sm">
+                      <div>
+                        <div className="font-medium">{u.name}</div>
+                        <div className="text-xs text-gray-400">{formatBytes(u.size)} • {new Date(u.createdAt).toLocaleString()}</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button title="Copiar caminho" onClick={()=> { navigator.clipboard?.writeText(u.path); alert('Caminho copiado') }} className="text-xs px-2 py-1 border rounded">Copiar</button>
+                        <button title="Excluir (preview)" onClick={()=> { setRecentUploads(r=> r.filter(x=> x!==u)); setQuota(q=> ({...q, filesCount: q.filesCount-1, bytesUsed: Math.max(0, q.bytesUsed - u.size)})); }} className="text-xs px-2 py-1 border rounded text-red-400">Excluir</button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              }
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<MediaUpload />);
+  </script>
+</body>
+</html>

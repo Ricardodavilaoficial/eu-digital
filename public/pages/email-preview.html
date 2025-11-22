@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Prévia de E-mails — MEI Robô</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <style>
+    body{background:#0e1114;color:#e6e6e6}
+    .wrap{max-width:900px;margin:24px auto;padding:16px}
+    .card{background:#11161a;border:1px solid #24303a;border-radius:16px;padding:16px}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+    select,input{background:#0f1418;border:1px solid #2a3a46;color:#e6e6e6;border-radius:10px;padding:8px}
+    iframe{width:100%;height:80vh;border:none;background:#fff;border-radius:12px}
+    .note{font-size:12px;color:#aab3bb;margin-top:8px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Prévia de E-mails — MEI Robô</h1>
+    <div class="card">
+      <div class="controls">
+        <label>Tipo:
+          <select id="type">
+            <option value="resumo">Resumo diário</option>
+            <option value="confirmacao">Confirmação</option>
+            <option value="lembrete">Lembrete</option>
+          </select>
+        </label>
+        <label>Remetente:
+          <input id="from" placeholder="mei-robo@fujicadobrasil.com.br">
+        </label>
+        <label>Data:
+          <input id="date" placeholder="09/09">
+        </label>
+        <label>Hora:
+          <input id="time" placeholder="14:00">
+        </label>
+        <button id="btn">Gerar prévia</button>
+      </div>
+      <iframe id="view"></iframe>
+      <div class="note">Dica: você pode abrir com querystring, ex.: <code>?type=resumo&from=mei-robo@fujicadobrasil.com.br</code></div>
+    </div>
+  </div>
+
+  <script>
+  (function(){
+    const qs = new URLSearchParams(location.search);
+    const $type = document.getElementById('type');
+    const $from = document.getElementById('from');
+    const $date = document.getElementById('date');
+    const $time = document.getElementById('time');
+    const $btn  = document.getElementById('btn');
+    const $view = document.getElementById('view');
+
+    $type.value = qs.get('type') || 'resumo';
+    $from.value = qs.get('from') || 'mei-robo@fujicadobrasil.com.br';
+    $date.value = qs.get('date') || '09/09';
+    $time.value = qs.get('time') || '06:30';
+
+    function htmlFor(t){
+      const sender = $from.value.trim() || 'mei-robo@fujicadobrasil.com.br';
+      const date = $date.value || '09/09';
+      const time = $time.value || '06:30';
+
+      if(t==='resumo'){
+        return `
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;background:#f8f9fb;color:#222}.card{background:#fff;border:1px solid #e6e8ee;border-radius:12px;padding:20px;max-width:720px;margin:0 auto}h1{font-size:18px;margin:0 0 12px}.kpis{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}.kpi{background:#f3f7f5;border:1px solid #dfe7e3;border-radius:10px;padding:8px 12px;font-weight:600}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{font-size:14px;text-align:left;padding:10px;border-bottom:1px solid #edf0f4}th{background:#fbfcfe}.brand{font-size:12px;color:#888;margin-top:8px}</style>
+<title>Agenda de hoje — ${date}</title></head><body><div class="card">
+<h1>Agenda de hoje — ${date}</h1>
+<p>Olá! Segue o resumo do seu dia. Bom trabalho!</p>
+<div class="kpis"><div class="kpi">Serviços: 6</div><div class="kpi">Total: R$ 540</div><div class="kpi">Novos: 2</div></div>
+<table><thead><tr><th>Hora</th><th>Cliente</th><th>Serviço</th><th>Preço</th><th>Status</th><th>Obs.</th></tr></thead>
+<tbody><tr><td>08:00</td><td>Carlos Silva</td><td>Corte masculino</td><td>R$ 60</td><td>agendado</td><td></td></tr>
+<tr><td>09:30</td><td>Ana Souza</td><td>Coloração</td><td>R$ 180</td><td>agendado</td><td>retocar raiz</td></tr></tbody></table>
+<p class="brand">Enviado por MEI Robô — Remetente: ${sender}</p></div></body></html>`;
+      }
+      if(t==='confirmacao'){
+        return `
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;background:#f8f9fb;color:#222}.card{background:#fff;border:1px solid #e6e8ee;border-radius:12px;padding:20px;max-width:640px;margin:0 auto}h1{font-size:18px;margin:0 0 10px}.btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}a.btn{padding:10px 14px;border-radius:10px;border:1px solid #e0e3ea;text-decoration:none}</style>
+<title>Confirmação — ${date} ${time}</title></head><body><div class="card">
+<h1>Confirmação do seu horário</h1>
+<p>Olá João! Seu horário está marcado para <strong>${date}</strong> às <strong>${time}</strong>.</p>
+<p>Se precisar, você pode:</p>
+<div class="btns"><a class="btn" href="#ok">Confirmar</a><a class="btn" href="#reag">Reagendar</a><a class="btn" href="#cancel">Cancelar</a></div>
+<p>Obrigado e bom trabalho!</p>
+<p style="font-size:12px;color:#666;margin-top:10px">MEI Robô — Remetente: ${sender}</p></div></body></html>`;
+      }
+      return `
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;background:#f8f9fb;color:#222}.card{background:#fff;border:1px solid #e6e8ee;border-radius:12px;padding:20px;max-width:640px;margin:0 auto}h1{font-size:18px;margin:0 0 10px}a.btn{display:inline-block;margin-top:10px;padding:10px 14px;border-radius:10px;border:1px solid #e0e3ea;text-decoration:none}</style>
+<title>Lembrete — ${time}</title></head><body><div class="card">
+<h1>Lembrete de agendamento</h1>
+<p>Olá João! Seu horário é hoje, <strong>${date}</strong>, às <strong>${time}</strong>.</p>
+<p>Se precisar ajustar, toque abaixo:</p>
+<a class="btn" href="#reagendar">Reagendar/Cancelar</a>
+<p>Até já, e bom trabalho!</p>
+<p style="font-size:12px;color:#666;margin-top:10px">MEI Robô — Remetente: ${sender}</p></div></body></html>`;
+    }
+
+    function render(){
+      const t = $type.value;
+      const doc = htmlFor(t);
+      const blob = new Blob([doc], {type:"text/html"});
+      $view.src = URL.createObjectURL(blob);
+    }
+    $btn.addEventListener('click', render);
+    render();
+  })();
+  </script>
+</body>
+</html>

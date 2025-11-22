@@ -186,3 +186,7 @@ routes.json
 idtoken.json
 idtoken.txt
 sendgrid.key
+!public/
+!public/**
+!public/pages/**
+!public/assets/**

@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Cache-Control" content="no-store, max-age=0, must-revalidate" />
+  <title>ADMIN — Cupons (diag7)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <link rel="icon" href="data:,">
+
+  <!-- Firebase v8 (ordem importa) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+
+  <!-- Init DEFAULT único do projeto (deve vir antes do backend-patch/layout) -->
+  <script src="/assets/firebase-init.js?v=login6"></script>
+
+  <!-- Patch de rotas (não reinicializa Firebase) -->
+  <script src="/assets/backend-patch.js"></script>
+
+  <!-- Loader de header/footer (defer) -->
+  <script defer src="/assets/layout.js"></script>
+
+  <!-- DIAG_VERSION=7 -->
+  <style>
+    .btn[disabled]{opacity:.6;cursor:not-allowed}
+    code{word-break:break-all}
+    #out{white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="container">
+    <div class="card">
+      <h2>Admin • Cupons</h2>
+      <p class="note">Acesso restrito. Somente administrador.</p>
+
+      <div class="note" style="margin:8px 0; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+        <span><strong>Versão:</strong> diag7</span>
+        <span id="adminBadge" class="badge" style="padding:2px 6px;border-radius:6px;background:#1b2a33;">
+          status: <code id="admFlag">verificando…</code>
+        </span>
+      </div>
+
+      <!-- Aviso para não-admin -->
+      <div id="nonAdminBanner" class="card" style="display:none; margin:12px 0; background:#2a1210; border:1px solid #5a2a20;" role="alert" aria-live="assertive">
+        <strong>Sem acesso.</strong> Esta área é exclusiva de administradores.
+        <div id="nonAdminActions" style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn" id="btnSignIn" type="button" style="display:none;">Entrar</button>
+          <button class="btn secondary" id="btnSwitch" type="button" style="display:none;">Trocar conta</button>
+        </div>
+      </div>
+
+      <!-- Último cupom gerado (apenas admin) -->
+      <div id="last-coupon" class="note" style="display:none; margin:8px 0;">
+        <strong>Último cupom:</strong>
+        <code id="last-code"></code>
+        <small>(via: <span id="last-via"></span>)</small>
+        <button class="btn secondary" id="copyLast" type="button" style="margin-left:8px;">Copiar</button>
+      </div>
+
+      <!-- Painel de status -->
+      <div class="card" style="margin-top:12px; background:#0c171d;">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <span class="note">UID: <code id="uid">-</code></span>
+          <span class="note">Token: <span id="tok">-</span></span>
+          <span class="note">Firebase: <code id="fbStatus">-</code></span>
+          <button class="btn secondary" id="refreshToken" type="button">Atualizar token</button>
+          <button class="btn secondary" id="diagnosticar" type="button">Diagnosticar rotas</button>
+          <button class="btn danger" id="stopScan" type="button" title="Cancela a varredura atual">Parar varredura</button>
+        </div>
+      </div>
+
+      <!-- Área admin (totalmente oculta para não-admin) -->
+      <div id="admin-area" style="display:none; margin-top:14px;">
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <button class="btn" id="gerar" type="button">Gerar cupom</button>
+          <button class="btn secondary" id="listar" type="button">Atualizar lista</button>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:12px">
+          <div>
+            <label for="dias">Dias de validade (opcional)</label>
+            <input id="dias" class="input" type="number" min="1" step="1" placeholder="ex.: 7" />
+          </div>
+          <div>
+            <label for="prefixo">Prefixo (opcional)</label>
+            <input id="prefixo" class="input" placeholder="ex.: MEI" />
+          </div>
+        </div>
+
+        <pre id="out" role="status" aria-live="polite" style="margin-top:12px;"></pre>
+
+        <table class="table" id="tbl" style="margin-top:8px; display:none;">
+          <thead>
+            <tr><th>código</th><th>status</th><th>criadoEm</th><th>expiraEm</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script>
+    (function(){
+      'use strict';
+
+      const ABS_API   = "https://mei-robo-prod.onrender.com";
+      // UID estático removido para evitar acoplamento; validação agora é 100% no backend.
+
+      // --- storage helpers ---
+      function lsGet(key) { try { return window.localStorage.getItem(key); } catch { return null; } }
+      function lsSet(key, val) { try { window.localStorage.setItem(key, val); } catch {} }
+      function lsDel(key) { try { window.localStorage.removeItem(key); } catch {} }
+
+      // UI helpers
+      function setOut(msg){
+        const el = document.getElementById('out');
+        if(!el) return;
+        if(msg == null || msg === '') { el.textContent = ''; return; }
+        if(typeof msg === 'string') el.textContent = msg;
+        else {
+          try { el.textContent = JSON.stringify(msg, null, 2); }
+          catch { el.textContent = String(msg); }
+        }
+      }
+      function updateAuthUI(u){
+        document.getElementById('uid').textContent = u ? (u.uid || '-') : '-';
+        document.getElementById('tok').textContent = (u ? 'token?' : '-') || '-';
+        document.getElementById('fbStatus').textContent = (typeof window.firebase !== 'undefined') ? 'ok' : 'indisponível';
+      }
+      function setBusy(btn, busy, labelBusy){
+        if(!btn) return ()=>{};
+        const prev = btn.textContent;
+        btn.disabled = !!busy;
+        if(busy && labelBusy){ btn.textContent = labelBusy; btn.setAttribute('aria-busy','true'); }
+        if(!busy){ btn.removeAttribute('aria-busy'); }
+        return function restore(){ btn.disabled = false; btn.textContent = prev; btn.removeAttribute('aria-busy'); };
+      }
+
+      // Token helpers
+      async function getTokenPreferFresh(){
+        try{
+          if (typeof firebase !== 'undefined' && firebase.auth){
+            const u = firebase.auth().currentUser;
+            if(u) return await u.getIdToken();
+          }
+        }catch{}
+        return lsGet('idToken') || '';
+      }
+      async function refreshIdToken(){
+        const btn = document.getElementById('refreshToken');
+        const restore = setBusy(btn, true, 'Atualizando…');
+        try{
+          if (typeof firebase === 'undefined' || !firebase.auth) { setOut('Firebase indisponível. Recarregue (Ctrl+F5).'); updateAuthUI(null); return; }
+          const u = firebase.auth().currentUser;
+          if(!u){ setOut('Sem usuário logado. Faça login.'); updateAuthUI(null); return; }
+          const t = await u.getIdToken(true);
+          if(t){ lsSet('idToken', t); }
+          updateAuthUI(u);
+          setOut('Token atualizado e salvo em localStorage.idToken ✅');
+          await applyWhoamiAdmin(); // reavalia após refresh
+        }catch(err){
+          setOut({ erro:'Falha ao atualizar token', detalhe: err && err.message ? err.message : String(err) });
+        }finally{
+          restore();
+        }
+      }
+
+      // “Último cupom”
+      function showLastCoupon(code, via){
+        const box = document.getElementById('last-coupon');
+        const elCode = document.getElementById('last-code');
+        const elVia  = document.getElementById('last-via');
+        if (!code) { box.style.display = 'none'; return; }
+        elCode.textContent = code;
+        elVia.textContent  = via || '-';
+        box.style.display  = '';
+      }
+      function saveLastCoupon(code, via){
+        try { lsSet('lastCoupon', JSON.stringify({ code, via, at: Date.now() })); } catch {}
+        showLastCoupon(code, via);
+      }
+
+      // ===== util: timeout + abort (diagnósticos) =====
+      let currentScan = null; // {controller}
+      function stopScan(reason){
+        try{
+          if (currentScan && currentScan.controller) currentScan.controller.abort();
+          currentScan = null;
+          if (reason) setOut({ info:'Varredura cancelada', motivo: reason });
+        }catch{}
+      }
+      function fetchWithTimeout(url, init, ms, signal){
+        const ctrl = new AbortController();
+        const timer = setTimeout(()=>ctrl.abort(), ms);
+        if (signal) signal.addEventListener('abort', ()=>ctrl.abort(), { once:true });
+        const merged = { ...init, signal: ctrl.signal };
+        return fetch(url, merged).finally(()=>clearTimeout(timer));
+      }
+
+      // ===== Checagem: sou admin? (usa /admin/ping) =====
+      async function isAdminUser(){
+        try{
+          let t = await getTokenPreferFresh();
+          if(!t && typeof firebase !== 'undefined' && firebase.auth){
+            const u = firebase.auth().currentUser || await new Promise(res => firebase.auth().onAuthStateChanged(res));
+            if (u) t = await u.getIdToken(true);
+          }
+          if (!t) return false;
+
+          const r = await fetch(ABS_API + "/admin/ping", {
+            method: "GET", mode: "cors",
+            headers: { "Authorization": "Bearer " + t },
+            cache: "no-store"
+          });
+          return r.ok; // 200 => admin; 401/403 => não-admin
+        }catch{ return false; }
+      }
+
+      // Aplica/força UI de admin vs não-admin
+      async function applyWhoamiAdmin(){
+        const adm = await isAdminUser();
+
+        const adminArea    = document.getElementById('admin-area');
+        const nonAdmin     = document.getElementById('nonAdminBanner');
+        const gerarBtn     = document.getElementById('gerar');
+        const listarBtn    = document.getElementById('listar');
+        const table        = document.getElementById('tbl');
+        const admFlag      = document.getElementById('admFlag');
+        const badge        = document.getElementById('adminBadge');
+        const lastBox      = document.getElementById('last-coupon');
+
+        if (adm) {
+          adminArea.style.display = '';
+          nonAdmin.style.display  = 'none';
+          gerarBtn.disabled = false;
+          listarBtn.disabled = false;
+          table.style.display = ''; // só admins veem a tabela
+          admFlag.textContent = 'admin';
+          badge.style.background = '#10331b';
+
+          // restaura “último cupom” só para admin
+          try {
+            const raw = lsGet('lastCoupon');
+            if (raw) {
+              const obj = JSON.parse(raw);
+              showLastCoupon(obj.code, obj.via);
+            } else {
+              lastBox.style.display = 'none';
+            }
+          } catch { lastBox.style.display = 'none'; }
+
+        } else {
+          // Esconde a área restrita por completo para não-admin
+          adminArea.style.display = 'none';
+          nonAdmin.style.display  = '';
+          gerarBtn.disabled = true;
+          listarBtn.disabled = true;
+          table.style.display = 'none';
+          admFlag.textContent = 'não-admin';
+          badge.style.background = '#311b10';
+
+          // limpa qualquer vestígio local de cupom
+          lsDel('lastCoupon');
+          lastBox.style.display = 'none';
+          setOut('');
+
+          // Mostra "Entrar" se não logado; "Trocar conta" se logado
+          try {
+            const u = (typeof firebase !== 'undefined') ? firebase.auth().currentUser : null;
+            const btnIn  = document.getElementById('btnSignIn');
+            const btnSw  = document.getElementById('btnSwitch');
+            if (btnIn && btnSw) {
+              if (!u) {
+                btnIn.style.display = '';
+                btnSw.style.display = 'none';
+              } else {
+                btnIn.style.display = 'none';
+                btnSw.style.display = '';
+              }
+              // Handler: redireciona para o login canônico (sem popup)
+              btnIn.onclick = () => { window.location.href = '/pages/login.html'; };
+              btnSw.onclick = async () => {
+                try {
+                  await firebase.auth().signOut();
+                  lsDel('idToken');
+                  updateAuthUI(null);
+                  await applyWhoamiAdmin();
+                } catch(e) {
+                  setOut({ erro: 'Falha ao sair', detalhe: String(e && e.message || e) });
+                }
+              };
+            }
+          } catch {}
+        }
+
+        return adm;
+      }
+
+      // ====== GERAR (idempotente + retry 401) ======
+      async function gerar(){
+        const btn = document.getElementById('gerar');
+        const restore = setBusy(btn, true, 'Gerando…');
+        try{
+          setOut('Gerando cupom…');
+
+          const canAdmin = await isAdminUser();
+          if (!canAdmin) {
+            setOut({ erro: "Permissão negada", detalhe: "Somente administrador pode gerar cupons." });
+            return;
+          }
+
+          const dias    = Number(document.getElementById('dias').value || 0);
+          const prefixo = (document.getElementById('prefixo').value || '').trim();
+
+          const bodyAdmin = {};
+          if (dias > 0) bodyAdmin.diasValidade = dias;
+          if (prefixo)  bodyAdmin.prefixo = prefixo;
+          bodyAdmin.origem = "admin-cupons";
+
+          async function postJsonWithToken(url, body, tokenValue){
+            const headers = { "Content-Type": "application/json" };
+            if (tokenValue) headers["Authorization"] = "Bearer " + tokenValue;
+            const r = await fetch(url, { method:"POST", mode:"cors", headers, body: JSON.stringify(body) });
+            const ct = r.headers.get("content-type") || "";
+            const data = ct.includes("application/json") ? await r.json() : (await r.text());
+            return { ok: r.ok, status: r.status, statusText: r.statusText, data };
+          }
+
+          let tok = await getTokenPreferFresh();
+          let resp = await postJsonWithToken(ABS_API + "/admin/cupons", bodyAdmin, tok);
+
+          // fallback defensivo: /gerar-cupom
+          if ([404,405].includes(resp.status)) {
+            resp = await postJsonWithToken(ABS_API + "/gerar-cupom", bodyAdmin, tok);
+          }
+
+          // retry 401 uma única vez após refresh
+          if (resp.status === 401) {
+            await refreshIdToken();
+            tok = await getTokenPreferFresh();
+            resp = await postJsonWithToken(ABS_API + "/admin/cupons", bodyAdmin, tok);
+            if ([404,405].includes(resp.status)) {
+              resp = await postJsonWithToken(ABS_API + "/gerar-cupom", bodyAdmin, tok);
+            }
+          }
+
+          if (!resp.ok) {
+            const resumo = typeof resp.data === 'string' ? resp.data.slice(0,200) : JSON.stringify(resp.data).slice(0,200);
+            throw new Error(`Falha ao criar cupom: ${resp.status} ${resp.statusText} — ${resumo}`);
+          }
+
+          const cup = resp.data || {};
+          const codigo = cup.codigo || cup.code || "(sem código)";
+          saveLastCoupon(codigo, "admin");
+          setOut({ ok:true, via:"admin", cupom: codigo, resposta: cup });
+
+          await listar();
+        } catch(err){
+          setOut({ erro: "Falha ao gerar cupom", detalhe: String(err && err.message || err) });
+        } finally{
+          restore();
+        }
+      }
+
+      // ====== LISTAR (resiliente, com fallbacks) ======
+      async function listar(){
+        const btn = document.getElementById('listar');
+        const restore = setBusy(btn, true, 'Atualizando…');
+
+        const canAdmin = await isAdminUser();
+        if (!canAdmin) {
+          setOut({ erro:'Sem permissão', detalhe:'Somente administradores podem listar cupons.' });
+          restore(); return;
+        }
+
+        setOut('Listando cupons…');
+        const tb = document.querySelector('#tbl tbody');
+        const table = document.getElementById('tbl');
+        tb.innerHTML = '';
+        table.style.display = 'none';
+
+        try{
+          async function tryListOnce(url, tokenValue){
+            const headers = {};
+            if (tokenValue) headers["Authorization"] = "Bearer " + tokenValue;
+            const r = await fetch(url, { method:"GET", mode:"cors", headers, cache:"no-store" });
+            const ct = r.headers.get("content-type") || "";
+            const data = ct.includes("application/json") ? await r.json() : (await r.text());
+            return { ok:r.ok, status:r.status, data };
+          }
+
+          async function doList(tokenValue){
+            const base = ABS_API;
+            const attempts = [
+              base + "/__list?col=cuponsAtivacao&limit=50",     // utilitária, se existir
+              base + "/api/admin/cupons?limit=50&status=todos", // rota oficial (se existir)
+              base + "/admin/cupons?limit=50&status=todos"      // alternativa
+            ];
+
+            for (const url of attempts){
+              const resp = await tryListOnce(url, tokenValue);
+              if (resp.ok && resp.data) return { url, payload: resp.data };
+            }
+            throw new Error("Nenhuma rota de listagem disponível/ok (/__list | /api/admin/cupons | /admin/cupons).");
+          }
+
+          let tok = await getTokenPreferFresh();
+          let { url, payload } = await doList(tok);
+
+          // retry 401: atualiza token e tenta de novo
+          if (!payload || (payload.ok === false) ) {
+            if (payload && payload.error && /unauth|401|token/i.test(String(payload.error))) {
+              await refreshIdToken();
+              tok = await getTokenPreferFresh();
+              ({ url, payload } = await doList(tok));
+            }
+          }
+
+          // Normalização de formatos
+          const items = Array.isArray(payload.items) ? payload.items
+                       : Array.isArray(payload) ? payload
+                       : (payload.documents || payload.docs || []);
+
+          for (const c of items){
+            const codigo = c.codigo ?? c.code ?? c.id ?? "-";
+            const created = c.createdAt ?? c.criadoEm ?? c.created ?? c.created_at ?? "-";
+            const expira  = c.expiraEm ?? c.validUntil ?? c.expira ?? c.expira_em ?? "-";
+
+            let status = c.status || "-";
+            if (status === "-" || typeof status === "undefined") {
+              if (typeof c.usosMax !== "undefined") {
+                status = ((c.usos || 0) >= (c.usosMax || 1)) ? "usado" : "disponível";
+              } else if (typeof c.ativo !== "undefined") {
+                status = (c.ativo === false) ? "inativo" : "ativo";
+              } else {
+                status = "desconhecido";
+              }
+            }
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${codigo}</td>
+              <td>${status}</td>
+              <td>${created}</td>
+              <td>${expira}</td>`;
+            tb.appendChild(tr);
+          }
+
+          table.style.display = '';
+          setOut({ ok:true, origem:url, itens: (items && items.length) || 0 });
+        }catch(err){
+          setOut({ erro:'Falha ao listar cupons', detalhe: String(err).slice(0,300) });
+        }finally{
+          restore();
+        }
+      }
+
+      // ---- Diagnóstico com abort/timeout ----
+      async function diagnosticarRotas(){
+        const btn = document.getElementById('diagnosticar');
+        const restore = setBusy(btn, true, 'Diagnosticando…');
+
+        const canAdmin = await isAdminUser();
+        if (!canAdmin) { setOut('Diagnóstico indisponível para não-admin.'); restore(); return; }
+
+        try {
+          setOut('Diagnosticando rotas…');
+          const u = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
+          if(!u){ setOut('Sem usuário logado. Faça login primeiro.'); return; }
+          const tok = await u.getIdToken(true);
+          const base = ABS_API;
+
+          const controller = new AbortController();
+          currentScan = { controller };
+
+          async function ping(path, method, body){
+            const needsJson = (method==="POST" || method==="PUT" || method==="PATCH");
+            let res;
+            try {
+              res = await fetchWithTimeout(base + path, {
+                method, mode:"cors",
+                headers: { "Authorization":"Bearer "+tok, ...(needsJson?{"Content-Type":"application/json"}:{}) },
+                body: needsJson ? JSON.stringify(body||{origem:"admin-cupons"}) : undefined
+              }, 10000, controller.signal);
+            } catch(e) {
+              return { path, method, status:'FETCH_ERR', allow:'-', acam:'-', sample:String(e) };
+            }
+            const allow = res.headers.get('allow') || '-';
+            const acam  = res.headers.get('access-control-allow-methods') || '-';
+            const ct = res.headers.get('content-type') || '';
+            let text;
+            try { text = ct.includes('application/json') ? JSON.stringify(await res.json()) : await res.text(); }
+            catch(e) { text = '(sem corpo)'; }
+            return { path, method, status: res.status, allow, acam, sample: (text||'').replace(/\s+/g,' ').slice(0,160) };
+          }
+
+          const rows = [];
+          rows.push(await ping("/admin/ping", "GET"));
+          rows.push(await ping("/admin/cupons", "POST", {diasValidade:3,prefixo:"MEI"}));
+          rows.push(await ping("/gerar-cupom", "POST", {diasValidade:3,prefixo:"MEI"}));
+          rows.push(await ping("/__list?col=cuponsAtivacao&limit=5", "GET"));
+          rows.push(await ping("/api/admin/cupons?limit=5&status=todos", "GET"));
+
+          setOut("Resultado da sonda:\n" + rows.map(r => `${r.method} ${r.path} -> ${r.status} | Allow: ${r.allow} | ACAM: ${r.acam} | ${r.sample}…`).join('\n'));
+        } catch (err) {
+          setOut({ erro: 'Falha no diagnóstico', detalhe: err && err.message ? err.message : String(err) });
+        } finally {
+          currentScan = null;
+          restore();
+        }
+      }
+
+      // Bindings
+      window.addEventListener('DOMContentLoaded', async () => {
+        try {
+          if (typeof firebase !== 'undefined' && firebase.auth) {
+            firebase.auth().onAuthStateChanged(async u => {
+              updateAuthUI(u || null);
+              await applyWhoamiAdmin();
+            });
+          } else {
+            updateAuthUI(null);
+            await applyWhoamiAdmin();
+          }
+        } catch(e) {
+          updateAuthUI(null);
+          await applyWhoamiAdmin();
+        }
+
+        document.getElementById('refreshToken').onclick = refreshIdToken;
+        document.getElementById('gerar').onclick = gerar;
+        document.getElementById('listar').onclick = listar;
+        document.getElementById('diagnosticar').onclick = diagnosticarRotas;
+        document.getElementById('stopScan').onclick = () => stopScan('botão parar');
+
+        const btnCopy = document.getElementById('copyLast');
+        if (btnCopy) btnCopy.onclick = async () => {
+          const code = (document.getElementById('last-code').textContent || '').trim();
+          if (!code) return;
+          try { await navigator.clipboard.writeText(code); setOut('Código copiado ✔'); }
+          catch { setOut('Não foi possível copiar automaticamente.'); }
+        };
+      });
+    })();
+  </script>
+</body>
+</html>

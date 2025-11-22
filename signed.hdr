@@ -1,0 +1,14 @@
+HTTP/1.1 200 OK
+Date: Sat, 01 Nov 2025 14:53:54 GMT
+Content-Type: application/json
+Transfer-Encoding: chunked
+Connection: keep-alive
+CF-RAY: 997c396e4924fb82-POA
+access-control-allow-origin: *
+rndr-id: 4a26bace-c845-482d
+vary: Accept-Encoding
+x-render-origin-server: gunicorn
+cf-cache-status: DYNAMIC
+Server: cloudflare
+alt-svc: h3=":443"; ma=86400
+

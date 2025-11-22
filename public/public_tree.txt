@@ -1,0 +1,110 @@
+Listagem de caminhos de pasta para o volume OS
+O n£mero de s‚rie do volume ‚ 52CF-BED4
+C:.
+|   bem-vindo.html
+|   cadastro.backup.1253.html
+|   cadastro.backup.16296.html
+|   cadastro.backup.16322.html
+|   cadastro.backup.23394.html
+|   cadastro.backup.25912.html
+|   cadastro.backup.28832.html
+|   cadastro.html
+|   consentimento-voz.html
+|   cookies.html
+|   index.backup.global-replace.html
+|   index.backup.html
+|   index.html
+|   login-test.html
+|   login.backup-20250904.html
+|   manifest.webmanifest
+|   payload.json
+|   privacidade.html
+|   public_tree.txt
+|   ROCKET.txt
+|   termos.html
+|   verify-email.html
+|   
++---assets
+|   |   admin-storage.js
+|   |   api-test.js
+|   |   ativar-cliente.js
+|   |   auth.js
+|   |   auth.legacy.js
+|   |   backend-patch.js
+|   |   captcha_gate.js
+|   |   cookies.js
+|   |   favicon.ico
+|   |   firebase-init.js
+|   |   firebase-init.prod.js
+|   |   icon-16.png
+|   |   icon-180.png
+|   |   icon-192.png
+|   |   icon-32.png
+|   |   icon-512.png
+|   |   layout.js
+|   |   login.js
+|   |   mei-robo-icon.png
+|   |   styles.css
+|   |   styles.css.bak
+|   |   
+|   +---img
+|   |   \---mock
+|   |           morena-iluminada.jpg
+|   |           
+|   +---partials
+|   |       footer.html
+|   |       header.html
+|   |       
+|   \---samples
+|           contatos-modelo.csv
+|           
++---js
+|       signed-url.js
+|       
++---pages
+|       admin-cupons.html
+|       admin-storage.html
+|       admin.html
+|       agenda.html
+|       ativar-cliente.backup.18441.html
+|       ativar-cliente.backup.24009.html
+|       ativar-cliente.backup.8451.html
+|       ativar-cliente.html
+|       ativar-config.backup.14532.html
+|       ativar-config.html
+|       ativar.backup.21485.html
+|       ativar.html
+|       cnpj.html
+|       configuracao.html
+|       confirmacao-empresa.backup.26442.html
+|       confirmacao-empresa.backup.30063.html
+|       confirmacao-empresa.html
+|       contatos.html
+|       dashboard.html
+|       email-preview.html
+|       login.html
+|       media-gallery.html
+|       media-preview-v1.1.html
+|       media-preview.html
+|       media-upload-v2.html
+|       media-upload-v3.1.html
+|       media-upload-v3.2.html
+|       media-upload-v3.3.1.html
+|       media-upload-v3.3.2.html
+|       media-upload-v3.3.3.html
+|       media-upload-v3.3.4.html
+|       media-upload-v3.3.5.html
+|       media-upload-v3.3.html
+|       media-upload-v3.html
+|       orcamentos.html
+|       precos.backup.html
+|       precos.html
+|       signed-url-test.html
+|       vinculo.backup.5767.html
+|       vinculo.html
+|       
+\---partials
+        footer.html
+        header.backup.html
+        header.html
+        

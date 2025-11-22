@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Orçamentos — MEI Robô (v1.4 simples)</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <script src="/assets/layout.js" defer></script>
+  <style>
+    :root{ --bg:#0d1117; --card:#161b22; --br:#30363d; --soft:#cfe3dc; --muted:#9fb0aa; --txt:#e6edf3; --danger:#ff6961; --ok:#238636; }
+    html,body{background:var(--bg); color:var(--txt); margin:0; padding:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    main{max-width:980px; margin:0 auto; padding:16px}
+    h1{font-size:1.6rem; margin:8px 0 16px; color:var(--soft)}
+    .card{background:var(--card); border:1px solid var(--br); border-radius:14px; padding:14px; margin:12px 0}
+    .badge{display:inline-block; padding:2px 8px; border:1px solid var(--br); border-radius:999px; color:var(--soft); font-size:.8rem}
+    label{font-weight:700; font-size:.95rem; display:block; margin-top:8px}
+    input[type="text"], input[type="number"], textarea, select{ width:100%; background:#0d1117; color:var(--txt); border:1px solid var(--br); border-radius:10px; padding:10px; }
+    input::placeholder, textarea::placeholder{color:var(--muted)}
+    .btn{background:var(--ok); color:#fff; border:none; border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:700}
+    .btn:hover{filter:brightness(1.05)}
+    .btn-ghost{background:transparent; border:1px solid var(--br); color:var(--txt)}
+    .btn-danger{background:var(--danger)}
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .grid-2{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+    .grid-3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px}
+    .right{text-align:right}
+    /* Tabela */
+    #tabela-wrap{max-height:300px; overflow:auto; border:1px solid var(--br); border-radius:12px}
+    table{width:100%; border-collapse:collapse; table-layout:fixed}
+    col.col-cod{width:90px} col.col-item{width:auto} col.col-preco{width:120px} col.col-qtd{width:80px} col.col-dur{width:90px} col.col-sub{width:140px} col.col-act{width:80px}
+    thead th{background:#0f141a; position:sticky; top:0; z-index:1; color:var(--soft)}
+    th,td{border-bottom:1px solid var(--br); padding:8px; vertical-align:middle}
+    .w-100{width:100%} .h-40{height:40px}
+    .kicker{font-size:.95rem; color:var(--muted)}
+    .logo-box{width:200px; height:80px; border:1px dashed var(--br); border-radius:12px; display:flex; align-items:center; justify-content:center; color:var(--muted); background:#0f141a; overflow:hidden}
+    .header-grid{display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center}
+    .totais{font-size:1.05rem}
+    .only-print{display:none}
+    @media print{
+      body{background:#fff; color:#000}
+      .no-print{display:none!important}
+      .only-print{display:block}
+      .card{border:none}
+      main{max-width:100%; padding:0 8mm}
+      #tabela-wrap{max-height:none; overflow:visible; border:none}
+      table th, table td{border-color:#ddd}
+    }
+  </style>
+</head>
+<body>
+  <div id="app-header" class="no-print"></div>
+  <main id="printable">
+    <!-- Cabeçalho com logo/nome e número do orçamento -->
+    <section class="card">
+      <div class="header-grid">
+        <div>
+          <label class="no-print">Logo (Arquivo PNG/SVG — opcional)</label>
+          <div class="logo-box" id="logoBox"><span>Logo</span></div>
+          <input class="no-print" type="file" id="inLogo" accept="image/png,image/svg+xml" style="margin-top:6px" aria-label="Selecionar arquivo de logo (PNG ou SVG)">
+          <div class="kicker no-print">Selecione um <strong>Arquivo</strong> PNG ou SVG.</div>
+        </div>
+        <div>
+          <label>Nome do MEI / Empresa</label>
+          <input type="text" id="nomeEmpresa" placeholder="Ex.: João Barbeiro MEI" />
+        </div>
+        <div class="right">
+          <div><span class="badge">Orçamento</span> <span id="numero-badge" class="badge" style="display:none"></span></div>
+          <div class="kicker" id="dataHoje"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Busca simples e ações de linhas -->
+    <section class="card no-print">
+      <div class="grid-3">
+        <div>
+          <label>Adicionar por código ou nome</label>
+          <input type="text" id="busca" placeholder="Ex.: #BARB01 ou 'corte de cabelo'"/>
+          <div class="kicker">Dica: use #CÓDIGO para adicionar direto.</div>
+        </div>
+        <div style="align-self:end">
+          <button class="btn" id="btn-buscar">Adicionar</button>
+          <button class="btn btn-ghost" id="btn-add-linha">Adicionar linha</button>
+        </div>
+        <div style="align-self:end" class="right">
+          <button class="btn" id="btn-salvar">Salvar</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Itens (6 linhas visíveis mesmo em branco) -->
+    <section class="card">
+      <h2>Itens do orçamento</h2>
+      <div id="tabela-wrap">
+        <table id="tabela-itens">
+          <colgroup><col class="col-cod"/><col class="col-item"/><col class="col-preco"/><col class="col-qtd"/><col class="col-dur"/><col class="col-sub"/><col class="col-act"/></colgroup>
+          <thead><tr><th>Código</th><th>Item</th><th>Preço (R$)</th><th>Qtd</th><th>Duração</th><th class="right">Subtotal (R$)</th><th></th></tr></thead>
+          <tbody id="tbody-itens"></tbody>
+        </table>
+      </div>
+      <div class="totais" style="margin-top:8px">
+        <div class="row" style="justify-content:flex-end; gap:24px">
+          <div><strong>Total:</strong> <span id="totalGeral">R$ 0,00</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Informações adicionais (padronizável em nuvem) -->
+    <section class="card">
+      <h2>Informações Adicionais</h2>
+      <textarea id="infoAdicionais" rows="3" placeholder="Despesas de deslocamento e/ou frete e condições de pagamento serão combinados no momento da formalização da proposta."></textarea>
+      <div class="row no-print" style="justify-content:space-between">
+        <div class="kicker" id="infoStatus">Este texto pode virar padrão do seu MEI (salvo em nuvem).</div>
+        <div class="row">
+          <button class="btn btn-ghost" id="btn-salvar-info-cloud">Salvar como padrão (nuvem)</button>
+          <button class="btn btn-ghost" id="btn-salvar-info-local" title="Apenas neste dispositivo">Salvar local</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Mensagem que acompanha o orçamento (padronizável em nuvem) -->
+    <section class="card">
+      <h2>Mensagem de envio</h2>
+      <textarea id="msgEnvio" rows="3">Olá, Segue conforme solicitado, orçamento que  ainda não é proposta, precisando ser validado após confirmação de disponibilidade. para confirmar, solicite proposta. obrigado.</textarea>
+      <div class="row no-print" style="justify-content:space-between">
+        <div class="kicker" id="msgStatus">Pode virar padrão do seu MEI (salvo em nuvem).</div>
+        <div class="row">
+          <button class="btn btn-ghost" id="btn-salvar-msg-cloud">Salvar como padrão (nuvem)</button>
+          <button class="btn btn-ghost" id="btn-copiar">Copiar mensagem</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Assinatura/Carimbo (opcionais) -->
+    <section class="card">
+      <h2>Assinatura e carimbo (opcional)</h2>
+      <div class="row">
+        <div>
+          <label>Assinatura (Arquivo PNG/SVG)</label>
+          <input type="file" id="inAssinatura" accept="image/png,image/svg+xml" aria-label="Selecionar arquivo de assinatura (PNG ou SVG)" />
+          <div class="kicker">Envie um <strong>Arquivo</strong> PNG com fundo transparente (ou SVG).</div>
+          <div class="logo-box" id="prevAssinatura"><span>Assinatura</span></div>
+        </div>
+        <div>
+          <label>Carimbo (Arquivo PNG/SVG)</label>
+          <input type="file" id="inCarimbo" accept="image/png,image/svg+xml" aria-label="Selecionar arquivo de carimbo (PNG ou SVG)" />
+          <div class="kicker">Envie um <strong>Arquivo</strong> PNG com fundo transparente (ou SVG).</div>
+          <div class="logo-box" style="width:160px;height:160px" id="prevCarimbo"><span>Carimbo</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Ações finais -->
+    <section class="card no-print">
+      <div class="row" style="justify-content:space-between">
+        <div class="kicker">Dica: use “Imprimir” para gerar PDF pelo navegador.</div>
+        <div class="row">
+          <button class="btn" id="btn-imprimir">Imprimir</button>
+          <button class="btn btn-ghost" id="btn-email">Exportar p/ E-mail</button>
+          <button class="btn btn-ghost" id="btn-whats">Exportar p/ WhatsApp</button>
+        </div>
+      </div>
+    </section>
+
+    <p class="kicker" style="font-style:italic">Este orçamento não é proposta. A validade depende de disponibilidade de produto/agenda. Para formalizar a proposta e confirmar o serviço, solicite confirmação.</p>
+  </main>
+  <div id="app-footer" class="no-print"></div>
+
+  <script>
+    const el = (id)=>document.getElementById(id);
+    const fmt = (v)=>'R$ ' + (Number(v||0)).toFixed(2).replace('.',',');
+    const today = new Date(); el('dataHoje').textContent = today.toLocaleDateString('pt-BR');
+
+    const params = new URLSearchParams(location.search);
+    const isValidate = params.get('validate') === '1';
+
+    // Estado simples
+    let numero = '';
+    let itens = [];
+    for(let i=0;i<6;i++){ itens.push({codigo:'', nome:'', preco:0, qtd:1, duracao:''}); }
+    renderTabela(); renderTotal();
+
+    // Previews de Arquivo
+    bindPreview('inLogo','logoBox');
+    bindPreview('inAssinatura','prevAssinatura');
+    bindPreview('inCarimbo','prevCarimbo');
+    function bindPreview(inputId, targetId){
+      const input = el(inputId); if(!input) return;
+      input.addEventListener('change', (e)=>{
+        const file = e.target.files && e.target.files[0]; const box = el(targetId);
+        if(!file){ box.textContent=''; box.style.backgroundImage='none'; return; }
+        const r = new FileReader();
+        r.onload = ev => { box.textContent=''; box.style.background='#0f141a'; box.style.backgroundImage=`url('${ev.target.result}')`; box.style.backgroundRepeat='no-repeat'; box.style.backgroundPosition='center'; box.style.backgroundSize='contain'; };
+        r.readAsDataURL(file);
+      });
+    }
+
+    // Linhas: adicionar por busca simples
+    el('btn-buscar').addEventListener('click', ()=>{
+      const t = el('busca').value.trim();
+      if(!t) return;
+      let cod = ''; let nome = '';
+      if(t.startsWith('#')){ cod = t.replace('#','').toUpperCase(); }
+      else { nome = t; }
+      const idx = itens.findIndex(x => !x.nome && !x.codigo);
+      const target = idx>=0 ? itens[idx] : (itens.push({codigo:'', nome:'', preco:0, qtd:1, duracao:''}), itens[itens.length-1]);
+      if(cod) target.codigo = cod; if(nome) target.nome = nome;
+      el('busca').value=''; renderTabela(); renderTotal();
+    });
+    el('btn-add-linha').addEventListener('click', ()=>{ itens.push({codigo:'', nome:'', preco:0, qtd:1, duracao:''}); renderTabela(); });
+
+    // Salvar (gera número simulado no topo)
+    el('btn-salvar').addEventListener('click', ()=>{
+      if(!numero){
+        const ano = new Date().getFullYear();
+        const seq = Math.floor(Math.random()*90000)+10000;
+        numero = `ORC-${ano}-${String(seq).padStart(5,'0')}`;
+        const badge = el('numero-badge'); badge.textContent = numero; badge.style.display='inline-block';
+      }
+      alert('✅ Orçamento salvo (simulação). Número atribuído no topo.');
+    });
+
+    // Totais
+    function rowHasValue(it){ return (it.nome && it.nome.trim()!=='') || (it.codigo && it.codigo.trim()!=='') || (Number(it.preco)>0); }
+    function getTotal(){ return itens.reduce((acc, it)=>{ if(!rowHasValue(it)) return acc; const sub = (Number(it.preco)||0) * (Number(it.qtd)||0); return acc + sub; }, 0); }
+    function renderTotal(){ el('totalGeral').textContent = fmt(getTotal()); }
+    function renderTabela(){
+      const tbody = el('tbody-itens');
+      tbody.innerHTML = itens.map((it, i)=>`
+        <tr>
+          <td><input class="h-40 w-100" type="text" value="${it.codigo||''}" data-i="${i}" data-k="codigo" placeholder="Ex.: BARB01"/></td>
+          <td><input class="h-40 w-100" type="text" value="${it.nome||''}" data-i="${i}" data-k="nome" placeholder="Ex.: Barba desenhada"/></td>
+          <td><input class="h-40 w-100" type="number" step="0.01" value="${it.preco||0}" data-i="${i}" data-k="preco"/></td>
+          <td><input class="h-40 w-100" type="number" step="1" value="${it.qtd||1}" data-i="${i}" data-k="qtd"/></td>
+          <td><input class="h-40 w-100" type="number" step="5" value="${it.duracao||''}" data-i="${i}" data-k="duracao" placeholder="min"/></td>
+          <td class="right">${fmt((Number(it.preco)||0) * (Number(it.qtd)||0))}</td>
+          <td class="right"><button class="btn btn-danger" data-rem="${i}">Remover</button></td>
+        </tr>`).join('');
+      tbody.querySelectorAll('input').forEach(inp=>{
+        inp.addEventListener('input', e=>{
+          const i = Number(e.target.dataset.i), k = e.target.dataset.k;
+          let v = e.target.value;
+          if(['preco','qtd','duracao'].includes(k)) v = Number(v||0);
+          itens[i][k] = v; renderTotal();
+        });
+      });
+      tbody.querySelectorAll('button[data-rem]').forEach(btn=> btn.addEventListener('click', ()=>{ 
+        const idx = Number(btn.dataset.rem); itens.splice(idx,1); renderTabela(); renderTotal();
+      }));
+    }
+
+    // --------- Padrões em nuvem (Firestore) com fallback local ---------
+    // Estrutura: profissionais/{uid}/config/orcamentos  (mantém padrão do projeto)
+    const INFO_KEY = 'mei_orc_info_padrao';
+    const MSG_KEY  = 'mei_orc_msg_padrao';
+
+    function hasFirebaseCompat(){
+      try { return !!(window.firebase && typeof firebase.initializeApp === 'function'); } catch(_) { return false; }
+    }
+    async function getUid(){
+      try{
+        if(!hasFirebaseCompat() || typeof firebase.auth !== 'function') return null;
+        const auth = firebase.auth(); // pode lançar se app DEFAULT não estiver inicializado
+        const current = auth.currentUser;
+        if(current) return current.uid;
+        return await new Promise(resolve=> auth.onAuthStateChanged(u=> resolve(u?u.uid:null)));
+      }catch(_){
+        // SDK presente mas app DEFAULT não inicializado: tratar como offline/local
+        return null;
+      }
+    }
+    function getConfigDoc(uid){
+      if(!uid || typeof firebase === 'undefined' || typeof firebase.firestore !== 'function') return null;
+      try{
+        return firebase.firestore()
+          .collection('profissionais').doc(uid)
+          .collection('config').doc('orcamentos');
+      }catch(_){
+        return null; // App DEFAULT não inicializado
+      }
+    }
+
+    async function loadCloudDefaults(){
+      try{
+        const uid = await getUid();
+        if(!uid){ el('infoStatus').textContent = 'Entre para salvar/usar o padrão em nuvem.'; el('msgStatus').textContent = 'Entre para salvar/usar o padrão em nuvem.'; loadLocalDefaults(); return; }
+        const ref = getConfigDoc(uid);
+        if(!ref){ el('infoStatus').textContent = 'Nuvem indisponível. Usando padrão local.'; el('msgStatus').textContent = 'Nuvem indisponível. Usando padrão local.'; loadLocalDefaults(); return; }
+        const snap = await ref.get();
+        if(snap.exists){
+          const data = snap.data()||{};
+          if(typeof data.infoPadrao === 'string') el('infoAdicionais').value = data.infoPadrao;
+          if(typeof data.msgPadrao  === 'string') el('msgEnvio').value = data.msgPadrao;
+          el('infoStatus').textContent = 'Padrão carregado da nuvem.';
+          el('msgStatus').textContent  = 'Padrão carregado da nuvem.';
+        } else {
+          el('infoStatus').textContent = 'Sem padrão na nuvem. Você pode salvar um.';
+          el('msgStatus').textContent  = 'Sem padrão na nuvem. Você pode salvar um.';
+          loadLocalDefaults();
+        }
+      } catch(err){
+        console.warn('Cloud defaults error:', err);
+        el('infoStatus').textContent = 'Não foi possível acessar a nuvem. Usando padrão local.';
+        el('msgStatus').textContent  = 'Não foi possível acessar a nuvem. Usando padrão local.';
+        loadLocalDefaults();
+      }
+    }
+    function loadLocalDefaults(){
+      try{
+        const v = localStorage.getItem(INFO_KEY); if(v) el('infoAdicionais').value = v;
+        const m = localStorage.getItem(MSG_KEY);  if(m) el('msgEnvio').value = m;
+      } catch(_) {}
+    }
+    async function saveInfoCloud(){
+      try{
+        const uid = await getUid(); if(!uid){ alert('Entre para salvar na nuvem.'); return; }
+        const ref = getConfigDoc(uid); if(!ref){ alert('Nuvem indisponível.'); return; }
+        await ref.set({ infoPadrao: el('infoAdicionais').value||'', updatedAt: new Date().toISOString() }, { merge:true });
+        alert('☁️ Informações Adicionais salvas como padrão na nuvem.');
+      } catch(err){ alert('Falha ao salvar na nuvem. Verifique conexão/autenticação.'); console.warn(err); }
+    }
+    async function saveMsgCloud(){
+      try{
+        const uid = await getUid(); if(!uid){ alert('Entre para salvar na nuvem.'); return; }
+        const ref = getConfigDoc(uid); if(!ref){ alert('Nuvem indisponível.'); return; }
+        await ref.set({ msgPadrao: el('msgEnvio').value||'', updatedAt: new Date().toISOString() }, { merge:true });
+        alert('☁️ Mensagem de envio salva como padrão na nuvem.');
+      } catch(err){ alert('Falha ao salvar na nuvem. Verifique conexão/autenticação.'); console.warn(err); }
+    }
+    function saveInfoLocal(){ try{ localStorage.setItem(INFO_KEY, el('infoAdicionais').value||''); alert('💾 Salvo localmente neste dispositivo.'); }catch(_){} }
+
+    // Bind botões de nuvem/local
+    el('btn-salvar-info-cloud').addEventListener('click', saveInfoCloud);
+    el('btn-salvar-msg-cloud').addEventListener('click', saveMsgCloud);
+    el('btn-salvar-info-local').addEventListener('click', saveInfoLocal);
+
+    // Carregar padrões (nuvem se possível, senão local)
+    loadCloudDefaults();
+
+    // Copiar / Imprimir / Exportar
+    el('btn-copiar').addEventListener('click', ()=>{ navigator.clipboard.writeText(el('msgEnvio').value||'').then(()=> alert('📋 Mensagem copiada!')); });
+    el('btn-imprimir').addEventListener('click', ()=> window.print());
+    el('btn-email').addEventListener('click', ()=>{
+      const empresa = el('nomeEmpresa').value||'Meu MEI';
+      const num = numero || 'Orçamento (sem número)';
+      const linhas = itens.filter(rowHasValue).map(it=> `- ${it.codigo?('#'+it.codigo+' - '):''}${it.nome||''} x ${it.qtd||1} — ${fmt((it.preco||0)*(it.qtd||1))}`).join('%0D%0A');
+      const total = getTotal();
+      const corpo = encodeURIComponent(`${el('msgEnvio').value||''}\n\n${empresa}\n${num}\n\nItens:\n${decodeURIComponent(linhas.replace(/%0D%0A/g,'\n'))}\n\nTotal: ${fmt(total)}\n\n${el('infoAdicionais').value||''}`);
+      const subject = encodeURIComponent(`${empresa} — ${num}`);
+      location.href = `mailto:?subject=${subject}&body=${corpo}`;
+    });
+    el('btn-whats').addEventListener('click', ()=>{
+      const empresa = el('nomeEmpresa').value||'Meu MEI';
+      const num = numero || 'Orçamento (sem número)';
+      const linhas = itens.filter(rowHasValue).map(it=> `• ${it.codigo?('#'+it.codigo+' - '):''}${it.nome||''} x ${it.qtd||1} — ${fmt((it.preco||0)*(it.qtd||1))}`).join('%0A');
+      const total = getTotal();
+      const texto = `${el('msgEnvio').value||''}%0A%0A${empresa}%0A${num}%0A%0AItens:%0A${linhas}%0A%0ATotal: ${fmt(total)}%0A%0A${encodeURIComponent(el('infoAdicionais').value||'')}`;
+      window.open(`https://wa.me/?text=${texto}`, '_blank');
+    });
+  </script>
+</body>
+</html>

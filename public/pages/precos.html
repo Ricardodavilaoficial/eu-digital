@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Preços e Serviços — MEI Robô</title>
+
+  <!-- Estilos canônicos do projeto -->
+  <link rel="stylesheet" href="/assets/styles.css" />
+
+  <!-- Firebase SDK v8 — ORDEM IMPORTA -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+  <!-- Inicialização DEFAULT do projeto (sem defer, para estar pronto no load) -->
+  <script src="/assets/firebase-init.js"></script>
+
+  <!-- Microlayout e legibilidade (herdando a paleta do tema escuro) -->
+  <style>
+    .app-main { min-height: 82svh; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .col { flex: 1 1 320px; }
+    .card { border-radius: 16px; padding: 16px; }
+    .title-xl { font-size: 1.5rem; font-weight: 800; letter-spacing: .2px; }
+    .help { font-size: .92rem; opacity: .85; }
+    .toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .mt-1{margin-top:4px} .mt-2{margin-top:8px} .mt-3{margin-top:12px} .mt-4{margin-top:16px} .mt-6{margin-top:24px} .mt-8{margin-top:32px}
+    .mb-2{margin-bottom:8px} .mb-4{margin-bottom:16px}
+    .hidden { display:none !important; }
+    .text-right { text-align: right; }
+    .nowrap { white-space: nowrap; }
+
+    /* Inputs: manter contraste do tema; reforçar placeholder */
+    .input { border-radius:10px; padding:10px 12px; font-size:1rem; color: inherit; width: 100%; }
+    .input::placeholder { opacity:.55; } /* solução memorizada: placeholder ~55% */
+    .button { border-radius:10px; padding:10px 12px; font-size:1rem; font-weight:700; cursor:pointer; }
+    .button:disabled { opacity:.55; cursor:not-allowed; }
+
+    /* Tabela */
+    .table { width:100%; border-collapse:collapse; }
+    .table th, .table td { padding:10px; text-align:left; font-size:.95rem; vertical-align:top; }
+
+    /* Upload */
+    .upload-area { border:2px dashed currentColor; border-radius:12px; padding:18px; cursor:pointer; }
+    .upload-area:focus { outline: none; box-shadow: 0 0 0 3px rgba(15,157,88,.25); }
+
+    /* Mensagens */
+    .msg { border-radius:8px; padding:10px; font-weight:700; }
+    .msg.ok { border:1px solid; }
+    .msg.err { border:1px solid; }
+
+    /* Badge simples */
+    .badge { display:inline-flex; align-items:center; gap:6px; font-weight:700; font-size:.85rem; padding:4px 10px; border-radius:999px; border:1px solid currentColor; opacity:.9; }
+  </style>
+</head>
+<body class="app-shell">
+  <!-- Header dinâmico -->
+  <header id="app-header"></header>
+
+  <main class="app-main">
+    <section class="container">
+      <h1 class="title-xl">Preços e Serviços</h1>
+      <div class="mt-2 help">
+        Cadastre aqui o que você faz e quanto cobra. Esses dados ajudam o MEI Robô a entender o pedido do seu cliente,
+        responder natural e <b>propor agendamentos com duração correta do serviço</b>.
+        <div class="mt-1">Exemplo: <i>Corte masculino — <b>CÓDIGO BARB01</b> — R$ 45,00 — 30 minutos</i>.</div>
+      </div>
+
+      <!-- 1) Adicionar serviço (formulário simples) -->
+      <div class="mt-4 card">
+        <div class="badge">Adicionar serviço</div>
+        <div class="row mt-2">
+          <!-- NOVO: campo Código (opcional) -->
+          <div class="col">
+            <label for="f-cod">Código (opcional)</label>
+            <input id="f-cod" class="input" placeholder="Ex.: BARB01" maxlength="24" />
+            <div class="help mt-1">Use letras, números e traço (-). Sem espaços. Único por MEI.</div>
+          </div>
+          <div class="col">
+            <label for="f-nome">Nome do serviço</label>
+            <input id="f-nome" class="input" placeholder="Ex.: Corte masculino" maxlength="80" />
+            <div class="help mt-1">Use um nome simples que o cliente reconheça.</div>
+          </div>
+          <div class="col">
+            <label for="f-preco">Preço (R$)</label>
+            <input id="f-preco" class="input" placeholder="Ex.: 45,00" inputmode="decimal" />
+            <div class="help mt-1">Use vírgula para centavos (ex.: 60,00).</div>
+          </div>
+          <div class="col">
+            <label for="f-dur">Tempo do serviço (minutos)</label>
+            <input id="f-dur" class="input" placeholder="Ex.: 30" inputmode="numeric" />
+            <div class="help mt-1">De 1 a 360 minutos.</div>
+          </div>
+        </div>
+        <div class="row mt-2">
+          <div class="col" style="flex-basis:100%;">
+            <label for="f-info">Complete aqui outras informações do serviço (opcional)</label>
+            <input id="f-info" class="input" placeholder="Ex.: a domicílio, feminino, infantil, unhas de gel, acabamento, hidráulica" maxlength="200" />
+            <div class="help mt-1">Separe por vírgulas. Escreva palavras que ajudem a identificar o serviço (onde, para quem, variações, material, estilo). Evite colocar preço ou tempo aqui.</div>
+          </div>
+        </div>
+        <div class="mt-2 toolbar">
+          <button id="btn-add" class="button">Salvar serviço</button>
+          <button id="btn-clear" class="button">Limpar</button>
+        </div>
+        <div id="add-msg" class="mt-2 msg hidden"></div>
+      </div>
+
+      <!-- 2) Seus serviços (lista + busca + paginação) -->
+      <div class="mt-4 card">
+        <div class="toolbar">
+          <div class="badge">Seus serviços</div>
+          <input id="search" class="input" placeholder="Buscar por CÓDIGO, nome ou outras informações…" style="flex:1 1 280px" />
+          <div class="help">Resultados: <span id="count">0</span></div>
+        </div>
+
+        <div class="mt-2">
+          <table class="table" id="svc-table" aria-label="Tabela de serviços">
+            <thead>
+              <tr>
+                <!-- NOVO: coluna Código -->
+                <th class="nowrap">Código</th>
+                <th>Serviço</th>
+                <th class="nowrap">Preço (R$)</th>
+                <th class="nowrap">Tempo (min)</th>
+                <th>Outras informações</th>
+                <th class="nowrap">Anexos</th>
+              </tr>
+            </thead>
+            <tbody id="svc-body"><tr><td colspan="6">Carregando…</td></tr></tbody>
+          </table>
+          <div class="mt-2 text-right">
+            <button id="prev" class="button" disabled>Anterior</button>
+            <button id="next" class="button" disabled>Próximo</button>
+          </div>
+        </div>
+
+        <div class="mt-2 help">
+          Em breve: você poderá anexar fotos, panfletos e PDFs de cada serviço direto por aqui.
+        </div>
+      </div>
+
+      <!-- 3) Importar planilha (opcional) -->
+      <div class="mt-4 card">
+        <div class="badge">Importar planilha (opcional)</div>
+        <div class="help mt-1">
+          Se você já tem sua tabela, pode importar para acelerar. Aceita planilha <b>.csv</b>. Em breve: Excel / PDF.
+        </div>
+
+        <div id="import-ready" class="mt-2 help"></div>
+
+        <div class="mt-2 upload-area" id="dropzone" tabindex="0" role="button" aria-label="Escolher arquivo de planilha">
+          <div><b>Escolher arquivo</b> ou arraste aqui.</div>
+          <div class="help mt-1">
+            Colunas esperadas: <b>código (opcional)</b>, <b>nome do serviço</b>, <b>preço (R$)</b>, <b>tempo (min)</b>, <b>outras informações (opcional)</b>.
+          </div>
+          <input id="file-input" type="file" accept=".csv,text/csv" class="hidden" />
+        </div>
+
+        <div class="mt-2 toolbar">
+          <button id="btn-preview" class="button" disabled>Ver prévia</button>
+          <button id="btn-import" class="button" disabled>Importar</button>
+          <button id="btn-sample" class="button" title="Baixar exemplo">Baixar exemplo de planilha</button>
+          <button id="btn-excel" class="button" disabled title="Em breve: Excel/PDF com ajuda de IA">Importar Excel/PDF (em breve)</button>
+        </div>
+
+        <div id="import-msg" class="mt-2 msg hidden"></div>
+        <div id="preview-wrap" class="mt-2 hidden">
+          <div class="help"><b>Prévia (primeiras linhas)</b>:</div>
+          <table class="table" id="preview-table" aria-label="Prévia da planilha"></table>
+          <div id="preview-note" class="help mt-2 hidden"></div>
+        </div>
+      </div>
+
+      <!-- Navegação -->
+      <div class="mt-6 row">
+        <div class="col">
+          <button id="btn-back" class="button">← Voltar (Configuração)</button>
+        </div>
+        <div class="col" style="text-align:right;">
+          <button id="btn-next" class="button">Próximo (Contatos)</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer dinâmico -->
+  <footer id="app-footer"></footer>
+
+  <!-- Loader de header/footer -->
+  <script src="/assets/layout.js"></script>
+
+  <!-- Helpers do app (rotas/token etc.) -->
+  <script src="/assets/backend-patch.js"></script>
+
+  <!-- Lógica da página -->
+  <script>
+    (function(){
+      const log = (...a) => console.log('[precos]', ...a);
+      const $ = (sel) => document.querySelector(sel);
+      const byId = id => document.getElementById(id);
+      const params = new URLSearchParams(location.search);
+      let REDIRECTING_TO_LOGIN = false;
+
+      // ===== Fallback header/footer =====
+      async function ensureHeaderFooter() {
+        try {
+          const hdr = document.querySelector('header.app-header');
+          const ftr = document.querySelector('footer.app-footer');
+          if (!hdr && byId('app-header')) {
+            const h = await fetch('/partials/header.html'); byId('app-header').innerHTML = await h.text();
+          }
+          if (!ftr && byId('app-footer')) {
+            const f = await fetch('/partials/footer.html'); byId('app-footer').innerHTML = await f.text();
+          }
+          log('OK: header/footer');
+        } catch(e) { console.warn('[precos] fallback header/footer falhou', e); }
+      }
+
+      // ===== Estado global =====
+      let currentUser = null;
+      let isVerified = false;
+      let uid = null;
+
+      const PAGE_SIZE = 10;
+      let dataAll = [];
+      let dataView = [];
+      let page = 0;
+
+      // ===== Navegação =====
+      byId('btn-back').onclick = () => location.href = '/pages/configuracao.html';
+      byId('btn-next').onclick = () => location.href = '/pages/contatos.html';
+
+      // ===== Sessão de validação opcional =====
+      async function maybeCleanSession() {
+        if (params.get('validate') === '1') {
+          log('Sessão limpa por validate=1');
+          try { await firebase.auth().signOut(); } catch(e){}
+          try { localStorage.removeItem('uid'); localStorage.removeItem('idToken'); localStorage.removeItem('isAdmin'); } catch(e){}
+        }
+      }
+
+      // ===== Helpers UI =====
+      function setMsg(el, type, text) {
+        el.classList.remove('hidden','ok','err'); el.classList.add('msg');
+        el.classList.add(type === 'error' ? 'err' : 'ok');
+        el.textContent = text;
+      }
+      function clearMsg(el){ el.classList.add('hidden'); el.textContent=''; }
+
+      // ===== Slugify (gerado automaticamente a partir do nome) =====
+      function slugify(str){
+        return String(str || '')
+          .normalize('NFD').replace(/\\p{Diacritic}/gu,'')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g,'-')
+          .replace(/^-+|-+$/g,'')
+          .slice(0, 80);
+      }
+
+      // ===== Parse de preço BRL ("45,00" ou "45.00") =====
+      function parsePriceBRL(s){
+        if (!s) return NaN;
+        let x = String(s).trim().replace(/\\s+/g,'');
+        x = x.replace(/\\./g,'').replace(',', '.');
+        return Number(x);
+      }
+
+      // ===== Normalizador de lista (vírgulas e ";") =====
+      function splitTags(s) {
+        if (!s) return [];
+        return String(s)
+          .split(/[;,]/)               // aceita vírgula e ";"
+          .map(v => v.trim())
+          .filter(Boolean)
+          .slice(0, 15);               // limite saudável
+      }
+
+      // ===== Formulário Adicionar Serviço =====
+      byId('btn-clear').onclick = () => {
+        byId('f-cod').value=''; byId('f-nome').value=''; byId('f-preco').value=''; byId('f-dur').value=''; byId('f-info').value='';
+        clearMsg(byId('add-msg'));
+        byId('f-cod').focus();
+      };
+
+      byId('btn-add').onclick = async () => {
+        clearMsg(byId('add-msg'));
+        if (!currentUser) { setMsg(byId('add-msg'),'error','Sessão expirada. Faça login novamente.'); return; }
+
+        let codigo = byId('f-cod').value.trim();
+        const nome = byId('f-nome').value.trim();
+        const precoStr = byId('f-preco').value.trim();
+        const durStr = byId('f-dur').value.trim();
+        const infoStr = byId('f-info').value.trim();
+
+        // NOVO: validação do Código (opcional)
+        if (codigo) {
+          codigo = codigo.toUpperCase();
+          if (!/^[A-Z0-9-]{1,24}$/.test(codigo)) {
+            setMsg(byId('add-msg'),'error','Código inválido. Use apenas letras, números e "-" (até 24).'); return;
+          }
+        }
+
+        if (!nome) { setMsg(byId('add-msg'),'error','Informe o nome do serviço.'); return; }
+        if (nome.length > 80) { setMsg(byId('add-msg'),'error','Nome muito longo (máx. 80 caracteres).'); return; }
+
+        const preco = parsePriceBRL(precoStr);
+        if (!(preco >= 0)) { setMsg(byId('add-msg'),'error','Preço inválido. Use formato 45,00.'); return; }
+        if (preco > 99999.99) { setMsg(byId('add-msg'),'error','Preço muito alto.'); return; }
+
+        const dur = parseInt(durStr, 10);
+        if (!(dur >= 1 && dur <= 360)) { setMsg(byId('add-msg'),'error','Tempo inválido. Use de 1 a 360 minutos.'); return; }
+
+        const outrasInfo = splitTags(infoStr);
+        const slug = slugify(nome);
+        if (!slug) { setMsg(byId('add-msg'),'error','Não foi possível gerar um identificador para este nome.'); return; }
+
+        try {
+          const db = firebase.firestore();
+          const col = db.collection('profissionais').doc(uid).collection('produtosEServicos');
+
+          // Unicidade (nome/slug) mantida; NOVO: unicidade do código, se informado
+          const dup = await col.where('slug','==',slug).limit(1).get();
+          if (!dup.empty) { setMsg(byId('add-msg'),'error','Este serviço já existe na sua lista.'); return; }
+          if (codigo) {
+            const dupCod = await col.where('codigo','==',codigo).limit(1).get();
+            if (!dupCod.empty) { setMsg(byId('add-msg'),'error','Este CÓDIGO já está em uso nos seus serviços.'); return; }
+          }
+
+          const now = firebase.firestore.FieldValue.serverTimestamp();
+          await col.add({
+            codigo: codigo || null,   // NOVO
+            slug,
+            nome,
+            precoBase: Number(preco.toFixed(2)),
+            duracaoMin: dur,
+            sinonimos: outrasInfo, // compatível com versões anteriores
+            createdAt: now,
+            updatedAt: now
+          });
+
+          setMsg(byId('add-msg'),'ok','Serviço salvo com sucesso.');
+          byId('btn-clear').click();
+          await loadServices();
+        } catch(e) {
+          console.error('[precos] add error', e);
+          setMsg(byId('add-msg'),'error','Não foi possível salvar agora. Tente novamente.');
+        }
+      };
+
+      // ===== Amostra de planilha (CSV) — linguagem MEI =====
+      function getSampleCsvBlob() {
+        // NOVO: inclui coluna "codigo" como primeira coluna
+        const rows = [
+          'codigo,nome do servico,preco (R$),tempo (min),outras informacoes',
+          'BARB01,Corte masculino,45,30,"corte, pezinho, maquina"',
+          'CORT-INF,Corte infantil,35,30,"cabelo infantil, tesoura"',
+          'BARB-TRAD,Barba tradicional,30,20,"barbear, navalha"',
+          'COMBO-CB,Combo corte + barba,70,60,"combo, pacote"',
+          'ACAB25,Sombra e acabamento,25,15,"acabamento, contorno"',
+          'HIDR60,Hidratação capilar,60,40,"tratamento, mascara capilar"',
+          'PIGM80,Pigmentação/Correção,80,45,"tonalizante, correcao de falhas"'
+        ].join('\\n');
+        return new Blob([rows], {type:'text/csv;charset=utf-8'});
+      }
+      byId('btn-sample').onclick = () => {
+        const blob = getSampleCsvBlob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'exemplo-planilha.csv'; a.click();
+        setTimeout(()=>URL.revokeObjectURL(url), 1500);
+      };
+
+      // ===== Upload de planilha (CSV) =====
+      const drop = byId('dropzone');
+      const finput = byId('file-input');
+      drop.addEventListener('click', ()=>finput.click());
+      drop.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); finput.click(); }});
+      drop.addEventListener('dragover', e=>{ e.preventDefault(); });
+      drop.addEventListener('drop', e=>{
+        e.preventDefault();
+        if (e.dataTransfer.files?.length) { finput.files = e.dataTransfer.files; onFileSelected(); }
+      });
+      finput.addEventListener('change', onFileSelected);
+
+      let csvText = '';
+      function onFileSelected(){
+        clearMsg(byId('import-msg'));
+        byId('preview-wrap').classList.add('hidden');
+        csvText = '';
+        const f = finput.files?.[0];
+        if (!f) { byId('btn-preview').disabled = true; byId('btn-import').disabled = true; return; }
+        if (f.size > 1024*1024) { setMsg(byId('import-msg'), 'error', 'Arquivo muito grande (máx. 1MB).'); finput.value = ''; return; }
+        const reader = new FileReader();
+        reader.onload = () => {
+          csvText = String(reader.result || '');
+          byId('btn-preview').disabled = !csvText;
+          byId('btn-import').disabled = !csvText || !isVerified;
+        };
+        reader.readAsText(f, 'UTF-8');
+      }
+
+      // ===== Parser simples =====
+      function parseCsvBasic(text){
+        const lines = text.split(/\\r?\\n/).map(l=>l.trim()).filter(Boolean);
+        if (!lines.length) return { header:[], rows:[] };
+        const headerRaw = lines[0].split(',').map(h=>h.trim());
+        const header = headerRaw.map(h=>h.toLowerCase());
+        const rows = lines.slice(1).map(line=>{
+          const cols = [];
+          let cur = ''; let inQ = false;
+          for (let i=0;i<line.length;i++){
+            const ch = line[i];
+            if (ch === '"') { inQ = !inQ; continue; }
+            if (ch === ',' && !inQ) { cols.push(cur); cur=''; continue; }
+            cur += ch;
+          }
+          cols.push(cur);
+          return cols.map(c=>c.trim());
+        });
+        return { headerRaw, header, rows };
+      }
+
+      // mapeamento flexível de nomes de coluna
+      const colMap = {
+        codigo: ['codigo','código','cod','cód'],
+        nome: ['nome do servico','nome','servico','descrição','descricao'],
+        preco: ['preco (r$)','preco','valor','preco r$','preço','preço (r$)'],
+        tempo: ['tempo (min)','duracao','min','duracao (min)','tempo'],
+        outras: ['outras informacoes','outras informações','outros nomes','sinonimos','apelidos','palavras-chave','detalhes']
+      };
+      function pickBy(header, cols, keys){
+        for (const k of keys) { const i = header.indexOf(k); if (i>=0) return cols[i] ?? ''; }
+        return '';
+      }
+      function findExtras(header){
+        const known = new Set([ ...colMap.codigo, ...colMap.nome, ...colMap.preco, ...colMap.tempo, ...colMap.outras ]);
+        return header.filter(h => !known.has(h));
+      }
+
+      // ===== Prévia da planilha =====
+      byId('btn-preview').onclick = ()=>{
+        clearMsg(byId('import-msg'));
+        const { headerRaw, header, rows } = parseCsvBasic(csvText);
+
+        const t = byId('preview-table');
+        t.innerHTML = '';
+        const thead = document.createElement('thead'), trh = document.createElement('tr');
+        // Mantemos 4 colunas na prévia (simples), mesmo aceitando "codigo" — menos ruído para o MEI
+        ['nome do servico','preco (R$)','tempo (min)','outras informacoes'].forEach(n=>{ const th=document.createElement('th'); th.textContent=n; trh.appendChild(th); });
+        thead.appendChild(trh); t.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        rows.slice(0,10).forEach(cols=>{
+          const vNome = pickBy(header, cols, colMap.nome);
+          const vPreco = pickBy(header, cols, colMap.preco);
+          const vTempo = pickBy(header, cols, colMap.tempo);
+          const vOutras = pickBy(header, cols, colMap.outras);
+
+          const tr = document.createElement('tr');
+          [vNome, vPreco, vTempo, vOutras].forEach(v=>{
+            const td = document.createElement('td'); td.textContent = v || ''; tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+        t.appendChild(tbody);
+
+        // Nota sobre colunas extra
+        const extras = findExtras(header);
+        const note = byId('preview-note');
+        if (extras.length) {
+          note.textContent = 'Atenção: as seguintes colunas serão ignoradas nesta prévia: ' + extras.join(', ') + '.';
+          note.classList.remove('hidden');
+        } else {
+          note.classList.add('hidden');
+          note.textContent = '';
+        }
+
+        byId('preview-wrap').classList.remove('hidden');
+      };
+
+      // ===== Importar planilha (v1.0 mantém formato canônico sem "codigo") =====
+      const BACKEND_BASE = window.BACKEND_BASE || 'https://mei-robo-prod.onrender.com';
+      byId('btn-import').onclick = async ()=>{
+        clearMsg(byId('import-msg'));
+        if (!currentUser) { setMsg(byId('import-msg'),'error','Sessão expirada. Faça login novamente.'); return; }
+        if (!isVerified) { setMsg(byId('import-msg'),'error','⚠️ Confirme seu e-mail para importar.'); return; }
+        if (!finput.files?.[0]) { setMsg(byId('import-msg'),'error','Escolha um arquivo primeiro.'); return; }
+
+        try {
+          const { header, rows } = parseCsvBasic(csvText);
+          const out = [];
+          out.push('slug,nome,precoBase,duracaoMin,sinonimos');
+          rows.forEach(cols=>{
+            const nome = pickBy(header, cols, colMap.nome);
+            const precoRaw = pickBy(header, cols, colMap.preco);
+            const tempoRaw = pickBy(header, cols, colMap.tempo);
+            const outrasRaw = pickBy(header, cols, colMap.outras);
+
+            if (!nome) return;
+            const slug = slugify(nome);
+            const preco = parsePriceBRL(precoRaw);
+            const tempo = parseInt(String(tempoRaw).replace(/\\D/g,''), 10);
+            const tags = splitTags(outrasRaw).join(';');
+
+            out.push([slug, '\"' + nome.replace(/\"/g,'\"\"') + '\"', 
+                      (isFinite(preco)?preco.toFixed(2):'0.00'), 
+                      (isFinite(tempo)?tempo:0), 
+                      '\"' + tags.replace(/\"/g,'\"\"') + '\"'].join(','));
+          });
+          const canonicalBlob = new Blob([out.join('\\n')], {type:'text/csv;charset=utf-8'});
+          const canonicalFile = new File([canonicalBlob], 'importado.csv', { type: 'text/csv' });
+
+          const token = await currentUser.getIdToken(true);
+          const url = BACKEND_BASE.replace(/\\/$/,'') + '/api/importar-precos';
+          const fd = new FormData();
+          fd.append('file', canonicalFile, canonicalFile.name);
+
+          const res = await fetch(url, { method:'POST', headers: { 'Authorization': 'Bearer ' + token }, body: fd });
+          const text = await res.text();
+          let json; try { json = JSON.parse(text); } catch { json = { ok:false, error: 'Resposta inesperada do servidor' }; }
+
+          if (!res.ok || json.ok === false) {
+            setMsg(byId('import-msg'),'error', json?.error || ('Falha HTTP ' + res.status));
+          } else {
+            const det = 'Importados: ' + (json.imported ?? 0) + (json.skipped ? (' | Ignorados: ' + json.skipped) : '');
+            setMsg(byId('import-msg'),'ok','Importação concluída. ' + det);
+            await loadServices();
+          }
+        } catch(e) {
+          console.error('[precos] import error', e);
+          setMsg(byId('import-msg'),'error','Não foi possível importar agora.');
+        }
+      };
+
+      // ===== Lista de serviços (Firestore) =====
+      async function loadServices(){
+        const db = firebase.firestore();
+        const col = db.collection('profissionais').doc(uid).collection('produtosEServicos');
+        const snap = await col.orderBy('nome').get();
+        dataAll = snap.docs.map(d=>{
+          const v = d.data() || {};
+          return {
+            id: d.id,
+            codigo: v.codigo || '', // NOVO
+            nome: v.nome || '',
+            precoBase: typeof v.precoBase === 'number' ? v.precoBase : parseFloat(v.precoBase || '0') || 0,
+            duracaoMin: typeof v.duracaoMin === 'number' ? v.duracaoMin : parseInt(v.duracaoMin || '0') || 0,
+            sinonimos: Array.isArray(v.sinonimos) ? v.sinonimos : (typeof v.sinonimos === 'string' ? v.sinonimos.split(';').map(s=>s.trim()).filter(Boolean) : [])
+          };
+        });
+        applyFilter();
+      }
+
+      function normalize(t) { return String(t||'').toLowerCase().normalize('NFD').replace(/\\p{Diacritic}/gu,''); }
+
+      function applyFilter(){
+        const q = normalize(byId('search').value || '');
+        dataView = !q ? dataAll.slice() : dataAll.filter(s =>
+          normalize(s.codigo).includes(q) ||   // NOVO
+          normalize(s.nome).includes(q) ||
+          normalize((s.sinonimos||[]).join(' ')).includes(q)
+        );
+        page = 0;
+        renderTable();
+      }
+      byId('search').addEventListener('input', applyFilter);
+
+      function renderTable(){
+        const body = byId('svc-body');
+        body.innerHTML = '';
+        if (!dataView.length) {
+          const tr=document.createElement('tr'); const td=document.createElement('td');
+          td.colSpan=6; td.textContent='Nenhum serviço cadastrado ainda.'; tr.appendChild(td); body.appendChild(tr);
+        } else {
+          const start = page * PAGE_SIZE, end = Math.min(start + PAGE_SIZE, dataView.length);
+          dataView.slice(start, end).forEach(s=>{
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td class="nowrap">${s.codigo || '-'}</td>
+              <td>${s.nome}</td>
+              <td class="nowrap">${s.precoBase.toFixed(2)}</td>
+              <td class="nowrap">${s.duracaoMin}</td>
+              <td>${(s.sinonimos||[]).join(', ')}</td>
+              <td class="nowrap"><span class="help">Em breve</span></td>
+            `;
+            body.appendChild(tr);
+          });
+        }
+        byId('count').textContent = String(dataView.length);
+        byId('prev').disabled = page<=0;
+        byId('next').disabled = (page+1)*PAGE_SIZE >= dataView.length;
+      }
+      byId('prev').onclick = ()=>{ if(page>0){ page--; renderTable(); } };
+      byId('next').onclick = ()=>{ if((page+1)*PAGE_SIZE < dataView.length){ page++; renderTable(); } };
+
+      // ===== Gate de sessão =====
+      async function ensureAuth(){
+        await maybeCleanSession();
+        await ensureHeaderFooter();
+
+        return new Promise((resolve)=>{
+          firebase.auth().onAuthStateChanged(async (u)=>{
+            if (!u) {
+              REDIRECTING_TO_LOGIN = true;
+              log('Sem sessão: redirecionando para login');
+              location.href = '/pages/login.html';
+              return;
+            }
+            currentUser = u;
+            uid = u.uid;
+            isVerified = !!u.emailVerified;
+
+            // status curto no bloco de importação
+            const ready = byId('import-ready');
+            if (isVerified) {
+              ready.textContent = '✅ Pronto para importar';
+            } else {
+              ready.innerHTML = '⚠️ Para importar, confirme seu e-mail. <a href="/verify-email.html">Verificar agora</a>';
+            }
+
+            // habilita botões conforme estado
+            byId('btn-import').disabled = !(finput.files?.[0] && isVerified);
+            resolve();
+          });
+        });
+      }
+
+      // ===== Init =====
+      (async function init(){
+        try {
+          await ensureAuth();
+          if (REDIRECTING_TO_LOGIN) return;
+          await loadServices();
+          log('Pronto.');
+        } catch(e) {
+          console.error('[precos] init error', e);
+          if (!REDIRECTING_TO_LOGIN) {
+            const tb = byId('svc-body');
+            tb.innerHTML = '<tr><td colspan="6" class="msg err">Falha ao carregar a página. Recarregue e verifique sua conexão.</td></tr>';
+          }
+        }
+      })();
+    })();
+  </script>
+</body>
+</html>

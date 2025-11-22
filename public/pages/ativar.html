@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ativar Conta — MEI Robô</title>
+
+  <!-- SEO/Social: operacional (não indexar) + canonical WWW -->
+  <meta name="robots" content="noindex, nofollow" />
+  <meta http-equiv="Cache-Control" content="no-store" />
+  <link rel="canonical" href="https://www.meirobo.com.br/pages/ativar.html" />
+  <meta property="og:url" content="https://www.meirobo.com.br/pages/ativar.html" />
+  <meta name="twitter:url" content="https://www.meirobo.com.br/pages/ativar.html" />
+
+  <!-- Perf: conexões antecipadas (não crítico, só ajuda) -->
+  <link rel="preconnect" href="https://mei-robo-prod.onrender.com" crossorigin>
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://firebase.googleapis.com" crossorigin>
+
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <link rel="icon" href="data:,">
+
+  <!-- Firebase SDK v8 — ORDEM IMPORTA (apenas o necessário: app + auth) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+
+  <!-- Inicialização REAL do projeto (app DEFAULT único) -->
+  <script src="/assets/firebase-init.js"></script>
+
+  <!-- Patches/infra e layout -->
+  <script src="/assets/backend-patch.js"></script>
+  <script defer src="/assets/layout.js"></script>
+
+  <style>
+    .ok { color: #0a7a0a; }
+    .warn { color: #a36b00; }
+    .err { color: #b00020; }
+    .muted { color: #666; }
+    .stack { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .badge { padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; }
+    pre { white-space:pre-wrap; }
+  </style>
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="container" style="padding:16px;">
+    <div class="card" style="padding:16px; max-width:760px;">
+      <h1 style="margin-top:0;font-size:1.35rem">Ativar Conta</h1>
+
+      <nav aria-label="Navegação secundária" style="margin-bottom:12px;">
+        <a href="/pages/dashboard.html">Dashboard</a>
+        <span style="margin:0 6px;">•</span>
+        <a href="/pages/agenda.html">Agenda</a>
+        <span style="margin:0 6px;">•</span>
+        <a href="/pages/admin-cupons.html">Admin Cupons</a>
+      </nav>
+
+      <label for="codigo" style="display:block;margin:8px 0;"><strong>Código do cupom</strong></label>
+      <input class="input" id="codigo" placeholder="Ex.: ABCDE-1234" inputmode="latin" autocomplete="one-time-code" aria-describedby="ajudaCupom" />
+      <div id="ajudaCupom" class="muted" style="margin-top:6px">Digite seu cupom, valide e depois ative na sua conta.</div>
+
+      <div class="stack" style="margin-top:12px;">
+        <button class="btn" id="validar" type="button">Validar</button>
+        <button class="btn" id="ativar" type="button">Ativar</button>
+        <button class="btn outline" id="abrir-admin" type="button">Abrir Admin Cupons</button>
+        <span id="status-pill" class="badge muted" aria-live="polite">aguardando…</span>
+      </div>
+
+      <details style="margin-top:12px;">
+        <summary>Ajuda</summary>
+        <ul>
+          <li><strong>Validar</strong> verifica se o cupom existe/está livre (não precisa login).</li>
+          <li><strong>Ativar</strong> aplica o cupom na sua conta (precisa estar logado).</li>
+        </ul>
+      </details>
+
+      <pre id="out" aria-live="polite" style="margin-top:16px;"></pre>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <!-- Fallback leve de header/footer caso layout.js não injete -->
+  <script>
+    (function(){
+      function hasContent(id){ var el=document.getElementById(id); return !!(el && (el.children?.length || (el.innerHTML||'').trim())); }
+      function inject(id, url){
+        var host=document.getElementById(id);
+        if(!host) return;
+        fetch(url,{cache:'no-store'}).then(function(r){ if(!r.ok) throw 0; return r.text(); })
+          .then(function(html){ if(!hasContent(id)) host.innerHTML = html; })
+          .catch(function(){});
+      }
+      window.addEventListener('load', function(){
+        setTimeout(function(){
+          if(!hasContent('app-header')) inject('app-header','/assets/partials/header.html');
+          if(!hasContent('app-footer')) inject('app-footer','/assets/partials/footer.html');
+        }, 600);
+      });
+    })();
+  </script>
+
+  <script>
+    (function () {
+      // --- helpers de storage/ambiente ---
+      function getLS(key) { try { return window.localStorage.getItem(key); } catch { return null; } }
+      function setLS(key, val) { try { window.localStorage.setItem(key, val); } catch {} }
+      function delLS(key) { try { window.localStorage.removeItem(key); } catch {} }
+
+      // DEFAULT seguro para produção (se não houver override em localStorage)
+      var API_DEFAULT = 'https://mei-robo-prod.onrender.com';
+      var LS_BASE = getLS('apiBase');
+      var API_BASE = (LS_BASE && LS_BASE.trim()) ? LS_BASE.replace(/\/+$/,'') : API_DEFAULT;
+
+      var $codigo = document.getElementById('codigo');
+      var $btnVal = document.getElementById('validar');
+      var $btnAtv = document.getElementById('ativar');
+      var $btnAdmin = document.getElementById('abrir-admin');
+      var $out = document.getElementById('out');
+      var $pill = document.getElementById('status-pill');
+
+      function pill(text, cls) {
+        $pill.textContent = text;
+        $pill.className = 'badge ' + (cls || 'muted');
+      }
+      function log(obj, cls) {
+        if (typeof obj === 'string') $out.textContent = obj;
+        else {
+          try { $out.textContent = JSON.stringify(obj, null, 2); }
+          catch { $out.textContent = String(obj); }
+        }
+        if (cls) $out.className = cls;
+      }
+
+      // Firebase idToken (via app DEFAULT do firebase-init.js) com fallback em localStorage
+      async function getIdToken(maxWaitMs) {
+        maxWaitMs = maxWaitMs || 2500;
+        try {
+          if (window.firebase && typeof firebase.auth === 'function') {
+            try { firebase.app(); } catch (e) {}
+            var cur = firebase.auth().currentUser;
+            if (cur) return await cur.getIdToken();
+            return await new Promise(function(resolve){
+              var done = false;
+              var timer = setTimeout(function(){ if(!done){ done=true; resolve(null); } }, maxWaitMs);
+              var unsub = firebase.auth().onAuthStateChanged(async function(u){
+                try{ unsub && unsub(); }catch(_){}
+                if(!done){
+                  done = true; clearTimeout(timer);
+                  resolve(u ? await u.getIdToken() : null);
+                }
+              });
+            });
+          }
+        } catch {}
+        var tok = getLS('idToken');
+        return (tok && tok.includes('.')) ? tok : null;
+      }
+
+      // guarda cupom pendente para pós-login (expira em 1h)
+      function savePendingCupom(codigo) {
+        var payload = { codigo: codigo, ts: Date.now(), ttl: 3600*1000 };
+        setLS('cupomPendente', JSON.stringify(payload));
+      }
+      function readPendingCupom() {
+        try {
+          var raw = getLS('cupomPendente');
+          if (!raw) return null;
+          var o = JSON.parse(raw);
+          if (!o || !o.codigo) return null;
+          if ((Date.now() - (o.ts || 0)) > (o.ttl || 0)) { delLS('cupomPendente'); return null; }
+          return o.codigo;
+        } catch { return null; }
+      }
+
+      async function validarPublico(codigo) {
+        var url = API_BASE + '/api/cupons/validar-publico';
+        var resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ codigo: codigo })
+        });
+        var json = await resp.json().catch(function(){ return {}; });
+        return { ok: resp.ok && json && json.ok, json: json, status: resp.status };
+      }
+
+      async function ativarAutenticado(codigo) {
+        var url = API_BASE + '/api/cupons/ativar';
+        var idToken = await getIdToken(2500);
+        if (!idToken) return { ok: false, status: 401, json: { erro: 'Não autenticado' } };
+        var resp = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + idToken
+          },
+          body: JSON.stringify({ codigo: codigo })
+        });
+        var json = await resp.json().catch(async function(){ return { message: await resp.text() }; });
+        return { ok: resp.ok, status: resp.status, json: json };
+      }
+
+      function normalizeCode(v){
+        return String(v || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g,'');
+      }
+
+      async function onValidar() {
+        var codigo = normalizeCode($codigo.value);
+        if (!codigo) { $codigo.focus(); pill('informe um código', 'warn'); return; }
+        $btnVal.disabled = true;
+        $btnAtv.disabled = true;
+        pill('validando…', 'muted');
+        log('Validando…');
+        try {
+          var r = await validarPublico(codigo);
+          if (r.ok) {
+            pill('cupom válido!', 'ok');
+            log(r.json);
+            savePendingCupom(codigo);
+          } else {
+            pill('inválido ou indisponível', 'err');
+            log(r.json || { erro: 'Falha ao validar' }, 'err');
+          }
+        } catch (e) {
+          pill('erro de rede', 'err');
+          log('❌ ' + (e && e.message ? e.message : e), 'err');
+        } finally {
+          $btnVal.disabled = false;
+          $btnAtv.disabled = false;
+        }
+      }
+
+      async function onAtivar() {
+        var codigo = normalizeCode($codigo.value);
+        if (!codigo) {
+          var pend = readPendingCupom();
+          if (pend) { codigo = pend; $codigo.value = pend; }
+        }
+        if (!codigo) { $codigo.focus(); pill('informe um código', 'warn'); return; }
+
+        $btnVal.disabled = true;
+        $btnAtv.disabled = true;
+        pill('ativando…', 'muted');
+        log('Ativando…');
+
+        try {
+          var r = await ativarAutenticado(codigo);
+          if (r.ok) {
+            pill('ativado!', 'ok');
+            log(r.json, 'ok');
+            delLS('cupomPendente');
+            setTimeout(function(){ window.location.href = '/pages/dashboard.html'; }, 1200);
+          } else if (r.status === 401) {
+            pill('faça login para ativar', 'warn');
+            log('⚠️ Você precisa entrar na sua conta para ativar o cupom. Valide primeiro e depois faça login.', 'warn');
+            savePendingCupom(codigo);
+          } else {
+            pill('não foi possível ativar', 'err');
+            log(r.json || { erro: 'Falha ao ativar' }, 'err');
+          }
+        } catch (e) {
+          pill('erro de rede', 'err');
+          log('❌ ' + (e && e.message ? e.message : e), 'err');
+        } finally {
+          $btnVal.disabled = false;
+          $btnAtv.disabled = false;
+        }
+      }
+
+      // eventos
+      $btnVal.addEventListener('click', onValidar);
+      $btnAtv.addEventListener('click', onAtivar);
+      $codigo.addEventListener('keydown', function(ev){ if (ev.key === 'Enter') onValidar(); });
+      $btnAdmin.addEventListener('click', function(){ window.location.href = '/pages/admin-cupons.html'; });
+
+      // preenche campo com cupom pendente (se houver)
+      var pend = readPendingCupom();
+      if (pend) { $codigo.value = pend; pill('cupom pendente detectado', 'warn'); }
+      else { pill('aguardando…', 'muted'); }
+    })();
+  </script>
+</body>
+</html>

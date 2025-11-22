@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Teste — Signed URL (MEI Robô)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0c1116; color:#d6e2f0; margin:0; padding:24px; }
+    .card { background:#121a22; border:1px solid #1f2a36; border-radius:12px; padding:20px; max-width:760px; margin:0 auto; box-shadow:0 1px 10px rgba(0,0,0,.25); }
+    h1 { font-size:20px; margin:0 0 12px; }
+    .muted { color:#9bb0c3; font-size:14px; }
+    label { display:block; font-size:14px; margin:12px 0 6px; color:#c2d4e7;}
+    input[type="text"], input[type="email"], input[type="password"] { width:100%; padding:10px; background:#0b1218; border:1px solid #223041; border-radius:8px; color:#e6f0ff; }
+    button { padding:10px 14px; border-radius:10px; border:1px solid #2b3a4c; background:#1a2633; color:#e6f0ff; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .row { display:flex; gap:8px; margin-top:12px; align-items:center; flex-wrap:wrap; }
+    .ok { color:#85f285; }
+    .err { color:#ff8a8a; }
+    pre { background:#0b1218; border:1px solid #1f2a36; padding:12px; border-radius:8px; overflow:auto; white-space:pre-wrap; }
+    img { max-width:100%; border-radius:8px; border:1px solid #223041; }
+    a.btn { display:inline-block; padding:8px 12px; border-radius:8px; border:1px solid #2b3a4c; background:#14202b; color:#e6f0ff; text-decoration:none; }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; background:#0b1218; border:1px solid #1f2a36; padding:2px 6px; border-radius:6px;}
+    .grid { display:grid; grid-template-columns: 1fr; gap:16px; }
+    @media (min-width: 720px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .section { border-top:1px solid #1f2a36; margin-top:16px; padding-top:16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Teste — Signed URL (MEI Robô)</h1>
+    <p class="muted">Gere uma URL temporária e segura para visualizar um arquivo do seu Storage.</p>
+
+    <div class="grid">
+      <div>
+        <h3>Login Firebase (e-mail/senha)</h3>
+        <div id="authBox" class="muted">Carregando…</div>
+        <label for="email">E-mail</label>
+        <input id="email" type="email" placeholder="teste@meirobo.com.br" />
+        <label for="password">Senha</label>
+        <input id="password" type="password" placeholder="••••••••" />
+        <div class="row">
+          <button id="btnLogin">Entrar</button>
+          <button id="btnLogout" disabled>Sair</button>
+        </div>
+
+        <div class="section">
+          <h3>Token manual (opcional)</h3>
+          <p class="muted">Cole um <span class="kbd">idToken</span> (avançado). Se preenchido, será usado no lugar do login.</p>
+          <label for="manualToken">idToken</label>
+          <input id="manualToken" type="text" placeholder="eyJhbGciOiJSUzI1NiIsInR..." />
+        </div>
+      </div>
+
+      <div>
+        <h3>Gerar Signed URL</h3>
+        <label for="path">Caminho do arquivo no Storage</label>
+        <input id="path" type="text" placeholder="ex.: users/&lt;uid&gt;/media/2025/24/icone sem bola preto.png" />
+        <div class="row">
+          <button id="btnGen" disabled>Gerar Signed URL</button>
+          <a id="btnOpen" class="btn" href="#" target="_blank" style="display:none">Abrir</a>
+        </div>
+        <div id="result" style="margin-top:12px;"></div>
+        <div id="preview" style="margin-top:12px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    const FN_BASE = "https://api-aiwaw34poq-rj.a.run.app";
+
+    const authBox = document.getElementById("authBox");
+    const email = document.getElementById("email");
+    const password = document.getElementById("password");
+    const btnLogin = document.getElementById("btnLogin");
+    const btnLogout = document.getElementById("btnLogout");
+    const manualToken = document.getElementById("manualToken");
+
+    const inputPath = document.getElementById("path");
+    const btnGen = document.getElementById("btnGen");
+    const btnOpen = document.getElementById("btnOpen");
+    const result = document.getElementById("result");
+    const preview = document.getElementById("preview");
+
+    let app, auth, currentUser;
+
+    function renderJSON(title, obj, ok) {
+      result.innerHTML = `<div class="${ok ? 'ok' : 'err'}"><strong>${title}</strong></div><pre>${JSON.stringify(obj, null, 2)}</pre>`;
+    }
+    function renderPreviewFromURL(url) {
+      preview.innerHTML = "";
+      if (!url) return;
+      try {
+        const u = new URL(url);
+        const pn = u.pathname.toLowerCase();
+        if (/\.(jpg|jpeg|png|webp|gif)$/.test(pn)) {
+          const img = document.createElement("img");
+          img.src = url;
+          preview.appendChild(img);
+          return;
+        }
+        if (pn.endsWith(".pdf")) {
+          const link = document.createElement("a");
+          link.href = url; link.target = "_blank"; link.className = "btn"; link.textContent = "Abrir PDF";
+          preview.appendChild(link);
+          return;
+        }
+        const link = document.createElement("a");
+        link.href = url; link.target = "_blank"; link.className = "btn"; link.textContent = "Abrir arquivo";
+        preview.appendChild(link);
+      } catch {}
+    }
+
+    async function ensureFirebase() {
+      const { initializeApp, getApps } = await import("https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js");
+      const { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } = await import("https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js");
+
+      let _app = getApps()[0];
+      if (!_app) {
+        const init = await fetch("/__/firebase/init.json").then(r => r.json());
+        const cfg = init.firebaseConfig || init;
+        _app = initializeApp(cfg);
+      }
+      app = _app;
+      auth = getAuth(app);
+
+      onAuthStateChanged(auth, (user) => {
+        currentUser = user || null;
+        if (user) {
+          authBox.innerHTML = `✅ Logado como <span class="kbd">${user.email || user.uid}</span>`;
+          btnLogout.disabled = false;
+          if (!inputPath.value) {
+            inputPath.value = `users/${user.uid}/media/2025/24/icone sem bola preto.png`; // pré-preenche seu caso
+          }
+          btnGen.disabled = false;
+        } else {
+          authBox.innerHTML = `❌ Não logado. Use o formulário ao lado para entrar com e-mail/senha.`;
+          btnLogout.disabled = true;
+          // Se tiver token manual, podemos permitir gerar mesmo sem login
+          btnGen.disabled = manualToken.value.trim() ? false : true;
+        }
+      });
+
+      // handlers
+      btnLogin.onclick = async () => {
+        try {
+          btnLogin.disabled = true;
+          await signInWithEmailAndPassword(auth, email.value.trim(), password.value);
+        } catch (e) {
+          renderJSON("Erro de login", { code: e.code, message: e.message }, false);
+        } finally {
+          btnLogin.disabled = false;
+        }
+      };
+      btnLogout.onclick = async () => {
+        try { await signOut(auth); } catch {}
+      };
+      manualToken.oninput = () => {
+        if (!currentUser) {
+          btnGen.disabled = manualToken.value.trim() ? false : true;
+        }
+      };
+    }
+
+    async function generateSignedURL() {
+      btnGen.disabled = true; btnOpen.style.display = "none"; preview.innerHTML = ""; result.innerHTML = `<span class="muted">Gerando…</span>`;
+
+      try {
+        const path = (inputPath.value || "").trim();
+        if (!/^users\/[^/]+\/media\//.test(path)) {
+          renderJSON("Erro", { error: "invalid_path_format", hint: "Deve começar com users/<uid>/media/..." }, false);
+          return;
+        }
+
+        // pegar idToken: usa manualToken se fornecido; senão, do usuário logado
+        let idToken = manualToken.value.trim();
+        if (!idToken) {
+          if (!currentUser) { renderJSON("Erro", { error: "not_logged_in" }, false); return; }
+          idToken = await currentUser.getIdToken();
+        }
+
+        const url = `${FN_BASE}/media/signed-url?path=${encodeURIComponent(path)}`;
+        const resp = await fetch(url, { headers: { Authorization: "Bearer " + idToken } });
+        const json = await resp.json();
+
+        if (resp.ok && json.url) {
+          renderJSON("OK", json, true);
+          btnOpen.href = json.url; btnOpen.style.display = "inline-block";
+          renderPreviewFromURL(json.url);
+        } else {
+          renderJSON(`Falhou (HTTP ${resp.status})`, json, false);
+        }
+      } catch (e) {
+        renderJSON("Exceção", { message: e?.message || String(e) }, false);
+      } finally {
+        btnGen.disabled = false;
+      }
+    }
+
+    await ensureFirebase();
+    btnGen.addEventListener("click", generateSignedURL);
+  </script>
+</body>
+</html>

@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Entrar — MEI Robô</title>
+  <meta name="description" content="Entre no MEI Robô para acessar seu painel e configurar seu WhatsApp inteligente." />
+
+  <!-- Canonical WWW v1.0 (placeholders estáticos; layout.js pode sobrescrever em runtime) -->
+  <link rel="canonical" href="https://www.meirobo.com.br/pages/login.html" />
+  <meta property="og:url" content="https://www.meirobo.com.br/pages/login.html" />
+  <meta name="twitter:url" content="https://www.meirobo.com.br/pages/login.html" />
+
+  <!-- Evitar indexação desta página -->
+  <meta name="robots" content="noindex,nofollow,noarchive,nosnippet" />
+
+  <!-- OG básico -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Entrar — MEI Robô" />
+  <meta property="og:description" content="Entre no MEI Robô para acessar seu painel e configurar seu WhatsApp inteligente." />
+
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <link rel="icon" href="data:,">
+
+  <!-- Firebase SDK v8 — ORDEM IMPORTA -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+  <!-- Inicialização DEFAULT do projeto (sem defer, para estar pronto no load) -->
+  <script src="/assets/firebase-init.js"></script>
+  <!-- Patch de rotas (geral do app) -->
+  <script src="/assets/backend-patch.js" defer></script>
+
+  <!-- Cloudflare Turnstile (CAPTCHA) -->
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="section">
+    <div class="container form-wrap">
+      <h1 style="color:var(--wa-dark); margin:0 0 6px">Entrar</h1>
+
+      <div class="form-grid">
+        <form id="login-form" class="form-card full" action="#" method="POST" novalidate autocomplete="on">
+          <div class="form-row">
+            <label for="email"><strong>E-mail</strong></label>
+            <input id="email" name="email" class="input" type="email" placeholder="voce@email.com" required autocomplete="email" />
+          </div>
+
+          <div class="form-row">
+            <label for="senha"><strong>Senha</strong></label>
+            <input id="senha" name="senha" class="input" type="password" placeholder="********" required autocomplete="current-password" />
+          </div>
+
+          <!-- CAPTCHA: widget do Turnstile -->
+          <div id="captcha-container" data-sitekey="0x4AAAAAAB0t6kBJwJJgmsr3" style="margin:12px 0;"></div>
+
+          <div class="actions" style="margin-top:12px">
+            <!-- Gate humano: começa desabilitado, habilita após verificação -->
+            <button class="cta" id="btn-login" type="submit" data-human-gated disabled>Entrar</button>
+            <a class="btn-secondary" id="btn-cadastrar" href="/cadastro.html">Criar conta</a>
+          </div>
+
+          <p id="msg" class="hint" style="margin-top:10px"></p>
+          <p class="hint" style="margin-top:6px"><a id="forgot" href="#">Esqueci minha senha</a></p>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <!-- FALLBACK: injeta header/footer se o loader falhar -->
+  <script>
+    (function () {
+      function pick(which){
+        return document.getElementById('app-'+which) || document.querySelector('[data-include="'+which+'"]');
+      }
+      function hasContent(el){
+        return !!(el && ((el.children && el.children.length) || (el.innerHTML && el.innerHTML.trim() !== '')));
+      }
+      function fetchPart(which){
+        return fetch('/partials/'+which+'.html',{cache:'no-store'}).then(function(r){
+          if(!r.ok) throw new Error('HTTP '+r.status);
+          return r.text();
+        });
+      }
+      function injectIfEmpty(which, html){
+        var el = pick(which);
+        if (el && !hasContent(el)) el.innerHTML = html;
+      }
+      function bootFallback(){
+        setTimeout(function(){
+          var h = pick('header'), f = pick('footer');
+          if (!hasContent(h) || !hasContent(f)) {
+            try { console.warn('[login-fallback] layout.js indisponível — header/footer injetados.'); } catch(e){}
+            Promise.allSettled([fetchPart('header'), fetchPart('footer')]).then(function(res){
+              if (res[0].status === 'fulfilled') injectIfEmpty('header', res[0].value);
+              if (res[1].status === 'fulfilled') injectIfEmpty('footer', res[1].value);
+            });
+          }
+        }, 350);
+      }
+      if (document.readyState !== 'loading') bootFallback();
+      else document.addEventListener('DOMContentLoaded', bootFallback);
+    })();
+  </script>
+
+  <!-- Loader principal (se falhar, o fallback acima garante) -->
+  <script defer src="/assets/layout.js?v=20250905a"></script>
+
+  <!-- Gate humano: habilita o botão após /captcha/verify ok -->
+  <script defer src="/assets/captcha_gate.js"></script>
+
+  <script>
+    (function () {
+      const $form   = document.getElementById('login-form');
+      const $email  = document.getElementById('email');
+      const $senha  = document.getElementById('senha');
+      const $btn    = document.getElementById('btn-login');
+      const $msg    = document.getElementById('msg');
+      const $forgot = document.getElementById('forgot');
+      const $cad    = document.getElementById('btn-cadastrar');
+
+      function say(text, ok=false){
+        $msg.style.color = ok ? 'var(--ok, #2e7d32)' : 'var(--err, #b00020)';
+        $msg.textContent = text || '';
+      }
+      function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch{} }
+      function lsDel(k){  try{ localStorage.removeItem(k); }catch{} }
+
+      // === App nomeado para isolar de qualquer inicialização legada ===
+      function getLoginAuth() {
+        if (!(window.firebase && firebase.app)) throw new Error('SDK do Firebase não carregado.');
+        let rootApp;
+        try { rootApp = firebase.app(); }
+        catch (e) { throw new Error('App DEFAULT não inicializado. Verifique /assets/firebase-init.js.'); }
+        const cfg = rootApp.options || {};
+        if ((cfg.apiKey || '').toUpperCase() === 'PASTE_API_KEY') {
+          console.error('Config com PASTE_API_KEY detectada — verifique firebase-init.js');
+          throw new Error('Config inválida (PASTE_API_KEY).');
+        }
+        const loginApp =
+          (firebase.apps || []).find(a => a.name === 'loginApp') ||
+          firebase.initializeApp(cfg, 'loginApp');
+        try {
+          console.log('Default apiKey:', rootApp.options.apiKey);
+          console.log('loginApp apiKey:', loginApp.options.apiKey);
+        } catch {}
+        return loginApp.auth();
+      }
+
+      async function doLogin(e){
+        e.preventDefault();
+        const email = ($email.value || '').trim();
+        const senha = ($senha.value || '').trim();
+        if(!email || !senha){ say('Preencha e-mail e senha.'); return; }
+
+        // 🔒 Gate humano: impede submit por Enter antes de resolver o CAPTCHA
+        if ($btn.disabled) { say('Resolva o CAPTCHA para continuar.'); return; }
+
+        let auth;
+        try { auth = getLoginAuth(); }
+        catch(err) { say(err.message || String(err)); console.error(err); return; }
+
+        $btn.disabled = true;
+        const prev = $btn.textContent;
+        $btn.textContent = 'Entrando…';
+        say('Autenticando…', true);
+
+        try{
+          const cred = await auth.signInWithEmailAndPassword(email, senha);
+          const user = cred.user;
+          const idt  = await user.getIdToken(true);
+
+          lsSet('uid', user.uid);
+          lsSet('idToken', idt);
+
+          console.log('Login OK — UID:', user.uid, 'IDToken(ini):', idt.slice(0,25), '...');
+          say('Login OK! Redirecionando…', true);
+
+          window.location.href = '/pages/dashboard.html';
+        }catch(err){
+          const code = err && err.code ? String(err.code) : '';
+          if(code === 'auth/user-not-found') say('Usuário não encontrado.');
+          else if(code === 'auth/wrong-password') say('Senha incorreta.');
+          else if(code === 'auth/invalid-email') say('E-mail inválido.');
+          else if(code === 'auth/too-many-requests') say('Muitas tentativas. Tente mais tarde.');
+          else if(code === 'auth/invalid-api-key') say('Falha: API key inválida (verifique firebase-init.js).');
+          else say('Falha no login: ' + (err && err.message ? err.message : err));
+          console.error('Erro no login:', err);
+        }finally{
+          $btn.disabled = false;
+          $btn.textContent = prev;
+        }
+      }
+
+      async function doReset(e){
+        e.preventDefault();
+        const email = ($email.value || '').trim();
+        if(!email){ say('Digite seu e-mail para receber o link de reset.'); return; }
+        try{
+          const auth = getLoginAuth();
+          await auth.sendPasswordResetEmail(email);
+          say('Enviamos um link de redefinição para o seu e-mail.', true);
+        }catch(err){
+          say('Falha ao enviar e-mail de redefinição: ' + (err.message || err));
+          console.error('Erro reset senha:', err);
+        }
+      }
+
+      // Limpa sessão antes de ir para cadastro (evita herdar seus dados)
+      function clearSession(){
+        ['uid','idToken','isAdmin'].forEach(lsDel);
+        try { getLoginAuth().signOut().catch(()=>{}); } catch(_) {}
+      }
+
+      $form.addEventListener('submit', doLogin);
+      $forgot.addEventListener('click', doReset);
+      $cad.addEventListener('click', function(ev){
+        ev.preventDefault();
+        clearSession();
+        window.location.href = '/cadastro.html';
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Política de Cookies — MEI Robô</title>
+  <meta name="description" content="Política de Cookies do MEI Robô: tipos de cookies, finalidades, prazos e como gerenciar preferências, conforme LGPD e práticas de mercado." />
+  <link rel="stylesheet" href="./assets/styles.css" />
+  <style>
+    body{background:#0f1115;color:#e6e6e6;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;line-height:1.6;margin:0;padding:0}
+    main{max-width:900px;margin:0 auto;padding:32px 16px}
+    h1,h2,h3{color:#eafcf0;margin:24px 0 8px}
+    a{color:#36d07f;text-decoration:none} a:hover{text-decoration:underline}
+    .muted{color:#a7b0b3} .card{background:#141820;border:1px solid #1e2430;border-radius:12px;padding:16px;margin:16px 0}
+    ol,ul{padding-left:20px}
+    hr{border:0;border-top:1px solid #1e2430;margin:24px 0}
+    table{width:100%;border-collapse:collapse;margin:8px 0}
+    th,td{border:1px solid #1e2430;padding:8px;vertical-align:top}
+    th{text-align:left;background:#151a22}
+    .chips{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 0}
+    .chip{background:#182028;border:1px solid #243041;color:#bfd6c8;border-radius:999px;padding:4px 10px;font-size:12px}
+    .kbd{background:#151a22;border:1px solid #222938;padding:2px 6px;border-radius:6px;font-family:ui-monospace,monospace}
+    .cta{display:inline-block;border:1px solid #1e2430;border-radius:10px;padding:8px 12px}
+
+    /* ===== Ajuste mínimo específico desta página para evitar "sobras" ao dar zoom ===== */
+    .cookies-doc{ overflow-x:hidden; }
+    .cookies-doc *{ max-width:100%; }
+    .cookies-doc a{ word-break:break-word; overflow-wrap:anywhere; }
+    .cookies-doc pre, .cookies-doc code{ white-space:pre-wrap; word-break:break-word; }
+    .cookies-doc table{ display:block; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .cookies-doc img{ height:auto; max-width:100%; }
+  </style>
+</head>
+<body>
+  <div id="app-header"></div>
+
+  <main class="cookies-doc">
+    <header class="card">
+      <h1>Política de Cookies</h1>
+      <p class="muted">Versão 1.1 • Vigência a partir de 19/09/2025</p>
+      <p>Esta Política explica como o <strong>MEI Robô</strong> utiliza cookies e tecnologias semelhantes para operar o site e melhorar sua experiência, em conformidade com a LGPD e com práticas usuais de mercado.</p>
+      <div class="chips">
+        <span class="chip">LGPD</span>
+        <span class="chip">Cookies essenciais</span>
+        <span class="chip">Medição</span>
+        <span class="chip">Marketing</span>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>1. O que são cookies?</h2>
+      <p>Cookies são pequenos arquivos colocados no seu dispositivo quando você visita um site. Eles permitem funcionalidades básicas (ex.: manter sessão) e podem ajudar a entender como o site é utilizado.</p>
+    </section>
+
+    <section class="card">
+      <h2>2. Quais cookies utilizamos</h2>
+      <table aria-label="Tipos de cookies utilizados">
+        <thead>
+          <tr>
+            <th>Categoria</th>
+            <th>Finalidade</th>
+            <th>Exemplos</th>
+            <th>Prazo típico</th>
+            <th>Base legal</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Essenciais (estritamente necessários)</strong></td>
+            <td>Permitem o funcionamento do site e a segurança (ex.: manter login, preferências de consentimento).</td>
+            <td>Cookies de sessão, token de autenticação (quando logado), registro da opção “aceitar cookies”.</td>
+            <td>Durante a sessão ou até 12 meses.</td>
+            <td>Execução de contrato e legítimo interesse.</td>
+          </tr>
+          <tr>
+            <td><strong>Medição/Analytics</strong></td>
+            <td>Mensurar tráfego e performance para melhorar a experiência, preferindo dados agregados/anônimos quando possível.</td>
+            <td>Métricas de páginas acessadas, tempo de permanência, erros de carregamento.</td>
+            <td>Até 13 meses, conforme a ferramenta.</td>
+            <td>Consentimento (quando exigido) ou legítimo interesse com avaliação de impacto.</td>
+          </tr>
+          <tr>
+            <td><strong>Marketing</strong></td>
+            <td>Mensurar campanhas, evitar repetição de anúncios e, quando aplicável, personalizar comunicações.</td>
+            <td>Parâmetros de campanha (UTM), frequência de exibição, conversões.</td>
+            <td>Até 13 meses, conforme a ferramenta.</td>
+            <td>Consentimento.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Não utilizamos cookies para vender dados pessoais. Eventuais integrações de terceiros (ex.: players, widgets) podem definir seus próprios cookies conforme suas políticas.</p>
+    </section>
+
+    <section class="card">
+      <h2>3. Gerenciar preferências</h2>
+      <p>Você pode <strong>aceitar</strong> apenas os cookies essenciais e, quando disponível, <strong>configurar</strong> preferências para cookies de medição e marketing.</p>
+      <ul>
+        <li><strong>Banner/painel do site</strong>: use o botão abaixo para abrir o painel de preferências, quando disponível.</li>
+        <li><strong>Navegador</strong>: bloqueie/remova cookies nas configurações. Ex.: <span class="kbd">Chrome &gt; Configurações &gt; Privacidade e segurança &gt; Cookies</span>.</li>
+        <li><strong>Dispositivos móveis</strong>: ajuste pelas preferências de privacidade do sistema.</li>
+      </ul>
+      <p><a href="#" class="cta" id="openPrefs">Gerenciar preferências de cookies</a></p>
+      <p class="muted">Se você bloquear cookies essenciais, partes do site podem não funcionar corretamente.</p>
+    </section>
+
+    <section class="card">
+      <h2>4. Tecnologias semelhantes</h2>
+      <p>Podemos utilizar <em>local storage</em>, <em>session storage</em> e identificadores anônimos para finalidades similares às dos cookies, sempre respeitando esta Política.</p>
+    </section>
+
+    <section class="card">
+      <h2>5. Atualizações desta Política</h2>
+      <p>Poderemos atualizar esta Política para refletir mudanças legais, técnicas ou operacionais. Avisaremos mudanças relevantes no site. A versão vigente é indicada no topo desta página.</p>
+    </section>
+
+    <section class="card">
+      <h2>6. Contato</h2>
+      <p>Para dúvidas sobre esta Política, entre em contato com o nosso Encarregado (DPO): <a href="mailto:meirobo@fujicadobrasil.com.br">meirobo@fujicadobrasil.com.br</a>.</p>
+    </section>
+
+    <footer class="muted">
+      <hr/>
+      <p>© 2025 MEI Robô. Última atualização: 19/09/2025.</p>
+      <p><a href="./privacidade.html">Política de Privacidade</a> • <a href="./termos.html">Termos de Uso</a></p>
+    </footer>
+  </main>
+
+  <div id="app-footer"></div>
+  <script src="./assets/layout.js" defer></script>
+  <script>
+    // Compatível com o padrão anterior do projeto
+    document.addEventListener('DOMContentLoaded', () => {
+      const btn = document.getElementById('openPrefs');
+      btn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (window.CookieConsent && typeof window.CookieConsent.openPreferences === 'function') {
+          window.CookieConsent.openPreferences();
+        } else {
+          alert('Preferências de cookies indisponíveis no momento.');
+        }
+      });
+    });
+  </script>
+</body>
+</html>

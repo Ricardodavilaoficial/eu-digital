@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MEI Robô — Configuração → Mídia (Preview seguro — Passo 1/4)</title>
+
+  <!-- Tailwind (CDN) só para visual -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- React 18 + ReactDOM 18 + Babel (para JSX no navegador) -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body { background:#0b0f14; color:#e5e7eb; }
+    .container { max-width: 860px; margin: 0 auto; }
+    code { background: rgba(255,255,255,.06); padding: .1rem .35rem; border-radius: .35rem; }
+  </style>
+</head>
+<body>
+  <div class="container p-4 sm:p-6">
+    <div class="mb-4 rounded-xl border border-yellow-600/40 bg-yellow-900/20 text-yellow-200 p-3 text-sm">
+      <strong>Preview seguro:</strong> este arquivo funciona <em>sem</em> Firebase quando aberto com <code>?validate=1</code>. Nada é gravado.
+    </div>
+    <div id="root"></div>
+  </div>
+
+  <script type="text/babel">
+    // ======= Componente React — Passo 1/4 (Barra de uso da quota) =======
+    const { useEffect, useMemo, useState } = React;
+
+    // Tentativa de carregar Firebase se existir; em preview pode falhar (tudo bem).
+    let firebaseApp = null;
+    let getAuthRef = null;
+    let onAuthStateChangedRef = null;
+    let getFirestoreRef = null;
+    let docRef = null;
+    let onSnapshotRef = null;
+    try {
+      // Em apps reais isto viria de módulos ESM. Aqui apenas protegemos o preview.
+      // Se falhar, seguimos em mock quando ?validate=1
+      // eslint-disable-next-line no-undef
+      const nope = undefined;
+      if (nope) console.log(nope);
+    } catch (e) {}
+
+    const CANARY_UID = 'V4eFP2bNdXNtQz2Eh4PxpwHNLOP2';
+
+    function isValidateMode() {
+      try { return new URLSearchParams(window.location.search).has('validate'); }
+      catch { return false; }
+    }
+
+    function isMediaV1EnabledFor(uid) {
+      const flagLocal = typeof window !== 'undefined' && window.localStorage?.getItem('MEDIA_V1') === 'on';
+      const flagGlobal = typeof window !== 'undefined' && window.__MEI_FLAGS?.MEDIA_V1 === 'on';
+      return uid === CANARY_UID && (flagLocal || flagGlobal);
+    }
+
+    function formatBytes(bytes) {
+      if (bytes == null || isNaN(bytes)) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let i = 0;
+      let val = Math.max(0, bytes);
+      while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+      const fixed = val >= 100 ? 0 : val >= 10 ? 1 : 2;
+      return `${val.toFixed(fixed)} ${units[i]}`;
+    }
+
+    function toPercent(n) {
+      if (!n || !isFinite(n)) return 0;
+      return Math.max(0, Math.min(100, Math.round(n)));
+    }
+
+    function useAuthUser() {
+      const [user, setUser] = useState(null);
+      const [ready, setReady] = useState(false);
+
+      useEffect(() => {
+        const validate = isValidateMode();
+        // Sem Firebase: no validate, simulamos usuário canário logado
+        if (!firebaseApp) {
+          if (validate) setUser({ uid: CANARY_UID, displayName: 'Canário (preview)' });
+          setReady(true);
+          return;
+        }
+        // (Se estivesse com Firebase real, observaríamos Auth aqui)
+        setReady(true);
+      }, []);
+
+      return { user, ready };
+    }
+
+    function useQuotaDoc(uid) {
+      const [quota, setQuota] = useState(null);
+      const [status, setStatus] = useState('idle'); // idle | loading | live | mock | error
+
+      useEffect(() => {
+        if (!uid) return;
+        const validate = isValidateMode();
+        // Preview seguro sem Firebase → dados mock
+        if (!firebaseApp) {
+          setStatus('mock');
+          setQuota({
+            limitBytes: 2147483648,
+            bytesUsed: Math.floor(2147483648 * 0.65), // 65% usado
+            filesCount: 128,
+            updatedAt: new Date().toISOString(),
+          });
+          return;
+        }
+        // (Com Firebase real, ouviríamos Firestore aqui)
+        setStatus('live');
+        setQuota({
+          limitBytes: 2147483648,
+          bytesUsed: 0,
+          filesCount: 0,
+          updatedAt: null,
+        });
+      }, [uid]);
+
+      return { quota, status };
+    }
+
+    function QuotaBar({ limitBytes, bytesUsed }) {
+      const pctRaw = (bytesUsed / Math.max(1, limitBytes)) * 100;
+      const pct = toPercent(pctRaw);
+      const over = pctRaw >= 100;
+      const near = !over && pctRaw >= 90;
+
+      const barClass = over ? 'bg-red-500' : (near ? 'bg-yellow-500' : 'bg-green-500');
+      const label = over
+        ? 'Limite atingido — novos uploads bloqueados'
+        : (near ? 'Você está quase no limite (≥ 90%)' : 'Tudo certo com seu armazenamento');
+
+      return (
+        <div className="w-full space-y-2">
+          <div className="flex items-center justify-between text-sm text-gray-300">
+            <span>Uso de armazenamento</span>
+            <span>{formatBytes(bytesUsed)} / {formatBytes(limitBytes)} ({pct}%)</span>
+          </div>
+          <div className="w-full h-3 bg-gray-700/60 rounded-full overflow-hidden">
+            <div className={`${barClass} h-3 transition-all duration-500`} style={{ width: `${pct}%` }} />
+          </div>
+          <p className={`text-sm ${over ? 'text-red-400' : (near ? 'text-yellow-300' : 'text-gray-300')}`}>{label}</p>
+        </div>
+      );
+    }
+
+    function MediaSettings() {
+      const validate = isValidateMode();
+      const { user, ready } = useAuthUser();
+      const mediaFlagOk = React.useMemo(() => isMediaV1EnabledFor(user?.uid || ''), [user?.uid]);
+      const { quota, status } = useQuotaDoc(user?.uid);
+
+      return (
+        <div className="max-w-2xl mx-auto">
+          <div className="mb-4">
+            <h2 className="text-xl sm:text-2xl font-semibold text-white">Configuração → Mídia</h2>
+            <p className="text-sm text-gray-300">Armazenamento de fotos, vídeos e PDFs do seu negócio.</p>
+          </div>
+
+          {validate && (
+            <div className="mb-4 rounded-xl border border-yellow-600/40 bg-yellow-900/20 text-yellow-200 p-3 text-sm">
+              PREVIEW SEGURO ativo (<code>?validate=1</code>) — leitura somente; nada será gravado.
+            </div>
+          )}
+
+          {!ready ? (
+            <div className="text-gray-300">Carregando…</div>
+          ) : !user ? (
+            <div className="rounded-xl border border-gray-700 bg-gray-900 p-4 text-gray-200">
+              <p className="font-medium">Faça login para acessar sua área de mídia.</p>
+              <p className="text-sm text-gray-400 mt-1">Esta seção só funciona autenticado.</p>
+            </div>
+          ) : !mediaFlagOk ? (
+            <div className="rounded-xl border border-gray-700 bg-gray-900 p-4 text-gray-300">
+              <p className="font-medium">Recurso em teste (canário)</p>
+              <ul className="list-disc ml-5 mt-2 text-sm text-gray-400 space-y-1">
+                <li>Disponível apenas para UID canário.</li>
+                <li>Ative a flag no seu navegador: <code>localStorage.setItem('MEDIA_V1','on')</code> e recarregue.</li>
+              </ul>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="rounded-2xl bg-gray-900/70 border border-gray-800 p-5 shadow-lg">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center text-gray-200">💾</div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">Uso da sua cota</h3>
+                    <p className="text-xs text-gray-400">Atualiza em tempo real</p>
+                  </div>
+                </div>
+
+                {status === 'error' && (
+                  <div className="text-red-300 text-sm mb-2">Não foi possível carregar a sua cota agora. Tente novamente.</div>
+                )}
+
+                {!quota ? (
+                  <div className="text-gray-400">Carregando cota…</div>
+                ) : (
+                  <QuotaBar limitBytes={quota.limitBytes} bytesUsed={quota.bytesUsed} />
+                )}
+
+                {quota && (
+                  <div className="mt-3 text-xs text-gray-400">
+                    Arquivos armazenados: <span className="text-gray-200 font-medium">{quota.filesCount}</span>
+                    {quota.updatedAt && (
+                      <> • Atualizado: <span className="text-gray-300">{new Date(quota.updatedAt).toLocaleString()}</span></>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-gray-800 p-4 bg-gray-900/40 text-gray-400 text-sm">
+                Próximas etapas (em entregas separadas): Upload básico, Lista de arquivos e Exclusão com confirmação.
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<MediaSettings />);
+  </script>
+</body>
+</html>

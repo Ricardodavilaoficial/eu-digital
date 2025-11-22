@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Consulta CNPJ — MEI Robô</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin-top: 16px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    input, button { padding: 10px 12px; border-radius: 8px; border: 1px solid #ccc; }
+    button { cursor: pointer; }
+    .muted { color: #666; font-size: 0.9rem; }
+    .error { color: #b00020; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#f0f0f0; font-size:.8rem; }
+    .grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .list { margin: 0; padding-left: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Consulta CNPJ</h1>
+  <p class="muted">Use o CNPJ (apenas números) e, se quiser melhorar a heurística, informe o nome/razão social.</p>
+
+  <div class="row">
+    <input id="cnpj" placeholder="CNPJ (somente números)" inputmode="numeric" maxlength="14" />
+    <input id="nome" placeholder="Nome/Razão social (opcional)" />
+    <button id="btn">Consultar</button>
+  </div>
+
+  <!-- Microtexto de vínculo/autoridade (inserção) -->
+  <div id="micro-vinculo" class="muted" style="margin-top:8px;">
+    Você precisa constar como sócio/administrador <strong>ou</strong> ter procuração para responder pela empresa.
+  </div>
+
+  <div id="hint" class="muted" style="margin-top:8px;">
+    Dica: o serviço público tem limite de consultas por IP. Se aparecer 429, tente novamente depois.
+  </div>
+
+  <div id="out"></div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const out = $("#out");
+    const btn = $("#btn");
+    const cnpjInput = $("#cnpj");
+    const nomeInput = $("#nome");
+
+    function onlyDigits(s) { return (s || "").replace(/\D+/g, ""); }
+
+    async function consultar() {
+      out.innerHTML = "";
+      const cnpj = onlyDigits(cnpjInput.value);
+      const nome = (nomeInput.value || "").trim();
+
+      if (!cnpj || cnpj.length < 14) {
+        out.innerHTML = `<p class="error">Informe um CNPJ válido (14 dígitos).</p>`;
+        return;
+      }
+
+      const url = nome
+        ? `/integracoes/cnpj/${cnpj}?nome=${encodeURIComponent(nome)}`
+        : `/integracoes/cnpj/${cnpj}`;
+
+      const started = Date.now();
+      try {
+        const resp = await fetch(url, { method: "GET" });
+        const txt = await resp.text();
+        let data = null;
+        try { data = JSON.parse(txt); } catch { /* pode retornar HTML em erro */ }
+
+        if (!resp.ok) {
+          if (resp.status === 404) {
+            out.innerHTML = `<div class="card"><p class="error">CNPJ não encontrado.</p></div>`;
+            return;
+          }
+          if (resp.status === 429) {
+            out.innerHTML = `<div class="card"><p class="error">Limite de consultas atingido. Tente novamente em alguns minutos.</p></div>`;
+            return;
+          }
+          out.innerHTML = `<div class="card"><p class="error">Erro ${resp.status}. ${data?.erro || "Tente novamente."}</p></div>`;
+          return;
+        }
+
+        // Render
+        const t = (v) => (v === null || v === undefined || v === "" ? "<span class='muted'>—</span>" : v);
+        const endereco = data.endereco || {};
+        const cnae = data.cnaePrincipal || {};
+        const socios = Array.isArray(data.socios) ? data.socios : [];
+        const atualizado = data.atualizadoEm ? new Date(data.atualizadoEm).toLocaleString() : null;
+        const ms = Date.now() - started;
+
+        out.innerHTML = `
+          <div class="card">
+            <div class="grid">
+              <div><div class="muted">CNPJ</div><div class="mono">${t(data.cnpj)}</div></div>
+              <div><div class="muted">Razão Social</div><div>${t(data.razaoSocial)}</div></div>
+              <div><div class="muted">Nome Fantasia</div><div>${t(data.nomeFantasia)}</div></div>
+              <div><div class="muted">Abertura</div><div>${t(data.dataAbertura)}</div></div>
+              <div><div class="muted">CNAE Principal</div><div>${t(cnae.descricao)}</div></div>
+              <div><div class="muted">Município/UF</div><div>${t(endereco?.municipio?.nome)} / ${t(endereco?.uf?.sigla)}</div></div>
+              <div><div class="muted">Endereço</div><div>${t(endereco.logradouro)} ${t(endereco.numero)} — ${t(endereco.bairro)} — CEP ${t(endereco.cep)}</div></div>
+            </div>
+
+            <div style="margin-top:12px;">
+              <span class="pill">fonte: ${t(data.fonte)}</span>
+              ${atualizado ? `<span class="pill" style="margin-left:6px;">atualizado: ${atualizado}</span>` : ""}
+              <span class="pill" style="margin-left:6px;">${ms} ms</span>
+            </div>
+
+            <div style="margin-top:16px;">
+              <div class="muted">Sócios</div>
+              ${
+                socios.length
+                  ? `<ul class="list">${socios.map(s => `<li>${t(s.nome)} — <span class="muted">${t(s.qualificacao?.descricao)}</span></li>`).join("")}</ul>`
+                  : `<p class="muted">Nenhum sócio retornado.</p>`
+              }
+            </div>
+          </div>
+        `;
+      } catch (e) {
+        out.innerHTML = `<div class="card"><p class="error">Falha de rede. Tente novamente.</p><pre class="muted">${String(e)}</pre></div>`;
+      }
+    }
+
+    btn.addEventListener("click", consultar);
+    cnpjInput.addEventListener("keyup", (e) => { if (e.key === "Enter") consultar(); });
+    nomeInput.addEventListener("keyup", (e) => { if (e.key === "Enter") consultar(); });
+  </script>
+</body>
+</html>
