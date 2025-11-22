@@ -662,6 +662,139 @@ def verify_turnstile(token: str, client_ip: str) -> Tuple[bool, list, dict]:
 from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
 from services.db import db
 
+# =====================================
+# Admin — geração de cupons
+# =====================================
+def _ensure_admin_uid():
+    """
+    Retorna o UID do token Bearer se estiver presente
+    e dentro do ADMIN_UID_ALLOWLIST. Caso contrário, None.
+    """
+    try:
+        uid = _uid_from_bearer()
+    except Exception:
+        uid = None
+    if not uid:
+        return None
+    if uid not in ADMIN_UID_ALLOWLIST:
+        return None
+    return uid
+
+
+def _generate_coupon_code(prefix: str = "", length: int = 6) -> str:
+    """
+    Gera um código de cupom "humano" (sem 0/O/1/I) com prefixo opcional.
+    Ex.: MEI-AB29FQ
+    """
+    import secrets
+    alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    core = "".join(secrets.choice(alphabet) for _ in range(length))
+    prefix = (prefix or "").strip().upper()
+    if prefix:
+        return f"{prefix}-{core}"
+    return core
+
+
+def _create_admin_coupon(body: dict) -> dict:
+    """
+    Cria um cupom de ativação na coleção cuponsAtivacao.
+    Retorna o dict salvo (já com código e datas).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    dias_raw = body.get("diasValidade") or body.get("dias") or 0
+    try:
+        dias = int(dias_raw)
+    except Exception:
+        dias = 0
+
+    prefixo = (body.get("prefixo") or "").strip().upper()
+    origem  = (body.get("origem") or "admin-cupons").strip()
+
+    now = datetime.now(timezone.utc)
+    col = db.collection("cuponsAtivacao")
+
+    # Gera código único (tenta algumas vezes)
+    codigo = None
+    for _ in range(8):
+        cand = _generate_coupon_code(prefixo or "MEI", length=6)
+        if not col.document(cand).get().exists:
+            codigo = cand
+            break
+    if not codigo:
+        raise ValueError("nao_foi_possivel_gerar_codigo_unico")
+
+    doc = {
+        "codigo": codigo,
+        "tipo": "ativacao",
+        "escopo": "plano",
+        "plano": "start",
+        "status": "novo",
+        "ativo": True,
+        "usos": 0,
+        "usosMax": 1,
+        "origem": origem,
+        "createdAt": now.isoformat(),
+    }
+
+    if dias > 0:
+        doc["expiraEm"] = (now + timedelta(days=dias)).isoformat()
+
+    col.document(codigo).set(doc, merge=True)
+    return doc
+
+
+@app.route("/admin/cupons", methods=["POST", "OPTIONS"])
+def admin_cupons_create():
+    """
+    Endpoint oficial usado por /pages/admin-cupons.html para gerar cupons.
+    - Requer Bearer válido e UID presente em ADMIN_UID_ALLOWLIST.
+    - Cria documento em cuponsAtivacao.
+    """
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    if not ADMIN_UID_ALLOWLIST:
+        return jsonify({"ok": False, "error": "admin_allowlist_empty"}), 403
+
+    uid = _ensure_admin_uid()
+    if not uid:
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    body = request.get_json(silent=True) or {}
+    try:
+        cupom = _create_admin_coupon(body)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception as e:
+        app.logger.exception("admin_cupons_create: erro")
+        return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
+
+    public = {
+        "codigo": cupom.get("codigo"),
+        "status": cupom.get("status"),
+        "expiraEm": cupom.get("expiraEm"),
+        "usos": cupom.get("usos", 0),
+        "usosMax": cupom.get("usosMax", 1),
+        "tipo": cupom.get("tipo"),
+        "escopo": cupom.get("escopo"),
+        "plano": cupom.get("plano"),
+        "origem": cupom.get("origem"),
+        "createdAt": cupom.get("createdAt"),
+    }
+    return jsonify({"ok": True, "codigo": public["codigo"], "cupom": public}), 200
+
+
+@app.route("/gerar-cupom", methods=["POST", "OPTIONS"])
+def gerar_cupom_legacy():
+    """
+    Alias legado para compatibilidade com versões antigas do painel.
+    Apenas delega para /admin/cupons, mantendo mesma regra de admin.
+    """
+    if request.method == "OPTIONS":
+        return ("", 204)
+    return admin_cupons_create()
+
 def _parse_iso_maybe_z(s: str):
     if not s: return None
     try:
