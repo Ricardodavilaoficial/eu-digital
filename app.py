@@ -40,6 +40,7 @@ _cors_common = {
         "X-Requested-With",
         "cf-turnstile-response",  # ✅ header usado pelo Turnstile no cadastro
         "X-Turnstile-Token",      # ✅ alias que você também aceita em _is_human_ok()
+        "X-Submit-Nonce",         # ✅ nonce de submissão usado no cadastro.html
     ],
     "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 }
@@ -79,6 +80,7 @@ def _ensure_cadastro_cors(resp):
             "X-Requested-With",
             "cf-turnstile-response",
             "X-Turnstile-Token",
+            "X-Submit-Nonce",
         })
         resp.headers["Access-Control-Allow-Headers"] = ", ".join(sorted(items))
 
