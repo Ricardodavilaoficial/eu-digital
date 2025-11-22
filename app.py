@@ -43,6 +43,47 @@ CORS(app, resources={
     r"/admin/*": _cors_common,
 })
 
+# =====================================
+# Admin ping (usado pelo frontend para saber se é admin)
+# =====================================
+
+ADMIN_UID_ALLOWLIST = set(
+    x.strip()
+    for x in os.environ.get("ADMIN_UID_ALLOWLIST", "").split(",")
+    if x.strip()
+)
+
+try:
+    # Helper canônico do projeto para extrair UID do Bearer (Firebase ID token)
+    from services.auth import get_uid_from_bearer  # type: ignore
+except Exception:
+    get_uid_from_bearer = None  # type: ignore
+
+
+@app.route("/admin/ping", methods=["GET"])
+def admin_ping():
+    """
+    Retorna 200 se o Bearer token for de um admin.
+    401 se não tiver token / token inválido.
+    403 se não estiver na allowlist de admin.
+    """
+    if get_uid_from_bearer is None:
+        return jsonify({"ok": False, "error": "auth_helper_not_available"}), 500
+
+    try:
+        uid = get_uid_from_bearer(request)
+    except Exception:
+        return jsonify({"ok": False, "error": "invalid_token"}), 401
+
+    if not uid:
+        return jsonify({"ok": False, "error": "missing_uid"}), 401
+
+    # Segurança: só é admin se estiver na allowlist
+    if ADMIN_UID_ALLOWLIST and uid not in ADMIN_UID_ALLOWLIST:
+        return jsonify({"ok": False, "error": "not_admin", "uid": uid}), 403
+
+    return jsonify({"ok": True, "uid": uid, "role": "admin"}), 200
+
 # Limite de upload (25 MB) — importante para áudio
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB
 
