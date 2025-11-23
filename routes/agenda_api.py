@@ -9,6 +9,9 @@ from datetime import datetime, timedelta
 import pytz
 from flask import Blueprint, request, jsonify, g
 
+# Firestore (config de agenda por profissional)
+from services.db import db
+
 # Auth helper (usa seu serviço existente)
 uid_from_bearer = None
 try:
@@ -43,6 +46,256 @@ def _require_uid(req):
         if dbg:
             return dbg
     return None
+
+
+def _current_uid():
+    """
+    Preferencialmente usa g.uid (preenchido pelo hook global em app.py),
+    caindo para o _require_uid local como fallback (dev/X-Debug-UID).
+    """
+    return getattr(g, "uid", None) or _require_uid(request)
+
+
+# ---------------------------------------------------------------------
+# Helpers de configuração de agenda (Firestore)
+# ---------------------------------------------------------------------
+_AGENDA_DOC_NAME = "agendamento"
+_ALLOWED_INTERVALS = (15, 30, 60)
+_ALLOWED_DIAS = ("seg", "ter", "qua", "qui", "sex", "sab", "dom")
+
+
+def _agenda_doc_ref(uid):
+    return (
+        db.collection("profissionais")
+        .document(uid)
+        .collection("config")
+        .document(_AGENDA_DOC_NAME)
+    )
+
+
+def _normalize_interval(value):
+    """
+    Garante que intervaloMin seja 15, 30 ou 60.
+    Se vier outra coisa (ex.: 20), aproxima ao mais próximo.
+    """
+    try:
+        v = int(value)
+    except Exception:
+        return 30
+
+    if v in _ALLOWED_INTERVALS:
+        return v
+
+    # aproxima para o intervalo mais próximo
+    best = 30
+    best_diff = 999
+    for opt in _ALLOWED_INTERVALS:
+        d = abs(opt - v)
+        if d < best_diff:
+            best_diff = d
+            best = opt
+    return best
+
+
+def _normalize_hhmm(value, fallback):
+    """
+    Normaliza HH:MM. Se estiver inválido, volta para o fallback.
+    """
+    if not isinstance(value, str):
+        return fallback
+    txt = value.strip()
+    if not txt:
+        return fallback
+    parts = txt.split(":")
+    if len(parts) != 2:
+        return fallback
+    try:
+        h = int(parts[0])
+        m = int(parts[1])
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return f"{h:02d}:{m:02d}"
+    except Exception:
+        pass
+    return fallback
+
+
+def _sanitize_dias(dias):
+    """
+    Filtra e garante diasAtendimento dentro de {seg..dom}.
+    """
+    if not isinstance(dias, (list, tuple)):
+        return ["seg", "ter", "qua", "qui", "sex"]
+    out = []
+    for d in dias:
+        if not isinstance(d, str):
+            continue
+        dd = d.strip().lower()
+        if dd in _ALLOWED_DIAS and dd not in out:
+            out.append(dd)
+    if not out:
+        out = ["seg", "ter", "qua", "qui", "sex"]
+    return out
+
+
+def _default_agenda_config():
+    return {
+        "tz": "America/Sao_Paulo",
+        "diasAtendimento": ["seg", "ter", "qua", "qui", "sex"],
+        "atendimentoInicio": "08:00",
+        "atendimentoFim": "18:30",
+        "intervaloMin": 30,
+        "antecedenciaMinDias": 0,
+        "antecedenciaMaxDias": 30,
+    }
+
+
+def _sanitize_agenda_config(raw: dict | None):
+    """
+    Recebe o dict cru salvo no Firestore (ou None) e devolve
+    uma versão saneada com defaults e limites básicos.
+    """
+    base = _default_agenda_config()
+    if not isinstance(raw, dict):
+        return base
+
+    cfg = dict(base)
+    cfg.update(raw or {})
+
+    # saneia campos principais
+    cfg["tz"] = (cfg.get("tz") or "America/Sao_Paulo").strip() or "America/Sao_Paulo"
+    cfg["diasAtendimento"] = _sanitize_dias(cfg.get("diasAtendimento"))
+    cfg["atendimentoInicio"] = _normalize_hhmm(
+        cfg.get("atendimentoInicio"), base["atendimentoInicio"]
+    )
+    cfg["atendimentoFim"] = _normalize_hhmm(
+        cfg.get("atendimentoFim"), base["atendimentoFim"]
+    )
+    cfg["intervaloMin"] = _normalize_interval(cfg.get("intervaloMin"))
+
+    def _int_clamp(v, lo, hi, default):
+        try:
+            x = int(v)
+        except Exception:
+            return default
+        if x < lo:
+            return lo
+        if x > hi:
+            return hi
+        return x
+
+    cfg["antecedenciaMinDias"] = _int_clamp(
+        cfg.get("antecedenciaMinDias"), 0, 365, base["antecedenciaMinDias"]
+    )
+    cfg["antecedenciaMaxDias"] = _int_clamp(
+        cfg.get("antecedenciaMaxDias"), 0, 365, base["antecedenciaMaxDias"]
+    )
+
+    return cfg
+
+
+# ---------------------------------------------------------------------
+# GET /api/agenda/config
+# Configuração de agenda do profissional (usada por configuracao.html)
+# ---------------------------------------------------------------------
+@agenda_api_bp.route("/config", methods=["GET"])
+def get_agenda_config():
+    uid = _current_uid()
+    if not uid:
+        return jsonify({"ok": False, "error": "unauthenticated"}), 401
+
+    try:
+        doc_ref = _agenda_doc_ref(uid)
+        snap = doc_ref.get()
+        if snap.exists:
+            raw = snap.to_dict() or {}
+        else:
+            raw = None
+
+        cfg = _sanitize_agenda_config(raw)
+        return jsonify({"ok": True, "uid": uid, "config": cfg}), 200
+    except Exception as e:
+        log.exception("[agenda_api] erro em get_agenda_config para uid=%s", uid)
+        return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
+
+
+# ---------------------------------------------------------------------
+# POST /api/agenda/config
+# Salva/atualiza a configuração de agenda do profissional
+# ---------------------------------------------------------------------
+@agenda_api_bp.route("/config", methods=["POST"])
+def save_agenda_config():
+    uid = _current_uid()
+    if not uid:
+        return jsonify({"ok": False, "error": "unauthenticated"}), 401
+
+    data = request.get_json(silent=True) or {}
+
+    try:
+        # Carrega o que já existe para fazer merge
+        doc_ref = _agenda_doc_ref(uid)
+        snap = doc_ref.get()
+        raw = snap.to_dict() or {} if snap.exists else {}
+
+        incoming = {}
+
+        # tz opcional
+        if "tz" in data:
+            incoming["tz"] = (data.get("tz") or "").strip() or "America/Sao_Paulo"
+
+        # diasAtendimento
+        if "diasAtendimento" in data:
+            incoming["diasAtendimento"] = _sanitize_dias(data.get("diasAtendimento"))
+
+        # horários
+        if "atendimentoInicio" in data:
+            incoming["atendimentoInicio"] = _normalize_hhmm(
+                data.get("atendimentoInicio"),
+                raw.get("atendimentoInicio") or _default_agenda_config()["atendimentoInicio"],
+            )
+
+        if "atendimentoFim" in data:
+            incoming["atendimentoFim"] = _normalize_hhmm(
+                data.get("atendimentoFim"),
+                raw.get("atendimentoFim") or _default_agenda_config()["atendimentoFim"],
+            )
+
+        # intervaloMin (15/30/60)
+        if "intervaloMin" in data:
+            incoming["intervaloMin"] = _normalize_interval(data.get("intervaloMin"))
+
+        # antecedências
+        def _int_clamp(v, lo, hi):
+            try:
+                x = int(v)
+            except Exception:
+                return None
+            if x < lo:
+                x = lo
+            if x > hi:
+                x = hi
+            return x
+
+        if "antecedenciaMinDias" in data:
+            v = _int_clamp(data.get("antecedenciaMinDias"), 0, 365)
+            if v is not None:
+                incoming["antecedenciaMinDias"] = v
+
+        if "antecedenciaMaxDias" in data:
+            v = _int_clamp(data.get("antecedenciaMaxDias"), 0, 365)
+            if v is not None:
+                incoming["antecedenciaMaxDias"] = v
+
+        # Merge suave
+        raw.update(incoming)
+        cfg_final = _sanitize_agenda_config(raw)
+
+        # Salva no Firestore
+        doc_ref.set(cfg_final, merge=True)
+
+        return jsonify({"ok": True, "uid": uid, "config": cfg_final}), 200
+    except Exception as e:
+        log.exception("[agenda_api] erro em save_agenda_config para uid=%s", uid)
+        return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
 
 
 # ---------------------------------------------------------------------
