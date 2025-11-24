@@ -18,6 +18,11 @@ from datetime import datetime, timedelta
 import pytz
 from flask import Blueprint, request, jsonify
 
+try:
+    from services.db import db
+except Exception:
+    db = None
+
 agenda_digest_bp = Blueprint("agenda_digest_bp", __name__, url_prefix="/api/agenda")
 
 # ---------------- Auth guard ----------------
@@ -200,6 +205,25 @@ def _split_emails(value: str):
     return parts or None
 
 
+def _get_profissional_name(uid: str) -> str:
+    """
+    Busca o nome do profissional em profissionais/{uid}.
+    Fallback seguro: "MEI" se não encontrar nada.
+    """
+    if not db or not uid:
+        return "MEI"
+    try:
+        doc = db.collection("profissionais").document(uid).get()
+        if doc and doc.exists:
+            data = doc.to_dict() or {}
+            nome = (data.get("nome") or "").strip()
+            if nome:
+                return nome
+    except Exception:
+        logging.exception("[agenda_digest] falha ao ler nome do profissional para uid=%s", uid)
+    return "MEI"
+
+
 # ---------------- Route ----------------
 @agenda_digest_bp.route("/digest", methods=["GET"])
 def digest_get():
@@ -227,7 +251,7 @@ def digest_get():
     preview = _build_preview(uid, items, date_str, tz)
 
     # Corpos de e-mail (texto/HTML)
-    nome_profissional = "Ricardo"  # se houver nome no perfil do profissional, trocar por esse valor
+    nome_profissional = _get_profissional_name(uid)
     url_agenda = os.getenv("DIGEST_AGENDA_URL", "https://meirobo.com.br/pages/agenda.html?source=email-digest")
     subject, body_text, body_html = _build_email_bodies(
         nome_profissional, url_agenda, items, date_str, tz
