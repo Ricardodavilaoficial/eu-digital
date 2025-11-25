@@ -326,6 +326,12 @@ except Exception as e:
     _config_read = None
 
 try:
+    from routes.orcamentos import orcamentos_bp
+    _register_bp(orcamentos_bp, "orcamentos_bp (/api/orcamentos)")
+except Exception as e:
+    print("[bp][warn] orcamentos_bp:", e)
+
+try:
     from routes.stripe_webhook import stripe_webhook_bp
     _register_bp(stripe_webhook_bp, "stripe_webhook_bp")
 except Exception as e:
@@ -896,7 +902,7 @@ def admin_cupons_list():
         return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
 
 
-def _parse_iso_maybe_z(s: str):    
+def _parse_iso_maybe_z(s: str):
     if not s: return None
     try:
         if isinstance(s, str) and s.endswith("Z"):
