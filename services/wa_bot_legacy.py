@@ -108,6 +108,7 @@ def _merge_intents_legacy_with_v1(nlu_legacy: dict, text: str) -> dict:
 import re
 import requests
 import unicodedata
+import random
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -303,7 +304,7 @@ DB = _DB_CLIENT
 
 # ========== NLU leve (imports tolerantes) ==========
 try:
-    # âš ï¸ Alias para evitar o erro "cannot import name 'extract_intent'":
+    # âš ï¸ Alias para evitar o erro "cannot import name 'extract_intent'":
     from services.openai.nlu_intent import detect_intent as extract_intent  # abs
 except Exception as e_abs:
     try:
@@ -464,7 +465,7 @@ _L10N_DEFAULTS = {
     "faq_default": "Posso te ajudar com endereÃ§o, horÃ¡rios, telefone e Pix. O que vocÃª precisa?",
     "ask_service": "Qual serviÃ§o vocÃª quer? Exemplos: {exemplos}.",
     "ask_datetime": "Qual dia e horÃ¡rio ficam bons? Ex.: â€˜terÃ§a 10hâ€™ ou â€˜01/09 14:00â€™.",
-    "schedule_confirm": "Fechado: {servico} em {dia} Ã s {hora}{preco}. Se precisar mudar, Ã© sÃ³ me falar.",
+    "schedule_confirm": "Fechado: {servico} em {dia} Ã s {hora}{preco}. Se precisar mudar, Ã© sÃ³ me falar.",
     "reschedule_ask": "Qual nova data e horÃ¡rio? Ex.: 02/09 10:00, ou 'quarta 15h'.",
     "session_cleared": "Pronto, zerei nossa conversa. Quer recomeÃ§ar com â€˜preÃ§osâ€™ ou â€˜agendarâ€™?",
     "audio_error": "Poxa, tive um probleminha aqui com seu Ã¡udio. Pode tentar de novo? Se preferir, me manda por texto tambÃ©m."
@@ -1058,7 +1059,7 @@ def _extract_time_from_words(t: str):
         period = "tarde"
     elif re.search(r"\bda\s+noite\b|\bde\s+noite\b|\bnoite\b", t):
         period = "noite"
-    m = re.search(r"\b(?:as|Ã s)?\s*(?P<h>\d{1,2})(?:[:h](?P<m>\d{2}))?\s*(?:horas?)?", t)
+    m = re.search(r"\b(?:as|Ã s)?\s*(?P<h>\d{1,2})(?:[:h](?P<m>\d{2}))?\s*(?:horas?)?", t)
     if m:
         hh = int(m.group("h"))
         mi = int(m.group("m")) if m.group("m") else 0
@@ -1067,7 +1068,7 @@ def _extract_time_from_words(t: str):
         if period in ("tarde", "noite") and 1 <= hh <= 11:
             hh += 12
         return hh, mi
-    m2 = re.search(r"\b(?:as|Ã s)?\s*([a-z]+)(?:\s*e\s*meia)?\s*(?:horas?)?", t)
+    m2 = re.search(r"\b(?:as|Ã s)?\s*([a-z]+)(?:\s*e\s*meia)?\s*(?:horas?)?", t)
     if m2:
         word = m2.group(1)
         hh = _words_to_int_pt(word)
@@ -1458,7 +1459,7 @@ def _build_and_save_agendamento(uid_default: str, value: dict, to_msisdn: str, s
     else:
         preco = ag.get("preco")
         preco_txt = f" â€” {_format_brl(preco)}" if preco not in (None, "", "?") else ""
-        msg = f"Prontinho! Agendei {ag['servicoNome']} para {dia} Ã s {hora}{preco_txt}. Se precisar alterar, Ã© sÃ³ me chamar. ðŸ˜‰"
+        msg = f"Prontinho! Agendei {ag['servicoNome']} para {dia} Ã s {hora}{preco_txt}. Se precisar alterar, Ã© sÃ³ me chamar. ðŸ˜‰"
 
     return True, msg
 
@@ -1529,6 +1530,237 @@ def _reply_price_from_cache_or_data(uid: str, to: str, user_text: str, send_text
         kv_put(uid, key, msg, ttl_sec=PRICE_CACHE_TTL)
 
     return send_text(to, msg)
+
+
+def _build_budget_message(uid: str, itens: List[Dict[str, Any]], *, observacao: str | None = None) -> str:
+    """
+    Monta um orçamento em texto puro (para WhatsApp) a partir de itens de preço.
+    Cada item deve ter pelo menos: nome, preco, duracaoMin (opcional).
+    """
+    if not itens:
+        return "Ainda não consegui montar um orçamento com base no que você pediu. Pode me dizer o serviço com um pouco mais de detalhe?"
+
+    linhas = []
+    total = 0.0
+
+    linhas.append("Orçamento solicitado:\n")
+
+    for idx, it in enumerate(itens, start=1):
+        nome = it.get("nome") or "serviço"
+        dur = it.get("duracaoMin")
+        preco = it.get("preco")
+        try:
+            v = float(preco)
+        except Exception:
+            v = 0.0
+
+        total += v
+        dur_txt = f" — {int(dur)}min" if dur not in (None, "", "?") else ""
+        linhas.append(f"{idx}. {nome}{dur_txt} — {_format_brl(preco)}")
+
+    linhas.append("")
+    linhas.append(f"Total: {_format_brl(total)}")
+
+    if observacao:
+        obs_clean = (observacao or "").strip()
+        if obs_clean:
+            linhas.append("")
+            linhas.append(f"Obs.: {obs_clean[:240]}")
+
+    linhas.append("")
+    linhas.append("Esse é um orçamento, sujeito a confirmação de agenda e disponibilidade. Se quiser, já posso te ajudar a agendar. 😉")
+
+    msg = "\n".join(linhas)
+    # Sanitiza antes de enviar, para não vazar nada estranho
+    try:
+        return H_sanitize(msg)
+    except Exception:
+        return msg
+
+
+def _register_budget_from_bot(
+    uid_default: str,
+    to_msisdn: str,
+    value: dict,
+    itens: List[Dict[str, Any]],
+    *,
+    observacao: str | None = None,
+) -> None:
+    """
+    Registra o orçamento gerado pelo bot na mesma coleção/formato
+    do blueprint oficial de orçamentos (routes/orcamentos.py):
+
+      profissionais/{uid}/orcamentos/{orcId}
+
+    Campos principais compatíveis:
+      - numero, origem, createdAt, total, moeda
+      - clienteNome, clienteTelefone, clienteTipo
+      - itens[ {codigo, nome, preco, qtd, duracaoMin} ]
+      - canalEnvio, status
+    """
+    if not _db_ready():
+        logging.info("[ORCAMENTO][BOT] DB indisponível; orçamento não registrado.")
+        return
+
+    try:
+        # 1) Dados mínimos do cliente (nome/telefone) a partir do payload Meta
+        cliente_nome = ""
+        try:
+            contacts = value.get("contacts") or []
+            if contacts and isinstance(contacts, list):
+                prof = contacts[0].get("profile") or {}
+                cliente_nome = (prof.get("name") or "").strip()
+        except Exception:
+            pass
+
+        tel_norm = _normalize_br_msisdn(to_msisdn or "")
+        obs_txt = (observacao or "").strip()
+
+        # 2) Normaliza itens no formato esperado pelo blueprint
+        norm_itens: List[Dict[str, Any]] = []
+        total = 0.0
+
+        for it in (itens or []):
+            if not isinstance(it, dict):
+                continue
+
+            nome = (it.get("nome") or "serviço").strip()
+            preco_raw = it.get("preco")
+
+            try:
+                preco_val = float(preco_raw)
+            except Exception:
+                preco_val = 0.0
+
+            norm = {
+                "codigo": (it.get("codigo") or "").strip(),
+                "nome": nome,
+                "preco": preco_val,
+                "qtd": 1.0,  # por enquanto o bot sempre considera 1 unidade
+                "duracaoMin": 0.0,
+            }
+            try:
+                if it.get("duracaoMin") not in (None, "", "?"):
+                    norm["duracaoMin"] = float(it.get("duracaoMin"))
+            except Exception:
+                pass
+
+            norm_itens.append(norm)
+            total += preco_val * norm["qtd"]
+
+        # 3) Campos canônicos de orçamentos
+        created_at = datetime.now(timezone.utc).isoformat()
+
+        # Mesmo padrão do blueprint: ORC-YYYY-XXXXX
+        ano = datetime.now().year
+        seq = random.randint(10000, 99999)
+        numero = f"ORC-{ano}-{seq:05d}"
+
+        doc = {
+            "numero": numero,
+            "origem": "bot",
+            "createdAt": created_at,
+            "total": total,
+            "moeda": "BRL",
+            "clienteId": None,
+            "clienteTipo": "",
+            "clienteNome": cliente_nome,
+            "clienteContato": "",
+            "clienteTelefone": tel_norm,
+            "clienteEmail": "",
+            "clienteObs": obs_txt,
+            "cliente": {
+                "tipo": "",
+                "nome": cliente_nome,
+                "contato": "",
+                "telefone": tel_norm,
+                "email": "",
+                "obs": obs_txt,
+            },
+            "itens": norm_itens,
+            "mensagemEnvio": "",
+            "infoAdicionais": "",
+            "canalEnvio": "whatsapp",
+            "status": "enviado",
+        }
+
+        col = DB.collection(f"profissionais/{uid_default}/orcamentos")
+        ref = col.document()
+        ref.set(doc, merge=False)
+
+        logging.info(
+            "[ORCAMENTO][BOT] registrado id=%s numero=%s total=%s",
+            ref.id,
+            numero,
+            total,
+        )
+    except Exception as e:
+        logging.exception("[ORCAMENTO][BOT] falhou ao registrar: %s", e)
+
+
+def _reply_budget(
+    uid: str,
+    to: str,
+    user_text: str,
+    send_text,
+    value: dict,
+    *,
+    channel_mode: str = "text",
+) -> None:
+    """
+    Fluxo de orçamento:
+      - Usa a mesma base de preços do robô
+      - Tenta achar 1..N serviços mencionados
+      - Monta texto de orçamento
+      - Registra o orçamento para digest/e-mail do MEI
+    """
+    items = _load_prices(uid)
+    if not items:
+        msg = "Ainda não tenho uma tabela de preços cadastrada para montar um orçamento. Assim que você cadastrar seus serviços e valores, posso fazer isso por aqui."
+        send_text(to, msg)
+        return
+
+    prof_ctx = _load_prof_context(uid)
+    text_norm = _strip_accents_lower(user_text or "")
+
+    # 1) Tenta achar um serviço principal, como já fazemos em _find_price_item
+    principal = _find_price_item(items, user_text or "", prof_ctx)
+
+    selected: List[Dict[str, Any]] = []
+    if principal:
+        selected.append(principal)
+
+    # 2) Se o texto citar mais serviços (“corte e barba”, “banho e tosa”), tenta achar mais itens
+    #    de forma simples, sem travar o fluxo.
+    for it in items:
+        if it in selected:
+            continue
+        nome = it.get("nomeLower") or ""
+        if not nome:
+            continue
+        # Heurística leve: se pelo menos um token do nome aparece no texto, inclui
+        for tok in re.findall(r"[a-z0-9]{4,}", nome):
+            if tok in text_norm:
+                selected.append(it)
+                break
+
+    # Se mesmo assim não tiver nada, cai para um orçamento “genérico” (primeiro item)
+    if not selected and items:
+        selected.append(items[0])
+
+    observacao = user_text
+
+    # Monta mensagem de orçamento
+    msg = _build_budget_message(uid, selected, observacao=observacao)
+
+    # Envia (respeitando TTS/áudio quando vier áudio)
+    send_text(to, msg)
+
+    # Registra no backend (coleção orçamentos ou módulo oficial, via stub)
+    try:
+        _register_budget_from_bot(uid, to, value, selected, observacao=observacao)
+    except Exception as e:
+        logging.info("[ORCAMENTO][BOT] falha não-crítica ao registrar: %s", e)
 
 
 def _reply_faq(uid: str, to: str, faq_key: str, send_text, channel_mode: str = "text"):
@@ -1680,7 +1912,7 @@ def _reagendar_fluxo(value: dict, to_msisdn: str, uid_default: str, app_tag: str
         payload = {"servico": nome, "data": dt.strftime("%Y-%m-%d"), "data_str": dia, "hora": hora}
         return H("confirm_reagenda", payload, mode=("audio" if channel_mode == "audio" else "text"))
 
-    return f"Tudo certo! Reagendei {nome} para {dia} Ã s {hora}. Se precisar, eu mudo de novo. ðŸ˜‰"
+    return f"Tudo certo! Reagendei {nome} para {dia} Ã s {hora}. Se precisar, eu mudo de novo. ðŸ˜‰"
 
 
 # ========== Entrada principal ==========
@@ -1788,6 +2020,15 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             send_reply(uid_default, to_raw, say(uid_default, "session_cleared"), msg_type, send_text_fn, send_audio_fn)
             continue
 
+        # -------- Orçamento (intent dedicada) ----------
+        # A intenção "orcamento" deve vir da IA de NLU (GPT),
+        # mas mantemos uma proteção extra por palavra "orcamento"/"orçamento"
+        # para não deixar o usuário sem resposta caso o modelo não classifique direito.
+        if intent == "orcamento" or "orcamento" in text_norm or "orçamento" in text_norm:
+            send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
+            _reply_budget(uid_default, to_raw, text_in, send, value, channel_mode=channel_mode)
+            continue
+
         # -------- Roteamento ----------
         if intent == "precos":
             send = lambda _to, _msg: send_reply(uid_default, _to, _msg, msg_type, send_text_fn, send_audio_fn)
@@ -1856,4 +2097,3 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             f"[WA_BOT][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}",
             flush=True,
         )
-
