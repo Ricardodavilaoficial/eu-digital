@@ -15,14 +15,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import pytz
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
+import base64
+import json as _json
 
 from services.db import db  # mesmo client do app principal
-
-try:
-    from services.auth import get_uid_from_bearer  # type: ignore
-except Exception:  # pragma: no cover
-    get_uid_from_bearer = None  # type: ignore
 
 try:
     from services import mailer  # type: ignore
@@ -45,9 +42,43 @@ DIGEST_SIGNOFF = os.environ.get("DIGEST_SIGNOFF") or "Bom trabalho hoje com seus
 DIGEST_BCC = os.environ.get("DIGEST_BCC") or ""
 
 
+def _uid_from_bearer_fallback():
+    """
+    Decodifica o Firebase ID token direto do header Authorization (sem verificar assinatura).
+    Serve como fallback se g.uid não estiver preenchido.
+    """
+    auth = (request.headers.get("Authorization") or "").strip()
+    if not auth.lower().startswith("bearer "):
+        return None
+    tok = auth.split(" ", 1)[1].strip()
+    parts = tok.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
+        payload = _json.loads(
+            base64.urlsafe_b64decode((parts[1] + pad).encode("utf-8")).decode("utf-8")
+        )
+        return payload.get("user_id") or payload.get("uid") or payload.get("sub")
+    except Exception:
+        return None
+
+
+def _require_uid():
+    """
+    Tenta primeiro g.uid (preenchido pelo app.before_request).
+    Se não tiver, decodifica o Bearer localmente.
+    """
+    uid = getattr(g, "uid", None) or _uid_from_bearer_fallback()
+    if not uid:
+        return None, (jsonify({"ok": False, "error": "unauthenticated"}), 401)
+    return uid, None
+
+
 def _get_uid_from_request():
     """
-    Resolve o UID a partir do Authorization: Bearer ou X-Debug-UID.
+    Resolve o UID a partir do X-Debug-UID (quando permitido) ou do helper _require_uid().
+    Mantém compatibilidade com o uso atual deste módulo.
     """
     # Modo debug explícito (útil pra curl local)
     if ALLOW_DEBUG_UID:
@@ -55,18 +86,10 @@ def _get_uid_from_request():
         if dbg:
             return dbg
 
-    auth = request.headers.get("Authorization") or ""
-    if auth.startswith("Bearer "):
-        token = auth.split(" ", 1)[1].strip()
-        if get_uid_from_bearer:
-            try:
-                uid = get_uid_from_bearer(token)
-                if uid:
-                    return uid
-            except Exception as e:  # pragma: no cover
-                log.warning("[orcamentos_digest] falha ao decodificar Bearer: %s", e)
-
-    return None
+    uid, err = _require_uid()
+    if err is not None:
+        return None
+    return uid
 
 
 def _parse_date(param_name: str, tz_str: str):
