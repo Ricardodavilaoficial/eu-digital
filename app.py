@@ -332,6 +332,12 @@ except Exception as e:
     print("[bp][warn] orcamentos_bp:", e)
 
 try:
+    from routes.orcamentos_digest import orcamentos_digest_bp
+    _register_bp(orcamentos_digest_bp, "orcamentos_digest_bp (/api/orcamentos/digest)")
+except Exception as e:
+    print("[bp][warn] orcamentos_digest_bp:", e)
+
+try:
     from routes.stripe_webhook import stripe_webhook_bp
     _register_bp(stripe_webhook_bp, "stripe_webhook_bp")
 except Exception as e:
@@ -1010,7 +1016,7 @@ def api_cupons_ativar_legado():
         }, merge=True)
         return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
     except Exception as e:
-        return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"}), 500
+        return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"), 500
 
 # =====================================
 # Cadastro / ativar-cliente + CNPJ availability (ajustado)
