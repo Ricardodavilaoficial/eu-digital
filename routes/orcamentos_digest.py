@@ -1,262 +1,473 @@
 # routes/orcamentos_digest.py
-# Digest diário de orçamentos do MEI Robô
-#
 # GET /api/orcamentos/digest?dry_run=true|false&date=YYYY-MM-DD&tz=America/Sao_Paulo
+# - Auth: Bearer padrão do projeto OU header X-Debug-UID quando ALLOW_DEBUG_UID=1
+# - Dry-run: retorna JSON com itens reais do dia + preview_html/text
+# - Envio real: usa services.mailer.send_email (se disponível)
+# - Personalização por ENV (reutiliza os mesmos da agenda):
+#     EMAIL_SENDER            (obrigatória p/ envio real)
+#     EMAIL_REPLY_TO          (opcional)
+#     DIGEST_LOGO_URL         (opcional)
+#     DIGEST_BRAND_COLOR      (opcional, ex: #128C7E)
+#     DIGEST_SIGNOFF          (opcional, ex: "Bom trabalho hoje! 🚀")
+#     DIGEST_BCC              (opcional; múltiplos separados por vírgula)
 #
-# - Auth:
-#     Authorization: Bearer <token Firebase>  OU
-#     X-Debug-UID: <uid> quando ALLOW_DEBUG_UID=1
-# - Lê profissionais/{uid}/orcamentos do dia informado
-# - dry_run=true  -> só retorna JSON com o resumo (não envia e-mail)
-# - dry_run=false -> envia e-mail se houver ao menos 1 orçamento no dia
+# Observação:
+# - Este digest é DIÁRIO: agrupa todos os orçamentos do dia para o MEI.
+# - Para Cliente Zero vamos chamar em dry_run via curl; depois, com e-mail ligado, dry_run=false.
 
 import os
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pytz
-from flask import Blueprint, request, jsonify, g
-import base64
-import json as _json
-
-from services.db import db  # mesmo client do app principal
+from flask import Blueprint, request, jsonify
 
 try:
-    from services import mailer  # type: ignore
-except Exception:  # pragma: no cover
-    mailer = None  # type: ignore
+    from services.db import db
+except Exception:
+    db = None
 
-orcamentos_digest_bp = Blueprint(
-    "orcamentos_digest_bp",
-    __name__,
-    url_prefix="/api/orcamentos",
-)
+orcamentos_digest_bp = Blueprint("orcamentos_digest_bp", __name__, url_prefix="/api/orcamentos")
 
-log = logging.getLogger(__name__)
-
-ALLOW_DEBUG_UID = os.environ.get("ALLOW_DEBUG_UID", "0") == "1"
-EMAIL_SENDER = os.environ.get("EMAIL_SENDER") or ""  # mesmo usado em agenda_digest
-EMAIL_REPLY_TO = os.environ.get("EMAIL_REPLY_TO") or ""
-DIGEST_BRAND_COLOR = os.environ.get("DIGEST_BRAND_COLOR") or "#128C7E"
-DIGEST_SIGNOFF = os.environ.get("DIGEST_SIGNOFF") or "Bom trabalho hoje com seus clientes! 🚀"
-DIGEST_BCC = os.environ.get("DIGEST_BCC") or ""
+# ---------------- Auth guard ----------------
+_uid_from_bearer = None
+try:
+    from services.auth import get_uid_from_bearer as _uid_from_bearer
+except Exception:
+    _uid_from_bearer = None
 
 
-def _uid_from_bearer_fallback():
-    """
-    Decodifica o Firebase ID token direto do header Authorization (sem verificar assinatura).
-    Serve como fallback se g.uid não estiver preenchido.
-    """
-    auth = (request.headers.get("Authorization") or "").strip()
-    if not auth.lower().startswith("bearer "):
-        return None
-    tok = auth.split(" ", 1)[1].strip()
-    parts = tok.split(".")
-    if len(parts) < 2:
-        return None
-    try:
-        pad = "=" * ((4 - len(parts[1]) % 4) % 4)
-        payload = _json.loads(
-            base64.urlsafe_b64decode((parts[1] + pad).encode("utf-8")).decode("utf-8")
-        )
-        return payload.get("user_id") or payload.get("uid") or payload.get("sub")
-    except Exception:
-        return None
-
-
-def _require_uid():
-    """
-    Tenta primeiro g.uid (preenchido pelo app.before_request).
-    Se não tiver, decodifica o Bearer localmente.
-    """
-    uid = getattr(g, "uid", None) or _uid_from_bearer_fallback()
-    if not uid:
-        return None, (jsonify({"ok": False, "error": "unauthenticated"}), 401)
-    return uid, None
-
-
-def _get_uid_from_request():
-    """
-    Resolve o UID a partir do X-Debug-UID (quando permitido) ou do helper _require_uid().
-    Mantém compatibilidade com o uso atual deste módulo.
-    """
-    # Modo debug explícito (útil pra curl local)
-    if ALLOW_DEBUG_UID:
-        dbg = (request.headers.get("X-Debug-UID") or "").strip()
+def _require_uid(req):
+    # 1) Produção: Bearer normal
+    if _uid_from_bearer:
+        try:
+            uid = _uid_from_bearer(req)
+            if uid:
+                return uid
+        except Exception:
+            pass
+    # 2) DEV: X-Debug-UID quando ALLOW_DEBUG_UID=1
+    if os.getenv("ALLOW_DEBUG_UID", "0") == "1":
+        dbg = req.headers.get("X-Debug-UID")
         if dbg:
             return dbg
-
-    uid, err = _require_uid()
-    if err is not None:
-        return None
-    return uid
+    return None
 
 
-def _parse_date(param_name: str, tz_str: str):
-    """
-    Lê ?date=YYYY-MM-DD (ou usa hoje no fuso informado) e devolve (dt_inicio, dt_fim, data_br).
-    """
-    tz = pytz.timezone(tz_str)
-    raw = (request.args.get(param_name) or "").strip()
-    if raw:
-        try:
-            y, m, d = [int(x) for x in raw.split("-")]
-            base = tz.localize(datetime(y, m, d, 0, 0, 0))
-        except Exception:
-            base = tz.localize(datetime.now())
-    else:
-        base = tz.localize(datetime.now())
-
-    inicio = base.replace(hour=0, minute=0, second=0, microsecond=0)
-    fim = inicio + timedelta(days=1)
-
-    data_br = inicio.strftime("%d/%m/%Y")
-    return inicio, fim, data_br, tz
+# ---------------- Mailer ----------------
+_send_email = None
+try:
+    from services.mailer import send_email as _send_email
+except Exception:
+    _send_email = None
 
 
-def _fmt_brl(v: float) -> str:
+# ---------------- Helpers genéricos ----------------
+def _parse_bool(val, default=False):
+    if val is None:
+        return default
+    s = str(val).strip().lower()
+    return s in ("1", "true", "yes", "on")
+
+
+def _today_str_tz(tz: str) -> str:
     try:
-        s = f"{v:,.2f}"
+        zone = pytz.timezone(tz)
+        return datetime.now(zone).strftime("%Y-%m-%d")
     except Exception:
-        s = "0.00"
-    # 1,234.56 -> 1.234,56
-    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
-    return f"R$ {s}"
+        # fallback: -3h (BR) aproximado
+        return (datetime.utcnow() - timedelta(hours=3)).strftime("%Y-%m-%d")
 
 
-@orcamentos_digest_bp.route("/digest", methods=["GET"])
-def orcamentos_digest():
-    uid = _get_uid_from_request()
-    if not uid:
-        return jsonify({"ok": False, "error": "unauthenticated"}), 401
+def _br_date_formats(date_str, tz):
+    """
+    date_str: 'YYYY-MM-DD'
+    Retorna:
+      - data_curta: 'DD/MM/AAAA'
+      - data_extenso: 'quarta-feira, 26 de novembro de 2025'
+    """
+    try:
+        y, m, d = [int(x) for x in date_str.split("-")]
+        zone = pytz.timezone(tz)
+        dt = zone.localize(datetime(y, m, d))
+    except Exception:
+        dt = datetime.utcnow()
+    meses = [
+        "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+        "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
+    ]
+    dias_sem = [
+        "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira",
+        "sexta-feira", "sábado", "domingo"
+    ]
+    data_curta = dt.strftime("%d/%m/%Y")
+    data_extenso = f"{dias_sem[dt.weekday()]}, {dt.day} de {meses[dt.month - 1]} de {dt.year}"
+    return dt, data_curta, data_extenso
 
-    dry_run = (request.args.get("dry_run") or "true").lower() == "true"
-    tz_str = (request.args.get("tz") or "America/Sao_Paulo").strip() or "America/Sao_Paulo"
+
+def _fmt_moeda(valor: float, moeda: str = "BRL") -> str:
+    # Por enquanto só BRL; se um dia tiver outra moeda, a gente trata.
+    v = float(valor or 0.0)
+    return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _split_emails(value: str):
+    if not value:
+        return None
+    parts = [p.strip() for p in value.split(",") if p.strip()]
+    return parts or None
+
+
+def _get_profissional_name(uid: str) -> str:
+    """
+    Busca o nome do profissional em profissionais/{uid}.
+    Fallback seguro: "MEI" se não encontrar nada.
+    """
+    if not db or not uid:
+        return "MEI"
+    try:
+        doc = db.collection("profissionais").document(uid).get()
+        if doc and doc.exists:
+            data = doc.to_dict() or {}
+            nome = (data.get("nome") or "").strip()
+            if nome:
+                return nome
+    except Exception:
+        logging.exception("[orcamentos_digest] falha ao ler nome do profissional para uid=%s", uid)
+    return "MEI"
+
+
+# ---------------- Repo de orçamentos ----------------
+def _list_orcamentos_for(uid: str, date_str: str, tz: str):
+    """
+    Lista orçamentos do dia (janelinha do tz informado) em:
+      profissionais/{uid}/orcamentos
+    Campos usados:
+      - numero
+      - total
+      - moeda
+      - canalEnvio / canal
+      - origem
+      - clienteNome / cliente.nome
+      - createdAt
+    """
+    if not db or not uid:
+        logging.warning("[orcamentos_digest] db ou uid ausente")
+        return []
 
     try:
-        dt_inicio, dt_fim, data_br, tz = _parse_date("date", tz_str)
-    except Exception as e:
-        return jsonify({"ok": False, "error": "bad_date", "detail": str(e)}), 400
+        zone = pytz.timezone(tz)
+    except Exception:
+        zone = pytz.timezone("America/Sao_Paulo")
 
-    # Buscamos um lote razoável e filtramos em memória por data (como no listar_orcamentos)
     try:
-        col = db.collection("profissionais").document(uid).collection("orcamentos")
-        docs = list(col.limit(500).stream())
-    except Exception as e:
-        log.error("[orcamentos_digest] erro ao ler Firestore: %s", e)
-        return jsonify({"ok": False, "error": "internal_error"}), 500
+        y, m, d = [int(x) for x in date_str.split("-")]
+        local_start = zone.localize(datetime(y, m, d, 0, 0, 0))
+    except Exception:
+        # fallback: hoje na tz
+        local_start = zone.localize(datetime.now(zone).replace(hour=0, minute=0, second=0, microsecond=0))
 
-    itens = []
-    total_dia = 0.0
+    local_end = local_start + timedelta(days=1)
 
-    for doc in docs:
-        d = doc.to_dict() or {}
-        created_at = d.get("createdAt") or d.get("created_at")
-        if not created_at:
-            continue
+    start_utc = local_start.astimezone(pytz.UTC)
+    end_utc = local_end.astimezone(pytz.UTC)
 
-        # createdAt vem em ISO (ex.: 2025-11-26T12:34:56+00:00)
-        try:
-            dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
-            # Converte para o fuso do MEI pra comparar o "dia"
-            dt_local = dt.astimezone(tz)
-        except Exception:
-            continue
-
-        if not (dt_inicio <= dt_local < dt_fim):
-            continue
-
-        numero = d.get("numero") or doc.id
-        cliente_nome = (
-            d.get("clienteNome")
-            or (d.get("cliente") or {}).get("nome")
-            or ""
-        )
-        origem = (d.get("origem") or "manual").lower()
-        canal = (d.get("canalEnvio") or "").lower() or "indefinido"
-        total = float(d.get("total") or 0.0)
-
-        total_dia += total
-
-        itens.append(
-            {
-                "id": doc.id,
-                "numero": numero,
-                "clienteNome": cliente_nome,
-                "origem": origem,
-                "canal": canal,
-                "total": total,
-                "createdAt": created_at,
-            }
-        )
-
-    itens.sort(key=lambda x: x.get("numero") or "")
-
-    resumo = {
-        "ok": True,
-        "date": data_br,
-        "tz": tz_str,
-        "count": len(itens),
-        "total": total_dia,
-        "total_fmt": _fmt_brl(total_dia),
-        "items": itens,
-    }
-
-    if dry_run or not EMAIL_SENDER or mailer is None:
-        # Só preview, sem disparar e-mail
-        resumo["email_sent"] = False
-        resumo["reason"] = (
-            "dry_run" if dry_run else "EMAIL_SENDER/mailer não configurados"
-        )
-        return jsonify(resumo), 200
-
-    if not itens:
-        resumo["email_sent"] = False
-        resumo["reason"] = "sem_orcamentos_no_dia"
-        return jsonify(resumo), 200
-
-    # Monta texto simples; HTML pode vir depois se precisar
-    linhas = []
-    for it in itens:
-        linhas.append(
-            f"- {it['numero']} — {it['clienteNome'] or 'Cliente'} — "
-            f"{_fmt_brl(it['total'])} — origem: {it['origem']} — canal: {it['canal']}"
-        )
-
-    body_text = (
-        f"Resumo de orçamentos do dia {data_br}\n\n"
-        f"Total de orçamentos: {len(itens)}\n"
-        f"Somatório: {resumo['total_fmt']}\n\n"
-        + "\n".join(linhas)
-        + "\n\n"
-        + DIGEST_SIGNOFF
+    col = (
+        db.collection("profissionais")
+        .document(uid)
+        .collection("orcamentos")
     )
 
-    subject = f"[MEI Robô] Resumo de orçamentos — {data_br}"
+    try:
+        # createdAt: Timestamp
+        q = (
+            col.where("createdAt", ">=", start_utc)
+               .where("createdAt", "<", end_utc)
+               .order_by("createdAt")
+        )
+        docs = list(q.stream())
+    except Exception:
+        # se der pau, tenta sem filtro (últimos 50) só pra não quebrar
+        logging.exception("[orcamentos_digest] falha na query com filtro de data; tentando fallback")
+        try:
+            docs = list(col.order_by("createdAt", direction="DESCENDING").limit(50).stream())
+        except Exception:
+            logging.exception("[orcamentos_digest] fallback também falhou")
+            return []
 
-    to_email = d.get("emailDestino") if itens else None  # fallback frágil
-    # Por enquanto, se não acharmos e-mail de destino, não enviamos nada
+    items = []
+    for doc in docs:
+        d = doc.to_dict() or {}
+        created = d.get("createdAt")
+        if hasattr(created, "isoformat"):
+            created_iso = created.isoformat()
+        else:
+            created_iso = str(created) if created else None
+
+        cliente_nome = d.get("clienteNome") or (d.get("cliente") or {}).get("nome") or ""
+        cliente_tipo = d.get("clienteTipo") or (d.get("cliente") or {}).get("tipo") or ""
+        canal = d.get("canalEnvio") or d.get("canal") or "whatsapp"
+        origem = d.get("origem") or "manual"
+        numero = d.get("numero") or doc.id
+        total = float(d.get("total") or 0.0)
+        moeda = d.get("moeda") or "BRL"
+
+        items.append({
+            "id": doc.id,
+            "numero": numero,
+            "clienteNome": cliente_nome,
+            "clienteTipo": cliente_tipo,
+            "canal": canal,
+            "origem": origem,
+            "total": total,
+            "total_fmt": _fmt_moeda(total, moeda),
+            "moeda": moeda,
+            "createdAt": created_iso,
+        })
+
+    return items
+
+
+# ---------------- Formatação de linhas & preview ----------------
+def _fmt_item_line(it) -> str:
+    numero = it.get("numero") or it.get("id") or "ORC"
+    cliente = it.get("clienteNome") or "Cliente"
+    canal = it.get("canal") or "whatsapp"
+    origem = it.get("origem") or "manual"
+    total_fmt = it.get("total_fmt") or _fmt_moeda(it.get("total") or 0.0)
+    return f"{numero} — {cliente} — {total_fmt} ({canal}, {origem})"
+
+
+def _build_preview(items, date_str_br, date_extenso):
+    if items:
+        linhas = [_fmt_item_line(it) for it in items]
+        summary = f"{len(items)} orçamento(s):\n" + "\n".join(linhas)
+    else:
+        summary = "Sem orçamentos para hoje."
+
+    header = f"Orçamentos de hoje — {date_str_br}"
+    return {
+        "header": header,
+        "summary": summary,
+        "count": len(items),
+        "items": items,
+        "date_extenso": date_extenso,
+    }
+
+
+def _build_email_bodies(nome_profissional, url_orcamentos, items, date_str, tz):
+    # date_str é YYYY-MM-DD
+    _dt, data_curta_br, data_extenso = _br_date_formats(date_str, tz)
+
+    brand = os.getenv("DIGEST_BRAND_COLOR", "#128C7E")
+    logo = os.getenv("DIGEST_LOGO_URL", "").strip()
+    signoff = os.getenv("DIGEST_SIGNOFF", "Bom trabalho hoje! 🚀")
+
+    # Texto puro
+    if items:
+        linhas = [f"- {_fmt_item_line(it)}" for it in items]
+        blocos = "\n".join(linhas)
+    else:
+        blocos = "- (sem orçamentos para hoje)"
+
+    text_subject = f"🧾 Seus orçamentos de hoje — {data_curta_br}"
+    text_body = (
+        f"Olá, {nome_profissional}!\n\n"
+        f"Aqui estão seus orçamentos de hoje ({data_extenso}):\n\n"
+        f"{blocos}\n\n"
+        f"Abrir a tela de orçamentos: {url_orcamentos}\n\n"
+        f"{signoff}\n"
+        f"— MEI Robô"
+    )
+
+    # HTML simples compatível com clientes de e-mail
+    itens_html = (
+        "".join(f'<li style="margin:0 0 8px 0;">{_fmt_item_line(it)}</li>' for it in items)
+        if items else '<li style="margin:0 0 8px 0;">(sem orçamentos para hoje)</li>'
+    )
+
+    html_body = f"""<!DOCTYPE html>
+<html lang="pt-BR">
+  <body style="margin:0;background:#f6f7f9;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7f9;">
+      <tr><td align="center" style="padding:24px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#fff;border-radius:12px;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#222;">
+          <tr>
+            <td style="text-align:center;padding-bottom:16px;">
+              {f'<img src="{logo}" alt="MEI Robô" style="height:40px;display:inline-block;">' if logo else ''}
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <h2 style="margin:0 0 8px 0;color:{brand};font-size:22px;">🧾 Orçamentos de hoje — {data_curta_br}</h2>
+              <p style="margin:0 0 16px 0;">Olá, <strong>{nome_profissional}</strong>!</p>
+              <ul style="list-style:none;padding-left:0;margin:0 0 16px 0;">
+                {itens_html}
+              </ul>
+              <p style="margin:16px 0;">
+                <a href="{url_orcamentos}"
+                   style="display:inline-block;background:{brand};color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;">
+                   Abrir tela de orçamentos
+                </a>
+              </p>
+              <p style="margin:16px 0 8px 0;color:#333;">{signoff}</p>
+              <hr style="border:none;border-top:1px solid #eee;margin:16px 0;">
+              <p style="margin:0;color:#999;font-size:12px;">
+                Recebeu este e-mail porque seu MEI Robô está ativo. Precisa de ajuda? Responda para {os.getenv("EMAIL_REPLY_TO","suporte@fujicadobrasil.com.br")}.
+              </p>
+            </td>
+          </tr>
+        </table>
+        <div style="max-width:640px;margin-top:12px;color:#9aa0a6;font-size:11px;font-family:Arial,Helvetica,sans-serif;">
+          © {datetime.now().year} MEI Robô — Todos os direitos reservados.
+        </div>
+      </td></tr>
+    </table>
+  </body>
+</html>"""
+
+    return text_subject, text_body, html_body, data_curta_br, data_extenso
+
+
+# ---------------- Route ----------------
+@orcamentos_digest_bp.route("/digest", methods=["GET"])
+def orcamentos_digest():
+    uid = _require_uid(request)
+    if not uid:
+        return jsonify({"erro": "Auth obrigatório"}), 401
+
+    dry_run = _parse_bool(request.args.get("dry_run"), default=True)
+    tz = (request.args.get("tz") or request.args.get("timezone") or "America/Sao_Paulo").strip()
+    date_str = (request.args.get("date") or "").strip() or _today_str_tz(tz)
+
+    # Carrega orçamentos reais do dia
+    items = _list_orcamentos_for(uid, date_str, tz)
+    total = sum(float(it.get("total") or 0.0) for it in items)
+    total_fmt = _fmt_moeda(total)
+
+    # Info de data para preview/e-mail
+    _dt, data_curta_br, data_extenso = _br_date_formats(date_str, tz)
+
+    preview = _build_preview(items, data_curta_br, data_extenso)
+
+    nome_profissional = _get_profissional_name(uid)
+    url_orcamentos = os.getenv(
+        "DIGEST_ORCAMENTOS_URL",
+        "https://meirobo.com.br/pages/orcamentos.html?source=email-digest",
+    )
+    subject, body_text, body_html, data_curta_br, data_extenso = _build_email_bodies(
+        nome_profissional, url_orcamentos, items, date_str, tz
+    )
+
+    logging.info(
+        "[orcamentos_digest] uid=%s dry_run=%s date=%s tz=%s count=%s total=%s",
+        uid, dry_run, date_str, tz, len(items), total
+    )
+
+    # DRY RUN → só mostra o que seria enviado
+    if dry_run:
+        return jsonify({
+            "ok": True,
+            "dry_run": True,
+            "reason": "dry_run",
+            "date": data_curta_br,       # mantém formato pt-BR, ex: 26/11/2025
+            "tz": tz,
+            "count": len(items),
+            "items": items,
+            "total": total,
+            "total_fmt": total_fmt,
+            "email_sent": False,
+            "preview": preview,
+            "preview_text": body_text,
+            "preview_html": body_html,
+        })
+
+    # Envio real de e-mail
+    if not _send_email:
+        return jsonify({
+            "ok": False,
+            "dry_run": False,
+            "reason": "mailer_not_available",
+            "date": data_curta_br,
+            "tz": tz,
+            "error": "mailer_not_available",
+            "detail": "services.mailer.send_email não encontrado."
+        }), 501
+
+    email_from = os.environ.get("EMAIL_SENDER") or os.environ.get("EMAIL_FROM") or ""
+    if not email_from:
+        return jsonify({
+            "ok": False,
+            "dry_run": False,
+            "reason": "email_env_missing",
+            "date": data_curta_br,
+            "tz": tz,
+            "error": "email_env_missing",
+            "detail": "Configure EMAIL_SENDER para envio real."
+        }), 400
+
+    # destinatário: ?to=email@dominio ou header X-Digest-To
+    to_email = request.args.get("to") or request.headers.get("X-Digest-To")
     if not to_email:
-        resumo["email_sent"] = False
-        resumo["reason"] = "email_destino_indefinido"
-        return jsonify(resumo), 200
+        return jsonify({
+            "ok": False,
+            "dry_run": False,
+            "reason": "recipient_missing",
+            "date": data_curta_br,
+            "tz": tz,
+            "error": "recipient_missing",
+            "detail": "Informe destinatário via ?to=email@dominio ou header X-Digest-To."
+        }), 400
+
+    # BCC (env ou header)
+    bcc_header = request.headers.get("X-Digest-Bcc", "")
+    bcc_env = os.getenv("DIGEST_BCC", "")
+    bcc_list = _split_emails(bcc_header) or _split_emails(bcc_env)
+
+    reply_to = os.getenv("EMAIL_REPLY_TO", "").strip() or None
 
     try:
-        mailer.send_email(
-            to_email=to_email,
+        _send_email(
+            to=to_email,
             subject=subject,
             text=body_text,
-            html=None,  # manter simples no v1.0
-            sender=EMAIL_SENDER,
-            reply_to=EMAIL_REPLY_TO or None,
-            bcc=[x.strip() for x in DIGEST_BCC.split(",") if x.strip()] or None,
+            html=body_html,
+            from_email=email_from,
+            bcc=bcc_list,
+            reply_to=reply_to,
+            disable_click_tracking=True,  # igual agenda: link direto
         )
-        resumo["email_sent"] = True
-        resumo["reason"] = "ok"
-    except Exception as e:  # pragma: no cover
-        log.error("[orcamentos_digest] erro ao enviar e-mail: %s", e)
-        resumo["email_sent"] = False
-        resumo["reason"] = "erro_envio_email"
-        resumo["error_detail"] = str(e)
+    except TypeError:
+        # fallback simples
+        _send_email(
+            to=to_email,
+            subject=subject,
+            text=body_text,
+            from_email=email_from,
+        )
+    except Exception as e:
+        logging.exception("[orcamentos_digest] send failed: %s", e)
+        return jsonify({
+            "ok": False,
+            "dry_run": False,
+            "reason": "send_failed",
+            "date": data_curta_br,
+            "tz": tz,
+            "error": "send_failed",
+            "detail": str(e),
+        }), 500
 
-    return jsonify(resumo), 200
+    logging.info("[orcamentos_digest] sent to=%s bcc=%s", to_email, bcc_list)
+    return jsonify({
+        "ok": True,
+        "dry_run": False,
+        "reason": "sent",
+        "date": data_curta_br,
+        "tz": tz,
+        "count": len(items),
+        "total": total,
+        "total_fmt": total_fmt,
+        "sent_to": to_email,
+        "bcc": bcc_list,
+        "email_sent": True,
+    })
