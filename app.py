@@ -1016,7 +1016,7 @@ def api_cupons_ativar_legado():
         }, merge=True)
         return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200
     except Exception as e:
-        return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"), 500
+        return jsonify({"erro": f"ativar_cupom_legado[app]: {str(e)}"}), 500
 
 # =====================================
 # Cadastro / ativar-cliente + CNPJ availability (ajustado)
