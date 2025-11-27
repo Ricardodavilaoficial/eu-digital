@@ -73,10 +73,8 @@ def _snapshot_publico_default():
 def _snapshot_publico_from_firestore(uid: str | None):
     """
     Lê do Firestore o perfil público (nome que aparece para os clientes).
-    Procura em:
-      1) profissionais/{uid}/config/comunicacao
-      2) profissionais/{uid}/config/conta
-      3) profissionais/{uid} (branding/estiloComunicacao/perfilProfissional)
+    Procura primeiro em profissionais/{uid}/config/* e também no doc principal
+    profissionais/{uid}, dando prioridade ao que o MEI escolheu (especialidades).
     Se não achar nada, cai no default.
     """
     base_env = _snapshot_publico_default()
@@ -85,72 +83,99 @@ def _snapshot_publico_from_firestore(uid: str | None):
         return base_env
 
     try:
-        col_cfg = (
-            db.collection("profissionais")
-              .document(uid)
-              .collection("config")
-        )
+        # ----- 1) Tenta ler config/comunicacao ou config/conta -----
+        data_cfg = None
+        try:
+            col_cfg = (
+                db.collection("profissionais")
+                  .document(uid)
+                  .collection("config")
+            )
+            doc = col_cfg.document("comunicacao").get()
+            data_cfg = doc.to_dict() if doc.exists else None
 
-        # 1) Tentativa principal: config/comunicacao
-        doc = col_cfg.document("comunicacao").get()
-        data = doc.to_dict() if doc.exists else None
+            if not data_cfg:
+                doc2 = col_cfg.document("conta").get()
+                data_cfg = doc2.to_dict() if doc2.exists else None
+        except Exception:
+            logging.exception("conta_status: erro ao ler config/* para uid=%s", uid)
+            data_cfg = None
 
-        # 2) Fallback: config/conta
-        if not data:
-            doc2 = col_cfg.document("conta").get()
-            data = doc2.to_dict() if doc2.exists else None
+        # ----- 2) Lê doc principal profissionais/{uid} -----
+        data_prof = None
+        try:
+            doc_prof = (
+                db.collection("profissionais")
+                  .document(uid)
+                  .get()
+            )
+            data_prof = doc_prof.to_dict() if doc_prof.exists else None
+        except Exception:
+            logging.exception("conta_status: erro ao ler profissionais/%s", uid)
+            data_prof = None
 
-        # 3) Fallback: doc raiz profissionais/{uid}
-        if not data:
-            root_doc = db.collection("profissionais").document(uid).get()
-            root = root_doc.to_dict() if root_doc.exists else None
-
-            if isinstance(root, dict):
-                data = {}
-                branding = root.get("branding") or {}
-                estilo = root.get("estiloComunicacao") or {}
-                perfil = root.get("perfilProfissional") or {}
-
-                # Nome que aparece pros clientes:
-                # 1) branding.public_brand
-                # 2) estiloComunicacao.display_name
-                public_brand = branding.get("public_brand")
-                display_name = estilo.get("display_name")
-
-                if public_brand:
-                    data["nomePublico"] = public_brand
-                elif display_name:
-                    data["nomePublico"] = display_name
-
-                # Segmento público: usa o segmento profissional do MEI
-                seg = perfil.get("segmento")
-                if seg:
-                    data["segmentoPublico"] = seg
-
-                # descriçãoPublica ainda pode ficar vazia (usa base_env depois)
-
-        if not data:
+        if not data_cfg and not data_prof:
+            # Nada específico → volta pro default
             return base_env
 
+        # Mapas auxiliares do doc principal
+        branding = {}
+        estilo = {}
+        perfil = {}
+
+        if isinstance(data_prof, dict):
+            branding = data_prof.get("branding") or {}
+            if not isinstance(branding, dict):
+                branding = {}
+
+            estilo = data_prof.get("estiloComunicacao") or {}
+            if not isinstance(estilo, dict):
+                estilo = {}
+
+            perfil = data_prof.get("perfilProfissional") or {}
+            if not isinstance(perfil, dict):
+                perfil = {}
+
+        # Dados de config (se existirem)
+        data = data_cfg or {}
+
+        # ----- nomePublico -----
         nome_publico = (
             data.get("nomePublico")
             or data.get("nome_publico")
             or data.get("displayName")
             or data.get("nomeNegocio")
             or data.get("nome_negocio")
+            or branding.get("public_brand")
+            or estilo.get("display_name")
             or base_env["nomePublico"]
         )
 
+        # ----- segmentoPublico (especialidades primeiro) -----
         segmento_publico = (
             data.get("segmentoPublico")
             or data.get("segmento_publico")
-            or data.get("descricaoPublica")
-            or data.get("descricao_publica")
             or data.get("nicho")
             or data.get("atividade")
-            or base_env["segmentoPublico"]
         )
 
+        if not segmento_publico and perfil:
+            espec = perfil.get("especializacoes") or []
+            if isinstance(espec, list):
+                espec_clean = [str(e).strip() for e in espec if str(e).strip()]
+            else:
+                espec_clean = [str(espec).strip()] if str(espec).strip() else []
+
+            if espec_clean:
+                # Ex.: "Barbeiro / Cabelereiro"
+                segmento_publico = " / ".join(espec_clean[:2])
+            else:
+                segmento_publico = perfil.get("segmento")
+
+        if not segmento_publico:
+            segmento_publico = base_env["segmentoPublico"]
+
+        # ----- descricaoPublica -----
         descricao_publica = (
             data.get("descricaoPublica")
             or data.get("descricao_publica")
