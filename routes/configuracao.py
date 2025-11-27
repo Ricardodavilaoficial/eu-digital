@@ -235,8 +235,18 @@ def ler_configuracao():
         perfil_prof   = (data.get("perfilProfissional") or {}) if isinstance(data.get("perfilProfissional"), dict) else {}
         voz_clonada   = data.get("vozClonada") or {}
 
-        estilo        = (data.get("estiloComunicacao") or {}) if isinstance(data.get("estiloComunicacao"), dict) else {}
         branding      = (data.get("branding") or {}) if isinstance(data.get("branding"), dict) else {}
+        estilo        = (data.get("estiloComunicacao") or {}) if isinstance(data.get("estiloComunicacao"), dict) else {}
+
+        public_brand  = _first_non_empty(
+            branding.get("public_brand"),
+            dados_basicos.get("public_brand"),
+        )
+        display_nm    = _first_non_empty(
+            estilo.get("display_name"),
+            dados_basicos.get("display_name"),
+            data.get("nome"),
+        )
 
         # consolidação tolerante
         nome      = _first_non_empty(data.get("nome"),      dados_basicos.get("nome"))
@@ -263,13 +273,13 @@ def ler_configuracao():
             "segmento": segmento or "",
             "legal_name": legal_nm or "",
             "trade_name": trade_nm or "",
+            "public_brand": public_brand or "",
+            "display_name": display_nm or "",
             # player no front:
             "vozClonadaUrl": (voz_clonada.get("arquivoUrl") or ""),
             "vozClonada": voz_clonada or None,
             # NOVO: infos de branding/MEI para o ativar-config
             "branding_choice": branding.get("branding_choice") or "",
-            "public_brand": branding.get("public_brand") or "",
-            "display_name": estilo.get("display_name") or "",
         }
 
         # especializações (esp1/esp2) só pra enriquecer, se existirem
@@ -414,3 +424,4 @@ def salvar_configuracao():
         resp["vozUrl"] = voz_url
 
     return jsonify(resp), 200
+
