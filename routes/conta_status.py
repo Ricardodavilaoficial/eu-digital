@@ -52,6 +52,96 @@ def _snapshot_empresa():
     }
 
 
+# ============================================================
+# 1) NOVO BLOCO — PERFIL PÚBLICO DEFAULT
+# ============================================================
+def _snapshot_publico_default():
+    """
+    Perfil público do MEI (o que aparece para os clientes).
+    Pode ser overrideado pelo Firestore.
+    """
+    return {
+        "nomePublico": os.getenv("SNAP_PUBLIC_NAME", "Seu negócio"),
+        "segmentoPublico": os.getenv("SNAP_PUBLIC_SEGMENTO", "Profissional MEI"),
+        "descricaoPublica": os.getenv("SNAP_PUBLIC_DESC", ""),
+    }
+
+
+# ============================================================
+# 2) NOVO BLOCO — PERFIL PÚBLICO DO FIRESTORE
+# ============================================================
+def _snapshot_publico_from_firestore(uid: str | None):
+    """
+    Lê do Firestore o perfil público (nome que aparece pros clientes).
+    Procura em profissionais/{uid}/config/comunicacao e depois em /config/conta.
+    Se não achar nada, cai no default.
+    """
+    base_env = _snapshot_publico_default()
+
+    if not uid or db is None:
+        return base_env
+
+    try:
+        col_cfg = (
+            db.collection("profissionais")
+              .document(uid)
+              .collection("config")
+        )
+
+        # 1) Tentativa principal: config/comunicacao
+        doc = col_cfg.document("comunicacao").get()
+        data = doc.to_dict() if doc.exists else None
+
+        # 2) Fallback: config/conta
+        if not data:
+            doc2 = col_cfg.document("conta").get()
+            data = doc2.to_dict() if doc2.exists else None
+
+        if not data:
+            return base_env
+
+        nome_publico = (
+            data.get("nomePublico")
+            or data.get("nome_publico")
+            or data.get("displayName")
+            or data.get("nomeNegocio")
+            or data.get("nome_negocio")
+            or base_env["nomePublico"]
+        )
+
+        segmento_publico = (
+            data.get("segmentoPublico")
+            or data.get("segmento_publico")
+            or data.get("descricaoPublica")
+            or data.get("descricao_publica")
+            or data.get("nicho")
+            or data.get("atividade")
+            or base_env["segmentoPublico"]
+        )
+
+        descricao_publica = (
+            data.get("descricaoPublica")
+            or data.get("descricao_publica")
+            or data.get("mensagemBoasVindas")
+            or data.get("headline")
+            or base_env["descricaoPublica"]
+        )
+
+        return {
+            "nomePublico": nome_publico,
+            "segmentoPublico": segmento_publico,
+            "descricaoPublica": descricao_publica,
+        }
+
+    except Exception:
+        logging.exception("conta_status: erro ao ler perfil público para uid=%s", uid)
+        return base_env
+
+
+# ============================================================
+# 3) A partir daqui o arquivo segue igual como estava
+# ============================================================
+
 def _resolve_uid():
     """
     Resolve o UID do profissional a partir de:
@@ -64,14 +154,14 @@ def _resolve_uid():
     if uid:
         return uid
 
-    # 2) uid no contexto global (se algum auth já setou)
+    # 2) uid no contexto global
     try:
         if hasattr(g, "uid") and g.uid:
             return g.uid
     except Exception:
         pass
 
-    # 3) tentar extrair do Bearer via helper
+    # 3) Bearer
     if get_uid_from_bearer:
         try:
             uid = get_uid_from_bearer(request)  # type: ignore[arg-type]
@@ -83,12 +173,11 @@ def _resolve_uid():
     return None
 
 
+
 def _snapshot_empresa_from_firestore(uid: str):
     """
-    Tenta montar o snapshot da empresa a partir do Firestore, usando o mesmo
-    formato esperado por ativar-config.html (empresa.cnpj, razaoSocial, etc.).
-
-    Se não conseguir (erro ou doc inexistente), devolve _snapshot_empresa().
+    Tenta montar o snapshot da empresa a partir do Firestore.
+    Se não conseguir, devolve _snapshot_empresa().
     """
     base_env = _snapshot_empresa()
 
@@ -170,11 +259,9 @@ def _snapshot_empresa_from_firestore(uid: str):
         # =============  PATCH DO CNAE (NOVO BLOCO) ============
         # ======================================================
 
-        # CNAE principal (prioriza formato oficial do CNPJ)
         cnae_codigo = None
         cnae_desc = None
 
-        # 1) Muitos serviços usam "atividade_principal": [{ code, text }]
         atividade_principal = (
             data.get("atividade_principal")
             or data.get("atividadePrincipal")
@@ -211,33 +298,23 @@ def _snapshot_empresa_from_firestore(uid: str):
                 or cnae_desc
             )
 
-        # 3) fallback ambiente
         if not cnae_codigo:
             cnae_codigo = base_env["cnaePrincipal"]["codigo"]
         if not cnae_desc:
             cnae_desc = base_env["cnaePrincipal"]["descricao"]
 
         # ------------------------------------------------------
-        # Ajuste de coerência:
-        # Se o CNPJ já é real (diferente do mock), mas razão social / fantasia / CNAE
-        # ainda estão com os valores de fallback ("Nome Ltda", "Nome", "Cabeleireiros..."),
-        # preferimos NÃO mostrar esses valores genéricos.
+        # Ajuste coerência:
         # ------------------------------------------------------
         cnpj_base = base_env["cnpj"]
         razao_base = base_env["razaoSocial"]
         fantasia_base = base_env["nomeFantasia"]
-        # Deixamos o CNAE como está, para servir de rótulo amigável no topo
 
         if cnpj and cnpj != cnpj_base:
             if razao == razao_base:
                 razao = None
             if fantasia == fantasia_base:
                 fantasia = None
-            # NÃO zeramos cnae_desc/cnae_codigo aqui
-
-        # ======================================================
-        # ===================  FIM DO PATCH  ===================
-        # ======================================================
 
         return {
             "cnpj": cnpj,
@@ -256,6 +333,7 @@ def _snapshot_empresa_from_firestore(uid: str):
     except Exception:
         logging.exception("conta_status: erro ao ler empresa do Firestore para uid=%s", uid)
         return base_env
+
 
 
 def _vinculo_dict(score: int, limiar: int):
@@ -280,6 +358,9 @@ def stripe_gate():
     return _no_store(resp)
 
 
+# ============================================================
+# 4) AJUSTE FINAL — HANDLER /api/conta/status
+# ============================================================
 @bp_conta.get("/api/conta/status")
 def conta_status():
     limiar = _env_int("AUTOPASS_LIMIAR", 75)
@@ -288,13 +369,16 @@ def conta_status():
     uid = _resolve_uid()
     if uid:
         empresa = _snapshot_empresa_from_firestore(uid)
+        publico = _snapshot_publico_from_firestore(uid)
     else:
         empresa = _snapshot_empresa()
+        publico = _snapshot_publico_from_firestore(None)
 
     vinculo = _vinculo_dict(score, limiar)
 
     resp = make_response(jsonify({
         "empresa": empresa,
+        "publico": publico,
         "vinculo": vinculo
     }), 200)
     return _no_store(resp)
