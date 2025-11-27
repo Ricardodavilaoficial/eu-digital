@@ -226,17 +226,14 @@ def _snapshot_empresa_from_firestore(uid: str):
         cnpj_base = base_env["cnpj"]
         razao_base = base_env["razaoSocial"]
         fantasia_base = base_env["nomeFantasia"]
-        cnae_desc_base = base_env["cnaePrincipal"]["descricao"]
-        cnae_cod_base = base_env["cnaePrincipal"]["codigo"]
+        # Deixamos o CNAE como está, para servir de rótulo amigável no topo
 
         if cnpj and cnpj != cnpj_base:
             if razao == razao_base:
                 razao = None
             if fantasia == fantasia_base:
                 fantasia = None
-            if cnae_desc == cnae_desc_base and cnae_codigo == cnae_cod_base:
-                cnae_desc = None
-                cnae_codigo = None
+            # NÃO zeramos cnae_desc/cnae_codigo aqui
 
         # ======================================================
         # ===================  FIM DO PATCH  ===================
