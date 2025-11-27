@@ -235,6 +235,9 @@ def ler_configuracao():
         perfil_prof   = (data.get("perfilProfissional") or {}) if isinstance(data.get("perfilProfissional"), dict) else {}
         voz_clonada   = data.get("vozClonada") or {}
 
+        estilo        = (data.get("estiloComunicacao") or {}) if isinstance(data.get("estiloComunicacao"), dict) else {}
+        branding      = (data.get("branding") or {}) if isinstance(data.get("branding"), dict) else {}
+
         # consolidação tolerante
         nome      = _first_non_empty(data.get("nome"),      dados_basicos.get("nome"))
         email     = _first_non_empty(data.get("email"),     dados_basicos.get("email"))
@@ -250,6 +253,7 @@ def ler_configuracao():
         # Perfil público calculado (comoAparecer + segmento)
         perfil_publico = _compute_perfil_publico(data)
 
+        # NOVO bloco flat + especializações (esp1/esp2)
         flat = {
             "uid": uid,
             "nome": nome or "",
@@ -262,10 +266,17 @@ def ler_configuracao():
             # player no front:
             "vozClonadaUrl": (voz_clonada.get("arquivoUrl") or ""),
             "vozClonada": voz_clonada or None,
-            # helpers adicionais pro front, se quiser usar depois
-            "public_brand_effective": perfil_publico.get("comoAparecer", ""),
-            "perfil_segmento": perfil_publico.get("segmento", ""),
+            # NOVO: infos de branding/MEI para o ativar-config
+            "branding_choice": branding.get("branding_choice") or "",
+            "public_brand": branding.get("public_brand") or "",
+            "display_name": estilo.get("display_name") or "",
         }
+
+        # especializações (esp1/esp2) só pra enriquecer, se existirem
+        especs = perfil_prof.get("especializacoes") or []
+        if isinstance(especs, (list, tuple)):
+            flat["esp1"] = especs[0] if len(especs) > 0 else ""
+            flat["esp2"] = especs[1] if len(especs) > 1 else ""
 
         # IMPORTANTE: mantemos "data" igual, só acrescentamos "perfil" no topo
         return jsonify({"ok": True, "data": flat, "perfil": perfil_publico}), 200
