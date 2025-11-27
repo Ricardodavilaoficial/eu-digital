@@ -149,6 +149,60 @@ def _read_current_cnpj(uid: str):
     cnpj_raw = _first_non_empty(data.get("cnpj"), dados_basicos.get("cnpj"))
     return _normalize_cnpj(cnpj_raw)
 
+def _compute_perfil_publico(data: dict) -> dict:
+    """
+    Calcula um "perfil público" a partir do que já temos salvo:
+      - branding_choice + public_brand
+      - legal_name / trade_name
+      - segmento profissional
+    Isso é usado pela tela ativar-config.html para mostrar:
+      - Como você vai aparecer no MEI Robô
+      - Segmento
+    """
+    dados_basicos = data.get("dadosBasicos") or {}
+    perfil_prof = data.get("perfilProfissional") or {}
+    branding = data.get("branding") or {}
+
+    legal_nm = _first_non_empty(
+        data.get("legal_name"),
+        dados_basicos.get("legal_name"),
+        dados_basicos.get("razaoSocial"),
+        dados_basicos.get("razao_social"),
+    )
+    trade_nm = _first_non_empty(
+        data.get("trade_name"),
+        dados_basicos.get("trade_name"),
+        dados_basicos.get("nomeFantasia"),
+        dados_basicos.get("nome_fantasia"),
+    )
+
+    choice = (branding.get("branding_choice") or "").strip()
+    public_brand = (branding.get("public_brand") or "").strip()
+
+    # Regra de comoAparecer:
+    # 1) custom + public_brand
+    # 2) trade_name
+    # 3) legal_name
+    # 4) fallback para nome básico
+    if choice == "custom" and public_brand:
+        como = public_brand
+    elif choice == "trade_name" and trade_nm:
+        como = trade_nm
+    elif choice == "legal_name" and legal_nm:
+        como = legal_nm
+    else:
+        como = _first_non_empty(public_brand, trade_nm, legal_nm, dados_basicos.get("nome"))
+
+    segmento_escolhido = _first_non_empty(
+        perfil_prof.get("segmento"),
+        data.get("segmento"),
+    )
+
+    return {
+        "comoAparecer": como or "",
+        "segmento": segmento_escolhido or "",
+    }
+
 # ---------------------------
 # GET /api/configuracao
 # ---------------------------
@@ -193,6 +247,9 @@ def ler_configuracao():
         legal_nm  = _first_non_empty(data.get("legal_name"),  dados_basicos.get("legal_name"))
         trade_nm  = _first_non_empty(data.get("trade_name"),  dados_basicos.get("trade_name"))
 
+        # Perfil público calculado (comoAparecer + segmento)
+        perfil_publico = _compute_perfil_publico(data)
+
         flat = {
             "uid": uid,
             "nome": nome or "",
@@ -205,9 +262,13 @@ def ler_configuracao():
             # player no front:
             "vozClonadaUrl": (voz_clonada.get("arquivoUrl") or ""),
             "vozClonada": voz_clonada or None,
+            # helpers adicionais pro front, se quiser usar depois
+            "public_brand_effective": perfil_publico.get("comoAparecer", ""),
+            "perfil_segmento": perfil_publico.get("segmento", ""),
         }
 
-        return jsonify({"ok": True, "data": flat}), 200
+        # IMPORTANTE: mantemos "data" igual, só acrescentamos "perfil" no topo
+        return jsonify({"ok": True, "data": flat, "perfil": perfil_publico}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
 
@@ -232,6 +293,10 @@ def salvar_configuracao():
     segmento   = (request.form.get('segmento') or "").strip()
     esp1       = (request.form.get('esp1') or "").strip()
     esp2       = (request.form.get('esp2') or "").strip()
+
+    # 👇 NOVO: nomes legais/fantasia achatados
+    legal_name = (request.form.get('legal_name') or "").strip()
+    trade_name = (request.form.get('trade_name') or "").strip()
 
     formalidade = (request.form.get('formalidade') or "media").strip()
     emojis      = (request.form.get('emojis') or "sim").strip()
@@ -310,6 +375,11 @@ def salvar_configuracao():
             "branding_choice": branding_choice,
             "public_brand": public_brand,
         },
+        # 👇 NOVO: campos achatados para facilitar outras rotas
+        "cnpj": cnpj_new or "",
+        "legal_name": legal_name,
+        "trade_name": trade_name,
+        "segmento": segmento,
         # Mantemos um status genérico; ativação real depende de pagamento + voz processada
         "statusAtivacao": "aguardando-voz",
     }
