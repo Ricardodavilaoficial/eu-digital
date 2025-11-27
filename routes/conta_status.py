@@ -72,8 +72,11 @@ def _snapshot_publico_default():
 # ============================================================
 def _snapshot_publico_from_firestore(uid: str | None):
     """
-    Lê do Firestore o perfil público (nome que aparece pros clientes).
-    Procura em profissionais/{uid}/config/comunicacao e depois em /config/conta.
+    Lê do Firestore o perfil público (nome que aparece para os clientes).
+    Procura em:
+      1) profissionais/{uid}/config/comunicacao
+      2) profissionais/{uid}/config/conta
+      3) profissionais/{uid} (branding/estiloComunicacao/perfilProfissional)
     Se não achar nada, cai no default.
     """
     base_env = _snapshot_publico_default()
@@ -96,6 +99,35 @@ def _snapshot_publico_from_firestore(uid: str | None):
         if not data:
             doc2 = col_cfg.document("conta").get()
             data = doc2.to_dict() if doc2.exists else None
+
+        # 3) Fallback: doc raiz profissionais/{uid}
+        if not data:
+            root_doc = db.collection("profissionais").document(uid).get()
+            root = root_doc.to_dict() if root_doc.exists else None
+
+            if isinstance(root, dict):
+                data = {}
+                branding = root.get("branding") or {}
+                estilo = root.get("estiloComunicacao") or {}
+                perfil = root.get("perfilProfissional") or {}
+
+                # Nome que aparece pros clientes:
+                # 1) branding.public_brand
+                # 2) estiloComunicacao.display_name
+                public_brand = branding.get("public_brand")
+                display_name = estilo.get("display_name")
+
+                if public_brand:
+                    data["nomePublico"] = public_brand
+                elif display_name:
+                    data["nomePublico"] = display_name
+
+                # Segmento público: usa o segmento profissional do MEI
+                seg = perfil.get("segmento")
+                if seg:
+                    data["segmentoPublico"] = seg
+
+                # descriçãoPublica ainda pode ficar vazia (usa base_env depois)
 
         if not data:
             return base_env
@@ -171,7 +203,6 @@ def _resolve_uid():
             logging.exception("conta_status: falha ao extrair uid do bearer")
 
     return None
-
 
 
 def _snapshot_empresa_from_firestore(uid: str):
@@ -298,10 +329,16 @@ def _snapshot_empresa_from_firestore(uid: str):
                 or cnae_desc
             )
 
-        if not cnae_codigo:
-            cnae_codigo = base_env["cnaePrincipal"]["codigo"]
-        if not cnae_desc:
-            cnae_desc = base_env["cnaePrincipal"]["descricao"]
+        # Se não achamos NENHUM CNAE específico nos dados da empresa,
+        # é melhor deixar em branco do que usar o SNAP_* "genérico/mentiroso".
+        if not cnae_codigo and not cnae_desc:
+            cnae_codigo = None
+            cnae_desc = None
+        else:
+            if not cnae_codigo:
+                cnae_codigo = base_env["cnaePrincipal"]["codigo"]
+            if not cnae_desc:
+                cnae_desc = base_env["cnaePrincipal"]["descricao"]
 
         # ------------------------------------------------------
         # Ajuste coerência:
@@ -333,7 +370,6 @@ def _snapshot_empresa_from_firestore(uid: str):
     except Exception:
         logging.exception("conta_status: erro ao ler empresa do Firestore para uid=%s", uid)
         return base_env
-
 
 
 def _vinculo_dict(score: int, limiar: int):
@@ -382,3 +418,4 @@ def conta_status():
         "vinculo": vinculo
     }), 200)
     return _no_store(resp)
+
