@@ -231,7 +231,7 @@ def listar_acervo():
         docs = col_ref.order_by("criadoEm").limit(100).stream()
         itens: List[Dict[str, Any]] = []
         for d in docs:
-            data = d.to_dict() or {}
+            data = d.to_dict() or []
             data["id"] = d.id
             # sanity mínima: alguns campos default
             data.setdefault("habilitado", True)
@@ -363,9 +363,16 @@ def criar_acervo_upload():
         except Exception:
             logging.exception("Falha ao atualizar meta do acervo (upload)")
 
-        # resposta com o doc básico
-        doc_data["id"] = acervo_id
-        return _no_store(jsonify({"item": doc_data})), 201
+        # reidrata do Firestore para remover Sentinels (SERVER_TIMESTAMP)
+        try:
+            snap = doc_ref.get()
+            out = snap.to_dict() or {}
+            out["id"] = acervo_id
+        except Exception:
+            logging.exception("Falha ao reidratar doc de acervo (upload); usando doc_data em memória")
+            out = {**doc_data, "id": acervo_id}
+
+        return _no_store(jsonify({"item": out})), 201
 
     except Exception as e:
         logging.exception("Erro ao criar item de acervo via upload")
@@ -485,8 +492,16 @@ def criar_acervo_texto():
         except Exception:
             logging.exception("Falha ao atualizar meta do acervo (texto)")
 
-        doc_data["id"] = acervo_id
-        return _no_store(jsonify({"item": doc_data})), 201
+        # reidrata do Firestore para remover Sentinels (SERVER_TIMESTAMP)
+        try:
+            snap = doc_ref.get()
+            out = snap.to_dict() or {}
+            out["id"] = acervo_id
+        except Exception:
+            logging.exception("Falha ao reidratar doc de acervo (texto); usando doc_data em memória")
+            out = {**doc_data, "id": acervo_id}
+
+        return _no_store(jsonify({"item": out})), 201
 
     except Exception as e:
         logging.exception("Erro ao criar item de acervo via texto")
