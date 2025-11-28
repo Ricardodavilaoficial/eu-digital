@@ -16,7 +16,6 @@
 from flask import Blueprint, request, jsonify
 import os
 import logging
-import inspect
 from typing import List, Dict, Any, Optional
 
 bp_acervo = Blueprint("bp_acervo", __name__)
@@ -33,11 +32,11 @@ try:
 except Exception:  # pragma: no cover
     get_uid_from_bearer = None  # type: ignore
 
-# Storage helper oficial do projeto
+# Storage helper oficial do projeto (acervo)
 try:
-    from services.storage_gcs import upload_bytes_and_get_url  # type: ignore
+    from services.storage_gcs import upload_acervo_bytes_and_get_url  # type: ignore
 except Exception:  # pragma: no cover
-    upload_bytes_and_get_url = None  # type: ignore
+    upload_acervo_bytes_and_get_url = None  # type: ignore
 
 # Engine de consulta do acervo (mini-RAG)
 try:
@@ -65,13 +64,13 @@ def _allow_debug_uid() -> bool:
 
 
 def _get_uid() -> Optional[str]:
-    \"\"\"
+    """
     Recupera o uid do dono do acervo.
 
     Preferência:
       1) Authorization: Bearer <idToken Firebase> (mesma lógica do restante do projeto)
       2) X-Debug-UID, se ALLOW_DEBUG_UID=1 (para testes internos)
-    \"\"\"
+    """
     # 1) Bearer (usa o helper oficial, tentando as duas assinaturas possíveis)
     if get_uid_from_bearer is not None:
         auth_header = request.headers.get("Authorization", "")
@@ -102,9 +101,9 @@ def _get_uid() -> Optional[str]:
 
 
 def _acervo_collection(uid: str):
-    \"\"\"
+    """
     Retorna a referência da coleção profissionais/{uid}/acervo.
-    \"\"\"
+    """
     if db is None:
         raise RuntimeError("Firestore (services.db) não está configurado.")
     return db.collection("profissionais").document(uid).collection("acervo")
@@ -114,7 +113,7 @@ def _parse_tags(raw: str | None) -> List[str]:
     if not raw:
         return []
     # aceita vírgula ou ponto-e-vírgula
-    parts = [p.strip() for p in raw.replace(";", \",\").split(\",\")]
+    parts = [p.strip() for p in raw.replace(";", ",").split(",")]
     return [p for p in parts if p]
 
 
@@ -125,26 +124,26 @@ def _safe_bool(val, default: bool) -> bool:
         return val
     if isinstance(val, str):
         v = val.strip().lower()
-        if v in (\"1\", \"true\", \"sim\", \"yes\", \"y\", \"on\"):
+        if v in ("1", "true", "sim", "yes", "y", "on"):
             return True
-        if v in (\"0\", \"false\", \"nao\", \"não\", \"no\", \"off\"):
+        if v in ("0", "false", "nao", "não", "no", "off"):
             return False
     return default
 
 
 def _total_limit_bytes() -> int:
-    \"\"\"
+    """
     Limite total de bytes do acervo por MEI.
     Usa ACERVO_MAX_TOTAL_BYTES ou padrão de 50 MB.
-    \"\"\"
-    return _env_int(\"ACERVO_MAX_TOTAL_BYTES\", 50 * 1024 * 1024)
+    """
+    return _env_int("ACERVO_MAX_TOTAL_BYTES", 50 * 1024 * 1024)
 
 
 def _acervo_meta_doc(uid: str):
-    \"\"\"
+    """
     Documento de meta do acervo:
       profissionais/{uid}/acervoMeta/meta
-    \"\"\"
+    """
     if db is None:
         raise RuntimeError("Firestore (services.db) não está configurado.")
     return (
@@ -156,11 +155,11 @@ def _acervo_meta_doc(uid: str):
 
 
 def _get_acervo_meta(uid: str) -> Dict[str, Any]:
-    \"\"\"
+    """
     Recupera (ou cria) o resumo de uso do acervo do MEI:
       - totalBytes: soma de tamanhoBytes de todos os itens
       - maxBytes: limite permitido
-    \"\"\"
+    """
     from google.cloud import firestore  # type: ignore
 
     ref = _acervo_meta_doc(uid)
@@ -184,10 +183,10 @@ def _get_acervo_meta(uid: str) -> Dict[str, Any]:
 
 
 def _update_acervo_meta(uid: str, delta_bytes: int) -> None:
-    \"\"\"
+    """
     Atualiza totalBytes do acervo do MEI com segurança de transação.
     delta_bytes pode ser positivo (upload) ou negativo (delete).
-    \"\"\"
+    """
     from google.cloud import firestore  # type: ignore
 
     ref = _acervo_meta_doc(uid)
@@ -213,75 +212,14 @@ def _update_acervo_meta(uid: str, delta_bytes: int) -> None:
     db.transaction()(_txn)
 
 
-def _upload_gcs_compat(raw_bytes: bytes, dest_path: str, mimetype: str) -> str:
-    \"\"\"
-    Wrapper de compatibilidade para upload_bytes_and_get_url.
-
-    Em vez de chutar o nome dos parâmetros, inspeciona a assinatura real
-    e monta um dict de kwargs com os nomes corretos (buf, dest_path, mimetype etc.).
-    \"\"\"
-    if upload_bytes_and_get_url is None:
-        raise RuntimeError("storage_gcs.upload_bytes_and_get_url não configurado")
-
-    sig = inspect.signature(upload_bytes_and_get_url)
-    params = [
-        p
-        for p in sig.parameters.values()
-        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
-    ]
-
-    buf_name: Optional[str] = None
-    path_name: Optional[str] = None
-    mime_name: Optional[str] = None
-
-    # 1) Tenta identificar pelos nomes
-    for p in params:
-        name = p.name
-        lname = name.lower()
-
-        if buf_name is None and any(k in lname for k in ("buf", "bytes", "data", "content")):
-            buf_name = name
-            continue
-
-        if mime_name is None and any(k in lname for k in ("mime", "mimetype", "content_type")):
-            mime_name = name
-            continue
-
-        if path_name is None and any(k in lname for k in ("path", "name", "filename", "blob", "object")):
-            path_name = name
-            continue
-
-    # 2) Fallback por posição (primeiro = buf, segundo = path, terceiro = mime)
-    idx = 0
-    for p in params:
-        if buf_name is None and idx == 0:
-            buf_name = p.name
-        elif path_name is None and idx == 1:
-            path_name = p.name
-        elif mime_name is None and idx == 2:
-            mime_name = p.name
-        idx += 1
-
-    if buf_name is None:
-        raise RuntimeError("Não foi possível identificar parâmetro 'buf' em upload_bytes_and_get_url")
-
-    kwargs: Dict[str, Any] = {buf_name: raw_bytes}
-    if path_name is not None:
-        kwargs[path_name] = dest_path
-    if mime_name is not None:
-        kwargs[mime_name] = mimetype
-
-    return upload_bytes_and_get_url(**kwargs)  # type: ignore[misc]
-
-
 # -------- endpoints --------
 
 @bp_acervo.route("/api/acervo", methods=["GET"])
 def listar_acervo():
-    \"\"\"
+    """
     Lista itens de acervo do MEI logado.
     Filtro v1: todos; no futuro podemos filtrar por tag, tipo, habilitado etc.
-    \"\"\"
+    """
     uid = _get_uid()
     if not uid:
         return _no_store(jsonify({"error": "unauthenticated"})), 401
@@ -309,7 +247,7 @@ def listar_acervo():
 
 @bp_acervo.route("/api/acervo/upload", methods=["POST"])
 def criar_acervo_upload():
-    \"\"\"
+    """
     Cria item de acervo a partir de upload de arquivo.
     Espera multipart/form-data:
       - file: arquivo
@@ -317,12 +255,12 @@ def criar_acervo_upload():
       - tags: opcional ("tag1, tag2; tag3")
       - prioridade: opcional (int)
       - habilitado: opcional (bool-like)
-    \"\"\"
+    """
     uid = _get_uid()
     if not uid:
         return _no_store(jsonify({"error": "unauthenticated"})), 401
 
-    if upload_bytes_and_get_url is None:
+    if upload_acervo_bytes_and_get_url is None:
         return _no_store(jsonify({"error": "storage_not_configured"})), 500
 
     if "file" not in request.files:
@@ -380,18 +318,19 @@ def criar_acervo_upload():
         doc_ref = col_ref.document()  # id automático
         acervo_id = doc_ref.id
 
-        # destino no bucket, seguindo padrão combinado
+        # caminho relativo dentro de acervo/original
         ext = ""
         if "." in file.filename:
             ext = file.filename.rsplit(".", 1)[-1].lower()
-        dest_path = f"profissionais/{uid}/acervo/original/{acervo_id}"
+        rel_path = f"original/{acervo_id}"
         if ext:
-            dest_path = f"{dest_path}.{ext}"
+            rel_path = f"{rel_path}.{ext}"
 
-        # upload para GCS: helper já existente (compat)
-        public_url = _upload_gcs_compat(
+        # upload para GCS: helper específico de acervo
+        public_url, bucket_name, gcs_path, access_mode = upload_acervo_bytes_and_get_url(
+            uid,
+            rel_path,
             raw_bytes,
-            dest_path,
             content_type,
         )
 
@@ -407,7 +346,7 @@ def criar_acervo_upload():
             "prioridade": prioridade,
             "tamanhoBytes": size,
             "fonte": "upload",
-            "storageOriginalPath": dest_path,
+            "storageOriginalPath": gcs_path,
             "storageOriginalUrl": public_url,
             "storageConsultaPath": None,
             "resumoCurto": None,
@@ -435,7 +374,7 @@ def criar_acervo_upload():
 
 @bp_acervo.route("/api/acervo/texto", methods=["POST"])
 def criar_acervo_texto():
-    \"\"\"
+    """
     Cria item de acervo a partir de texto livre.
     Espera JSON:
       {
@@ -446,12 +385,12 @@ def criar_acervo_texto():
         "habilitado": true
       }
     Na v1, já grava o corpo diretamente em acervo/consulta/{id}.md
-    \"\"\"
+    """
     uid = _get_uid()
     if not uid:
         return _no_store(jsonify({"error": "unauthenticated"})), 401
 
-    if upload_bytes_and_get_url is None:
+    if upload_acervo_bytes_and_get_url is None:
         return _no_store(jsonify({"error": "storage_not_configured"})), 500
 
     data = request.get_json(silent=True) or {}
@@ -506,13 +445,13 @@ def criar_acervo_texto():
         doc_ref = col_ref.document()
         acervo_id = doc_ref.id
 
-        # destino da versão de consulta (.md)
-        dest_path = f"profissionais/{uid}/acervo/consulta/{acervo_id}.md"
-        # raw_bytes já calculado lá em cima
+        # caminho relativo da versão de consulta (.md)
+        rel_path = f"consulta/{acervo_id}.md"
 
-        public_url = _upload_gcs_compat(
+        public_url, bucket_name, gcs_path, access_mode = upload_acervo_bytes_and_get_url(
+            uid,
+            rel_path,
             raw_bytes,
-            dest_path,
             "text/markdown",
         )
 
@@ -530,7 +469,7 @@ def criar_acervo_texto():
             "fonte": "texto_livre",
             "storageOriginalPath": None,  # aqui pode ficar só a consulta
             "storageOriginalUrl": None,
-            "storageConsultaPath": dest_path,
+            "storageConsultaPath": gcs_path,
             "storageConsultaUrl": public_url,
             "resumoCurto": None,        # pode ser gerado depois, se quisermos
             "ultimaIndexacao": None,    # ex.: quando for para índice do Google
@@ -556,7 +495,7 @@ def criar_acervo_texto():
 
 @bp_acervo.route("/api/acervo/<acervo_id>", methods=["PATCH"])
 def atualizar_acervo(acervo_id: str):
-    \"\"\"
+    """
     Atualiza metadados de um item do acervo:
       - titulo
       - tags
@@ -564,7 +503,7 @@ def atualizar_acervo(acervo_id: str):
       - prioridade
       - resumoCurto
     Não mexe em arquivos no Storage (original/consulta) nesta rota.
-    \"\"\"
+    """
     uid = _get_uid()
     if not uid:
         return _no_store(jsonify({"error": "unauthenticated"})), 401
@@ -633,7 +572,7 @@ def atualizar_acervo(acervo_id: str):
 
 @bp_acervo.route("/api/acervo/query", methods=["POST"])
 def consultar_acervo():
-    \"\"\"
+    """
     Consulta o acervo do MEI usando o mini-RAG.
 
     Espera JSON:
@@ -648,7 +587,7 @@ def consultar_acervo():
         "usedDocs": [ { "id": "...", "titulo": "...", ... } ],
         "reason": "ok" | "no_docs" | "no_relevant_docs" | "llm_error"
       }
-    \"\"\"
+    """
     uid = _get_uid()
     if not uid:
         return _no_store(jsonify({"error": "unauthenticated"})), 401

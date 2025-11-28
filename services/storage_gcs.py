@@ -1,4 +1,4 @@
-# services/storage_gcs.py
+# services/storage_gcs.py 
 import io, os, json, logging
 from datetime import datetime, timedelta
 from google.cloud import storage
@@ -12,6 +12,7 @@ _STORAGE_SCOPES = [
     "https://www.googleapis.com/auth/devstorage.read_write",
     "https://www.googleapis.com/auth/cloud-platform",
 ]
+
 
 def _build_credentials():
     """
@@ -30,6 +31,7 @@ def _build_credentials():
         logging.error("[gcs] Credenciais inline inválidas: %s", e)
         raise
 
+
 def _get_client():
     """
     Cria o cliente GCS com projeto (quando disponível) e, se possível, com
@@ -43,6 +45,7 @@ def _get_client():
     except Exception as e:
         logging.exception("[gcs] storage.Client() falhou: %s", e)
         raise
+
 
 def upload_bytes_and_get_url(uid: str, filename: str, buf: bytes, mimetype: str):
     """
@@ -98,6 +101,69 @@ def upload_bytes_and_get_url(uid: str, filename: str, buf: bytes, mimetype: str)
             return url, bucket_name, gcs_path, "signed"
         except Exception as e2:
             logging.exception("[gcs] generate_signed_url falhou para '%s/%s': %s", bucket_name, gcs_path, e2)
+            raise
+
+
+def upload_acervo_bytes_and_get_url(uid: str, rel_path: str, buf: bytes, mimetype: str):
+    """
+    Sobe bytes para GCS em gs://<STORAGE_BUCKET>/profissionais/<uid>/acervo/<rel_path>
+
+    - uid: UID do profissional dono do acervo
+    - rel_path: caminho relativo dentro de "acervo/" (ex.: "original/<id>.pdf", "consulta/<id>.md")
+    - buf: conteúdo em bytes
+    - mimetype: tipo MIME (ex.: "text/plain", "application/pdf", "text/markdown")
+
+    Retorna: (url, bucket_name, gcs_path, access_mode)
+      onde access_mode ∈ {"public", "signed"}.
+    """
+    bucket_name = os.getenv("STORAGE_BUCKET")
+    if not bucket_name:
+        raise RuntimeError("STORAGE_BUCKET ausente nas variáveis de ambiente")
+
+    client = _get_client()
+    try:
+        bucket = client.bucket(bucket_name)
+    except Exception as e:
+        logging.exception("[gcs] client.bucket('%s') falhou: %s", bucket_name, e)
+        raise
+
+    gcs_path = f"profissionais/{uid}/acervo/{rel_path}"
+    blob = bucket.blob(gcs_path)
+    blob.cache_control = "public, max-age=3600"
+    blob.content_type = (mimetype or "application/octet-stream")
+
+    try:
+        blob.upload_from_file(
+            io.BytesIO(buf),
+            size=len(buf),
+            content_type=blob.content_type,
+            rewind=True,
+        )
+    except NotFound as e:
+        logging.error("[gcs] Bucket '%s' não encontrado ao subir '%s': %s", bucket_name, gcs_path, e)
+        raise
+    except Forbidden as e:
+        logging.error("[gcs] Sem permissão para escrever em '%s/%s': %s", bucket_name, gcs_path, e)
+        raise
+    except Exception as e:
+        logging.exception("[gcs] upload_from_file falhou em '%s/%s': %s", bucket_name, gcs_path, e)
+        raise
+
+    # Tenta público; se falhar, Signed URL v4
+    try:
+        blob.make_public()
+        return blob.public_url, bucket_name, gcs_path, "public"
+    except Exception as e:
+        logging.warning("[gcs] make_public falhou (acervo), usando Signed URL: %s", e)
+        try:
+            url = blob.generate_signed_url(
+                version="v4",
+                expiration=datetime.utcnow() + timedelta(seconds=SIGNED_SECS),
+                method="GET",
+            )
+            return url, bucket_name, gcs_path, "signed"
+        except Exception as e2:
+            logging.exception("[gcs] generate_signed_url falhou para '%s/%s' (acervo): %s", bucket_name, gcs_path, e2)
             raise
 
 
