@@ -500,7 +500,7 @@ except Exception as e:
 # =====================================
 # Health simples adicional e versão
 # =====================================
-APP_TAG = os.getenv("APP_TAG", "2025-10-14-F1")
+APP_TAG = os.getenv("APP_TAG", "2025-11-28-acervo-v0")
 
 @app.route("/health", methods=["GET"])
 def health_simple():
