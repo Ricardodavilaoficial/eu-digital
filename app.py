@@ -355,6 +355,12 @@ try:
 except Exception as e:
     print("[bp][warn] bp_conta:", e)
 
+try:
+    from routes.acervo import bp_acervo
+    _register_bp(bp_acervo, "bp_acervo (/api/acervo)")
+except Exception as e:
+    print("[bp][warn] bp_acervo:", e)
+
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 # NOVO: Auth blueprint (whoami + check-verification) sob /api
 try:
@@ -558,7 +564,8 @@ def _load_wa_bot():
         return _WA_BOT_MOD
     except Exception as e:
         _WA_BOT_MOD = None
-        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}\n" + (traceback.format_exc(limit=3) or "")
+        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}
+" + (traceback.format_exc(limit=3) or "")
         print(f"[init][erro] services.wa_bot: {e}", flush=True)
         return None
 
@@ -1312,3 +1319,4 @@ def __adc_debug():
 # =====================================
 # EOF
 # =====================================
+
