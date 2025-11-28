@@ -212,6 +212,55 @@ def _update_acervo_meta(uid: str, delta_bytes: int) -> None:
     db.transaction()(_txn)
 
 
+def _upload_gcs_compat(raw_bytes: bytes, dest_path: str, mimetype: str) -> str:
+    """
+    Wrapper de compatibilidade para upload_bytes_and_get_url, tentando
+    as assinaturas mais prováveis sem quebrar o restante do projeto.
+    """
+    if upload_bytes_and_get_url is None:
+        raise RuntimeError("storage_gcs.upload_bytes_and_get_url não configurado")
+
+    last_err: Optional[Exception] = None
+
+    # 1) Assinatura mais provável: (buf, dest_path, mimetype)
+    try:
+        return upload_bytes_and_get_url(raw_bytes, dest_path, mimetype)  # type: ignore[misc]
+    except TypeError as e:
+        last_err = e
+    except Exception:
+        # Outros erros (rede, credencial etc.) devem subir
+        raise
+
+    # 2) Outra forma comum: buf=, dest_path=, mimetype=
+    try:
+        return upload_bytes_and_get_url(  # type: ignore[misc]
+            buf=raw_bytes,
+            dest_path=dest_path,
+            mimetype=mimetype,
+        )
+    except TypeError as e:
+        last_err = e
+    except Exception:
+        raise
+
+    # 3) Variação: buf=, path=, mimetype=
+    try:
+        return upload_bytes_and_get_url(  # type: ignore[misc]
+            buf=raw_bytes,
+            path=dest_path,
+            mimetype=mimetype,
+        )
+    except TypeError as e:
+        last_err = e
+    except Exception:
+        raise
+
+    # Se nenhuma forma funcionou, propaga o último TypeError
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("Falha ao chamar upload_bytes_and_get_url de forma compatível")
+
+
 # -------- endpoints --------
 
 @bp_acervo.route("/api/acervo", methods=["GET"])
@@ -326,11 +375,11 @@ def criar_acervo_upload():
         if ext:
             dest_path = f"{dest_path}.{ext}"
 
-        # upload para GCS: helper já existente
-        public_url = upload_bytes_and_get_url(
+        # upload para GCS: helper já existente (compat)
+        public_url = _upload_gcs_compat(
             raw_bytes,
             dest_path,
-            mimetype=content_type,
+            content_type,
         )
 
         from google.cloud import firestore  # type: ignore
@@ -448,10 +497,10 @@ def criar_acervo_texto():
         dest_path = f"profissionais/{uid}/acervo/consulta/{acervo_id}.md"
         # raw_bytes já calculado lá em cima
 
-        public_url = upload_bytes_and_get_url(
+        public_url = _upload_gcs_compat(
             raw_bytes,
             dest_path,
-            mimetype="text/markdown",
+            "text/markdown",
         )
 
         from google.cloud import firestore  # type: ignore
