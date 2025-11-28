@@ -36,14 +36,23 @@ def _snapshot_empresa():
     Snapshot mínimo pro pós-pagamento (ativar-config).
     Pode trocar depois pra buscar do Firestore/receita/etc.
     Também aceita ENV para facilitar testes.
+    Agora já inclui situação, data de abertura e endereço mais completo.
     """
     return {
         "cnpj": os.getenv("SNAP_CNPJ", "00000000000000"),
         "razaoSocial": os.getenv("SNAP_RAZAO", "Nome Ltda"),
         "nomeFantasia": os.getenv("SNAP_FANTASIA", "Nome"),
+        # Campos adicionais para a configuracao.html enxergar tudo:
+        "situacao": os.getenv("SNAP_SITUACAO", "ATIVA"),
+        # ISO é melhor, mas aqui deixamos livre para testes (ex.: "2020-01-01")
+        "dataAbertura": os.getenv("SNAP_ABERTURA", ""),
         "endereco": {
+            "logradouro": os.getenv("SNAP_LOGRADOURO", ""),
+            "numero": os.getenv("SNAP_NUMERO", ""),
+            "bairro": os.getenv("SNAP_BAIRRO", ""),
             "municipio": os.getenv("SNAP_MUNICIPIO", "Cidade"),
             "uf": os.getenv("SNAP_UF", "UF"),
+            "cep": os.getenv("SNAP_CEP", ""),
         },
         "cnaePrincipal": {
             "codigo": os.getenv("SNAP_CNAE_COD", "9602-5/01"),
@@ -88,8 +97,8 @@ def _snapshot_publico_from_firestore(uid: str | None):
         try:
             col_cfg = (
                 db.collection("profissionais")
-                  .document(uid)
-                  .collection("config")
+                .document(uid)
+                .collection("config")
             )
             doc = col_cfg.document("comunicacao").get()
             data_cfg = doc.to_dict() if doc.exists else None
@@ -106,8 +115,8 @@ def _snapshot_publico_from_firestore(uid: str | None):
         try:
             doc_prof = (
                 db.collection("profissionais")
-                  .document(uid)
-                  .get()
+                .document(uid)
+                .get()
             )
             data_prof = doc_prof.to_dict() if doc_prof.exists else None
         except Exception:
@@ -234,6 +243,12 @@ def _snapshot_empresa_from_firestore(uid: str):
     """
     Tenta montar o snapshot da empresa a partir do Firestore.
     Se não conseguir, devolve _snapshot_empresa().
+
+    Agora também tenta preencher:
+    - situacao
+    - dataAbertura
+    - endereco (logradouro, numero, bairro, municipio, uf, cep)
+    de forma flexível.
     """
     base_env = _snapshot_empresa()
 
@@ -244,10 +259,10 @@ def _snapshot_empresa_from_firestore(uid: str):
         # 1) Tentativa principal: profissionais/{uid}/config/empresa
         doc = (
             db.collection("profissionais")
-              .document(uid)
-              .collection("config")
-              .document("empresa")
-              .get()
+            .document(uid)
+            .collection("config")
+            .document("empresa")
+            .get()
         )
         data = doc.to_dict() if doc.exists else None
 
@@ -255,10 +270,10 @@ def _snapshot_empresa_from_firestore(uid: str):
         if not data:
             doc2 = (
                 db.collection("profissionais")
-                  .document(uid)
-                  .collection("config")
-                  .document("cadastro")
-                  .get()
+                .document(uid)
+                .collection("config")
+                .document("cadastro")
+                .get()
             )
             data = doc2.to_dict() if doc2.exists else None
 
@@ -297,18 +312,61 @@ def _snapshot_empresa_from_firestore(uid: str):
 
         # Endereço pode estar aninhado ou flat
         end = data.get("endereco") or {}
+        if not isinstance(end, dict):
+            end = {}
+
+        logradouro = (
+            end.get("logradouro")
+            or data.get("logradouro")
+            or data.get("enderecoLogradouro")
+            or data.get("logradouro_nome")
+        )
+
+        numero = (
+            end.get("numero")
+            or data.get("numero")
+            or data.get("nr")
+        )
+
+        bairro = (
+            end.get("bairro")
+            or data.get("bairro")
+            or data.get("bairroDistrito")
+        )
+
+        cep = (
+            end.get("cep")
+            or data.get("cep")
+            or data.get("cepFormatado")
+        )
+
         municipio = (
             end.get("municipio")
-            or end.get("municipioDescricao")
+            or end.get("cidade")
             or data.get("municipio")
             or data.get("cidade")
             or base_env["endereco"]["municipio"]
         )
+
         uf = (
             end.get("uf")
+            or end.get("estado")
             or data.get("uf")
             or data.get("estado")
             or base_env["endereco"]["uf"]
+        )
+
+        # Situação cadastral / abertura da empresa
+        situacao = (
+            data.get("situacao")
+            or data.get("situacao_cadastral")
+            or data.get("status")
+        )
+
+        abertura = (
+            data.get("dataAbertura")
+            or data.get("abertura")
+            or data.get("data_inicio_atividade")
         )
 
         # ======================================================
@@ -339,6 +397,8 @@ def _snapshot_empresa_from_firestore(uid: str):
         # 2) Alternativas flat/aninhadas
         if not cnae_codigo or not cnae_desc:
             cnae = data.get("cnaePrincipal") or data.get("cnae_principal") or {}
+            if not isinstance(cnae, dict):
+                cnae = {}
             cnae_codigo = (
                 cnae.get("codigo")
                 or data.get("cnaePrincipalCodigo")
@@ -378,14 +438,23 @@ def _snapshot_empresa_from_firestore(uid: str):
             if fantasia == fantasia_base:
                 fantasia = None
 
+        # Monta endereço de saída, preenchendo faltas com base_env
+        end_out = {
+            "logradouro": logradouro or base_env["endereco"].get("logradouro", ""),
+            "numero": numero or base_env["endereco"].get("numero", ""),
+            "bairro": bairro or base_env["endereco"].get("bairro", ""),
+            "municipio": municipio,
+            "uf": uf,
+            "cep": cep or base_env["endereco"].get("cep", ""),
+        }
+
         return {
             "cnpj": cnpj,
             "razaoSocial": razao,
             "nomeFantasia": fantasia,
-            "endereco": {
-                "municipio": municipio,
-                "uf": uf,
-            },
+            "situacao": situacao or None,
+            "dataAbertura": abertura or None,
+            "endereco": end_out,
             "cnaePrincipal": {
                 "codigo": cnae_codigo,
                 "descricao": cnae_desc,
@@ -437,10 +506,12 @@ def conta_status():
 
     vinculo = _vinculo_dict(score, limiar)
 
-    resp = make_response(jsonify({
-        "empresa": empresa,
-        "publico": publico,
-        "vinculo": vinculo
-    }), 200)
+    resp = make_response(
+        jsonify({
+            "empresa": empresa,
+            "publico": publico,
+            "vinculo": vinculo,
+        }),
+        200,
+    )
     return _no_store(resp)
-
