@@ -330,7 +330,7 @@ def criar_acervo_upload():
         public_url = upload_bytes_and_get_url(
             raw_bytes,
             dest_path,
-            content_type=content_type
+            content_type
         )
 
         from google.cloud import firestore  # type: ignore
@@ -451,7 +451,7 @@ def criar_acervo_texto():
         public_url = upload_bytes_and_get_url(
             raw_bytes,
             dest_path,
-            content_type="text/markdown"
+            "text/markdown"
         )
 
         from google.cloud import firestore  # type: ignore
