@@ -16,7 +16,7 @@
 from flask import Blueprint, request, jsonify
 import os
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 bp_acervo = Blueprint("bp_acervo", __name__)
 
@@ -38,6 +38,12 @@ try:
 except Exception:  # pragma: no cover
     upload_bytes_and_get_url = None  # type: ignore
 
+# Engine de consulta do acervo (mini-RAG)
+try:
+    from domain.acervo import query_acervo_for_uid  # type: ignore
+except Exception:  # pragma: no cover
+    query_acervo_for_uid = None  # type: ignore
+
 
 # -------- helpers gerais --------
 
@@ -57,20 +63,35 @@ def _allow_debug_uid() -> bool:
     return os.getenv("ALLOW_DEBUG_UID", "0").strip() == "1"
 
 
-def _get_uid() -> str | None:
+def _get_uid() -> Optional[str]:
     """
     Recupera o uid do dono do acervo.
+
     Preferência:
-      1) Authorization: Bearer <idToken Firebase>
+      1) Authorization: Bearer <idToken Firebase> (mesma lógica do restante do projeto)
       2) X-Debug-UID, se ALLOW_DEBUG_UID=1 (para testes internos)
     """
-    # 1) Bearer
+    # 1) Bearer (usa o helper oficial, tentando as duas assinaturas possíveis)
     if get_uid_from_bearer is not None:
-        uid = get_uid_from_bearer(request.headers.get("Authorization", ""))
+        auth_header = request.headers.get("Authorization", "")
+        uid: Optional[str] = None
+
+        try:
+            # alguns módulos usam get_uid_from_bearer(request)
+            uid = get_uid_from_bearer(request)  # type: ignore[arg-type]
+        except TypeError:
+            # outros usam get_uid_from_bearer("Bearer ...")
+            try:
+                uid = get_uid_from_bearer(auth_header)  # type: ignore[arg-type]
+            except Exception:
+                uid = None
+        except Exception:
+            uid = None
+
         if uid:
             return uid
 
-    # 2) Debug header
+    # 2) Debug header (modo laboratório)
     if _allow_debug_uid():
         debug_uid = request.headers.get("X-Debug-UID") or request.args.get("debug_uid")
         if debug_uid:
@@ -108,6 +129,87 @@ def _safe_bool(val, default: bool) -> bool:
         if v in ("0", "false", "nao", "não", "no", "off"):
             return False
     return default
+
+
+def _total_limit_bytes() -> int:
+    """
+    Limite total de bytes do acervo por MEI.
+    Usa ACERVO_MAX_TOTAL_BYTES ou padrão de 50 MB.
+    """
+    return _env_int("ACERVO_MAX_TOTAL_BYTES", 50 * 1024 * 1024)
+
+
+def _acervo_meta_doc(uid: str):
+    """
+    Documento de meta do acervo:
+      profissionais/{uid}/acervoMeta/meta
+    """
+    if db is None:
+        raise RuntimeError("Firestore (services.db) não está configurado.")
+    return (
+        db.collection("profissionais")
+        .document(uid)
+        .collection("acervoMeta")
+        .document("meta")
+    )
+
+
+def _get_acervo_meta(uid: str) -> Dict[str, Any]:
+    """
+    Recupera (ou cria) o resumo de uso do acervo do MEI:
+      - totalBytes: soma de tamanhoBytes de todos os itens
+      - maxBytes: limite permitido
+    """
+    from google.cloud import firestore  # type: ignore
+
+    ref = _acervo_meta_doc(uid)
+    snap = ref.get()
+    limit_bytes = _total_limit_bytes()
+
+    if not snap.exists:
+        meta = {
+            "uid": uid,
+            "totalBytes": 0,
+            "maxBytes": limit_bytes,
+            "updatedEm": firestore.SERVER_TIMESTAMP,
+        }
+        ref.set(meta)
+        return meta
+
+    data = snap.to_dict() or {}
+    if "maxBytes" not in data:
+        data["maxBytes"] = limit_bytes
+    return data
+
+
+def _update_acervo_meta(uid: str, delta_bytes: int) -> None:
+    """
+    Atualiza totalBytes do acervo do MEI com segurança de transação.
+    delta_bytes pode ser positivo (upload) ou negativo (delete).
+    """
+    from google.cloud import firestore  # type: ignore
+
+    ref = _acervo_meta_doc(uid)
+
+    def _txn(transaction, ref=ref):
+        snap = ref.get(transaction=transaction)
+        base = snap.to_dict() or {
+            "uid": uid,
+            "totalBytes": 0,
+            "maxBytes": _total_limit_bytes(),
+        }
+        total = int(base.get("totalBytes", 0)) + int(delta_bytes)
+        if total < 0:
+            total = 0
+        base["totalBytes"] = total
+        base["updatedEm"] = firestore.SERVER_TIMESTAMP
+        transaction.set(ref, base)
+
+    if db is None:
+        logging.warning("Firestore não configurado ao atualizar meta do acervo.")
+        return
+
+    db.transaction()(_txn)
 
 
 # -------- endpoints --------
@@ -180,6 +282,23 @@ def criar_acervo_upload():
             "size": size
         })), 413
 
+    # Quota total do acervo (50 MB por padrão)
+    try:
+        meta = _get_acervo_meta(uid)
+        total_bytes = int(meta.get("totalBytes", 0))
+        max_bytes_total = int(meta.get("maxBytes", _total_limit_bytes()))
+    except Exception as e:
+        logging.exception("Erro ao ler meta do acervo")
+        return _no_store(jsonify({"error": "meta_error", "details": str(e)})), 500
+
+    if total_bytes + size > max_bytes_total:
+        return _no_store(jsonify({
+            "error": "quota_exceeded",
+            "totalBytes": total_bytes,
+            "maxBytes": max_bytes_total,
+            "incomingBytes": size
+        })), 409
+
     raw_bytes = file.read()
     content_type = file.mimetype or "application/octet-stream"
 
@@ -237,6 +356,12 @@ def criar_acervo_upload():
 
         doc_ref.set(doc_data)
 
+        # atualiza meta de quota (somatório de bytes do acervo)
+        try:
+            _update_acervo_meta(uid, size)
+        except Exception:
+            logging.exception("Falha ao atualizar meta do acervo (upload)")
+
         # resposta com o doc básico
         doc_data["id"] = acervo_id
         return _no_store(jsonify({"item": doc_data})), 201
@@ -291,13 +416,37 @@ def criar_acervo_texto():
     habilitado = _safe_bool(data.get("habilitado"), True)
 
     try:
+        raw_bytes = corpo.encode("utf-8")
+    except Exception:
+        return _no_store(jsonify({"error": "encode_error"})), 400
+
+    size = len(raw_bytes)
+
+    # Quota total do acervo (50 MB por padrão)
+    try:
+        meta = _get_acervo_meta(uid)
+        total_bytes = int(meta.get("totalBytes", 0))
+        max_bytes_total = int(meta.get("maxBytes", _total_limit_bytes()))
+    except Exception as e:
+        logging.exception("Erro ao ler meta do acervo (texto)")
+        return _no_store(jsonify({"error": "meta_error", "details": str(e)})), 500
+
+    if total_bytes + size > max_bytes_total:
+        return _no_store(jsonify({
+            "error": "quota_exceeded",
+            "totalBytes": total_bytes,
+            "maxBytes": max_bytes_total,
+            "incomingBytes": size
+        })), 409
+
+    try:
         col_ref = _acervo_collection(uid)
         doc_ref = col_ref.document()
         acervo_id = doc_ref.id
 
         # destino da versão de consulta (.md)
         dest_path = f"profissionais/{uid}/acervo/consulta/{acervo_id}.md"
-        raw_bytes = corpo.encode("utf-8")
+        # raw_bytes já calculado lá em cima
 
         public_url = upload_bytes_and_get_url(
             raw_bytes,
@@ -315,7 +464,7 @@ def criar_acervo_texto():
             "tags": tags,
             "habilitado": habilitado,
             "prioridade": prioridade,
-            "tamanhoBytes": len(raw_bytes),
+            "tamanhoBytes": size,
             "fonte": "texto_livre",
             "storageOriginalPath": None,  # aqui pode ficar só a consulta
             "storageOriginalUrl": None,
@@ -328,6 +477,12 @@ def criar_acervo_texto():
         }
 
         doc_ref.set(doc_data)
+
+        # atualiza meta de quota
+        try:
+            _update_acervo_meta(uid, size)
+        except Exception:
+            logging.exception("Falha ao atualizar meta do acervo (texto)")
 
         doc_data["id"] = acervo_id
         return _no_store(jsonify({"item": doc_data})), 201
@@ -412,3 +567,55 @@ def atualizar_acervo(acervo_id: str):
     except Exception as e:
         logging.exception("Erro ao atualizar item de acervo")
         return _no_store(jsonify({"error": "internal_error", "details": str(e)})), 500
+
+
+@bp_acervo.route("/api/acervo/query", methods=["POST"])
+def consultar_acervo():
+    """
+    Consulta o acervo do MEI usando o mini-RAG.
+
+    Espera JSON:
+      {
+        "pergunta": "como explico o meu atendimento de barba?",
+        "maxTokens": 120  // opcional
+      }
+
+    Resposta (v1, via domain.acervo.query_acervo_for_uid):
+      {
+        "answer": "...",
+        "usedDocs": [ { "id": "...", "titulo": "...", ... } ],
+        "reason": "ok" | "no_docs" | "no_relevant_docs" | "llm_error"
+      }
+    """
+    uid = _get_uid()
+    if not uid:
+        return _no_store(jsonify({"error": "unauthenticated"})), 401
+
+    if query_acervo_for_uid is None:
+        # domínio ainda não plugado
+        return _no_store(jsonify({"error": "rag_not_configured"})), 503
+
+    data = request.get_json(silent=True) or {}
+    pergunta = (data.get("pergunta") or data.get("question") or "").strip()
+    if not pergunta:
+        return _no_store(jsonify({
+            "error": "missing_field",
+            "field": "pergunta"
+        })), 400
+
+    try:
+        max_tokens = int(data.get("maxTokens") or 120)
+    except Exception:
+        max_tokens = 120
+
+    try:
+        result = query_acervo_for_uid(
+            uid=uid,
+            pergunta=pergunta,
+            max_tokens=max_tokens
+        )
+        return _no_store(jsonify(result)), 200
+    except Exception as e:
+        logging.exception("Erro ao consultar acervo (mini-RAG)")
+        return _no_store(jsonify({"error": "internal_error", "details": str(e)})), 500
+
