@@ -553,6 +553,7 @@ def env_safe():
 _WA_BOT_MOD = None
 _WA_BOT_LAST_ERR = None
 
+
 def _load_wa_bot():
     global _WA_BOT_MOD, _WA_BOT_LAST_ERR
     if _WA_BOT_MOD and isinstance(_WA_BOT_MOD, types.ModuleType):
@@ -564,10 +565,13 @@ def _load_wa_bot():
         return _WA_BOT_MOD
     except Exception as e:
         _WA_BOT_MOD = None
-        _WA_BOT_LAST_ERR = f"{type(e).__name__}: {e}
-" + (traceback.format_exc(limit=3) or "")
+        _WA_BOT_LAST_ERR = (
+            f"{type(e).__name__}: {e}\n"
+            + (traceback.format_exc(limit=3) or "")
+        )
         print(f"[init][erro] services.wa_bot: {e}", flush=True)
         return None
+
 
 @app.get("/__wa_bot_status")
 def wa_bot_status():
@@ -582,7 +586,6 @@ def wa_bot_status():
         "module": getattr(mod, "__file__", None) if mod else None,
     }), 200
 
-# =====================================
 # Helpers telefone + send-text
 # =====================================
 def _only_digits(s: str) -> str:
