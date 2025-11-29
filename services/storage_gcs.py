@@ -167,6 +167,61 @@ def upload_acervo_bytes_and_get_url(uid: str, rel_path: str, buf: bytes, mimetyp
             raise
 
 
+# === NOVO HELPER: leitura de texto por gcs_path (para .md do acervo, etc.) ===
+def download_text_by_gcs_path(gcs_path: str, max_bytes: int = 8192, encoding: str = "utf-8") -> str | None:
+    """
+    Lê conteúdo de texto de um objeto no GCS dado o caminho interno (gcs_path).
+
+    - gcs_path: ex.: 'profissionais/<uid>/acervo/consulta/<id>.md'
+    - max_bytes: limite de bytes a ler (para não explodir o contexto da IA)
+    - encoding: encoding usado para decodificar o texto (default: 'utf-8')
+
+    Retorna:
+      - string com o conteúdo (possivelmente truncado a max_bytes)
+      - ou None se não conseguir ler (erro, não encontrado, etc.)
+    """
+    bucket_name = os.getenv("STORAGE_BUCKET")
+    if not bucket_name:
+        logging.error("[gcs] download_text_by_gcs_path chamado sem STORAGE_BUCKET configurado.")
+        return None
+    if not gcs_path:
+        logging.error("[gcs] download_text_by_gcs_path chamado com gcs_path vazio.")
+        return None
+
+    try:
+        client = _get_client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(gcs_path)
+
+        # Faz download limitado em bytes
+        # (download_as_bytes já pode ser limitado via offset/length; aqui usamos length=max_bytes)
+        data = blob.download_as_bytes(start=0, end=max_bytes - 1)
+        if not data:
+            return None
+
+        try:
+            text = data.decode(encoding, errors="ignore")
+        except Exception as e:
+            logging.exception("[gcs] erro ao decodificar '%s' como %s: %s", gcs_path, encoding, e)
+            return None
+
+        # Garantir que não passe de max_bytes em caracteres (não é perfeito, mas suficiente)
+        if len(text) > max_bytes:
+            text = text[:max_bytes]
+
+        return text
+
+    except NotFound:
+        logging.warning("[gcs] Objeto não encontrado em download_text_by_gcs_path: %s/%s", bucket_name, gcs_path)
+        return None
+    except Forbidden as e:
+        logging.error("[gcs] Sem permissão para ler '%s/%s': %s", bucket_name, gcs_path, e)
+        return None
+    except Exception as e:
+        logging.exception("[gcs] Erro inesperado em download_text_by_gcs_path('%s'): %s", gcs_path, e)
+        return None
+
+
 # === NOVO HELPER: assinatura V4 on-demand para leitura ===
 def sign_v4_read_url(bucket_name: str, object_key: str, expires_seconds: int = None, inline: bool = True) -> str:
     """
@@ -194,3 +249,4 @@ def sign_v4_read_url(bucket_name: str, object_key: str, expires_seconds: int = N
         params["response_disposition"] = "inline"
 
     return blob.generate_signed_url(**params)
+

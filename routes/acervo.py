@@ -1,4 +1,4 @@
-# routes/acervo.py
+# routes/acervo.py 
 # Módulo: Acervo do MEI Robô
 #
 # Endpoints principais:
@@ -239,7 +239,13 @@ def listar_acervo():
             data.setdefault("tags", [])
             itens.append(data)
 
-        return _no_store(jsonify({"items": itens})), 200
+        # 🔹 AJUSTE MÍNIMO: incluir meta de quota na resposta
+        meta = _get_acervo_meta(uid)
+
+        return _no_store(jsonify({
+            "items": itens,
+            "meta": meta,
+        })), 200
     except Exception as e:
         logging.exception("Erro ao listar acervo")
         return _no_store(jsonify({"error": "internal_error", "details": str(e)})), 500
@@ -634,4 +640,3 @@ def consultar_acervo():
     except Exception as e:
         logging.exception("Erro ao consultar acervo (mini-RAG)")
         return _no_store(jsonify({"error": "internal_error", "details": str(e)})), 500
-

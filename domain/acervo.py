@@ -43,6 +43,12 @@ try:
 except Exception:  # pragma: no cover
     get_mini_embedding = None  # type: ignore
 
+# Helper de leitura de texto do GCS (para .md em storageConsultaPath)
+try:
+    from services.storage_gcs import download_text_by_gcs_path  # type: ignore
+except Exception:  # pragma: no cover
+    download_text_by_gcs_path = None  # type: ignore
+
 
 # Limites de sanidade
 _MAX_DOCS = 50
@@ -117,13 +123,43 @@ def _cosine(a: List[float], b: List[float]) -> float:
 def _build_magrinho_for_item(item: Dict[str, Any]) -> str:
     """
     Versão "magrinha" do item em texto:
-      - usa resumoCurto, se existir
-      - senão, monta com titulo + tags de forma simples
+
+      Ordem de preferência:
+        1) Conteúdo de consulta (.md) em storageConsultaPath, se disponível,
+           lendo direto do GCS (limitado em _MAX_CHARS_CONTEXT_PER_DOC * 2).
+        2) resumoCurto, se existir.
+        3) Fallback com titulo + tags de forma simples.
+
+    Isso respeita a arquitetura:
+      - versão "gorda" fica no Storage,
+      - versão "magrinha" (consulta) é usada para IA.
     """
+    # 1) Tenta ler a versão de consulta (texto .md) do GCS, se houver
+    gcs_path = item.get("storageConsultaPath") or item.get("storageConsultaUrl")
+    if download_text_by_gcs_path is not None and gcs_path:
+        try:
+            # max_bytes um pouco maior que o limite de contexto
+            raw = download_text_by_gcs_path(
+                str(gcs_path),
+                max_bytes=_MAX_CHARS_CONTEXT_PER_DOC * 2,
+                encoding="utf-8",
+            )
+            if raw:
+                snippet = raw.strip()
+                if len(snippet) > _MAX_CHARS_CONTEXT_PER_DOC:
+                    snippet = snippet[:_MAX_CHARS_CONTEXT_PER_DOC]
+                return snippet
+        except Exception:
+            logging.exception("domain.acervo: falha ao ler storageConsultaPath='%s'", gcs_path)
+
+    # 2) Se não conseguiu ler do GCS, tenta resumoCurto
     resumo = str(item.get("resumoCurto") or "").strip()
     if resumo:
+        if len(resumo) > _MAX_CHARS_CONTEXT_PER_DOC:
+            resumo = resumo[:_MAX_CHARS_CONTEXT_PER_DOC]
         return resumo
 
+    # 3) Fallback com titulo + tags
     titulo = str(item.get("titulo") or "").strip()
     tags = item.get("tags") or []
     tags_txt = ", ".join(str(t) for t in tags if str(t).strip())
@@ -136,7 +172,10 @@ def _build_magrinho_for_item(item: Dict[str, Any]) -> str:
     if not parts:
         return "Item do acervo do MEI (ainda sem resumo configurado)."
 
-    return "\n\n".join(parts)
+    texto = "\n\n".join(parts)
+    if len(texto) > _MAX_CHARS_CONTEXT_PER_DOC:
+        texto = texto[:_MAX_CHARS_CONTEXT_PER_DOC]
+    return texto
 
 
 def _load_acervo_docs(uid: str) -> List[Dict[str, Any]]:
@@ -286,6 +325,7 @@ CONTEÚDO DO ACERVO:
 
 PERGUNTA:
 \"\"\"{pergunta}\"\"\"
+
 
 Responda em no máximo {max_tokens} tokens, em português simples, direto, sem citar
 "modelo de linguagem" nem "documento".
