@@ -358,6 +358,91 @@ except Exception as e_abs:
 
         def can_use_gpt4o():
             return False
+            
+# ==== ACERVO / MINI-RAG (helpers) ==========================================
+def _acervo_mode() -> str:
+    try:
+        return os.getenv("ACERVO_MODE", "off").strip().lower()
+    except Exception:
+        return "off"
+
+
+def _acervo_enabled_for_uid(uid_default: str) -> bool:
+    """
+    Controla quem pode usar o acervo, de acordo com ACERVO_MODE.
+
+    - off    → sempre desliga
+    - on     → todos os MEIs (qualquer uid_default)
+    - canary → apenas o UID listado em ACERVO_CANARY_UID (se definido)
+    """
+    mode = _acervo_mode()
+    if mode == "off":
+        return False
+    if mode == "on":
+        return True
+    if mode == "canary":
+        canary_uid = os.getenv("ACERVO_CANARY_UID", "").strip()
+        if canary_uid and canary_uid == uid_default:
+            return True
+        # se não tiver canary definido, trata como desligado
+        return False
+    return False
+
+
+def _try_acervo_answer(uid_default: str, pergunta: str) -> Optional[str]:
+    """
+    Tenta responder usando o acervo do MEI.
+
+    - Se der erro, retorna None e deixa o fluxo cair pro fallback normal.
+    - Só usa mini-RAG; não altera nada de sessão/preço/agenda.
+    """
+    pergunta = (pergunta or "").strip()
+    if not pergunta:
+        return None
+
+    # import lazy para não quebrar boot se domain/acervo não existir
+    try:
+        from domain.acervo import query_acervo_for_uid  # type: ignore
+    except Exception:
+        logging.warning("[ACERVO] domain.acervo.query_acervo_for_uid indisponível.")
+        return None
+
+    max_tokens_default = 120
+    try:
+        max_tokens = int(os.getenv("LLM_MAX_TOKENS_ACERVO", str(max_tokens_default)))
+    except Exception:
+        max_tokens = max_tokens_default
+
+    try:
+        result = query_acervo_for_uid(
+            uid=uid_default,
+            pergunta=pergunta,
+            max_tokens=max_tokens,
+        )
+    except Exception:
+        logging.exception("[ACERVO] falha ao consultar mini-RAG do acervo.")
+        return None
+
+    if not isinstance(result, dict):
+        return None
+
+    reason = (result.get("reason") or "").lower()
+    answer = (result.get("answer") or "").strip()
+
+    # Só considera sucesso quando o domínio sinalizar "ok" e houver resposta
+    if reason != "ok" or not answer:
+        logging.info("[ACERVO] sem resposta útil (reason=%s).", reason)
+        return None
+
+    # Opcional: log mínimo dos docs usados (sem conteúdo)
+    try:
+        used_docs = result.get("usedDocs") or []
+        ids = [str(d.get("id")) for d in used_docs if isinstance(d, dict)]
+        logging.info("[ACERVO] resposta vinda do acervo. usedDocs=%s", ids)
+    except Exception:
+        pass
+
+    return answer
 
 # ========== Cache KV (novo) ==========
 # - Usamos cache.kv quando disponível; caso contrário, fallback em memória local.
@@ -2180,7 +2265,18 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
                 reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw, channel_mode=channel_mode)
                 send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
                 continue
-
+        # -------- Acervo (mini-RAG) antes do fallback --------
+        try:
+            if _acervo_enabled_for_uid(uid_default) and (text_in or "").strip():
+                acervo_reply = _try_acervo_answer(uid_default, text_in)
+                if acervo_reply:
+                    logging.info("[ACERVO] resposta enviada a partir do acervo (mini-RAG).")
+                    send_reply(uid_default, to_raw, acervo_reply, msg_type, send_text_fn, send_audio_fn)
+                    continue
+        except Exception:
+            # Nunca deixa o acervo derrubar o bot; loga e segue para fallback
+            logging.exception("[ACERVO] erro inesperado ao tentar usar o acervo; seguindo para fallback.")
+       
         # Fallback -> ajuda humanizada
         logging.info("[NLU] fallback -> help")
         help_msg = H("help", {"raw": say(uid_default, "help")}, mode=("audio" if channel_mode=="audio" else "text"))
@@ -2192,3 +2288,5 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             f"[WA_BOT][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}",
             flush=True,
         )
+
+
