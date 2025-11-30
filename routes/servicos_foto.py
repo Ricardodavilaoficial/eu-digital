@@ -43,25 +43,45 @@ def servico_foto_signed_url():
     if not uid:
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
-    data = request.get_json(silent=True) or {}
+    # 1) Tenta ler JSON normalmente
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
 
-    # bloco substituído
+    # 2) Se vier como form-data ou x-www-form-urlencoded, pega request.form
+    if not data:
+        try:
+            if request.form:
+                data = request.form.to_dict()
+        except Exception:
+            data = {}
+
+    # 3) Fallback: também olha a query-string (?servicoId=...)
+    qs = request.args or {}
+
+    # Aceita vários jeitos de vir do front: servicoId, id, slug, nomeSlug, nome
     raw_id = (
         data.get("servicoId")
         or data.get("id")
         or data.get("slug")
         or data.get("nomeSlug")
         or data.get("nome")
+        or qs.get("servicoId")
+        or qs.get("id")
+        or qs.get("slug")
         or ""
     )
+
     servico_id = _safe_id(raw_id)
-    content_type = (data.get("contentType") or "").strip().lower()
+    content_type = (data.get("contentType") or qs.get("contentType") or "").strip().lower()
 
     if not servico_id:
+        # Log só pra nós, pra entender se vier outro formato
         try:
             print(
-                "[servicos_foto] missing_servico_id data_keys=",
-                list(data.keys()),
+                "[servicos_foto] missing_servico_id "
+                "data_keys=", list(data.keys()),
+                "qs_keys=", list(qs.keys()),
                 "raw_id=", raw_id,
                 flush=True,
             )
