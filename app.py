@@ -48,6 +48,7 @@ _cors_common = {
 CORS(app, resources={
     r"/api/*": _cors_common,
     r"/admin/*": _cors_common,
+    r"/media/*": _cors_common,
     "/gerar-cupom": _cors_common,
     "/captcha/verify": _cors_common,
 })
@@ -1328,3 +1329,4 @@ def __adc_debug():
 # =====================================
 # EOF
 # =====================================
+
