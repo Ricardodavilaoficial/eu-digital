@@ -15,15 +15,20 @@ from __future__ import annotations
 
 import os
 import re
+import logging
 from datetime import timedelta
 
 from flask import Blueprint, request, jsonify
+from firebase_admin import firestore
+from services.db import db  # mesmo db usado em outras rotas
 
 from services.auth import auth_required, current_uid
 from services.gcs_handler import get_storage_client
 from routes.media import _resolve_bucket_from_env  # reaproveita a resolução de bucket
 
 servicos_foto_bp = Blueprint("servicos_foto_bp", __name__)
+
+logger = logging.getLogger("servicos_foto")
 
 _EXPIRES_MINUTES = int(os.getenv("SIGNED_URL_EXPIRES_MIN", "15"))
 
@@ -116,13 +121,44 @@ def servico_foto_signed_url():
         method="GET",
     )
 
+    # Atualiza o documento do serviço com a URL da foto
+    try:
+        svc_ref = (
+            db.collection("profissionais")
+            .document(uid)
+            .collection("produtosEServicos")
+            .document(servico_id)
+        )
+
+        svc_ref.set(
+            {
+                "fotoUrl": download_url,
+                "fotoUpdatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        logger.info(
+            "[servicos_foto] fotoUrl atualizada uid=%s servicoId=%s",
+            uid,
+            servico_id,
+        )
+    except Exception as e:
+        logger.warning(
+            "[servicos_foto] falha ao gravar fotoUrl no serviço uid=%s servicoId=%s err=%r",
+            uid,
+            servico_id,
+            e,
+        )
+
     return jsonify({
         "ok": True,
         "uploadUrl": upload_url,
         "downloadUrl": download_url,
+        "fotoUrl": download_url,
         "path": path,
         "bucket": bucket_name,
         "expiresInSeconds": _EXPIRES_MINUTES * 60,
         "contentType": content_type,
     }), 200
+
 
