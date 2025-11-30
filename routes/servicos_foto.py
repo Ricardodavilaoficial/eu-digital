@@ -11,8 +11,8 @@
 #  - backend valida UID + conteúdo
 #  - gera path CANÔNICO:
 #       profissionais/<uid>/produtosEServicos/<servicoId>/foto.<ext>
-#  - faz upload para o bucket configurado em STORAGE_BUCKET
-#  - salva fotoPath + (fotoUrl de conveniência) no Firestore
+#  - faz upload para o bucket configurado em STORAGE_BUCKET / STORAGE_GCS_BUCKET
+#  - salva fotoPath + fotoUrl (legado) no Firestore
 #  - devolve JSON com:
 #       { ok: true, fotoPath, fotoUrl }
 #
@@ -23,12 +23,10 @@
 from __future__ import annotations
 
 import os
-import re
-from datetime import timedelta
+from datetime import timedelta, datetime
 
 from flask import Blueprint, request, jsonify
-
-from firebase_admin import firestore  # usamos Firestore Admin para atualizar o doc
+from firebase_admin import firestore  # Firestore Admin
 
 from services.auth import auth_required, current_uid
 from services.gcs_handler import get_storage_client
@@ -115,8 +113,6 @@ def upload_foto_servico():
     blob.patch()
 
     # ---- Gerar Signed URL de leitura (conveniência) ----
-    from google.cloud.storage.blob import Blob  # tipo só para linter; não obrigatório
-
     expires = timedelta(minutes=_EXPIRES_MINUTES)
     foto_url = blob.generate_signed_url(
         version="v4",
@@ -133,11 +129,13 @@ def upload_foto_servico():
         .document(servico_id)
     )
 
-    # Merge para não apagar outros campos
+    now = datetime.utcnow()
+
     doc_ref.set(
         {
-          "fotoPath": object_path,
-          "fotoUrl": foto_url,  # legado/apoio — front novo usa fotoPath + /media/signed-url
+            "fotoPath": object_path,   # <- NOVO CAMPO CANÔNICO
+            "fotoUrl": foto_url,       # legado/apoio — front novo usa fotoPath
+            "fotoUpdatedAt": now.isoformat() + "Z",
         },
         merge=True,
     )
