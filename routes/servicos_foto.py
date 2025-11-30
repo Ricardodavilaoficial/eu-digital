@@ -162,3 +162,4 @@ def servico_foto_signed_url():
     }), 200
 
 
+
