@@ -85,7 +85,7 @@ def create_signed_url():
         "filename": "voz_teste.mp3",              # opcional se "path" for enviado
         "path": "profissionais/<uid>/voz/...",    # opcional; se ausente, geramos um canônico em sandbox/
         "bucket": "<proj>.firebasestorage.app",   # opcional; usado literalmente, sem conversão de domínio
-        "public": true                            # (ignorado aqui; upload assinado não precisa)
+        "public": true                              # (ignorado aqui; upload assinado não precisa)
       }
 
     Resposta:
@@ -117,14 +117,27 @@ def create_signed_url():
         if not ext:
             return jsonify({"ok": False, "error": "cannot_map_extension"}), 400
 
+        # 🔐 Segurança básica no path enviado pelo cliente
+        if ".." in provided_path or "\\" in provided_path:
+            return jsonify({"ok": False, "error": "invalid_path"}), 400
+
         if provided_path:
-            # Garantir que termina com a extensão correta (se não terminar, acrescenta)
-            # e evitar path vazio.
-            p = provided_path
+            # Normaliza e aplica regra de "dono" quando usar /profissionais/<uid>/...
+            p = provided_path.lstrip("/")
+
+            if p.startswith("profissionais/"):
+                parts = p.split("/")
+                # Esperado: profissionais/<uid>/...
+                if len(parts) < 3 or parts[1] != user_uid:
+                    return jsonify({"ok": False, "error": "forbidden_path_owner"}), 403
+
+            # Garante que termina com uma extensão "ok" (se não terminar, acrescenta)
             if not re.search(r"\.[A-Za-z0-9]{1,8}$", p):
                 p = f"{p.rstrip('/')}/{uuid.uuid4().hex}{ext}"
-            path = p.lstrip("/")  # path do GCS não deve começar com '/'
+
+            path = p  # path do GCS não deve começar com '/'
         else:
+            # Caminho padrão em sandbox, quando o cliente não define um path próprio
             now = datetime.utcnow()
             key = f"{uuid.uuid4().hex}{ext}"
             if filename and not filename.lower().endswith(ext):
@@ -170,3 +183,4 @@ def create_signed_url():
     except Exception as e:
         # Evite vazar detalhes demais em produção; aqui mantemos mensagem útil para diagnóstico.
         return jsonify({"ok": False, "error": f"internal_error: {e}"}), 500
+
