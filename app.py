@@ -473,7 +473,14 @@ if os.getenv("CNPJ_BP_ENABLED", "false").lower() in ("1","true","yes"):
         _register_bp(cnpj_bp, "cnpj_bp (/api/cnpj/<cnpj>)")
     except Exception as e:
         print("[bp][warn] cnpj_bp:", e)
-
+# CNPJ verificação (ReceitaWS pública)
+if os.getenv("CNPJ_VERIFICACAO_BP_ENABLED", "true").lower() in ("1","true","yes"):
+    try:
+        from routes.verificacao_cnpj_bp import verificacao_cnpj_bp
+        _register_bp(verificacao_cnpj_bp, "verificacao_cnpj_bp (/api/cnpj/verificar)")
+    except Exception as e:
+        print("[bp][warn] verificacao_cnpj_bp:", e)
+        
 # Voz V2 — usa o blueprint unificado routes/voz_v2.py
 if os.getenv("VOZ_V2_ENABLED", "false").lower() in ("1","true","yes"):
     try:
