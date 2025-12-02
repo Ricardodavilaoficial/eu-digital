@@ -5,7 +5,16 @@ def fetch_cnpj_info(cnpj_digits):
     """Busca dados públicos de CNPJ e normaliza.
 
     Retorna dict:
-      { "razaoSocial", "nomeFantasia", "cnae", "cnaeDescricao" }
+      {
+        "razaoSocial",
+        "nomeFantasia",
+        "cnae",
+        "cnaeDescricao",
+        "qsa",        # lista de sócios/administradores (quando disponível)
+        "simei",      # bloco simei da ReceitaWS (quando disponível)
+        "simples",    # bloco simples da ReceitaWS (quando disponível)
+        "raw",        # JSON cru completo da ReceitaWS
+      }
     ou None em erro/timeout/dados ausentes.
     """
     try:
@@ -13,8 +22,7 @@ def fetch_cnpj_info(cnpj_digits):
         if len(cnpj) != 14:
             return None
 
-        # Antes: tentava publica.cnpj.ws e depois ReceitaWS.
-        # Agora: usamos apenas a API pública da ReceitaWS.
+        # Agora usamos apenas a API pública da ReceitaWS.
         urls = [
             f"https://www.receitaws.com.br/v1/cnpj/{cnpj}",
         ]
@@ -39,22 +47,20 @@ def fetch_cnpj_info(cnpj_digits):
                     return v.strip()
             return default
 
-        # ReceitaWS costuma usar "nome" para razão social
-        # e "fantasia" / "nome_fantasia" para fantasia.
+        # ReceitaWS: "nome" costuma ser a razão social
         razao = pick(data, "razao_social", "razaoSocial", "nome", "razao")
         fantasia = pick(data, "nome_fantasia", "nomeFantasia", "fantasia")
 
         cnae_code, cnae_desc = "", ""
 
-        # Bloco legado para formato da publica.cnpj.ws (estabelecimento.*)
-        # Continua aqui, não atrapalha a ReceitaWS (que não usa esse campo).
+        # Legado para formato publica.cnpj.ws (não atrapalha se não existir)
         est = data.get("estabelecimento") or {}
         atv = est.get("atividade_principal") or {}
         if isinstance(atv, dict):
             cnae_code = (str(atv.get("id") or "")).strip()
             cnae_desc = (atv.get("descricao") or "").strip()
 
-        # Bloco para formato da ReceitaWS (lista atividade_principal)
+        # ReceitaWS: lista "atividade_principal"
         if not cnae_code:
             lista = data.get("atividade_principal") or []
             if isinstance(lista, list) and lista:
@@ -70,11 +76,16 @@ def fetch_cnpj_info(cnpj_digits):
         if not (razao or fantasia or cnae_code or cnae_desc):
             return None
 
+        # NOVO: além dos campos resumidos, devolvemos também qsa, simei, simples e o JSON cru.
         return {
             "razaoSocial": razao,
             "nomeFantasia": fantasia,
             "cnae": cnae_code,
             "cnaeDescricao": cnae_desc,
+            "qsa": data.get("qsa") or [],
+            "simei": data.get("simei") or {},
+            "simples": data.get("simples") or {},
+            "raw": data,
         }
     except Exception:
         return None
