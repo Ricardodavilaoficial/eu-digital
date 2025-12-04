@@ -167,6 +167,7 @@ def _get_acervo_meta(uid: str) -> Dict[str, Any]:
     limit_bytes = _total_limit_bytes()
 
     if not snap.exists:
+        # cria meta inicial e re-lê do Firestore para não devolver Sentinel (SERVER_TIMESTAMP)
         meta = {
             "uid": uid,
             "totalBytes": 0,
@@ -174,7 +175,7 @@ def _get_acervo_meta(uid: str) -> Dict[str, Any]:
             "updatedEm": firestore.SERVER_TIMESTAMP,
         }
         ref.set(meta)
-        return meta
+        snap = ref.get()
 
     data = snap.to_dict() or {}
     if "maxBytes" not in data:
@@ -209,7 +210,8 @@ def _update_acervo_meta(uid: str, delta_bytes: int) -> None:
         logging.warning("Firestore não configurado ao atualizar meta do acervo.")
         return
 
-    db.transaction()(_txn)
+    # usa o helper oficial de transação do cliente Firestore
+    db.run_transaction(_txn)
 
 
 # -------- endpoints --------
