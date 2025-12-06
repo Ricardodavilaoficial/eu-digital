@@ -5,7 +5,7 @@
 # - GET  /api/acervo                → lista itens do acervo do MEI logado
 # - POST /api/acervo/upload         → cria item a partir de upload de arquivo
 # - POST /api/acervo/texto          → cria item a partir de texto livre (.md direto)
-# - PATCH /api/acervo/<acervo_id>   → atualiza metadados (titulo, tags, habilitado, prioridade, resumoCurto)
+# - PATCH /api/acervo/<acervo_id>   → atualiza metadados (titulo, tags, habilitado, prioridade, resumoCurto, nivelUso)
 #
 # Notas importantes:
 # - Não processa PDF/áudio/vídeo aqui ainda; só registra e guarda original.
@@ -134,9 +134,9 @@ def _safe_bool(val, default: bool) -> bool:
 def _total_limit_bytes() -> int:
     """
     Limite total de bytes do acervo por MEI.
-    Usa ACERVO_MAX_TOTAL_BYTES ou padrão de 50 MB.
+    Usa ACERVO_MAX_TOTAL_BYTES ou padrão de 2 GB.
     """
-    return _env_int("ACERVO_MAX_TOTAL_BYTES", 50 * 1024 * 1024)
+    return _env_int("ACERVO_MAX_TOTAL_BYTES", 2 * 1024 * 1024 * 1024)
 
 
 def _acervo_meta_doc(uid: str):
@@ -158,7 +158,7 @@ def _get_acervo_meta(uid: str) -> Dict[str, Any]:
     """
     Recupera (ou cria) o resumo de uso do acervo do MEI:
       - totalBytes: soma de tamanhoBytes de todos os itens
-      - maxBytes: limite permitido
+      - maxBytes: limite permitido (derivado da ENV ou padrão)
     """
     from google.cloud import firestore  # type: ignore
 
@@ -167,7 +167,6 @@ def _get_acervo_meta(uid: str) -> Dict[str, Any]:
     limit_bytes = _total_limit_bytes()
 
     if not snap.exists:
-        # cria meta inicial e re-lê do Firestore para não devolver Sentinel (SERVER_TIMESTAMP)
         meta = {
             "uid": uid,
             "totalBytes": 0,
@@ -175,11 +174,25 @@ def _get_acervo_meta(uid: str) -> Dict[str, Any]:
             "updatedEm": firestore.SERVER_TIMESTAMP,
         }
         ref.set(meta)
-        snap = ref.get()
+        return meta
 
     data = snap.to_dict() or {}
-    if "maxBytes" not in data:
+    # garante maxBytes consistente com ENV
+    try:
+        current_max = int(data.get("maxBytes", 0))
+    except Exception:
+        current_max = 0
+
+    if current_max != limit_bytes:
         data["maxBytes"] = limit_bytes
+        try:
+            ref.set({"maxBytes": limit_bytes}, merge=True)
+        except Exception:
+            logging.exception("Falha ao sincronizar maxBytes do acervo com ENV.")
+
+    if "totalBytes" not in data:
+        data["totalBytes"] = 0
+
     return data
 
 
@@ -189,6 +202,10 @@ def _update_acervo_meta(uid: str, delta_bytes: int) -> None:
     delta_bytes pode ser positivo (upload) ou negativo (delete).
     """
     from google.cloud import firestore  # type: ignore
+
+    if db is None:
+        logging.warning("Firestore não configurado ao atualizar meta do acervo.")
+        return
 
     ref = _acervo_meta_doc(uid)
 
@@ -203,12 +220,9 @@ def _update_acervo_meta(uid: str, delta_bytes: int) -> None:
         if total < 0:
             total = 0
         base["totalBytes"] = total
+        base["maxBytes"] = _total_limit_bytes()
         base["updatedEm"] = firestore.SERVER_TIMESTAMP
         transaction.set(ref, base)
-
-    if db is None:
-        logging.warning("Firestore não configurado ao atualizar meta do acervo.")
-        return
 
     # usa o helper oficial de transação do cliente Firestore
     db.run_transaction(_txn)
@@ -232,17 +246,37 @@ def listar_acervo():
         # depois dá pra paginar.
         docs = col_ref.order_by("criadoEm").limit(100).stream()
         itens: List[Dict[str, Any]] = []
+        soma_bytes = 0
+
         for d in docs:
-            data = d.to_dict() or []
+            data = d.to_dict() or {}
             data["id"] = d.id
             # sanity mínima: alguns campos default
             data.setdefault("habilitado", True)
             data.setdefault("prioridade", 1)
             data.setdefault("tags", [])
+            # garante campo tamanhoBytes numérico
+            try:
+                tb = int(data.get("tamanhoBytes") or 0)
+            except Exception:
+                tb = 0
+            data["tamanhoBytes"] = tb
+            soma_bytes += tb
             itens.append(data)
 
-        # 🔹 AJUSTE MÍNIMO: incluir meta de quota na resposta
         meta = _get_acervo_meta(uid)
+        try:
+            total_bytes_meta = int(meta.get("totalBytes", 0))
+        except Exception:
+            total_bytes_meta = 0
+
+        # se já há itens e o meta ainda está zerado, corrige usando a soma
+        if soma_bytes > 0 and total_bytes_meta == 0:
+            meta["totalBytes"] = soma_bytes
+            try:
+                _acervo_meta_doc(uid).set({"totalBytes": soma_bytes}, merge=True)
+            except Exception:
+                logging.exception("Falha ao corrigir totalBytes do acervo na listagem.")
 
         return _no_store(jsonify({
             "items": itens,
@@ -263,6 +297,7 @@ def criar_acervo_upload():
       - tags: opcional ("tag1, tag2; tag3")
       - prioridade: opcional (int)
       - habilitado: opcional (bool-like)
+      - nivelUso: opcional ("todos" | "clientes" | "familia_amigos" | "interno")
     """
     uid = _get_uid()
     if not uid:
@@ -290,7 +325,7 @@ def criar_acervo_upload():
             "size": size
         })), 413
 
-    # Quota total do acervo (50 MB por padrão)
+    # Quota total do acervo (2 GB por padrão, configurável via ENV)
     try:
         meta = _get_acervo_meta(uid)
         total_bytes = int(meta.get("totalBytes", 0))
@@ -310,7 +345,7 @@ def criar_acervo_upload():
     raw_bytes = file.read()
     content_type = file.mimetype or "application/octet-stream"
 
-    # título e tags
+    # título, tags, prioridade, habilitado
     titulo = (request.form.get("titulo") or file.filename).strip()
     tags = _parse_tags(request.form.get("tags"))
     prioridade_raw = request.form.get("prioridade")
@@ -320,6 +355,11 @@ def criar_acervo_upload():
         prioridade = 1
 
     habilitado = _safe_bool(request.form.get("habilitado"), True)
+
+    # Quem pode usar esse conteúdo nas respostas (nivelUso)
+    nivel_uso_raw = (request.form.get("nivelUso") or "todos").strip()
+    if nivel_uso_raw not in ("todos", "clientes", "familia_amigos", "interno"):
+        nivel_uso_raw = "todos"
 
     try:
         col_ref = _acervo_collection(uid)
@@ -357,8 +397,10 @@ def criar_acervo_upload():
             "storageOriginalPath": gcs_path,
             "storageOriginalUrl": public_url,
             "storageConsultaPath": None,
+            "storageConsultaUrl": None,
             "resumoCurto": None,
             "ultimaIndexacao": None,
+            "nivelUso": nivel_uso_raw,
             "criadoEm": now,
             "atualizadoEm": now,
         }
@@ -395,9 +437,10 @@ def criar_acervo_texto():
       {
         "titulo": "Como faço manutenção de portões",
         "corpo":  "Texto em markdown ou texto puro",
-        "tags":   ["portões", "manutenção"],
+        "tags":   ["portões", "manutenção"] ou "tag1, tag2",
         "prioridade": 1,
-        "habilitado": true
+        "habilitado": true,
+        "nivelUso": "todos" | "clientes" | "familia_amigos" | "interno"
       }
     Na v1, já grava o corpo diretamente em acervo/consulta/{id}.md
     """
@@ -431,6 +474,11 @@ def criar_acervo_texto():
 
     habilitado = _safe_bool(data.get("habilitado"), True)
 
+    # Quem pode usar esse conteúdo nas respostas (nivelUso)
+    nivel_uso_raw = str(data.get("nivelUso") or "todos").strip()
+    if nivel_uso_raw not in ("todos", "clientes", "familia_amigos", "interno"):
+        nivel_uso_raw = "todos"
+
     try:
         raw_bytes = corpo.encode("utf-8")
     except Exception:
@@ -438,7 +486,7 @@ def criar_acervo_texto():
 
     size = len(raw_bytes)
 
-    # Quota total do acervo (50 MB por padrão)
+    # Quota total do acervo (2 GB por padrão, configurável via ENV)
     try:
         meta = _get_acervo_meta(uid)
         total_bytes = int(meta.get("totalBytes", 0))
@@ -488,6 +536,7 @@ def criar_acervo_texto():
             "storageConsultaUrl": public_url,
             "resumoCurto": None,        # pode ser gerado depois, se quisermos
             "ultimaIndexacao": None,    # ex.: quando for para índice do Google
+            "nivelUso": nivel_uso_raw,
             "criadoEm": now,
             "atualizadoEm": now,
         }
@@ -525,6 +574,7 @@ def atualizar_acervo(acervo_id: str):
       - habilitado
       - prioridade
       - resumoCurto
+      - nivelUso
     Não mexe em arquivos no Storage (original/consulta) nesta rota.
     """
     uid = _get_uid()
@@ -572,6 +622,12 @@ def atualizar_acervo(acervo_id: str):
             if resumo is not None:
                 resumo = str(resumo).strip()
             updates["resumoCurto"] = resumo
+
+        if "nivelUso" in data:
+            nivel_uso_raw = str(data.get("nivelUso") or "").strip()
+            if nivel_uso_raw not in ("todos", "clientes", "familia_amigos", "interno"):
+                return _no_store(jsonify({"error": "invalid_nivelUso"})), 400
+            updates["nivelUso"] = nivel_uso_raw
 
         if not updates:
             return _no_store(jsonify({"error": "nothing_to_update"})), 400
