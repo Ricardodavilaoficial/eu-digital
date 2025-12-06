@@ -11,10 +11,43 @@ from flask import Blueprint, request, jsonify, current_app
 try:
     import stripe
 except ImportError as e:
-    # Fallback: give a clear error if stripe isn't installed
-    stripe = None
+        # Fallback: give a clear error if stripe isn't installed
+        stripe = None
+
+# Firestore/DB para aplicar upgrade de acervo
+from services.db import db
+from google.cloud import firestore
 
 stripe_webhook_bp = Blueprint("stripe_webhook_bp", __name__)
+
+
+def _set_acervo_quota_10gb(uid: str):
+    """
+    Seta a quota do acervo do profissional para 10 GB,
+    gravando em profissionais/{uid}/acervoMeta/meta.
+    """
+    if not uid:
+        return
+
+    # 10 GB em bytes: 10 * 1024^3
+    max_bytes_10gb = 10_737_418_240
+
+    doc_ref = (
+        db.collection("profissionais")
+          .document(uid)
+          .collection("acervoMeta")
+          .document("meta")
+    )
+
+    doc_ref.set(
+        {
+            "maxBytes": max_bytes_10gb,
+            "maxBytesSource": "starter_plus_10gb",
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        },
+        merge=True,
+    )
+
 
 @stripe_webhook_bp.route("/webhooks/stripe", methods=["POST"])
 def stripe_webhook():
@@ -53,6 +86,20 @@ def stripe_webhook():
         if event_type == "checkout.session.completed":
             session = event["data"]["object"]
             current_app.logger.info(f"[stripe:webhook] checkout.session.completed id={session.get('id')}")
+
+            # --- Upgrade Starter+ (10 GB) ---
+            try:
+                metadata = session.get("metadata") or {}
+                upgrade_type = metadata.get("upgrade_type")
+                mei_uid = metadata.get("mei_uid")
+
+                if upgrade_type == "starter_plus_10gb" and mei_uid:
+                    _set_acervo_quota_10gb(mei_uid)
+                    current_app.logger.info(f"[stripe:webhook] Starter+ aplicado para uid={mei_uid}")
+            except Exception as e:
+                # Nunca falha o webhook por causa do upgrade
+                current_app.logger.exception(f"[stripe:webhook] erro ao aplicar Starter+ (ignorado): {e}")
+
             # TODO: enqueue job to activate license, persist subscription/customer ids, etc.
 
         elif event_type in ("customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"):
