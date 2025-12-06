@@ -11,7 +11,6 @@ from services.db import db
 
 stripe_checkout_bp = Blueprint("stripe_checkout_bp", __name__)
 
-
 def _abs_url(path: str) -> str:
     """
     Gera URL absoluta para o Stripe/redirects. Prioriza FRONTEND_BASE.
@@ -21,7 +20,6 @@ def _abs_url(path: str) -> str:
     path = path if path.startswith("/") else "/" + path
     return base + path
 
-
 def _get_secret_key():
     # simples: usa STRIPE_SECRET_KEY; (futuro: chave live/test por STRIPE_MODE)
     key = os.getenv("STRIPE_SECRET_KEY")
@@ -29,24 +27,21 @@ def _get_secret_key():
         raise RuntimeError("STRIPE_SECRET_KEY ausente no ambiente")
     return key
 
-
 def _get_price_id():
     price = os.getenv("STRIPE_PRICE_ID")
     if not price:
         raise RuntimeError("STRIPE_PRICE_ID ausente no ambiente")
     return price
 
-
-def _get_upgrade_price_id():
+def _get_starter_plus_price_id():
     """
-    Price ID específico do upgrade Starter+ (10 GB).
+    Price ID específico do plano Starter+ (10 GB).
     Deve estar em STRIPE_STARTER_PLUS_PRICE_ID.
     """
     price = os.getenv("STRIPE_STARTER_PLUS_PRICE_ID")
     if not price:
         raise RuntimeError("STRIPE_STARTER_PLUS_PRICE_ID ausente no ambiente")
     return price
-
 
 def _has_free_coupon(uid: str) -> bool:
     """
@@ -71,7 +66,6 @@ def _has_free_coupon(uid: str) -> bool:
     except Exception:
         # Em caso de falha de leitura do DB, NÃO libera de graça (fail-safe)
         return False
-
 
 @stripe_checkout_bp.route("/api/stripe/checkout", methods=["GET"])
 @auth_required
@@ -135,92 +129,61 @@ def api_stripe_checkout():
         session = stripe.checkout.Session.create(**params)
         return jsonify({"checkoutUrl": session.url}), 200
 
-    except Exception as e:
+    except Exception:
         # Não vazar detalhes sensíveis em produção
         return jsonify({"error": "Não foi possível iniciar a assinatura."}), 500
 
-
 # ============================================================
-# Upgrade de espaço — Starter+ (10 GB) — pagamento único
+# Novo endpoint: /api/upgrade/checkout  (Starter+ 10 GB)
 # ============================================================
-
 @stripe_checkout_bp.route("/api/upgrade/checkout", methods=["POST"])
 @auth_required
 def api_upgrade_checkout():
     """
-    Cria uma sessão de pagamento única para o upgrade Starter+ (10 GB).
-    - Requer usuário logado (auth_required + g.user).
-    - Usa STRIPE_STARTER_PLUS_PRICE_ID.
-    - Guarda mei_uid e upgrade_type na metadata da Session.
+    Cria uma sessão de Checkout para o upgrade de espaço (Starter+ 10 GB).
+    - Requer usuário logado (auth_required).
+    - Usa STRIPE_STARTER_PLUS_PRICE_ID (pagamento único).
+    - Envia metadata (upgrade, uid) para o webhook aplicar no Firestore.
     """
     try:
-        # 1) Recupera UID do usuário autenticado
         user = getattr(g, "user", None)
         uid = getattr(user, "uid", None)
 
         if not uid:
-            return jsonify({
-                "error": {
-                    "code": "not_logged_in",
-                    "message": "Você precisa estar logado para fazer o upgrade."
-                }
-            }), 401
+            return jsonify({"error": "Não autenticado"}), 401
 
+        # Lê corpo opcional (plan) só para sanity, mas não depende dele
         body = request.get_json(silent=True) or {}
-        plan = (body.get("plan") or "").strip()
-
-        if plan != "starter_plus_10gb":
-            return jsonify({
-                "error": {
-                    "code": "invalid_plan",
-                    "message": "Plano de upgrade inválido."
-                }
-            }), 400
+        plan = (body.get("plan") or "").strip().lower()
+        if plan and plan not in ("starter_plus_10gb", "starter+10gb", "starter_plus"):
+            # Não bloqueia forte, só loga via retorno
+            # (se quiser, podemos relaxar isso e ignorar completamente o plan)
+            pass
 
         stripe.api_key = _get_secret_key()
-        price_id = _get_upgrade_price_id()
+        price_id = _get_starter_plus_price_id()
 
-        success_url = _abs_url("/pages/acervo.html?upgrade=success")
-        cancel_url  = _abs_url("/pages/upgrade.html?upgrade=canceled")
+        success_url = _abs_url("/pages/acervo.html?upgrade=starter_plus_10gb")
+        cancel_url  = _abs_url("/pages/upgrade.html?cancel=1")
 
-        # Pagamento único do upgrade
-        session = stripe.checkout.Session.create(
-            mode="payment",
-            line_items=[{
+        params = {
+            "mode": "payment",  # upgrade de espaço = pagamento único
+            "line_items": [{
                 "price": price_id,
                 "quantity": 1,
             }],
-            metadata={
-                "mei_uid": uid,
-                "upgrade_type": "starter_plus_10gb",
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+            "automatic_tax": {"enabled": False},
+            "metadata": {
+                "upgrade": "starter_plus_10gb",
+                "uid": uid,
             },
-            success_url=success_url,
-            cancel_url=cancel_url,
-        )
+            "client_reference_id": uid,
+        }
 
+        session = stripe.checkout.Session.create(**params)
         return jsonify({"checkoutUrl": session.url}), 200
 
-    except RuntimeError as e:
-        # Erro de configuração (env faltando)
-        return jsonify({
-            "error": {
-                "code": "config_error",
-                "message": "Configuração de pagamento não encontrada. Fale com o suporte."
-            }
-        }), 500
-    except Exception as e:
-        # Erro genérico de Stripe ou similar
-        current_app = None
-        try:
-            from flask import current_app as _ca
-            current_app = _ca
-        except Exception:
-            pass
-        if current_app:
-            current_app.logger.exception("[stripe][upgrade_checkout] erro inesperado")
-        return jsonify({
-            "error": {
-                "code": "stripe_error",
-                "message": "Não consegui abrir a tela de pagamento agora. Tente de novo em alguns minutos."
-            }
-        }), 502
+    except Exception:
+        return jsonify({"error": "Não foi possível iniciar o upgrade agora. Tente de novo em alguns minutos."}), 500
