@@ -158,15 +158,19 @@ def _get_acervo_meta(uid: str) -> Dict[str, Any]:
     """
     Recupera (ou cria) o resumo de uso do acervo do MEI:
       - totalBytes: soma de tamanhoBytes de todos os itens
-      - maxBytes: limite permitido (derivado da ENV ou padrão)
+      - maxBytes: limite permitido (ajustado pelo plano/ENV)
+
+    Se o documento já existir com maxBytes menor que o limite atual
+    (ACERVO_MAX_TOTAL_BYTES), fazemos um "upgrade" para o novo valor.
     """
     from google.cloud import firestore  # type: ignore
 
     ref = _acervo_meta_doc(uid)
     snap = ref.get()
-    limit_bytes = _total_limit_bytes()
+    limit_bytes = _total_limit_bytes()  # ex.: 2 GB via ENV
 
     if not snap.exists:
+        # cria meta inicial já com o limite atual do plano
         meta = {
             "uid": uid,
             "totalBytes": 0,
@@ -174,24 +178,36 @@ def _get_acervo_meta(uid: str) -> Dict[str, Any]:
             "updatedEm": firestore.SERVER_TIMESTAMP,
         }
         ref.set(meta)
-        return meta
+        snap = ref.get()
 
     data = snap.to_dict() or {}
-    # garante maxBytes consistente com ENV
-    try:
-        current_max = int(data.get("maxBytes", 0))
-    except Exception:
-        current_max = 0
 
-    if current_max != limit_bytes:
-        data["maxBytes"] = limit_bytes
-        try:
-            ref.set({"maxBytes": limit_bytes}, merge=True)
-        except Exception:
-            logging.exception("Falha ao sincronizar maxBytes do acervo com ENV.")
-
+    # garante totalBytes presente
     if "totalBytes" not in data:
         data["totalBytes"] = 0
+
+    # faz upgrade automático do maxBytes se estiver abaixo do limite atual
+    try:
+        max_bytes_atual = int(data.get("maxBytes", 0) or 0)
+    except Exception:
+        max_bytes_atual = 0
+
+    if max_bytes_atual < limit_bytes:
+        try:
+            ref.update(
+                {
+                    "maxBytes": limit_bytes,
+                    "updatedEm": firestore.SERVER_TIMESTAMP,
+                }
+            )
+        except Exception:
+            logging.exception(
+                "Falha ao atualizar maxBytes do acervoMeta para uid=%s", uid
+            )
+        data["maxBytes"] = limit_bytes
+    else:
+        # se já tiver maxBytes >= limite, só garante o campo no dict
+        data["maxBytes"] = max_bytes_atual
 
     return data
 
