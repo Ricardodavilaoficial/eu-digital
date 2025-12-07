@@ -167,7 +167,9 @@ def api_upgrade_checkout():
         cancel_url  = _abs_url("/pages/upgrade.html?cancel=1")
 
         params = {
-            "mode": "payment",  # upgrade de espaço = pagamento único
+            # Plano Starter+ também é recorrente (mensal),
+            # então usamos Checkout em modo "subscription".
+            "mode": "subscription",
             "line_items": [{
                 "price": price_id,
                 "quantity": 1,
