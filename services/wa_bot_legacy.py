@@ -20,6 +20,7 @@ NLU_MODE = os.getenv("NLU_MODE", "legacy").strip().lower()
 PRICING_MODE = os.getenv("PRICING_MODE", "legacy").strip().lower()  # legacy | domain
 REPLY_AUDIO_WHEN_AUDIO = os.getenv("REPLY_AUDIO_WHEN_AUDIO", "true").strip().lower() in ("1", "true", "yes")
 ACERVO_MODE = os.getenv("ACERVO_MODE", "off").strip().lower()  # off | on | only:uid1,uid2
+CONTACT_MEMORY_MODE = os.getenv("CONTACT_MEMORY_MODE", "off").strip().lower()  # off | probe | on
 
 # ---- Humanizer (feature-flag) ----
 try:
@@ -443,6 +444,34 @@ def _try_acervo_answer(uid_default: str, pergunta: str) -> Optional[str]:
         pass
 
     return answer
+    
+# ==== Memória por contato (modo) ============================================
+def _contact_memory_mode() -> str:
+    """
+    Controla o modo de uso da memória por contato via CONTACT_MEMORY_MODE.
+
+    Valores esperados:
+      - off   → totalmente desligado
+      - probe → só loga o que seria usado (sem mudar resposta ao cliente)
+      - on    → ligado (iremos usar de verdade nas próximas atividades)
+    """
+    try:
+        m = (CONTACT_MEMORY_MODE or "off").strip().lower()
+    except Exception:
+        m = "off"
+    return m or "off"
+
+def _contact_memory_probe_enabled(uid: str) -> bool:
+    """
+    Retorna True quando devemos ao menos LOGAR a resolução de cliente/contato.
+    Nesta atividade, mesmo quando ativo, ele NÃO muda a resposta ao cliente.
+    """
+    mode = _contact_memory_mode()
+    if mode == "off":
+        return False
+    if mode in ("probe", "on"):
+        return True
+    return False
 
 # ========== Cache KV (novo) ==========
 # - Usamos cache.kv quando disponível; caso contrário, fallback em memória local.
@@ -1036,7 +1065,7 @@ def stt_transcribe(audio_bytes: bytes, mime_type: str = "audio/ogg", language: s
     return ""
 
 
-# ========== TTS helper (responder em áudio quando fizer sentido) ==========
+## ========== TTS helper (responder em áudio quando fizer sentido) ==========
 def tts_speak(uid: str, text: str, voice_hint: Optional[str] = None) -> Optional[Tuple[bytes, str]]:
     """
     Tenta sintetizar áudio a partir do texto.
@@ -1125,7 +1154,7 @@ def tts_speak(uid: str, text: str, voice_hint: Optional[str] = None) -> Optional
     return None
 
 
-def send_reply(uid: str, to: str, text: str, inbound_type: str, send_text_fn, send_audio_fn=None, voice_hint: Optional[str]=None):
+def send_reply(uid: str, to: str, text: str, inbound_type: str, send_text_fn, send_audio_fn=None, voice_hint: Optional[str] = None):
     """
     Se o cliente mandou ÁUDIO e houver send_audio_fn + TTS ok -> responde em áudio.
     Caso contrário, texto.
@@ -1150,6 +1179,45 @@ def send_reply(uid: str, to: str, text: str, inbound_type: str, send_text_fn, se
     return send_text_fn(to, text)
 
 
+# ========== Memória de contato (gancho) ==========
+
+try:
+    from domain.contact_memory import answer_from_contact as _cm_answer  # type: ignore
+except Exception:
+    _cm_answer = None  # type: ignore
+
+
+def _contact_memory_answer(uid: str, wa_id_or_phone: str, text_in: str) -> Optional[str]:
+    """
+    Tenta responder usando a memória do contato (cliente individual).
+    Se não houver domínio ou der erro, devolve None e deixa o fluxo seguir normal.
+    """
+    if not _cm_answer:
+        return None
+
+    pergunta = (text_in or "").strip()
+    if not pergunta:
+        return None
+
+    try:
+        # Tentativa 1: assinatura nomeada (mais amigável para o domínio)
+        try:
+            return _cm_answer(
+                uid=uid,
+                wa_id_or_phone=wa_id_or_phone,
+                question=pergunta,
+            )  # type: ignore[call-arg]
+        except TypeError:
+            # Tentativa 2: assinatura posicional (uid, wa_id, pergunta)
+            try:
+                return _cm_answer(uid, wa_id_or_phone, pergunta)  # type: ignore[misc]
+            except TypeError:
+                # Tentativa 3: assinatura reduzida (uid, pergunta)
+                return _cm_answer(uid, pergunta)  # type: ignore[misc]
+    except Exception as e:
+        logging.info("[CONTACT_MEMORY] erro ao consultar memória de contato: %s", e)
+        return None
+        
 # ========== Normalizador PT-BR (datas/horas) ==========
 _MONTHS = {
     "jan": 1, "janeiro": 1,
@@ -2168,6 +2236,21 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             send_reply(uid_default, to_raw, help_msg, msg_type, send_text_fn, send_audio_fn)
             continue
 
+        # -------- Probe de memória por contato (apenas LOG nesta etapa) ----------
+        if _contact_memory_probe_enabled(uid_default):
+            try:
+                # usamos apenas o wa_id bruto (to_raw) para resolver o cliente
+                cliente_probe_id = _resolve_cliente_id(uid_default, wa_id_raw="", to_msisdn=to_raw)
+                logging.info(
+                    "[CONTACT_MEMORY][probe] uid=%s clienteId=%s waKey=%s text='%s'",
+                    uid_default,
+                    cliente_probe_id,
+                    eq_key,
+                    (text_in or "")[:200],
+                )
+            except Exception as e:
+                logging.info("[CONTACT_MEMORY][probe] erro ao resolver cliente: %s", e)
+
         # -------- NLU probe ----------
         try:
             _nlu_probe(uid_default, text_in)
@@ -2265,6 +2348,7 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
                 reply = _reagendar_fluxo(value, to_raw, uid_default, app_tag, text_in, text_norm, sess, to_raw, channel_mode=channel_mode)
                 send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
                 continue
+
         # -------- Acervo (mini-RAG) antes do fallback --------
         try:
             if _acervo_enabled_for_uid(uid_default) and (text_in or "").strip():
