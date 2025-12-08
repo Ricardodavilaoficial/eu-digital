@@ -2227,7 +2227,7 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
 
                 if not audio_bytes:
                     send_reply(uid_default, to_raw, fallback_text(app_tag, "audio:bytes=0"), msg_type, send_text_fn, send_audio_fn)
-                    continue
+                continue
 
                 mt = (audio.get("mime_type") or content_type or "audio/ogg").split(";")[0].strip()
                 text_in = stt_transcribe(audio_bytes, mime_type=mt, language="pt-BR")
@@ -2359,10 +2359,92 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
 
         # -------- Acervo (mini-RAG) antes do fallback --------
         try:
-            if _acervo_enabled_for_uid(uid_default) and (text_in or "").strip():
-                acervo_reply = _try_acervo_answer(uid_default, text_in)
+            query_text = text_in or ""
+
+            # Se a memória por contato estiver ativa, monta um contexto curto
+            # a partir do cliente (histórico, tags, timeline, anexos, etc.)
+            if (query_text or "").strip() and contact_memory_enabled_for(uid_default):
+                cliente_id = None
+                try:
+                    # Reuso da mesma lógica de resolução de cliente usada na agenda
+                    cliente_id = _resolve_cliente_id(uid_default, wa_id_raw="", to_msisdn=to_raw)
+                except Exception as e_cm:
+                    logging.info("[ACERVO][CONTACT_MEMORY] erro ao resolver clienteId: %s", e_cm)
+
+                if cliente_id:
+                    ctx = None
+                    try:
+                        # Usa o builder de contexto do domínio
+                        ctx = build_contact_context(
+                            uid_default,
+                            cliente_id,
+                            max_notas=8,
+                            max_anexos=10,
+                        )
+                    except Exception as e_ctx:
+                        logging.info("[ACERVO][CONTACT_MEMORY] erro ao montar contexto do contato: %s", e_ctx)
+
+                    if ctx:
+                        partes = []
+
+                        nome = (ctx.get("nome") or "").strip()
+                        tel = (ctx.get("telefone") or "").strip()
+                        tags = ctx.get("tags") or []
+                        obs = (ctx.get("observacoes") or "").strip()
+
+                        header = ""
+                        if nome:
+                            header = f"Nome: {nome}"
+                        if tel:
+                            header = (header + f" | Telefone: {tel}").strip(" |")
+                        if header:
+                            partes.append(header)
+
+                        if tags:
+                            partes.append("Tags: " + ", ".join(str(t) for t in tags[:8]))
+
+                        if obs:
+                            partes.append("Observações: " + obs[:240])
+
+                        notas = ctx.get("notas") or []
+                        if notas:
+                            linhas_n = []
+                            for n in notas[:5]:
+                                data = (n.get("data") or "").strip()
+                                txt = (n.get("texto") or "").strip()
+                                if not txt:
+                                    continue
+                                prefix = f"[{data}] " if data else ""
+                                linhas_n.append(prefix + txt)
+                            if linhas_n:
+                                partes.append("Notas recentes:\n" + "\n".join(linhas_n))
+
+                        anexos = ctx.get("anexos") or []
+                        if anexos:
+                            linhas_a = []
+                            for a in anexos[:5]:
+                                data = (a.get("data") or "").strip()
+                                nome_arq = (a.get("nomeArquivo") or "").strip()
+                                if not nome_arq:
+                                    continue
+                                prefix = f"[{data}] " if data else ""
+                                linhas_a.append(prefix + nome_arq)
+                            if linhas_a:
+                                partes.append("Anexos recentes:\n" + "\n".join(linhas_a))
+
+                        cm_text = "\n".join(partes).strip()
+                        if cm_text:
+                            query_text = (
+                                "Contexto do contato (histórico, notas e anexos relevantes):\n"
+                                + cm_text
+                                + "\n\nPergunta atual do contato:\n"
+                                + (text_in or "")
+                            )
+
+            if _acervo_enabled_for_uid(uid_default) and (query_text or "").strip():
+                acervo_reply = _try_acervo_answer(uid_default, query_text)
                 if acervo_reply:
-                    logging.info("[ACERVO] resposta enviada a partir do acervo (mini-RAG).")
+                    logging.info("[ACERVO] resposta enviada a partir do acervo (mini-RAG + memória por contato).")
                     send_reply(uid_default, to_raw, acervo_reply, msg_type, send_text_fn, send_audio_fn)
                     continue
         except Exception:
@@ -2380,5 +2462,3 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             f"[WA_BOT][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}",
             flush=True,
         )
-
-

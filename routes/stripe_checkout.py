@@ -140,52 +140,61 @@ def api_stripe_checkout():
 @auth_required
 def api_upgrade_checkout():
     """
-    Cria uma sessão de Checkout para o upgrade de espaço (Starter+ 10 GB).
+    Abre o Portal de Cobrança da Stripe para o cliente ajustar plano/pagamento.
     - Requer usuário logado (auth_required).
-    - Usa STRIPE_STARTER_PLUS_PRICE_ID (pagamento único).
-    - Envia metadata (upgrade, uid) para o webhook aplicar no Firestore.
+    - Usa o customer_id já salvo em profissionais/{uid}.stripe.
+    - Após mexer no plano, volta para /pages/acervo.html.
     """
     try:
         user = getattr(g, "user", None)
         uid = getattr(user, "uid", None)
 
         if not uid:
-            return jsonify({"error": "Não autenticado"}), 401
+            return jsonify({
+                "error": "auth_required",
+                "message": "Login obrigatório."
+            }), 401
 
-        # Lê corpo opcional (plan) só para sanity, mas não depende dele
-        body = request.get_json(silent=True) or {}
-        plan = (body.get("plan") or "").strip().lower()
-        if plan and plan not in ("starter_plus_10gb", "starter+10gb", "starter_plus"):
-            # Não bloqueia forte, só loga via retorno
-            # (se quiser, podemos relaxar isso e ignorar completamente o plan)
-            pass
+        # Busca o profissional no Firestore
+        doc_ref = db.collection("profissionais").document(uid)
+        snap = doc_ref.get()
+        if not snap or not snap.exists:
+            return jsonify({
+                "error": "not_found",
+                "message": "Conta não encontrada."
+            }), 404
 
+        data = snap.to_dict() or {}
+        stripe_data = (data.get("stripe") or {}) or {}
+
+        # ID do cliente na Stripe salvo na ativação do plano
+        customer_id = (
+            stripe_data.get("stripe_customer_id")
+            or stripe_data.get("customer_id")
+        )
+        if not customer_id:
+            return jsonify({
+                "error": "stripe_not_linked",
+                "message": "Não encontrei seu cadastro de cobrança. Fale com o suporte."
+            }), 400
+
+        # Configura chave e Portal da Stripe
         stripe.api_key = _get_secret_key()
-        price_id = _get_starter_plus_price_id()
 
-        success_url = _abs_url("/pages/acervo.html?upgrade=starter_plus_10gb")
-        cancel_url  = _abs_url("/pages/upgrade.html?cancel=1")
+        # Depois que ele mexer no plano/pagamento, volta para o acervo
+        return_url = _abs_url("/pages/acervo.html")
 
-        params = {
-            # Plano Starter+ também é recorrente (mensal),
-            # então usamos Checkout em modo "subscription".
-            "mode": "subscription",
-            "line_items": [{
-                "price": price_id,
-                "quantity": 1,
-            }],
-            "success_url": success_url,
-            "cancel_url": cancel_url,
-            "automatic_tax": {"enabled": False},
-            "metadata": {
-                "upgrade": "starter_plus_10gb",
-                "uid": uid,
-            },
-            "client_reference_id": uid,
-        }
+        session = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=return_url,
+        )
 
-        session = stripe.checkout.Session.create(**params)
+        # Mantemos a mesma chave que o front espera: checkoutUrl
         return jsonify({"checkoutUrl": session.url}), 200
 
     except Exception:
-        return jsonify({"error": "Não foi possível iniciar o upgrade agora. Tente de novo em alguns minutos."}), 500
+        # Aqui você pode dar um logging.error(e) se quiser detalhar
+        return jsonify({
+            "error": "stripe_portal_error",
+            "message": "Não consegui abrir a tela de upgrade. Tente de novo em alguns minutos."
+        }), 500
