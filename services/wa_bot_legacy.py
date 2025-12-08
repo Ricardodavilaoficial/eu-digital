@@ -41,6 +41,15 @@ try:
 except Exception:
     detect_intent_legacy = None
 
+# --- Contact Memory (histórico por contato) ---
+try:
+    from domain.contact_memory import build_contact_context, contact_memory_enabled_for
+except Exception:
+    build_contact_context = None
+
+    def contact_memory_enabled_for(_uid: str) -> bool:
+        return False
+
 
 def parse_intent(text: str):
     """
@@ -188,7 +197,6 @@ def _normalize_br_msisdn(wa_id: str) -> str:
     if digits.startswith("55") and len(digits) == 12:
         digits = digits[:4] + "9" + digits[4:]
     return digits
-
 
 # ========== DB helpers (imports tolerantes + helpers internos) ==========
 _DB_LAST_ERR = None
