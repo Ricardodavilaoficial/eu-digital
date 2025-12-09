@@ -238,6 +238,7 @@ def ler_configuracao():
         branding      = (data.get("branding") or {}) if isinstance(data.get("branding"), dict) else {}
         estilo        = (data.get("estiloComunicacao") or {}) if isinstance(data.get("estiloComunicacao"), dict) else {}
 
+        # Campos de branding/estilo de comunicação
         public_brand  = _first_non_empty(
             branding.get("public_brand"),
             dados_basicos.get("public_brand"),
@@ -247,6 +248,24 @@ def ler_configuracao():
             dados_basicos.get("display_name"),
             data.get("nome"),
         )
+
+        # Jeito de falar (podem estar dentro de estiloComunicacao)
+        formalidade   = (estilo.get("formalidade") or "").strip() if isinstance(estilo, dict) else ""
+        saudacao      = (estilo.get("saudacao") or "").strip() if isinstance(estilo, dict) else ""
+        closing_text  = (estilo.get("closing_text") or "").strip() if isinstance(estilo, dict) else ""
+        janela_resp   = (estilo.get("janela_resposta") or "").strip() if isinstance(estilo, dict) else ""
+        janela_custom = (estilo.get("janela_resposta_custom") or "").strip() if isinstance(estilo, dict) else ""
+
+        # Emojis:
+        # - preferimos a string salva (estilo.emojis ou data.emojis)
+        # - se não existir, inferimos a partir do bool usaEmojis (sim/não)
+        emojis_flat = ""
+        if isinstance(estilo, dict):
+            emojis_flat = (estilo.get("emojis") or "").strip()
+        if not emojis_flat:
+            emojis_flat = (str(data.get("emojis") or "")).strip()
+        if not emojis_flat and isinstance(estilo.get("usaEmojis"), bool):
+            emojis_flat = "sim" if estilo.get("usaEmojis") else "nao"
 
         # consolidação tolerante
         nome      = _first_non_empty(data.get("nome"),      dados_basicos.get("nome"))
@@ -259,6 +278,9 @@ def ler_configuracao():
 
         legal_nm  = _first_non_empty(data.get("legal_name"),  dados_basicos.get("legal_name"))
         trade_nm  = _first_non_empty(data.get("trade_name"),  dados_basicos.get("trade_name"))
+
+        # Status de ativação (onboarding x já ativo)
+        status_ativacao = (data.get("statusAtivacao") or "").strip()
 
         # Perfil público calculado (comoAparecer + segmento)
         perfil_publico = _compute_perfil_publico(data)
@@ -275,10 +297,19 @@ def ler_configuracao():
             "trade_name": trade_nm or "",
             "public_brand": public_brand or "",
             "display_name": display_nm or "",
+            # Jeito de falar
+            "formalidade": formalidade or "",
+            "emojis": emojis_flat or "",
+            "saudacao": saudacao or "",
+            "closing_text": closing_text or "",
+            "janela_resposta": janela_resp or "",
+            "janela_resposta_custom": janela_custom or "",
+            # Status de ativação (onboarding x já ativo)
+            "statusAtivacao": status_ativacao or "",
             # player no front:
             "vozClonadaUrl": (voz_clonada.get("arquivoUrl") or ""),
             "vozClonada": voz_clonada or None,
-            # NOVO: infos de branding/MEI para o ativar-config
+            # Infos de branding/MEI para o ativar-config
             "branding_choice": branding.get("branding_choice") or "",
         }
 
@@ -371,6 +402,20 @@ def salvar_configuracao():
         except Exception as e:
             return (f"Falha no upload da voz: {e}", 500)
 
+    # -------- Status de ativação: preservar se já existir --------
+    existing_status = ""
+    try:
+        db = _get_db()
+        snap = db.collection("profissionais").document(uid).get()
+        if snap.exists:
+            existing_data = snap.to_dict() or {}
+            existing_status = (existing_data.get("statusAtivacao") or "").strip()
+    except Exception:
+        existing_status = ""
+
+    # Se não houver nada salvo ainda, usamos o default "aguardando-voz"
+    status_ativacao = existing_status or "aguardando-voz"
+
     # -------- Documento para Firestore --------
     doc = {
         "dadosBasicos": {
@@ -385,6 +430,8 @@ def salvar_configuracao():
         },
         "estiloComunicacao": {
             "formalidade": formalidade,
+            # Guardamos a string completa e o bool para compatibilidade
+            "emojis": emojis,  # "sim" | "as_vezes" | "nao"
             "usaEmojis": (emojis == "sim"),
             "saudacao": saudacao,
             "closing_text": closing,
@@ -401,8 +448,8 @@ def salvar_configuracao():
         "legal_name": legal_name,
         "trade_name": trade_name,
         "segmento": segmento,
-        # Mantemos um status genérico; ativação real depende de pagamento + voz processada
-        "statusAtivacao": "aguardando-voz",
+        # Mantemos statusAtivacao, preservando o valor se já existia
+        "statusAtivacao": status_ativacao,
     }
 
     # Só inclui vozClonada se um novo áudio foi enviado neste POST
@@ -424,4 +471,3 @@ def salvar_configuracao():
         resp["vozUrl"] = voz_url
 
     return jsonify(resp), 200
-
