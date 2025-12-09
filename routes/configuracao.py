@@ -404,17 +404,25 @@ def salvar_configuracao():
 
     # -------- Status de ativação: preservar se já existir --------
     existing_status = ""
+    had_doc = False
     try:
         db = _get_db()
         snap = db.collection("profissionais").document(uid).get()
-        if snap.exists:
+        had_doc = snap.exists
+        if had_doc:
             existing_data = snap.to_dict() or {}
             existing_status = (existing_data.get("statusAtivacao") or "").strip()
     except Exception:
         existing_status = ""
+        had_doc = False
 
-    # Se não houver nada salvo ainda, usamos o default "aguardando-voz"
-    status_ativacao = existing_status or "aguardando-voz"
+    # Regras:
+    # - Se já havia doc e não tinha status, consideramos "ativo"
+    # - Se não havia doc (onboarding novo), default "aguardando-voz"
+    if had_doc:
+        status_ativacao = existing_status or "ativo"
+    else:
+        status_ativacao = existing_status or "aguardando-voz"
 
     # -------- Documento para Firestore --------
     doc = {
