@@ -1,19 +1,6 @@
 # routes/voz_whatsapp_bp.py
-# NOVO (v1.1) — Voz via WhatsApp (inbound + convite outbound opcional)
-#
-# ✅ Não altera /api/voz/* existentes.
-# ✅ Não chama ElevenLabs.
-# ✅ Feature flags:
-#    - VOICE_WA_MODE=off|on               (inbound webhook + rotas status/link/reset/config)
-#    - VOICE_WA_OUTBOUND_MODE=off|on      (envio do convite pro WhatsApp do MEI)
-#
-# Rotas:
-# - POST /webhooks/voice-wa
-# - POST /api/voz/whatsapp/link          (gera código — compat)
-# - POST /api/voz/whatsapp/invite        (novo — vínculo direto + tenta enviar mensagem)
-# - GET  /api/voz/whatsapp/status
-# - GET  /api/voz/whatsapp/config        (novo — devolve número E.164 e flags p/ UI)
-# - POST /api/voz/whatsapp/reset         (novo — zera status e remove vínculo ativo do remetente)
+# HOTFIX — garante Firebase Admin init antes de validar Bearer
+# (mantém todo o comportamento do v1.1)
 
 from __future__ import annotations
 
@@ -25,6 +12,8 @@ from typing import Any, Dict, Optional
 from flask import Blueprint, request, jsonify
 from firebase_admin import auth as fb_auth
 from google.cloud import firestore  # type: ignore
+
+from services.firebase_admin_init import ensure_firebase_admin
 
 from services.voice_wa_link import (
     generate_link_code,
@@ -66,7 +55,10 @@ def _get_auth_uid() -> str:
     token = authz.split(" ", 1)[1].strip()
     if not token:
         raise PermissionError("missing_token")
+
+    ensure_firebase_admin()
     decoded = fb_auth.verify_id_token(token)
+
     uid = decoded.get("uid")
     if not uid:
         raise PermissionError("no_uid")
@@ -130,7 +122,6 @@ def voice_wa_status():
 
 @voz_whatsapp_bp.route("/api/voz/whatsapp/link", methods=["POST"])
 def voice_wa_link():
-    """Compat: gera código para o usuário digitar/enviar."""
     try:
         uid = _get_auth_uid()
     except PermissionError as e:
@@ -144,9 +135,6 @@ def voice_wa_link():
 
 @voz_whatsapp_bp.route("/api/voz/whatsapp/invite", methods=["POST"])
 def voice_wa_invite():
-    """Novo: vínculo direto + tenta enviar mensagem ao WhatsApp do MEI.
-    UX alvo: MEI recebe mensagem e só RESPONDE com um áudio.
-    """
     if not _mode_on():
         return jsonify({"ok": True, "ignored": True, "mode": "off"}), 200
 
@@ -165,7 +153,6 @@ def voice_wa_invite():
 
     ttl = int(os.environ.get("VOICE_WA_LINK_TTL_SECONDS", "3600") or "3600")
 
-    # cria vínculo direto (remetente -> uid)
     upsert_sender_link(from_e164=to_e164, uid=uid, ttl_seconds=ttl, method="invite")
 
     _status_update(uid, {
@@ -196,7 +183,6 @@ def voice_wa_invite():
 
 @voz_whatsapp_bp.route("/api/voz/whatsapp/reset", methods=["POST"])
 def voice_wa_reset():
-    """Novo: zera status e remove vínculo ativo do remetente (se conhecido)."""
     try:
         uid = _get_auth_uid()
     except PermissionError as e:
@@ -229,7 +215,6 @@ def voice_wa_reset():
 
 @voz_whatsapp_bp.route("/webhooks/voice-wa", methods=["POST"])
 def voice_wa_webhook():
-    """Inbound webhook. Responde 200 SEMPRE."""
     if not _mode_on():
         return jsonify({"ok": True, "ignored": True}), 200
 
@@ -252,7 +237,6 @@ def voice_wa_webhook():
         _log(None, payload, note=f"blocked sender={from_e164}")
         return jsonify({"ok": True, "ignored": True}), 200
 
-    # Texto: aceita "MEIROBO VOZ <CODE>" (modo antigo, compat)
     if kind == "text":
         text = (event.get("text") or "").strip()
         m = re.match(r"(?i)^\s*MEIROBO\s+VOZ\s+([A-Z0-9]{4,10})\s*$", text)
@@ -280,7 +264,6 @@ def voice_wa_webhook():
         _log(uid, payload, note=f"linked sender={from_e164}")
         return jsonify({"ok": True}), 200
 
-    # Áudio: resolve uid via mapping (invite direto ou por code)
     if kind != "audio":
         return jsonify({"ok": True}), 200
 
