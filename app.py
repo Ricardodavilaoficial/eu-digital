@@ -206,6 +206,14 @@ except Exception as e:
     # Mantém produção viva mesmo se o arquivo ainda não existir
     print("[boot] authority_bp não registrado:", e, flush=True)
 
+# === Blueprint: voz via WhatsApp (novo, atrás de flag VOICE_WA_MODE) ===
+try:
+    from routes.voz_whatsapp_bp import voz_whatsapp_bp
+    app.register_blueprint(voz_whatsapp_bp)
+    print("[boot] voz_whatsapp_bp registrado ✓", flush=True)
+except Exception as e:
+    print("[boot] voz_whatsapp_bp não registrado:", e, flush=True)
+    
 from flask import jsonify as _jsonify  # já importado acima, mas evita shadowing
 _PUBLIC_ALLOW_EXACT = {
     "/health",
