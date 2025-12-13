@@ -1,28 +1,28 @@
 # routes/voz_whatsapp_bp.py
-# NOVO (v1.0) — Captura de voz via WhatsApp (webhook) + status read-only
-# Regras:
-# - NÃO altera rotas existentes /api/voz/*
-# - NÃO chama ElevenLabs (processamento fica p/ outro passo)
-# - Tudo protegido por feature flag: VOICE_WA_MODE=off|on
+# NOVO (v1.1) — Voz via WhatsApp (inbound + convite outbound opcional)
+#
+# ✅ Não altera /api/voz/* existentes.
+# ✅ Não chama ElevenLabs.
+# ✅ Feature flags:
+#    - VOICE_WA_MODE=off|on               (inbound webhook + rotas status/link/reset/config)
+#    - VOICE_WA_OUTBOUND_MODE=off|on      (envio do convite pro WhatsApp do MEI)
 #
 # Rotas:
-# - POST /webhooks/voice-wa                (webhook inbound, responde 200 sempre)
-# - POST /api/voz/whatsapp/link            (auth) cria código curto p/ vincular
-# - GET  /api/voz/whatsapp/status          (auth) status atual (profissionais/{uid}/voz/whatsapp)
+# - POST /webhooks/voice-wa
+# - POST /api/voz/whatsapp/link          (gera código — compat)
+# - POST /api/voz/whatsapp/invite        (novo — vínculo direto + tenta enviar mensagem)
+# - GET  /api/voz/whatsapp/status
+# - GET  /api/voz/whatsapp/config        (novo — devolve número E.164 e flags p/ UI)
+# - POST /api/voz/whatsapp/reset         (novo — zera status e remove vínculo ativo do remetente)
 
 from __future__ import annotations
 
 import os
 import re
 import time
-import json
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
-import requests
 from flask import Blueprint, request, jsonify
-
-import firebase_admin
 from firebase_admin import auth as fb_auth
 from google.cloud import firestore  # type: ignore
 
@@ -31,6 +31,7 @@ from services.voice_wa_link import (
     save_link_code,
     consume_link_code,
     upsert_sender_link,
+    delete_sender_link,
     get_uid_for_sender,
     sender_allowed,
     normalize_e164_br,
@@ -41,23 +42,22 @@ from services.voice_wa_download import (
     sniff_extension,
     basic_audio_validate,
 )
-from services.voice_wa_storage import (
-    upload_voice_bytes,
-)
+from services.voice_wa_storage import upload_voice_bytes
+from services.voice_wa_outbound import send_invite_message
 
 voz_whatsapp_bp = Blueprint("voz_whatsapp_bp", __name__)
 
-STATUS_DOC_REL_PATH = "voz/whatsapp"  # dentro de profissionais/{uid}/...
-
-def _now_ts() -> firestore.SERVER_TIMESTAMP:  # type: ignore
-    return firestore.SERVER_TIMESTAMP
-
 def _db():
-    # assume Firebase Admin já inicializado em app.py (canônico)
     return firestore.Client()
+
+def _now_ts():
+    return firestore.SERVER_TIMESTAMP  # type: ignore
 
 def _mode_on() -> bool:
     return (os.environ.get("VOICE_WA_MODE", "off").strip().lower() == "on")
+
+def _outbound_on() -> bool:
+    return (os.environ.get("VOICE_WA_OUTBOUND_MODE", "off").strip().lower() == "on")
 
 def _get_auth_uid() -> str:
     authz = request.headers.get("Authorization", "")
@@ -87,43 +87,50 @@ def _status_set_failed(uid: str, err: str, extra: Optional[Dict[str, Any]] = Non
         payload.update(extra)
     _status_update(uid, payload)
 
-def _log(uid: Optional[str], event: Dict[str, Any], note: str = ""):
+def _log(uid: Optional[str], payload: Dict[str, Any], note: str = ""):
     try:
         db = _db()
-        doc = {
-            "createdAt": _now_ts(),
-            "note": (note or "")[:200],
-            "event": event,
-        }
+        doc = {"createdAt": _now_ts(), "note": (note or "")[:200], "payload": payload}
         if uid:
             db.collection("profissionais").document(uid).collection("voz_whatsapp_logs").add(doc)
         else:
             db.collection("voice_wa_logs").add(doc)
     except Exception:
-        # logs nunca podem derrubar o webhook
         pass
+
+@voz_whatsapp_bp.route("/api/voz/whatsapp/config", methods=["GET"])
+def voice_wa_config():
+    try:
+        _ = _get_auth_uid()
+    except PermissionError as e:
+        return jsonify({"ok": False, "error": str(e)}), 401
+
+    wa_number = (os.environ.get("VOICE_WA_NUMBER_E164") or os.environ.get("VOICE_WA_TEMP_NUMBER_E164") or "").strip()
+    return jsonify({
+        "ok": True,
+        "mode": "on" if _mode_on() else "off",
+        "outboundMode": "on" if _outbound_on() else "off",
+        "waNumberE164": wa_number,
+        "linkTtlSeconds": int(os.environ.get("VOICE_WA_LINK_TTL_SECONDS", "3600") or "3600"),
+    }), 200
 
 @voz_whatsapp_bp.route("/api/voz/whatsapp/status", methods=["GET"])
 def voice_wa_status():
-    """Read-only status atual (exige Firebase idToken)."""
     try:
         uid = _get_auth_uid()
     except PermissionError as e:
         return jsonify({"ok": False, "error": str(e)}), 401
 
-    ref = _status_doc_ref(uid)
-    snap = ref.get()
+    snap = _status_doc_ref(uid).get()
     if not snap.exists:
-        # default explícito p/ UX
         return jsonify({"ok": True, "status": "idle", "source": "whatsapp"}), 200
-
     data = snap.to_dict() or {}
     data["ok"] = True
     return jsonify(data), 200
 
 @voz_whatsapp_bp.route("/api/voz/whatsapp/link", methods=["POST"])
 def voice_wa_link():
-    """Cria código curto que o MEI vai usar no WhatsApp: 'MEIROBO VOZ <CODIGO>'."""
+    """Compat: gera código para o usuário digitar/enviar."""
     try:
         uid = _get_auth_uid()
     except PermissionError as e:
@@ -132,53 +139,122 @@ def voice_wa_link():
     ttl = int(os.environ.get("VOICE_WA_LINK_TTL_SECONDS", "3600") or "3600")
     code = generate_link_code()
     save_link_code(uid=uid, code=code, ttl_seconds=ttl)
-    # status passa p/ waiting (frontend pode orientar o próximo passo)
     _status_update(uid, {"status": "waiting", "source": "whatsapp", "lastError": ""})
     return jsonify({"ok": True, "code": code, "ttlSeconds": ttl}), 200
 
+@voz_whatsapp_bp.route("/api/voz/whatsapp/invite", methods=["POST"])
+def voice_wa_invite():
+    """Novo: vínculo direto + tenta enviar mensagem ao WhatsApp do MEI.
+    UX alvo: MEI recebe mensagem e só RESPONDE com um áudio.
+    """
+    if not _mode_on():
+        return jsonify({"ok": True, "ignored": True, "mode": "off"}), 200
+
+    try:
+        uid = _get_auth_uid()
+    except PermissionError as e:
+        return jsonify({"ok": False, "error": str(e)}), 401
+
+    data = request.get_json(silent=True) or {}
+    to_e164 = normalize_e164_br(data.get("toE164") or data.get("phoneE164") or "")
+    if not to_e164:
+        return jsonify({"ok": False, "error": "missing_toE164"}), 400
+
+    if not sender_allowed(to_e164):
+        return jsonify({"ok": False, "error": "unauthorized_sender"}), 403
+
+    ttl = int(os.environ.get("VOICE_WA_LINK_TTL_SECONDS", "3600") or "3600")
+
+    # cria vínculo direto (remetente -> uid)
+    upsert_sender_link(from_e164=to_e164, uid=uid, ttl_seconds=ttl, method="invite")
+
+    _status_update(uid, {
+        "status": "waiting",
+        "source": "whatsapp",
+        "inviteToE164": to_e164,
+        "inviteSentAt": _now_ts(),
+        "lastError": "",
+    })
+
+    sent = False
+    detail = ""
+    if _outbound_on():
+        try:
+            sent, detail = send_invite_message(to_e164)
+        except Exception as e:
+            sent, detail = False, f"send_failed:{type(e).__name__}"
+
+    return jsonify({
+        "ok": True,
+        "toE164": to_e164,
+        "ttlSeconds": ttl,
+        "outboundAttempted": _outbound_on(),
+        "sent": bool(sent),
+        "detail": detail,
+        "next": "Agora o MEI só precisa responder no WhatsApp com um áudio de 1–3 minutos.",
+    }), 200
+
+@voz_whatsapp_bp.route("/api/voz/whatsapp/reset", methods=["POST"])
+def voice_wa_reset():
+    """Novo: zera status e remove vínculo ativo do remetente (se conhecido)."""
+    try:
+        uid = _get_auth_uid()
+    except PermissionError as e:
+        return jsonify({"ok": False, "error": str(e)}), 401
+
+    snap = _status_doc_ref(uid).get()
+    from_e164 = ""
+    if snap.exists:
+        d = snap.to_dict() or {}
+        from_e164 = normalize_e164_br(d.get("fromE164") or d.get("inviteToE164") or "")
+
+    if from_e164:
+        try:
+            delete_sender_link(from_e164)
+        except Exception:
+            pass
+
+    _status_update(uid, {
+        "status": "idle",
+        "lastError": "",
+        "fromE164": "",
+        "messageId": "",
+        "provider": "",
+        "mimeType": "",
+        "durationSec": None,
+        "storagePath": "",
+        "originalFilename": "",
+    })
+    return jsonify({"ok": True, "status": "idle"}), 200
+
 @voz_whatsapp_bp.route("/webhooks/voice-wa", methods=["POST"])
 def voice_wa_webhook():
-    """Webhook inbound (Meta/YCloud). Responde 200 sempre.
-    Se VOICE_WA_MODE=off, devolve ok/ignored.
-    """
-    # sempre 200 p/ não quebrar provedor
+    """Inbound webhook. Responde 200 SEMPRE."""
     if not _mode_on():
         return jsonify({"ok": True, "ignored": True}), 200
 
-    # segredo simples (se configurado)
     secret_env = (os.environ.get("VOICE_WA_WEBHOOK_SECRET") or "").strip()
     if secret_env:
         got = (request.headers.get("X-Voice-WA-Secret") or request.args.get("secret") or "").strip()
         if not got or got != secret_env:
-            # não vaza info: só ignora
             return jsonify({"ok": True, "ignored": True}), 200
 
-    try:
-        payload = request.get_json(silent=True) or {}
-    except Exception:
-        payload = {}
-
-    # resolve event -> (kind, fromE164, messageId, provider, mediaInfo, text)
+    payload = request.get_json(silent=True) or {}
     event = resolve_incoming_event(payload)
     _log(None, payload, note=f"ingress kind={event.get('kind')} provider={event.get('provider')}")
 
-    from_e164 = (event.get("fromE164") or "").strip()
+    from_e164 = normalize_e164_br((event.get("fromE164") or "").strip())
     provider = (event.get("provider") or "unknown").strip()
     message_id = (event.get("messageId") or "").strip()
-    kind = (event.get("kind") or "").strip()  # "text" | "audio" | "unknown"
+    kind = (event.get("kind") or "").strip()
 
-    if from_e164:
-        from_e164 = normalize_e164_br(from_e164) or from_e164
-
-    # allowlist opcional (só bloqueia se ENV presente)
     if not sender_allowed(from_e164):
         _log(None, payload, note=f"blocked sender={from_e164}")
-        # ainda 200, mas ignora
         return jsonify({"ok": True, "ignored": True}), 200
 
+    # Texto: aceita "MEIROBO VOZ <CODE>" (modo antigo, compat)
     if kind == "text":
         text = (event.get("text") or "").strip()
-        # Comando: MEIROBO VOZ <CODE>
         m = re.match(r"(?i)^\s*MEIROBO\s+VOZ\s+([A-Z0-9]{4,10})\s*$", text)
         if not m:
             return jsonify({"ok": True}), 200
@@ -186,13 +262,13 @@ def voice_wa_webhook():
         code = m.group(1).upper()
         consume = consume_link_code(code)
         if not consume:
-            # sem uid -> não tem como atualizar status específico
             _log(None, payload, note=f"link invalid/expired code={code} from={from_e164}")
             return jsonify({"ok": True}), 200
 
         uid = consume["uid"]
         ttl = consume["ttlSeconds"]
         upsert_sender_link(from_e164=from_e164, uid=uid, ttl_seconds=ttl, method="code")
+
         _status_update(uid, {
             "status": "received",
             "source": "whatsapp",
@@ -204,17 +280,15 @@ def voice_wa_webhook():
         _log(uid, payload, note=f"linked sender={from_e164}")
         return jsonify({"ok": True}), 200
 
+    # Áudio: resolve uid via mapping (invite direto ou por code)
     if kind != "audio":
         return jsonify({"ok": True}), 200
 
-    # áudio chegou: resolve uid por mapping
     uid = get_uid_for_sender(from_e164)
     if not uid:
         _log(None, payload, note=f"no_link_for_sender sender={from_e164}")
-        # nada p/ atualizar no doc do usuário (não sabemos quem é). Ainda 200.
         return jsonify({"ok": True}), 200
 
-    # marca recebido + baixando
     _status_update(uid, {
         "status": "received",
         "source": "whatsapp",
@@ -230,6 +304,7 @@ def voice_wa_webhook():
     try:
         media = event.get("media") or {}
         raw_bytes, mime = download_media_bytes(provider=provider, media=media)
+
         ok, reason = basic_audio_validate(raw_bytes, mime_type=mime)
         if not ok:
             _status_set_failed(uid, reason or "audio_invalid", {"mimeType": mime or ""})
@@ -241,13 +316,11 @@ def voice_wa_webhook():
         _status_update(uid, {"status": "saving"})
         upload_voice_bytes(storage_path=storage_path, content_type=mime or "application/octet-stream", data=raw_bytes)
 
-        # salva status final
         _status_update(uid, {
             "status": "saved",
             "storagePath": storage_path,
             "mimeType": mime or "",
             "originalFilename": media.get("filename") or "",
-            # signedUrl opcional: deixe o front pedir via /media/signed-url
         })
         _log(uid, payload, note=f"saved path={storage_path}")
         return jsonify({"ok": True}), 200
