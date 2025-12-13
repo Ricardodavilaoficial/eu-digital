@@ -1,6 +1,5 @@
 # routes/voz_whatsapp_bp.py
-# HOTFIX — garante Firebase Admin init antes de validar Bearer
-# (mantém todo o comportamento do v1.1)
+# NOVO (v1.1 + hotfix v2) — Voz via WhatsApp (inbound + convite outbound opcional)
 
 from __future__ import annotations
 
@@ -55,10 +54,11 @@ def _get_auth_uid() -> str:
     token = authz.split(" ", 1)[1].strip()
     if not token:
         raise PermissionError("missing_token")
-
-    ensure_firebase_admin()
-    decoded = fb_auth.verify_id_token(token)
-
+    try:
+        ensure_firebase_admin()
+        decoded = fb_auth.verify_id_token(token)
+    except Exception:
+        raise PermissionError("auth_unavailable")
     uid = decoded.get("uid")
     if not uid:
         raise PermissionError("no_uid")
@@ -96,6 +96,8 @@ def voice_wa_config():
         _ = _get_auth_uid()
     except PermissionError as e:
         return jsonify({"ok": False, "error": str(e)}), 401
+    except Exception as e:
+        return jsonify({"ok": False, "error": "server_error", "detail": str(e)[:160]}), 500
 
     wa_number = (os.environ.get("VOICE_WA_NUMBER_E164") or os.environ.get("VOICE_WA_TEMP_NUMBER_E164") or "").strip()
     return jsonify({
@@ -112,6 +114,8 @@ def voice_wa_status():
         uid = _get_auth_uid()
     except PermissionError as e:
         return jsonify({"ok": False, "error": str(e)}), 401
+    except Exception as e:
+        return jsonify({"ok": False, "error": "server_error", "detail": str(e)[:160]}), 500
 
     snap = _status_doc_ref(uid).get()
     if not snap.exists:
@@ -126,6 +130,8 @@ def voice_wa_link():
         uid = _get_auth_uid()
     except PermissionError as e:
         return jsonify({"ok": False, "error": str(e)}), 401
+    except Exception as e:
+        return jsonify({"ok": False, "error": "server_error", "detail": str(e)[:160]}), 500
 
     ttl = int(os.environ.get("VOICE_WA_LINK_TTL_SECONDS", "3600") or "3600")
     code = generate_link_code()
@@ -142,17 +148,17 @@ def voice_wa_invite():
         uid = _get_auth_uid()
     except PermissionError as e:
         return jsonify({"ok": False, "error": str(e)}), 401
+    except Exception as e:
+        return jsonify({"ok": False, "error": "server_error", "detail": str(e)[:160]}), 500
 
     data = request.get_json(silent=True) or {}
     to_e164 = normalize_e164_br(data.get("toE164") or data.get("phoneE164") or "")
     if not to_e164:
         return jsonify({"ok": False, "error": "missing_toE164"}), 400
-
     if not sender_allowed(to_e164):
         return jsonify({"ok": False, "error": "unauthorized_sender"}), 403
 
     ttl = int(os.environ.get("VOICE_WA_LINK_TTL_SECONDS", "3600") or "3600")
-
     upsert_sender_link(from_e164=to_e164, uid=uid, ttl_seconds=ttl, method="invite")
 
     _status_update(uid, {
@@ -187,6 +193,8 @@ def voice_wa_reset():
         uid = _get_auth_uid()
     except PermissionError as e:
         return jsonify({"ok": False, "error": str(e)}), 401
+    except Exception as e:
+        return jsonify({"ok": False, "error": "server_error", "detail": str(e)[:160]}), 500
 
     snap = _status_doc_ref(uid).get()
     from_e164 = ""
@@ -308,7 +316,7 @@ def voice_wa_webhook():
         _log(uid, payload, note=f"saved path={storage_path}")
         return jsonify({"ok": True}), 200
 
-    except Exception as e:
+    except Exception:
         _status_set_failed(uid, "download_or_storage_failed")
-        _log(uid, payload, note=f"failed err={type(e).__name__}")
+        _log(uid, payload, note="failed")
         return jsonify({"ok": True}), 200
