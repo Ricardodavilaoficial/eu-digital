@@ -321,6 +321,12 @@ try:
     _register_bp(media_bp, "media_bp")
 except Exception as e:
     print("[bp][warn] media_bp:", e)
+    
+try:
+    from routes.admin_storage import admin_storage_bp
+    _register_bp(admin_storage_bp, "admin_storage_bp (/api/admin/storage/*)")
+except Exception as e:
+    print("[bp][warn] admin_storage_bp:", e)
 
 try:
     from routes.servicos_foto import servicos_foto_bp
