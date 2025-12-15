@@ -79,7 +79,7 @@ def _verify_signature_if_enabled(raw_body: bytes) -> bool:
 def _normalize_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normaliza o payload YCloud para um envelope canônico GLOBAL.
-    Baseado no evento whatsapp.inbound_message.received e whatsapp.message.updated. 
+    Baseado no evento whatsapp.inbound_message.received e whatsapp.message.updated.
     """
     ev_type = _safe_str(payload.get("type"))
     ev_id = _safe_str(payload.get("id"))
@@ -185,7 +185,7 @@ def ycloud_webhook_ingress():
     raw = request.get_data(cache=False) or b""
 
     # ============================================================
-    # PATCH 1 — Log do JSON Bruto (sempre)
+    # PATCH 1 — Log do JSON Bruto (sempre)  [mantido como estava]
     # - Captura o corpo bruto antes de qualquer validação/parse
     # - Grava em platform_wa_raw_logs como texto (UTF-8 com replace)
     # ============================================================
@@ -223,22 +223,63 @@ def ycloud_webhook_ingress():
         _log_global(env, raw_body=None)
         return jsonify({"ok": True, "ignored": True}), 200
 
-    # tenta JSON pelo Flask; se falhar, faz parse manual do body cru
+    # ============================================================
+    # PATCH 1 — Parse robusto do body (JSON + payload= + data=)
+    # ============================================================
+    # tenta JSON pelo Flask; se falhar, faz parse manual do body cru (inclui payload=...)
     payload = request.get_json(silent=True) or {}
+
     if not payload and raw:
         try:
-            payload = json.loads(raw.decode("utf-8", errors="replace"))
+            raw_txt_try = raw.decode("utf-8", errors="replace").strip()
+
+            # caso comum: "payload={...}" (form-urlencoded)
+            if raw_txt_try.startswith("payload="):
+                from urllib.parse import parse_qs
+                qs = parse_qs(raw_txt_try, keep_blank_values=True)
+                cand = (qs.get("payload") or [""])[0]
+                payload = json.loads(cand) if cand else {}
+
+            # caso comum: "data={...}"
+            elif raw_txt_try.startswith("data="):
+                from urllib.parse import parse_qs
+                qs = parse_qs(raw_txt_try, keep_blank_values=True)
+                cand = (qs.get("data") or [""])[0]
+                payload = json.loads(cand) if cand else {}
+
+            # caso comum: JSON puro como texto
+            else:
+                payload = json.loads(raw_txt_try)
+
         except Exception:
             payload = {}
+
+    # se vier embrulhado (muito comum em webhooks): {"data": {...}}
+    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+        payload = payload["data"]
+
+    # ============================================================
+    # PATCH 2 — Logar o RAW automaticamente quando o parse falhar
+    # + garante env normalizado DEPOIS do parse robusto
+    # ============================================================
+    log_raw = (os.environ.get("YCLOUD_WEBHOOK_LOG_RAW", "0").strip() == "1")
+
+    raw_txt2 = None
+    # loga raw se: (a) flag ligada OU (b) payload veio vazio (sinal de parse quebrado)
+    if log_raw or not payload:
+        try:
+            raw_txt2 = raw.decode("utf-8", errors="replace")
+        except Exception:
+            raw_txt2 = None
+
     env = _normalize_event(payload)
-        
+
     # ============================================================
     # Auto-reply simples (MVP): só para inbound TEXT
     # - Não depende de VOICE_WA_MODE
     # - Não escreve em profissionais/*
     # - Responde apenas se vier whatsapp.inbound_message.received (text)
     # ============================================================
-
     try:
         if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") == "text":
             from_e164 = (env.get("from") or "").strip()
@@ -250,25 +291,16 @@ def ycloud_webhook_ingress():
         # não quebra o webhook por causa de resposta
         pass
 
-    log_raw = (os.environ.get("YCLOUD_WEBHOOK_LOG_RAW", "0").strip() == "1")
-
-    raw_txt = None
-    # loga raw se: (a) flag ligada OU (b) payload veio vazio (sinal de parse quebrado)
-    if log_raw or not payload:
-        try:
-            raw_txt = raw.decode("utf-8", errors="replace")
-        except Exception:
-            raw_txt = None
-
-    _log_global(env, raw_body=raw_txt)
+    _log_global(env, raw_body=raw_txt2)
 
     # Atividade 1: só ingress + log.
     return jsonify({"ok": True}), 200
 
 
-# (OPCIONAL) compat: endpoint legado /webhooks/voice-wa
+# ============================================================
+# PATCH 3 — (Opcional) Stub compat do endpoint legado
 # Evita retry infinito de integrações antigas.
+# ============================================================
 @ycloud_webhook_bp.route("/webhooks/voice-wa", methods=["POST"])
 def voice_wa_compat_stub():
-    # compat legado: responde ok e não faz nada
     return jsonify({"ok": True, "ignored": True, "reason": "deprecated_endpoint"}), 200
