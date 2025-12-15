@@ -349,14 +349,6 @@ try:
 except Exception as e:
     print("[bp][warn] servicos_foto_bp:", e)
 
-
-
-try:
-    from routes.servicos_foto import servicos_foto_bp
-    _register_bp(servicos_foto_bp, "servicos_foto_bp (/api/servicos/foto)")
-except Exception as e:
-    print("[bp][warn] servicos_foto_bp:", e)
-
 try:
     from routes.contacts import contacts_bp
     _register_bp(contacts_bp, "contacts_bp")
