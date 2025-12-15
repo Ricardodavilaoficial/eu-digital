@@ -14,6 +14,7 @@ from flask import Blueprint, request, jsonify
 from google.cloud import firestore  # type: ignore
 
 from services.firebase_admin_init import ensure_firebase_admin
+from providers.ycloud import send_text as ycloud_send_text  # sender oficial (já validado)
 
 ycloud_webhook_bp = Blueprint("ycloud_webhook_bp", __name__)
 
@@ -204,6 +205,24 @@ def ycloud_webhook_ingress():
     payload = request.get_json(silent=True) or {}
     env = _normalize_event(payload)
 
+    # ============================================================
+    # Auto-reply simples (MVP): só para inbound TEXT
+    # - Não depende de VOICE_WA_MODE
+    # - Não escreve em profissionais/*
+    # - Responde apenas se vier whatsapp.inbound_message.received (text)
+    # ============================================================
+
+    try:
+        if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") == "text":
+            from_e164 = (env.get("from") or "").strip()
+            if from_e164:
+                reply = "Recebi 👍 Digite: 1 Voz | 2 Suporte | 3 Planos"
+                # usa sender oficial (providers/ycloud.py)
+                ycloud_send_text(from_e164, reply)
+    except Exception:
+        # não quebra o webhook por causa de resposta
+        pass
+
     log_raw = (os.environ.get("YCLOUD_WEBHOOK_LOG_RAW", "0").strip() == "1")
     raw_txt = None
     if log_raw:
@@ -218,195 +237,9 @@ def ycloud_webhook_ingress():
     return jsonify({"ok": True}), 200
 
 
-# =============================================================================
-# INCREMENTO: Webhook Voice-WA (auto-reply simples)
-# Rota: POST /webhooks/voice-wa
-# =============================================================================
-
-def _mode_on() -> bool:
-    # liga/desliga via VOICE_WA_MODE=on|1|true
-    v = (os.environ.get("VOICE_WA_MODE") or "").strip().lower()
-    return v in ("1", "true", "on", "enabled", "yes")
-
-def normalize_e164_br(x: str) -> str:
-    s = (x or "").strip()
-    if not s:
-        return ""
-    # mantém + e dígitos
-    if s.startswith("+"):
-        digits = "+" + "".join([c for c in s[1:] if c.isdigit()])
-    else:
-        digits = "".join([c for c in s if c.isdigit()])
-        if digits.startswith("55"):
-            digits = "+" + digits
-        else:
-            # assume BR quando vier “solto”
-            digits = "+55" + digits
-    # mínimo: +55DD... (sem validação pesada aqui)
-    return digits
-
-def sender_allowed(from_e164: str) -> bool:
-    # allowlist opcional: VOICE_WA_ALLOWLIST_E164="+5551999999999,+5551888888888"
-    allow = (os.environ.get("VOICE_WA_ALLOWLIST_E164") or "").strip()
-    if not allow:
-        return True
-    allowed = {normalize_e164_br(p.strip()) for p in allow.split(",") if p.strip()}
-    return normalize_e164_br(from_e164) in allowed
-
-def _log(uid: Optional[str], payload: Dict[str, Any], note: str = ""):
-    # log global, sem escrever em profissionais/*
-    env = {
-        "provider": payload.get("provider") or "voice-wa",
-        "kind": "voice-wa",
-        "eventType": "voice_wa_webhook",
-        "from": payload.get("fromE164") or payload.get("from") or "",
-        "to": payload.get("toE164") or payload.get("to") or "",
-        "messageType": payload.get("kind") or payload.get("messageType") or "",
-        "text": payload.get("text") or "",
-        "media": payload.get("media") or {},
-        "status": "",
-        "errorCode": "",
-        "errorMessage": _safe_str(note, 500),
-        "wamid": payload.get("messageId") or payload.get("wamid") or "",
-    }
-    _log_global(env, raw_body=None)
-
-def resolve_incoming_event(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Aceita dois formatos:
-    1) Formato "simplificado" já no padrão do voice-wa:
-       { provider, kind: text|audio, fromE164, messageId, ... }
-    2) Payload YCloud bruto (whatsapp.inbound_message.received / etc):
-       converte usando _normalize_event().
-    """
-    # já veio “pronto”
-    if payload.get("fromE164") or payload.get("kind"):
-        ev = dict(payload)
-        ev["provider"] = (ev.get("provider") or "unknown").strip()
-        ev["kind"] = (ev.get("kind") or "").strip()
-        ev["fromE164"] = ev.get("fromE164") or ev.get("from") or ""
-        ev["messageId"] = ev.get("messageId") or ev.get("wamid") or ""
-        return ev
-
-    # tenta interpretar como YCloud
-    try:
-        env = _normalize_event(payload)
-        kind = "event"
-        if env.get("kind") == "inbound":
-            if env.get("messageType") == "text":
-                kind = "text"
-            elif env.get("messageType") in ("audio", "voice"):
-                kind = "audio"
-            else:
-                kind = (env.get("messageType") or "event")
-        ev = {
-            "provider": "ycloud",
-            "kind": kind,
-            "fromE164": env.get("from") or "",
-            "toE164": env.get("to") or "",
-            "messageId": env.get("wamid") or env.get("messageId") or "",
-            "text": env.get("text") or "",
-            "media": env.get("media") or {},
-        }
-        return ev
-    except Exception:
-        return {
-            "provider": "unknown",
-            "kind": "event",
-            "fromE164": "",
-            "toE164": "",
-            "messageId": "",
-        }
-
-def send_text(to_e164: str, text: str) -> bool:
-    """
-    Envia mensagem via YCloud (se ENVs existirem). Se não existirem, só loga e retorna False.
-    ENVs esperadas (best effort):
-      - YCLOUD_API_BASE (ex.: https://api.ycloud.com/v2)
-      - YCLOUD_API_TOKEN (Bearer)
-      - YCLOUD_WABA_FROM (opcional: número/remetente default)
-    """
-    base = (os.environ.get("YCLOUD_API_BASE") or "").strip().rstrip("/")
-    token = (os.environ.get("YCLOUD_API_TOKEN") or "").strip()
-    from_id = (os.environ.get("YCLOUD_WABA_FROM") or "").strip()
-
-    to_e164 = normalize_e164_br(to_e164)
-    text = (text or "").strip()
-    if not to_e164 or not text:
-        return False
-
-    if not base or not token:
-        _log(None, {"provider":"voice-wa", "kind":"send_text_skipped", "fromE164":"", "toE164":to_e164, "text":text},
-             note="send_text skipped: missing YCLOUD_API_BASE or YCLOUD_API_TOKEN")
-        return False
-
-    try:
-        import requests  # type: ignore
-        url = f"{base}/whatsapp/messages"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
-        body: Dict[str, Any] = {
-            "to": to_e164,
-            "type": "text",
-            "text": {"body": text},
-        }
-        if from_id:
-            body["from"] = from_id
-
-        r = requests.post(url, headers=headers, json=body, timeout=10)
-        ok = (200 <= r.status_code < 300)
-        _log(None, {
-            "provider":"voice-wa",
-            "kind":"send_text",
-            "fromE164": from_id,
-            "toE164": to_e164,
-            "messageId": "",
-            "text": text
-        }, note=f"ycloud send_text status={r.status_code} ok={ok}")
-        return ok
-    except Exception as e:
-        _log(None, {
-            "provider":"voice-wa",
-            "kind":"send_text_error",
-            "fromE164": from_id,
-            "toE164": to_e164,
-            "messageId": "",
-            "text": text
-        }, note=f"send_text exception: {_safe_str(e, 240)}")
-        return False
-
+# (OPCIONAL) compat: endpoint legado /webhooks/voice-wa
+# Evita retry infinito de integrações antigas.
 @ycloud_webhook_bp.route("/webhooks/voice-wa", methods=["POST"])
-def voice_wa_webhook():
-    if not _mode_on():
-        return jsonify({"ok": True, "ignored": True}), 200
-
-    secret_env = (os.environ.get("VOICE_WA_WEBHOOK_SECRET") or "").strip()
-    if secret_env:
-        got = (request.headers.get("X-Voice-WA-Secret") or request.args.get("secret") or "").strip()
-        if not got or got != secret_env:
-            return jsonify({"ok": True, "ignored": True}), 200
-
-    payload = request.get_json(silent=True) or {}
-    event = resolve_incoming_event(payload)
-    _log(None, payload, note=f"ingress kind={event.get('kind')} provider={event.get('provider')}")
-
-    from_e164 = normalize_e164_br((event.get("fromE164") or "").strip())
-    provider = (event.get("provider") or "unknown").strip()
-    message_id = (event.get("messageId") or "").strip()
-    kind = (event.get("kind") or "").strip()
-
-    if not sender_allowed(from_e164):
-        _log(None, payload, note=f"blocked sender={from_e164}")
-        return jsonify({"ok": True, "ignored": True}), 200
-
-    # Verifica tipo de mensagem e responde
-    if kind == "text":
-        response_text = "Olá, qual serviço você precisa? 1 - Voz / 2 - Suporte / 3 - Vendas"
-        send_text(from_e164, response_text)
-    elif kind == "audio":
-        response_text = "Áudio recebido, processando..."
-        send_text(from_e164, response_text)
-
-    return jsonify({"ok": True}), 200
+def voice_wa_compat_stub():
+    # compat legado: responde ok e não faz nada
+    return jsonify({"ok": True, "ignored": True, "reason": "deprecated_endpoint"}), 200
