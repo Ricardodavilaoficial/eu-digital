@@ -40,15 +40,12 @@ def _api_key() -> str:
 
 def _from_number() -> str:
     """
-    YCloud espera o identificador do número do WhatsApp (phoneNumberId) no campo "from".
-    Ex.: 955185857667818 (NÃO é +55...)
-    """
-    # prioridade: Phone Number ID (correto para YCloud)
-    v = _env("YCLOUD_WHATSAPP_PHONE_NUMBER_ID", "")
-    if v:
-        return v
+    Para o endpoint sendDirectly, o campo "from" deve ser o NÚMERO E.164
+    registrado/conectado na YCloud (ex.: +555181474122).
 
-    # fallback legado (não recomendado): E.164
+    NÃO usar YCLOUD_WHATSAPP_PHONE_NUMBER_ID aqui.
+    O ID existe e é útil para outras APIs, mas não como "from" deste sender.
+    """
     v = _env("YCLOUD_WA_FROM_E164", "")
     if v:
         return v
@@ -58,7 +55,8 @@ def _from_number() -> str:
     if v:
         return v
 
-    raise YCloudError("missing_from_number (set YCLOUD_WHATSAPP_PHONE_NUMBER_ID)")
+    raise YCloudError("missing_from_number (set YCLOUD_WA_FROM_E164)")
+
 
 def _timeout() -> int:
     try:
@@ -122,7 +120,6 @@ def send_text(to_e164: str, text: str, from_e164: Optional[str] = None) -> Tuple
 
 
 def send_audio(to_e164: str, audio_url: str, from_e164: Optional[str] = None) -> Tuple[bool, Dict[str, Any]]:
-    # YCloud usa "audio": {"link": "<URL>"} :contentReference[oaicite:1]{index=1}
     payload = {
         "from": (from_e164 or _from_number()),
         "to": (to_e164 or "").strip(),
@@ -139,8 +136,6 @@ def send_template(
     language_code: str = "pt_BR",
     from_e164: Optional[str] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
-    # Template com parâmetros no body:
-    # components: [{type:"body", parameters:[{type:"text", text:"..."}]}] :contentReference[oaicite:2]{index=2}
     parameters = [{"type": "text", "text": str(x)} for x in (params or [])]
 
     payload = {
