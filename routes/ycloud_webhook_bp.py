@@ -183,6 +183,27 @@ def _log_global(envelope: Dict[str, Any], raw_body: Optional[str] = None):
 @ycloud_webhook_bp.route("/integracoes/ycloud/webhook", methods=["POST"])
 def ycloud_webhook_ingress():
     raw = request.get_data(cache=False) or b""
+
+    # ============================================================
+    # PATCH 1 — Log do JSON Bruto (sempre)
+    # - Captura o corpo bruto antes de qualquer validação/parse
+    # - Grava em platform_wa_raw_logs como texto (UTF-8 com replace)
+    # ============================================================
+    try:
+        raw_txt = raw.decode("utf-8", errors="replace")
+    except Exception:
+        raw_txt = None
+
+    if raw_txt:
+        try:
+            db = _db()
+            db.collection("platform_wa_raw_logs").add({
+                "createdAt": _now_ts(),
+                "rawData": raw_txt
+            })
+        except Exception:
+            pass
+
     if not _verify_signature_if_enabled(raw):
         # Segurança: responde 200 “ok” pra não virar DoS por retry,
         # mas ignora e registra que falhou verificação.
@@ -202,9 +223,15 @@ def ycloud_webhook_ingress():
         _log_global(env, raw_body=None)
         return jsonify({"ok": True, "ignored": True}), 200
 
+    # tenta JSON pelo Flask; se falhar, faz parse manual do body cru
     payload = request.get_json(silent=True) or {}
+    if not payload and raw:
+        try:
+            payload = json.loads(raw.decode("utf-8", errors="replace"))
+        except Exception:
+            payload = {}
     env = _normalize_event(payload)
-
+        
     # ============================================================
     # Auto-reply simples (MVP): só para inbound TEXT
     # - Não depende de VOICE_WA_MODE
@@ -224,8 +251,10 @@ def ycloud_webhook_ingress():
         pass
 
     log_raw = (os.environ.get("YCLOUD_WEBHOOK_LOG_RAW", "0").strip() == "1")
+
     raw_txt = None
-    if log_raw:
+    # loga raw se: (a) flag ligada OU (b) payload veio vazio (sinal de parse quebrado)
+    if log_raw or not payload:
         try:
             raw_txt = raw.decode("utf-8", errors="replace")
         except Exception:
