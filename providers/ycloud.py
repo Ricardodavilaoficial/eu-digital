@@ -39,16 +39,26 @@ def _api_key() -> str:
 
 
 def _from_number() -> str:
-    # prioridade: número oficial do MEI Robô (seu)
-    # fallback: VOICE_WA_NUMBER_E164 ou TEMP, se você já usa isso em voz
+    """
+    YCloud espera o identificador do número do WhatsApp (phoneNumberId) no campo "from".
+    Ex.: 955185857667818 (NÃO é +55...)
+    """
+    # prioridade: Phone Number ID (correto para YCloud)
+    v = _env("YCLOUD_WHATSAPP_PHONE_NUMBER_ID", "")
+    if v:
+        return v
+
+    # fallback legado (não recomendado): E.164
     v = _env("YCLOUD_WA_FROM_E164", "")
     if v:
         return v
+
+    # fallback voz (se você usa isso em outro lugar)
     v = _env("VOICE_WA_NUMBER_E164", "") or _env("VOICE_WA_TEMP_NUMBER_E164", "")
     if v:
         return v
-    raise YCloudError("missing_from_number (set YCLOUD_WA_FROM_E164)")
 
+    raise YCloudError("missing_from_number (set YCLOUD_WHATSAPP_PHONE_NUMBER_ID)")
 
 def _timeout() -> int:
     try:
