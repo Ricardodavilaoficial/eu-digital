@@ -190,3 +190,9 @@ sendgrid.key
 !public/**
 !public/pages/**
 !public/assets/**
+h origin main
+ycloud_webhook_bp.py
+*.bak
+*.tmp
+__pycache__/
+
