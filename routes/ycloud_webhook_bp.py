@@ -25,6 +25,31 @@ def _db():
 def _now_ts():
     return firestore.SERVER_TIMESTAMP  # type: ignore
 
+# ============================================================
+# PATCH A — DEDUPE Firestore (mínimo e cirúrgico)
+# ============================================================
+def _dedupe_once(key: str, ttl_seconds: int = 3600) -> bool:
+    """
+    Retorna True se for a primeira vez que vemos esta chave (pode responder).
+    Retorna False se já foi processado (não responde de novo).
+    """
+    try:
+        if not key:
+            return True  # sem chave, não bloqueia
+        db = _db()
+        ref = db.collection("platform_wa_dedupe").document(key)
+        snap = ref.get()
+        if snap.exists:
+            return False
+        ref.set({
+            "createdAt": _now_ts(),
+            "ttlSeconds": int(ttl_seconds),
+        })
+        return True
+    except Exception:
+        # se Firestore falhar, melhor NÃO spammar => bloqueia
+        return False
+
 def _safe_str(x: Any, limit: int = 180) -> str:
     s = "" if x is None else str(x)
     s = s.replace("\n", " ").replace("\r", " ").strip()
@@ -286,7 +311,16 @@ def ycloud_webhook_ingress():
             if from_e164:
                 reply = "Recebi 👍 Digite: 1 Voz | 2 Suporte | 3 Planos"
                 # usa sender oficial (providers/ycloud.py)
-                ycloud_send_text(from_e164, reply)
+
+                # ============================================================
+                # PATCH A — DEDUPE antes de responder
+                # ============================================================
+                msg_id = (env.get("messageId") or env.get("wamid") or "").strip()
+                if msg_id and not _dedupe_once(msg_id):
+                    # já processado, não responde de novo
+                    pass
+                else:
+                    ycloud_send_text(from_e164, reply)
     except Exception:
         # não quebra o webhook por causa de resposta
         pass
