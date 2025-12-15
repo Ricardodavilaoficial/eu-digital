@@ -174,7 +174,6 @@ env.json
 change_email.json
 upd.json
 *.log
-__pycache__ /
 .DS_Store
 idtoken.json
 idtoken.txt
