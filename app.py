@@ -213,7 +213,15 @@ try:
     print("[boot] voz_whatsapp_bp registrado ✓", flush=True)
 except Exception as e:
     print("[boot] voz_whatsapp_bp não registrado:", e, flush=True)
-    
+
+# === NOVO: webhook YCloud (GLOBAL) — /integracoes/ycloud/webhook ===
+try:
+    from routes.ycloud_webhook_bp import ycloud_webhook_bp
+    app.register_blueprint(ycloud_webhook_bp)
+    print("[boot] ycloud_webhook_bp registrado ✓", flush=True)
+except Exception as e:
+    print("[boot] ycloud_webhook_bp não registrado:", e, flush=True)
+        
 from flask import jsonify as _jsonify  # já importado acima, mas evita shadowing
 _PUBLIC_ALLOW_EXACT = {
     "/health",
@@ -321,12 +329,27 @@ try:
     _register_bp(media_bp, "media_bp")
 except Exception as e:
     print("[bp][warn] media_bp:", e)
-    
+
 try:
     from routes.admin_storage import admin_storage_bp
     _register_bp(admin_storage_bp, "admin_storage_bp (/api/admin/storage/*)")
 except Exception as e:
     print("[bp][warn] admin_storage_bp:", e)
+
+# === NOVO: Admin-only teste YCloud — /admin/ycloud/send-test ===
+try:
+    from routes.admin_ycloud_test_bp import admin_ycloud_test_bp
+    _register_bp(admin_ycloud_test_bp, "admin_ycloud_test_bp (/admin/ycloud/send-test)")
+except Exception as e:
+    print("[bp][warn] admin_ycloud_test_bp:", e)
+
+try:
+    from routes.servicos_foto import servicos_foto_bp
+    _register_bp(servicos_foto_bp, "servicos_foto_bp (/api/servicos/foto)")
+except Exception as e:
+    print("[bp][warn] servicos_foto_bp:", e)
+
+
 
 try:
     from routes.servicos_foto import servicos_foto_bp
