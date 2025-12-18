@@ -41,6 +41,59 @@ def _db():
 def _now_ts():
     return firestore.SERVER_TIMESTAMP  # type: ignore
 
+def _get_profile_telefone_candidates(uid: str) -> list[str]:
+    """Busca possíveis telefones do MEI no Firestore (por UID).
+
+    Mantém compat com várias chaves antigas/novas. Retorna lista (pode vir vazia).
+    """
+    try:
+        doc = _db().collection("profissionais").document(uid).get()
+        if not doc.exists:
+            return []
+        data = doc.to_dict() or {}
+    except Exception:
+        return []
+
+    out: list[str] = []
+
+    # formato atual: profissionais/{uid}.dadosBasicos.telefone / telefoneE164
+    dados = (data.get("dadosBasicos") or {}) if isinstance(data.get("dadosBasicos"), dict) else {}
+    for k in ("telefoneE164", "whatsE164", "phoneE164", "telefone", "whatsapp", "whats"):
+        v = dados.get(k)
+        if isinstance(v, str) and v.strip():
+            out.append(v.strip())
+
+    # compat: campos no topo
+    for k in ("telefoneE164", "whatsE164", "phoneE164", "telefone", "whatsapp", "whats"):
+        v = data.get(k)
+        if isinstance(v, str) and v.strip():
+            out.append(v.strip())
+
+    # de-dup mantendo ordem
+    seen = set()
+    uniq: list[str] = []
+    for v in out:
+        if v not in seen:
+            seen.add(v)
+            uniq.append(v)
+    return uniq
+
+
+def _resolve_to_e164(uid: str, body: dict) -> str:
+    """Resolve telefone destino (toE164) a partir do body ou do perfil no Firestore."""
+    raw = (body.get("toE164") or body.get("phoneE164") or body.get("whatsE164") or "")
+    to_e164 = normalize_e164_br(raw)
+
+    if to_e164:
+        return to_e164
+
+    # fallback: buscar no perfil do usuário logado
+    for cand in _get_profile_telefone_candidates(uid):
+        to_e164 = normalize_e164_br(cand)
+        if to_e164:
+            return to_e164
+
+    return ""
 def _mode_on() -> bool:
     return (os.environ.get("VOICE_WA_MODE", "off").strip().lower() == "on")
 
@@ -152,9 +205,9 @@ def voice_wa_invite():
         return jsonify({"ok": False, "error": "server_error", "detail": str(e)[:160]}), 500
 
     data = request.get_json(silent=True) or {}
-    to_e164 = normalize_e164_br(data.get("toE164") or data.get("phoneE164") or "")
+    to_e164 = _resolve_to_e164(uid, data)
     if not to_e164:
-        return jsonify({"ok": False, "error": "missing_toE164"}), 400
+        return jsonify({"ok": False, "error": "missing_toE164", "hint": "Preencha seu WhatsApp (com +55...) e clique em Salvar antes de enviar a voz."}), 400
     if not sender_allowed(to_e164):
         return jsonify({"ok": False, "error": "unauthorized_sender"}), 403
 
@@ -320,3 +373,4 @@ def voice_wa_webhook():
         _status_set_failed(uid, "download_or_storage_failed")
         _log(uid, payload, note="failed")
         return jsonify({"ok": True}), 200
+
