@@ -335,6 +335,4 @@ def ycloud_webhook_ingress():
 # PATCH 3 — (Opcional) Stub compat do endpoint legado
 # Evita retry infinito de integrações antigas.
 # ============================================================
-@ycloud_webhook_bp.route("/webhooks/voice-wa", methods=["POST"])
-def voice_wa_compat_stub():
-    return jsonify({"ok": True, "ignored": True, "reason": "deprecated_endpoint"}), 200
+

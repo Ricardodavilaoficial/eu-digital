@@ -207,7 +207,12 @@ def voice_wa_invite():
     data = request.get_json(silent=True) or {}
     to_e164 = _resolve_to_e164(uid, data)
     if not to_e164:
-        return jsonify({"ok": False, "error": "missing_toE164", "hint": "Preencha seu WhatsApp (com +55...) e clique em Salvar antes de enviar a voz."}), 400
+        return jsonify({
+            "ok": False,
+            "error": "missing_toE164",
+            "message": "Não achei seu WhatsApp salvo. Volte e confira seu número (com DDD) e tente de novo.",
+            "hint": "Ex.: +55 51 99999-9999",
+        }), 400
     if not sender_allowed(to_e164):
         return jsonify({"ok": False, "error": "unauthorized_sender"}), 403
 
@@ -373,4 +378,5 @@ def voice_wa_webhook():
         _status_set_failed(uid, "download_or_storage_failed")
         _log(uid, payload, note="failed")
         return jsonify({"ok": True}), 200
+
 
