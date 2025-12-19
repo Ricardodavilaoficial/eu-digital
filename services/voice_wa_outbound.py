@@ -29,21 +29,15 @@ from typing import Tuple
 
 import requests
 
-
 def _provider() -> str:
     return (os.environ.get("VOICE_WA_PROVIDER", "meta") or "meta").strip().lower()
-
 
 def _timeout() -> int:
     return int(os.environ.get("VOICE_WA_SEND_TIMEOUT_SECONDS", "15") or "15")
 
-
 def _invite_text() -> str:
-    return (
-        os.environ.get("VOICE_WA_INVITE_TEXT")
-        or "Aqui é o MEI Robô 🤖\n\nResponda esta mensagem com um ÁUDIO de 1 a 3 minutos, falando naturalmente (como você fala com seus clientes)."
-    ).strip()
-
+    return (os.environ.get("VOICE_WA_INVITE_TEXT") or
+            "Aqui é o MEI Robô 🤖\n\nResponda esta mensagem com um ÁUDIO de 1 a 3 minutos, falando naturalmente (como você fala com seus clientes).").strip()
 
 def send_invite_message(to_e164: str) -> Tuple[bool, str]:
     prov = _provider()
@@ -52,7 +46,6 @@ def send_invite_message(to_e164: str) -> Tuple[bool, str]:
     if prov == "ycloud":
         return _send_ycloud_text(to_e164)
     return (False, "provider_not_supported")
-
 
 def _send_meta_text(to_e164: str) -> Tuple[bool, str]:
     token = (os.environ.get("VOICE_WA_PROVIDER_TOKEN") or "").strip()
@@ -80,23 +73,7 @@ def _send_meta_text(to_e164: str) -> Tuple[bool, str]:
     )
     if 200 <= r.status_code < 300:
         return (True, "meta_sent")
-
-    # LOG DIAGNÓSTICO (não altera fluxo)
-    try:
-        err = r.json()
-    except Exception:
-        err = r.text
-
-    print(
-        "[voice_wa_outbound][META_ERROR]",
-        "status=",
-        r.status_code,
-        "response=",
-        err,
-    )
-
     return (False, f"meta_http_{r.status_code}")
-
 
 def _send_ycloud_text(to_e164: str) -> Tuple[bool, str]:
     send_url = (os.environ.get("VOICE_WA_YCLOUD_SEND_URL") or "").strip()
@@ -114,4 +91,3 @@ def _send_ycloud_text(to_e164: str) -> Tuple[bool, str]:
     if 200 <= r.status_code < 300:
         return (True, "ycloud_sent")
     return (False, f"ycloud_http_{r.status_code}")
-
