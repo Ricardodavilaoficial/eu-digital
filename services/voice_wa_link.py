@@ -190,3 +190,4 @@ def sender_allowed(from_e164: str) -> bool:
             allowed.add(p)
     return normalize_e164_br(from_e164) in allowed
 
+

@@ -135,11 +135,11 @@ def _normalize_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     if msg_type == "text":
         text = _safe_str((msg.get("text") or {}).get("body") or msg.get("text") or "" , 2000)
 
-    elif msg_type in ("audio", "voice"):
-        a = msg.get("audio") or {}
+    elif msg_type in ("audio", "voice", "ptt"):
+        a = (msg.get("audio") or msg.get("voice") or msg.get("ptt") or {})
         media = {
             "kind": "audio",
-            "url": _safe_str(a.get("url"), 500),
+            "url": _safe_str(a.get("link") or a.get("url") or a.get("downloadUrl") or a.get("download_url"), 500),
             "mimeType": _safe_str(a.get("mimeType") or a.get("mime_type") or ""),
             "sha256": _safe_str(a.get("sha256") or ""),
             "id": _safe_str(a.get("id") or ""),
@@ -417,5 +417,6 @@ def ycloud_webhook_ingress():
     # PATCH 3 — (Opcional) Stub compat do endpoint legado
     # Evita retry infinito de integrações antigas.
     # ============================================================
+
 
 
