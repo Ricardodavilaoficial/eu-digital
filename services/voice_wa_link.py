@@ -25,23 +25,67 @@ def _db():
 def _now():
     return datetime.now(timezone.utc)
 
-def normalize_e164_br(e164: str) -> str:
-    s = re.sub(r"[^\d+]", "", (e164 or "").strip())
-    if not s:
-        return ""
-    if s.startswith("00"):
-        s = "+" + s[2:]
-    if not s.startswith("+"):
-        digits = re.sub(r"\D+", "", s)
-        if digits.startswith("55"):
-            s = "+" + digits
-        elif len(digits) in (10, 11):
-            s = "+55" + digits
-        else:
-            s = "+" + digits
-    s = "+" + re.sub(r"\D+", "", s)
-    return s
+def _canonicalize_br_digits(digits: str) -> str:
+    """Recebe apenas dígitos. Se for BR (começa com 55), remove o '9' móvel quando aplicável.
 
+    Canonical:
+      - Fixo BR: 55 + DD + XXXXXXXX (12 dígitos)
+      - Móvel BR: 55 + DD + 9XXXXXXXX -> vira 55 + DD + XXXXXXXX (12 dígitos)
+    """
+    if not digits:
+        return ""
+    if not digits.startswith("55"):
+        return digits
+
+    rest = digits[2:]
+    # BR completo com DDD + 9 + 8 dígitos: 11 dígitos após o 55 => total 13
+    if len(rest) == 11:
+        dd = rest[:2]
+        body = rest[2:]
+        # remove o '9' móvel (3º dígito após o DDD)
+        if body.startswith("9") and len(body) == 9:
+            body = body[1:]
+        return "55" + dd + body
+
+    return digits
+
+
+def normalize_e164_br(e164: str) -> str:
+    """Normaliza números para algo E164-like e resolve o '9' móvel BR.
+
+    - Aceita +55..., 55..., 0 0 55..., ou nacional (10/11 dígitos com DDD).
+    - Para BR, remove o '9' móvel quando vier (11 dígitos após DDI+DDD+9+8).
+    - Para entradas curtas/estranhas (ex.: 34251716), apenas retorna '+' + dígitos (sem adivinhar DDD).
+    """
+    raw = (e164 or "").strip()
+    if not raw:
+        return ""
+
+    # Trata 00XX como prefixo internacional
+    if raw.startswith("00"):
+        raw = "+" + raw[2:]
+
+    has_plus = raw.startswith("+")
+    digits = re.sub(r"\D+", "", raw)
+    if not digits:
+        return ""
+
+    if has_plus:
+        digits = _canonicalize_br_digits(digits)
+        return "+" + digits
+
+    # Sem +: tenta entender.
+    if digits.startswith("55"):
+        digits = _canonicalize_br_digits(digits)
+        return "+" + digits
+
+    # Nacional BR com DDD: 10 (fixo) ou 11 (móvel)
+    if len(digits) in (10, 11):
+        digits = _canonicalize_br_digits("55" + digits)
+        return "+" + digits
+
+    # Fallback: não adivinhar DDD/país
+    return "+" + digits
 def generate_link_code(length: int = 6) -> str:
     return "".join(random.choice(string.digits) for _ in range(max(4, length)))
 
@@ -136,3 +180,4 @@ def sender_allowed(from_e164: str) -> bool:
         if p:
             allowed.add(p)
     return normalize_e164_br(from_e164) in allowed
+
