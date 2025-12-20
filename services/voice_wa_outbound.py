@@ -29,6 +29,35 @@ from typing import Tuple
 
 import requests
 
+def _safe_trunc(s: str, n: int = 220) -> str:
+    s = (s or "").replace("\n", " ").replace("\r", " ").strip()
+    if len(s) <= n:
+        return s
+    return s[: n - 3] + "..."
+
+def _meta_error_detail(status_code: int, body_text: str) -> str:
+    """Return a compact, non-sensitive error string for logs/UI."""
+    msg = ""
+    code = ""
+    fbtrace = ""
+    try:
+        data = json.loads(body_text or "{}")
+        err = data.get("error") or {}
+        msg = str(err.get("message") or "")
+        code = str(err.get("code") or "")
+        fbtrace = str(err.get("fbtrace_id") or "")
+    except Exception:
+        msg = body_text or ""
+    parts = [f"meta_http_{status_code}"]
+    if code:
+        parts.append(f"code_{code}")
+    if fbtrace:
+        parts.append(f"fbtrace_{fbtrace}")
+    if msg:
+        parts.append(_safe_trunc(msg, 160))
+    return "|".join(parts)
+
+
 def _provider() -> str:
     return (os.environ.get("VOICE_WA_PROVIDER", "meta") or "meta").strip().lower()
 
@@ -65,15 +94,23 @@ def _send_meta_text(to_e164: str) -> Tuple[bool, str]:
         "text": {"preview_url": False, "body": _invite_text()},
     }
 
-    r = requests.post(
-        url,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        data=json.dumps(payload),
-        timeout=_timeout(),
-    )
+    try:
+        r = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            data=json.dumps(payload),
+            timeout=_timeout(),
+        )
+    except requests.RequestException as e:
+        print(f"[voice-wa][meta] request_error to={_safe_trunc(to_e164, 40)} err={_safe_trunc(str(e), 160)}")
+        return (False, "meta_request_error")
+
     if 200 <= r.status_code < 300:
         return (True, "meta_sent")
-    return (False, f"meta_http_{r.status_code}")
+
+    detail = _meta_error_detail(r.status_code, getattr(r, "text", "") or "")
+    print(f"[voice-wa][meta] send_failed to={_safe_trunc(to_e164, 40)} detail={detail}")
+    return (False, detail)
 
 def _send_ycloud_text(to_e164: str) -> Tuple[bool, str]:
     send_url = (os.environ.get("VOICE_WA_YCLOUD_SEND_URL") or "").strip()
@@ -87,7 +124,17 @@ def _send_ycloud_text(to_e164: str) -> Tuple[bool, str]:
 
     payload = {"to": to_e164, "type": "text", "text": _invite_text()}
 
-    r = requests.post(send_url, headers=headers, data=json.dumps(payload), timeout=_timeout())
+    try:
+        r = requests.post(send_url, headers=headers, data=json.dumps(payload), timeout=_timeout())
+    except requests.RequestException as e:
+        print(f"[voice-wa][ycloud] request_error to={_safe_trunc(to_e164, 40)} err={_safe_trunc(str(e), 160)}")
+        return (False, "ycloud_request_error")
+
     if 200 <= r.status_code < 300:
         return (True, "ycloud_sent")
-    return (False, f"ycloud_http_{r.status_code}")
+
+    body = getattr(r, "text", "") or ""
+    detail = f"ycloud_http_{r.status_code}|{_safe_trunc(body, 180)}" if body else f"ycloud_http_{r.status_code}"
+    print(f"[voice-wa][ycloud] send_failed to={_safe_trunc(to_e164, 40)} detail={detail}")
+    return (False, detail)
+
