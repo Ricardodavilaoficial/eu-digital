@@ -25,67 +25,69 @@ def _db():
 def _now():
     return datetime.now(timezone.utc)
 
-def _canonicalize_br_digits(digits: str) -> str:
-    """Recebe apenas dígitos. Se for BR (começa com 55), remove o '9' móvel quando aplicável.
-
-    Canonical:
-      - Fixo BR: 55 + DD + XXXXXXXX (12 dígitos)
-      - Móvel BR: 55 + DD + 9XXXXXXXX -> vira 55 + DD + XXXXXXXX (12 dígitos)
-    """
-    if not digits:
-        return ""
-    if not digits.startswith("55"):
-        return digits
-
-    rest = digits[2:]
-    # BR completo com DDD + 9 + 8 dígitos: 11 dígitos após o 55 => total 13
-    if len(rest) == 11:
-        dd = rest[:2]
-        body = rest[2:]
-        # remove o '9' móvel (3º dígito após o DDD)
-        if body.startswith("9") and len(body) == 9:
-            body = body[1:]
-        return "55" + dd + body
-
-    return digits
-
-
 def normalize_e164_br(e164: str) -> str:
-    """Normaliza números para algo E164-like e resolve o '9' móvel BR.
+    """Normaliza para algo tipo E164 (+<digits>), com heurística BR.
 
-    - Aceita +55..., 55..., 0 0 55..., ou nacional (10/11 dígitos com DDD).
-    - Para BR, remove o '9' móvel quando vier (11 dígitos após DDI+DDD+9+8).
-    - Para entradas curtas/estranhas (ex.: 34251716), apenas retorna '+' + dígitos (sem adivinhar DDD).
+    - Aceita: +55..., 55..., 00..., (51) 9xxxx-xxxx, etc.
+    - Para BR com DDI 55:
+        * Se tiver DDD + 9 + 8 dígitos (celular 11 dígitos nacionais), remove o '9' móvel e
+          canonicaliza para +55DDXXXXXXXX.
+        * Se tiver DDD + 8 dígitos (fixo), mantém.
     """
-    raw = (e164 or "").strip()
-    if not raw:
+    s = re.sub(r"[^\d+]", "", (e164 or "").strip())
+    if not s:
         return ""
 
-    # Trata 00XX como prefixo internacional
-    if raw.startswith("00"):
-        raw = "+" + raw[2:]
+    # 00xx... -> +xx...
+    if s.startswith("00"):
+        s = "+" + s[2:]
 
-    has_plus = raw.startswith("+")
-    digits = re.sub(r"\D+", "", raw)
-    if not digits:
-        return ""
+    # se veio sem '+', tenta inferir BR
+    if not s.startswith("+"):
+        digits = re.sub(r"\D+", "", s)
+        if digits.startswith("55"):
+            s = "+" + digits
+        elif len(digits) in (10, 11):  # DDD + (8|9) dígitos
+            s = "+55" + digits
+        else:
+            s = "+" + digits
 
-    if has_plus:
-        digits = _canonicalize_br_digits(digits)
-        return "+" + digits
+    # garante só dígitos após '+'
+    s = "+" + re.sub(r"\D+", "", s)
 
-    # Sem +: tenta entender.
+    # Heurística BR: canonicalizar removendo o '9' móvel (DDD + 9 + 8)
+    digits = s[1:]
     if digits.startswith("55"):
-        digits = _canonicalize_br_digits(digits)
-        return "+" + digits
+        national = digits[2:]  # tudo após 55
+        if len(national) == 11:
+            ddd = national[:2]
+            num = national[2:]
+            if num.startswith("9") and len(num) == 9:
+                s = "+55" + ddd + num[1:]
+    return s
 
-    # Nacional BR com DDD: 10 (fixo) ou 11 (móvel)
-    if len(digits) in (10, 11):
-        digits = _canonicalize_br_digits("55" + digits)
-        return "+" + digits
+def _br_sender_variants(e164: str) -> list[str]:
+    """Gera variantes BR (com/sem 9) para compatibilidade no vínculo."""
+    base = normalize_e164_br(e164)
+    if not base:
+        return []
+    out = {base}
 
-    # Fallback: não adivinhar DDD/país
-    return "+" + digits
+    digits = base[1:]
+    if digits.startswith("55"):
+        national = digits[2:]
+        if len(national) == 10:
+            ddd = national[:2]
+            num = national[2:]
+            out.add("+55" + ddd + "9" + num)
+        elif len(national) == 11:
+            ddd = national[:2]
+            num = national[2:]
+            if num.startswith("9") and len(num) == 9:
+                out.add("+55" + ddd + num[1:])
+    return [x for x in out if x]
+
+
 def generate_link_code(length: int = 6) -> str:
     return "".join(random.choice(string.digits) for _ in range(max(4, length)))
 
@@ -129,13 +131,14 @@ def consume_link_code(code: str) -> Optional[Dict[str, Any]]:
     return {"uid": data.get("uid"), "ttlSeconds": int(data.get("ttlSeconds") or 3600)}
 
 def upsert_sender_link(from_e164: str, uid: str, ttl_seconds: int = 3600, method: str = "code") -> None:
-    from_e164 = normalize_e164_br(from_e164)
-    if not from_e164:
+    variants = _br_sender_variants(from_e164)
+    if not variants:
         raise ValueError("empty_sender")
+    canon = variants[0]
     expires_at = _now() + timedelta(seconds=int(ttl_seconds or 3600))
     doc = {
         "uid": uid,
-        "fromE164": from_e164,
+        "fromE164": canon,
         "method": method,
         "createdAt": firestore.SERVER_TIMESTAMP,  # type: ignore
         "expiresAt": expires_at,
@@ -150,12 +153,18 @@ def delete_sender_link(from_e164: str) -> None:
     _db().collection("voice_links").document(from_e164).delete()
 
 def get_uid_for_sender(from_e164: str) -> Optional[str]:
-    from_e164 = normalize_e164_br(from_e164)
-    if not from_e164:
+    variants = _br_sender_variants(from_e164)
+    if not variants:
         return None
-    ref = _db().collection("voice_links").document(from_e164)
-    snap = ref.get()
-    if not snap.exists:
+    col = _db().collection("voice_links")
+    snap = None
+    ref = None
+    for key in variants:
+        ref = col.document(key)
+        snap = ref.get()
+        if snap.exists:
+            break
+    if not snap or not snap.exists:
         return None
     data = snap.to_dict() or {}
     expires_at = data.get("expiresAt")
