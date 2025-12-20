@@ -29,6 +29,9 @@ from typing import Tuple
 
 import requests
 
+# sender oficial YCloud (já usado no webhook)
+from providers.ycloud import send_text as ycloud_send_text  # type: ignore
+
 def _safe_trunc(s: str, n: int = 220) -> str:
     s = (s or "").replace("\n", " ").replace("\r", " ").strip()
     if len(s) <= n:
@@ -113,28 +116,16 @@ def _send_meta_text(to_e164: str) -> Tuple[bool, str]:
     return (False, detail)
 
 def _send_ycloud_text(to_e164: str) -> Tuple[bool, str]:
-    send_url = (os.environ.get("VOICE_WA_YCLOUD_SEND_URL") or "").strip()
-    if not send_url:
-        return (False, "ycloud_missing_send_url")
+    """Envia o convite via YCloud usando o sender oficial (providers.ycloud.send_text).
 
-    token = (os.environ.get("VOICE_WA_PROVIDER_TOKEN") or "").strip()
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    payload = {"to": to_e164, "type": "text", "text": _invite_text()}
-
+    Reaproveita as ENVs já existentes do provider (ex.: YCLOUD_BASE_URL, WHATSAPP_TOKEN, etc.).
+    """
     try:
-        r = requests.post(send_url, headers=headers, data=json.dumps(payload), timeout=_timeout())
-    except requests.RequestException as e:
-        print(f"[voice-wa][ycloud] request_error to={_safe_trunc(to_e164, 40)} err={_safe_trunc(str(e), 160)}")
-        return (False, "ycloud_request_error")
-
-    if 200 <= r.status_code < 300:
+        ycloud_send_text(to_e164, _invite_text())
         return (True, "ycloud_sent")
+    except Exception as e:
+        detail = f"ycloud_send_error|{_safe_trunc(str(e), 180)}"
+        print(f"[voice-wa][ycloud] send_failed to={_safe_trunc(to_e164, 40)} detail={detail}")
+        return (False, detail)
 
-    body = getattr(r, "text", "") or ""
-    detail = f"ycloud_http_{r.status_code}|{_safe_trunc(body, 180)}" if body else f"ycloud_http_{r.status_code}"
-    print(f"[voice-wa][ycloud] send_failed to={_safe_trunc(to_e164, 40)} detail={detail}")
-    return (False, detail)
 
