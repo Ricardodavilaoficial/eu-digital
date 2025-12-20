@@ -10,6 +10,8 @@ from __future__ import annotations
 import os, json, time, hmac, hashlib
 from typing import Any, Dict, Optional, Tuple
 
+import logging
+
 from flask import Blueprint, request, jsonify
 from google.cloud import firestore  # type: ignore
 
@@ -20,6 +22,8 @@ from services.voice_wa_download import download_media_bytes
 from services.voice_wa_storage import upload_voice_bytes
 
 ycloud_webhook_bp = Blueprint("ycloud_webhook_bp", __name__)
+
+logger = logging.getLogger(__name__)
 
 def _db():
     ensure_firebase_admin()
@@ -304,106 +308,114 @@ def ycloud_webhook_ingress():
         except Exception:
             raw_txt2 = None
 
-    env = _normalize_event(payload)
-
-    # ============================================================
-    # Auto-reply simples (MVP): só para inbound TEXT
-    # - Não depende de VOICE_WA_MODE
-    # - Não escreve em profissionais/*
-    # - Responde apenas se vier whatsapp.inbound_message.received (text)
+    env = _normalize_event(payload)    # ============================================================
+    # Ingestão de VOZ (áudio) — mínimo v1 (salva no Storage + status no Firestore)
+    # - Não responde no WhatsApp (por enquanto)
+    # - Resolve uid pelo vínculo do invite (services.voice_wa_link)
     # ============================================================
     try:
-        
-# ================================
-# VOZ (áudio) — ingest mínimo v1
-# ================================
-if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") in ("audio","voice","ptt"):
-    from_e164 = (env.get("from") or "").strip()
-    media = env.get("media") or {}
-    media_url = (media.get("url") or "").strip()
-    mime = (media.get("mime") or media.get("mimeType") or "").strip()
+        if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") in ("audio", "voice", "ptt"):
+            from_e164 = (env.get("from") or "").strip()
+            media = env.get("media") or {}
 
-    # resolve uid via mapping gerado no invite
-    uid = get_uid_for_sender(from_e164) if from_e164 else ""
-    if not uid:
-        logger.info("[ycloud_webhook] voice: sender sem uid (ignore). from=%s", from_e164)
-        return "ok", 200
+            # Normaliza chaves esperadas pelo downloader
+            media_for_dl = {
+                "url": (media.get("url") or "").strip(),
+                "mimeType": (media.get("mimeType") or media.get("mime") or "").strip(),
+                "id": (media.get("id") or "").strip(),
+                "sha256": (media.get("sha256") or "").strip(),
+                "filename": (media.get("filename") or "").strip(),
+            }
 
-    if not media_url:
-        # Sem URL de mídia => nada a baixar
-        logger.info("[ycloud_webhook] voice: sem media_url. uid=%s from=%s", uid, from_e164)
-        _voice_status_ref(uid).set({
-            "status": "failed",
-            "lastError": "missing_media_url",
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-            "source": "whatsapp",
-            "waFromE164": from_e164,
-        }, merge=True)
-        return "ok", 200
+            uid = get_uid_for_sender(from_e164) if from_e164 else ""
+            if not uid:
+                logger.info("[ycloud_webhook] voice: sem uid (ignore). from=%s", from_e164)
+                _log_global(env, raw_body=raw_txt2)
+                return jsonify({"ok": True, "ignored": True}), 200
 
-    # YCloud: normalmente precisa de Bearer para baixar mídia
-    auth_bearer = os.environ.get("WHATSAPP_TOKEN") or ""
-    media_dl = {"url": media_url, "mime": mime, "authBearer": auth_bearer}
+            if not media_for_dl["url"]:
+                logger.info("[ycloud_webhook] voice: sem media_url. uid=%s from=%s", uid, from_e164)
+                _voice_status_ref(uid).set({
+                    "status": "failed",
+                    "lastError": "missing_media_url",
+                    "updatedAt": _now_ts(),
+                    "source": "whatsapp",
+                    "waFromE164": from_e164,
+                }, merge=True)
+                _log_global(env, raw_body=raw_txt2)
+                return jsonify({"ok": True}), 200
 
-    try:
-        b = download_media_bytes("ycloud", media_dl)
-        # salva no bucket (raw)
-        ext = "ogg"
-        if mime.endswith("mpeg"): ext = "mp3"
-        elif mime.endswith("wav") or mime == "audio/wav": ext = "wav"
-        gcs_path = upload_voice_bytes(uid, b, ext_hint=ext)
+            # Baixa bytes (usa token/headers internamente conforme implementação)
+            voice_bytes, mime = download_media_bytes(provider="ycloud", media=media_for_dl)
 
-        _voice_status_ref(uid).set({
-            "status": "received",
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-            "source": "whatsapp",
-            "waFromE164": from_e164,
-            "lastAudioGcsPath": gcs_path,
-            "lastAudioMime": mime,
-            "lastInboundAt": firestore.SERVER_TIMESTAMP,
-            "lastError": "",
-        }, merge=True)
+            # Define path raw no Storage (single source of truth do arquivo)
+            ext = "ogg"
+            m2 = (mime or media_for_dl["mimeType"] or "").lower()
+            if "mpeg" in m2 or "mp3" in m2:
+                ext = "mp3"
+            elif "wav" in m2:
+                ext = "wav"
+            elif "ogg" in m2 or "opus" in m2:
+                ext = "ogg"
 
-        logger.info("[ycloud_webhook] voice: salvo uid=%s path=%s", uid, gcs_path)
-        return "ok", 200
+            storage_path = f"profissionais/{uid}/voz/original/whatsapp_{int(time.time())}.{ext}"
+            upload_voice_bytes(storage_path=storage_path, content_type=(mime or media_for_dl["mimeType"] or "application/octet-stream"), data=voice_bytes)
+
+            _voice_status_ref(uid).set({
+                "status": "received",
+                "updatedAt": _now_ts(),
+                "source": "whatsapp",
+                "waFromE164": from_e164,
+                "lastAudioGcsPath": storage_path,
+                "lastAudioMime": (mime or media_for_dl["mimeType"] or ""),
+                "lastInboundAt": _now_ts(),
+                "lastError": "",
+            }, merge=True)
+
+            logger.info("[ycloud_webhook] voice: salvo uid=%s path=%s", uid, storage_path)
+            _log_global(env, raw_body=raw_txt2)
+            return jsonify({"ok": True}), 200
     except Exception as e:
-        logger.exception("[ycloud_webhook] voice: falha ingest uid=%s", uid)
-        _voice_status_ref(uid).set({
-            "status": "failed",
-            "lastError": f"ingest_failed:{type(e).__name__}",
-            "updatedAt": firestore.SERVER_TIMESTAMP,
-            "source": "whatsapp",
-            "waFromE164": from_e164,
-        }, merge=True)
-        return "ok", 200
+        # Não quebra o webhook; registra falha no status se der pra resolver uid
+        try:
+            from_e164 = (env.get("from") or "").strip()
+            uid = get_uid_for_sender(from_e164) if from_e164 else ""
+            if uid:
+                _voice_status_ref(uid).set({
+                    "status": "failed",
+                    "lastError": f"ingest_failed:{type(e).__name__}",
+                    "updatedAt": _now_ts(),
+                    "source": "whatsapp",
+                    "waFromE164": from_e164,
+                }, merge=True)
+        except Exception:
+            pass
+        logger.exception("[ycloud_webhook] voice: falha ingest")
 
-if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") == "text":
+    # ============================================================
+    # Auto-reply simples (MVP): só para inbound TEXT (dedupe)
+    # - Mantém comportamento anterior, mas sem derrubar o webhook
+    # ============================================================
+    try:
+        if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") == "text":
             from_e164 = (env.get("from") or "").strip()
             if from_e164:
                 reply = "Recebi 👍 Digite: 1 Voz | 2 Suporte | 3 Planos"
-                # usa sender oficial (providers/ycloud.py)
 
-                # ============================================================
-                # PATCH A — DEDUPE antes de responder
-                # ============================================================
                 msg_id = (env.get("messageId") or env.get("wamid") or "").strip()
-                if msg_id and not _dedupe_once(msg_id):
-                    # já processado, não responde de novo
-                    pass
-                else:
+                if not msg_id or _dedupe_once(msg_id):
                     ycloud_send_text(from_e164, reply)
     except Exception:
-        # não quebra o webhook por causa de resposta
         pass
-
     _log_global(env, raw_body=raw_txt2)
 
     # Atividade 1: só ingress + log.
     return jsonify({"ok": True}), 200
 
 
-# ============================================================
-# PATCH 3 — (Opcional) Stub compat do endpoint legado
-# Evita retry infinito de integrações antigas.
-# ============================================================
+    # ============================================================
+    # PATCH 3 — (Opcional) Stub compat do endpoint legado
+    # Evita retry infinito de integrações antigas.
+    # ============================================================
+
 
