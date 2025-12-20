@@ -15,12 +15,19 @@ from google.cloud import firestore  # type: ignore
 
 from services.firebase_admin_init import ensure_firebase_admin
 from providers.ycloud import send_text as ycloud_send_text  # sender oficial (já validado)
+from services.voice_wa_link import get_uid_for_sender
+from services.voice_wa_download import download_media_bytes
+from services.voice_wa_storage import upload_voice_bytes
 
 ycloud_webhook_bp = Blueprint("ycloud_webhook_bp", __name__)
 
 def _db():
     ensure_firebase_admin()
     return firestore.Client()
+
+def _voice_status_ref(uid: str):
+    # Single source of truth (não inventar outro path)
+    return _db().collection('profissionais').document(uid).collection('voz').document('whatsapp')
 
 def _now_ts():
     return firestore.SERVER_TIMESTAMP  # type: ignore
@@ -306,7 +313,71 @@ def ycloud_webhook_ingress():
     # - Responde apenas se vier whatsapp.inbound_message.received (text)
     # ============================================================
     try:
-        if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") == "text":
+        
+# ================================
+# VOZ (áudio) — ingest mínimo v1
+# ================================
+if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") in ("audio","voice","ptt"):
+    from_e164 = (env.get("from") or "").strip()
+    media = env.get("media") or {}
+    media_url = (media.get("url") or "").strip()
+    mime = (media.get("mime") or media.get("mimeType") or "").strip()
+
+    # resolve uid via mapping gerado no invite
+    uid = get_uid_for_sender(from_e164) if from_e164 else ""
+    if not uid:
+        logger.info("[ycloud_webhook] voice: sender sem uid (ignore). from=%s", from_e164)
+        return "ok", 200
+
+    if not media_url:
+        # Sem URL de mídia => nada a baixar
+        logger.info("[ycloud_webhook] voice: sem media_url. uid=%s from=%s", uid, from_e164)
+        _voice_status_ref(uid).set({
+            "status": "failed",
+            "lastError": "missing_media_url",
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+            "source": "whatsapp",
+            "waFromE164": from_e164,
+        }, merge=True)
+        return "ok", 200
+
+    # YCloud: normalmente precisa de Bearer para baixar mídia
+    auth_bearer = os.environ.get("WHATSAPP_TOKEN") or ""
+    media_dl = {"url": media_url, "mime": mime, "authBearer": auth_bearer}
+
+    try:
+        b = download_media_bytes("ycloud", media_dl)
+        # salva no bucket (raw)
+        ext = "ogg"
+        if mime.endswith("mpeg"): ext = "mp3"
+        elif mime.endswith("wav") or mime == "audio/wav": ext = "wav"
+        gcs_path = upload_voice_bytes(uid, b, ext_hint=ext)
+
+        _voice_status_ref(uid).set({
+            "status": "received",
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+            "source": "whatsapp",
+            "waFromE164": from_e164,
+            "lastAudioGcsPath": gcs_path,
+            "lastAudioMime": mime,
+            "lastInboundAt": firestore.SERVER_TIMESTAMP,
+            "lastError": "",
+        }, merge=True)
+
+        logger.info("[ycloud_webhook] voice: salvo uid=%s path=%s", uid, gcs_path)
+        return "ok", 200
+    except Exception as e:
+        logger.exception("[ycloud_webhook] voice: falha ingest uid=%s", uid)
+        _voice_status_ref(uid).set({
+            "status": "failed",
+            "lastError": f"ingest_failed:{type(e).__name__}",
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+            "source": "whatsapp",
+            "waFromE164": from_e164,
+        }, merge=True)
+        return "ok", 200
+
+if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") == "text":
             from_e164 = (env.get("from") or "").strip()
             if from_e164:
                 reply = "Recebi 👍 Digite: 1 Voz | 2 Suporte | 3 Planos"
