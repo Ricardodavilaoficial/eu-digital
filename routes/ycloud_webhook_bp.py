@@ -15,7 +15,6 @@ from flask import Blueprint, request, jsonify
 from google.cloud import firestore  # type: ignore
 
 from services.firebase_admin_init import ensure_firebase_admin
-from services import wa_bot  # porta de entrada do bot (fachada estável)
 from providers.ycloud import send_text as ycloud_send_text  # sender oficial (já validado)
 from services.voice_wa_link import get_uid_for_sender
 from services.voice_wa_download import download_media_bytes
@@ -31,18 +30,6 @@ def _db():
 def _voice_status_ref(uid: str):
     # Single source of truth
     return _db().collection('profissionais').document(uid).collection('voz').document('whatsapp')
-
-
-def _outbox_log(doc: Dict[str, Any]) -> None:
-    try:
-        db = _db()
-        db.collection("platform_wa_outbox_logs").add({
-            **doc,
-            "createdAt": _now_ts(),
-        })
-    except Exception:
-        # nunca travar webhook por log
-        pass
 
 def _now_ts():
     return firestore.SERVER_TIMESTAMP  # type: ignore
@@ -215,65 +202,58 @@ def ycloud_webhook_ingress():
         logger.exception("[ycloud_webhook] voice: falha ingest")
         return jsonify({"ok": True}), 200
 
-
-    # ===================== MENSAGEM DE TEXTO (BOT) =====================
+    # ===================== TEXTO (BOT) =====================
+    # Safe mode: responder texto sem mexer no fluxo de voz.
+    # Default ON; desligue no Render com YCLOUD_TEXT_REPLY=0 se precisar rollback instantâneo.
     try:
-        if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") == "text":
-            if os.environ.get("YCLOUD_TEXT_REPLY", "1") == "1":
+        if os.environ.get("YCLOUD_TEXT_REPLY", "1") not in ("0", "false", "False"):
+            if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") == "text":
                 from_e164 = (env.get("from") or "").strip()
                 text_in = (env.get("text") or "").strip()
-                msg_key = (env.get("wamid") or "").strip() or f"text:{from_e164}:{hash(text_in)}"
-                if from_e164 and text_in and _dedupe_once(msg_key):
-                    uid = get_uid_for_sender(from_e164) if from_e164 else ""
-                    if not uid:
-                        logger.info("[ycloud_webhook] text: sem uid (ignore). from=%s", from_e164)
-                        return jsonify({"ok": True, "ignored": True}), 200
 
-                    # chama o bot (fachada) — sem estourar webhook
-                    ctx = {
-                        "channel": "whatsapp",
-                        "provider": "ycloud",
-                        "from_e164": from_e164,
-                        "to_e164": (env.get("to") or "").strip(),
-                        "wamid": (env.get("wamid") or "").strip(),
-                    }
-                    bot_res = wa_bot.reply_to_text(uid, text_in, ctx=ctx)
+                if not from_e164 or not text_in:
+                    return jsonify({"ok": True}), 200
 
-                    # normaliza saída para texto (mantemos simples e seguro aqui)
-                    reply_text = ""
-                    if isinstance(bot_res, dict):
-                        reply_text = (bot_res.get("text") or bot_res.get("message") or bot_res.get("reply") or "").strip()
-                        if not reply_text and bot_res.get("ok") is False:
-                            reply_text = "Tive um probleminha aqui. Pode tentar de novo em alguns segundos?"
-                    else:
-                        reply_text = str(bot_res or "").strip()
+                msg_key = (env.get("wamid") or "").strip() or f"{from_e164}:{hashlib.sha1(text_in.encode('utf-8')).hexdigest()[:16]}"
+                if not _dedupe_once(msg_key):
+                    return jsonify({"ok": True, "deduped": True}), 200
 
-                    if reply_text:
-                        try:
-                            ycloud_send_text(from_e164, reply_text)
-                            _outbox_log({
-                                "ok": True,
-                                "uid": uid,
-                                "to": from_e164,
-                                "kind": "text",
-                                "wamid": (env.get("wamid") or "").strip(),
-                                "preview": reply_text[:180],
-                            })
-                        except Exception as e:
-                            logger.exception("[ycloud_webhook] text: falha ao enviar. uid=%s to=%s", uid, from_e164)
-                            _outbox_log({
-                                "ok": False,
-                                "uid": uid,
-                                "to": from_e164,
-                                "kind": "text",
-                                "wamid": (env.get("wamid") or "").strip(),
-                                "error": str(e)[:220],
-                            })
+                uid = get_uid_for_sender(from_e164)
+                # Resposta default (fallback seguro)
+                reply_text = "Recebi sua mensagem ✅"
+
+                # Tenta passar pelo cérebro do bot (porta de entrada). Se falhar, não quebra nada.
+                if uid:
+                    try:
+                        from services import wa_bot as wa_bot_entry  # lazy import
+                        if hasattr(wa_bot_entry, "reply_to_text"):
+                            reply_text = wa_bot_entry.reply_to_text(uid=uid, text=text_in, channel="whatsapp", from_e164=from_e164) or reply_text
+                    except Exception:
+                        logger.exception("[ycloud_webhook] text: falha ao chamar wa_bot (fallback) uid=%s", uid)
+
+                # Envia resposta via YCloud (texto)
+                try:
+                    ycloud_send_text(from_e164, reply_text)
+                    # Log mínimo de outbound pra debug (com timestamp)
+                    try:
+                        _db().collection("platform_wa_outbox_logs").add({
+                            "createdAt": _now_ts(),
+                            "eventType": env.get("eventType"),
+                            "messageType": "text",
+                            "fromE164": from_e164,
+                            "uid": uid,
+                            "wamid": env.get("wamid"),
+                            "inTextPreview": text_in[:180],
+                            "outTextPreview": str(reply_text)[:180],
+                            "status": "sent",
+                        })
+                    except Exception:
+                        pass
+                except Exception:
+                    logger.exception("[ycloud_webhook] text: falha ao enviar resposta via ycloud")
                 return jsonify({"ok": True}), 200
     except Exception:
-        logger.exception("[ycloud_webhook] text: falha")
-        return jsonify({"ok": True}), 200
-
+        logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
     return jsonify({"ok": True}), 200
 
 
