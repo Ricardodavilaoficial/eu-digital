@@ -100,7 +100,31 @@ def _normalize_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     media: Dict[str, Any] = {}
 
     if msg_type == "text":
-        text = _safe_str((msg.get("text") or {}).get("body") or msg.get("text") or "", 2000)
+        # YCloud pode variar o formato: {"text":{"body":"..."}} | {"text":"..."} | {"text":{"content":"..."}} etc.
+        t = msg.get("text")
+        candidate = ""
+        try:
+            if isinstance(t, dict):
+                candidate = t.get("body") or t.get("content") or t.get("text") or ""
+            elif isinstance(t, str):
+                candidate = t
+        except Exception:
+            candidate = ""
+
+        # alguns payloads trazem o texto em campos alternativos
+        if not candidate:
+            for k in ("body", "content", "message", "textBody", "text_body"):
+                v = msg.get(k)
+                if isinstance(v, str) and v.strip():
+                    candidate = v
+                    break
+                if isinstance(v, dict):
+                    vv = v.get("body") or v.get("content") or v.get("text")
+                    if isinstance(vv, str) and vv.strip():
+                        candidate = vv
+                        break
+
+        text = _safe_str(candidate or "", 2000)
     elif msg_type in ("audio", "voice", "ptt"):
         a = (msg.get("audio") or msg.get("voice") or msg.get("ptt") or {})
         media = {
@@ -247,7 +271,7 @@ def ycloud_webhook_ingress():
                 msg_key = (env.get("wamid") or "").strip()
                 if _dedupe_once(msg_key):
                     try:
-                        ycloud_send_text(from_e164, "Áudio recebido 👍 Agora estamos preparando sua voz.")
+                        ok_send, _resp_send = ycloud_send_text(from_e164, "Áudio recebido 👍 Agora estamos preparando sua voz.")
                     except Exception:
                         pass
 
@@ -316,6 +340,8 @@ def ycloud_webhook_ingress():
 
                 # tenta responder em áudio se a voz estiver pronta (vozClonada.status == ready e voiceId presente)
                 sent_mode = "text"
+                ok_send = None
+                _resp_send = None
                 try:
                     prof = _db().collection("profissionais").document(uid).get()
                     voz = (prof.to_dict() or {}).get("vozClonada") or {}
@@ -352,22 +378,22 @@ def ycloud_webhook_ingress():
 
                             # se falhar enviar áudio, cai para texto (sem quebrar)
                             if not ok:
-                                ycloud_send_text(from_e164, reply_text)
+                                ok_send, _resp_send = ycloud_send_text(from_e164, reply_text)
                                 sent_mode = "text"
                         else:
-                            ycloud_send_text(from_e164, reply_text)
+                            ok_send, _resp_send = ycloud_send_text(from_e164, reply_text)
                             sent_mode = "text"
                     except Exception:
                         logger.exception("[ycloud_webhook] text: falha ao responder em áudio; caindo para texto uid=%s", uid)
                         try:
-                            ycloud_send_text(from_e164, reply_text)
+                            ok_send, _resp_send = ycloud_send_text(from_e164, reply_text)
                             sent_mode = "text"
                         except Exception:
                             logger.exception("[ycloud_webhook] text: falha ao enviar texto (fallback) uid=%s", uid)
                 else:
                     # Envia resposta via YCloud (texto)
                     try:
-                        ycloud_send_text(from_e164, reply_text)
+                        ok_send, _resp_send = ok_send, _resp_send = ycloud_send_text(from_e164, reply_text)
                         sent_mode = "text"
                     except Exception:
                         logger.exception("[ycloud_webhook] text: falha ao enviar resposta via ycloud (texto) uid=%s", uid)
@@ -384,6 +410,8 @@ def ycloud_webhook_ingress():
                         "inTextPreview": text_in[:180],
                         "outTextPreview": str(reply_text)[:180],
                         "sentMode": sent_mode,
+                        "sendOk": ok_send,
+                        "sendResp": _resp_send if isinstance(_resp_send, dict) else None,
                     })
                 except Exception:
                     pass
@@ -392,5 +420,6 @@ def ycloud_webhook_ingress():
     except Exception:
         logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
     return jsonify({"ok": True}), 200
+
 
 
