@@ -121,6 +121,61 @@ def _normalize_event(payload: Dict[str, Any]) -> Dict[str, Any]:
         "media": media,
     }
 
+
+
+# =========================
+# Phone helpers (BR): tolera dígito 9 (mobile) e variações comuns
+# =========================
+def _digits_only(s: str) -> str:
+    return "".join(ch for ch in (s or "") if ch.isdigit())
+
+def _phone_variants(e164: str) -> list[str]:
+    """Gera variações do telefone para lookup (com/sem '9' após DDD no Brasil)."""
+    s = (e164 or "").strip()
+    if not s:
+        return []
+    # mantém + no começo se existir
+    plus = "+" if s.startswith("+") else ""
+    digits = _digits_only(s)
+    if not digits:
+        return [s]
+    # normaliza para +<digits>
+    base = plus + digits
+    out = []
+    def add(x):
+        if x and x not in out:
+            out.append(x)
+    add(base)
+
+    # heurística BR: +55 DDD (2) + número (8/9)
+    if digits.startswith("55") and len(digits) in (12, 13):
+        # depois do '55' vem DDD (2)
+        ddd = digits[2:4]
+        num = digits[4:]
+        # se veio com 8 dígitos (sem 9) → tenta inserir 9
+        if len(num) == 8:
+            add("+" + "55" + ddd + "9" + num)
+        # se veio com 9 dígitos e começa com 9 → tenta remover 9
+        if len(num) == 9 and num.startswith("9"):
+            add("+" + "55" + ddd + num[1:])
+
+    return out
+
+def _resolve_uid_for_sender(from_e164: str) -> str:
+    """Resolve uid tentando variações de telefone. Retorna '' se não achar."""
+    try:
+        from services.voice_wa_link import get_uid_for_sender  # type: ignore
+    except Exception:
+        return ""
+    for cand in _phone_variants(from_e164):
+        try:
+            uid = get_uid_for_sender(cand)
+            if uid:
+                return uid
+        except Exception:
+            continue
+    return ""
+
 @ycloud_webhook_bp.route("/integracoes/ycloud/webhook", methods=["POST"])
 def ycloud_webhook_ingress():
     raw = request.get_data(cache=False) or b""
@@ -139,7 +194,7 @@ def ycloud_webhook_ingress():
         if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") in ("audio", "voice", "ptt"):
             from_e164 = (env.get("from") or "").strip()
             media = env.get("media") or {}
-            uid = get_uid_for_sender(from_e164) if from_e164 else ""
+            uid = _resolve_uid_for_sender(from_e164) if from_e164 else ""
 
             if not uid:
                 logger.info("[ycloud_webhook] voice: sem uid (ignore). from=%s", from_e164)
@@ -220,12 +275,7 @@ def ycloud_webhook_ingress():
                     return jsonify({"ok": True}), 200
 
                 # resolve uid do remetente (mesma regra do fluxo de voz)
-                uid = None
-                try:
-                    from services.voice_wa_link import get_uid_for_sender  # type: ignore
-                    uid = get_uid_for_sender(from_e164)
-                except Exception:
-                    uid = None
+                uid = _resolve_uid_for_sender(from_e164) or None
 
                 # fallback conservador (não responde se não conseguir resolver uid)
                 if not uid:
