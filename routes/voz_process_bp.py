@@ -63,6 +63,42 @@ def _normalize_object(body: dict, qs: dict) -> Optional[str]:
             pass
     return obj[1:] if obj.startswith("/") else obj
 
+
+def _find_latest_voice_object(uid: str) -> Optional[str]:
+    """Best-effort: encontra o último áudio salvo via WhatsApp em profissionais/{uid}/voz/original/."""
+    try:
+        if not uid:
+            return None
+        prefix = f"profissionais/{uid}/voz/original/"
+        latest_name = None
+        latest_key = None  # (ts:int|None, dt:datetime|None)
+        for b in gcs.list_blobs(BUCKET, prefix=prefix):
+            name = getattr(b, 'name', '') or ''
+            if 'whatsapp_' not in name:
+                continue
+            # extrai ts do nome (whatsapp_<ts>.*) quando existir
+            ts = None
+            try:
+                m = __import__('re').search(r"whatsapp_(\d{9,})", name)
+                if m:
+                    ts = int(m.group(1))
+            except Exception:
+                ts = None
+            dt = getattr(b, 'updated', None) or getattr(b, 'time_created', None)
+            key = (ts, dt)
+            if latest_name is None:
+                latest_name, latest_key = name, key
+                continue
+            # compara: ts domina; se não houver ts, usa datetime
+            if ts is not None and (latest_key[0] is None or ts > latest_key[0]):
+                latest_name, latest_key = name, key
+            elif ts is None and latest_key[0] is None and dt and latest_key[1] and dt > latest_key[1]:
+                latest_name, latest_key = name, key
+        return latest_name
+    except Exception as e:
+        logging.warning("[voz/process] falha ao listar blobs (uid=%s): %s", uid, e)
+        return None
+
 def _normalize_content_type(body: dict, qs: dict) -> Optional[str]:
     return body.get("contentType") or body.get("content_type") or qs.get("contentType") or qs.get("content_type")
 
@@ -101,32 +137,51 @@ def _eleven_add_voice(name: str, audio_bytes: bytes) -> str:
         raise RuntimeError(f"ElevenLabs no voice_id: {data}")
     return vid
 
-def _save_ready(uid: str, voice_id: str, url: str):
+def _save_ready(uid: str, voice_id: str, url: str, object_path: Optional[str] = None):
     doc = {
         "vozClonada": {
             "status": "ready",
             "provider": "elevenlabs",
             "voiceId": voice_id,
             "arquivoUrl": url,
+            "object_path": object_path,
             "updatedAt": firestore.SERVER_TIMESTAMP,
         }
     }
-    db.collection("configuracao").document(uid).set(doc, merge=True)
+    # Fonte canônica: profissionais/{uid}
+    try:
+        db.collection("profissionais").document(uid).set(doc, merge=True)
+    except Exception as e:
+        logging.warning("[voz/process] falha ao salvar em profissionais/%s: %s", uid, e)
+    # Retrocompat: espelha em configuracao/{uid}
+    try:
+        db.collection("configuracao").document(uid).set(doc, merge=True)
+    except Exception as e:
+        logging.warning("[voz/process] falha ao espelhar em configuracao/%s: %s", uid, e)
 
-def _save_pending(uid: str, url: Optional[str]):
+def _save_pending(uid: str, url: Optional[str], object_path: Optional[str] = None):
     doc = {
         "vozClonada": {
             "status": "pendente",
             "provider": "elevenlabs",
             "arquivoUrl": url,
+            "object_path": object_path,
             "updatedAt": firestore.SERVER_TIMESTAMP,
         }
     }
-    db.collection("configuracao").document(uid).set(doc, merge=True)
+    # Fonte canônica: profissionais/{uid}
+    try:
+        if uid and uid != "unknown":
+            db.collection("profissionais").document(uid).set(doc, merge=True)
+    except Exception as e:
+        logging.warning("[voz/process] falha ao salvar pendente em profissionais/%s: %s", uid, e)
+    # Retrocompat: espelha em configuracao/{uid}
+    try:
+        if uid:
+            db.collection("configuracao").document(uid).set(doc, merge=True)
+    except Exception as e:
+        logging.warning("[voz/process] falha ao espelhar pendente em configuracao/%s: %s", uid, e)
 
-# -----------------------------------------------------------------------------
-# Rota principal
-# -----------------------------------------------------------------------------
 @voz_process_bp.route("/api/voz/process", methods=["POST"])
 def process_voz():
     """
@@ -156,6 +211,11 @@ def process_voz():
     is_force = _is_truthy(force_flag)
 
     obj = _normalize_object(body, qs)
+    if not obj and uid:
+        obj = _find_latest_voice_object(uid)
+        if obj:
+            logging.info("[voz/process] inferido object_path via listagem: %s", obj)
+
 
     link = body.get("arquivoUrl") or body.get("url") or qs.get("arquivoUrl") or qs.get("url")
 
@@ -170,11 +230,11 @@ def process_voz():
     }))
 
     if prov != "elevenlabs" or not uid or not obj:
-        _save_pending(uid or "unknown", link)
+        _save_pending(uid or "unknown", link, object_path=obj)
         return jsonify({"ok": True, "status": "pendente", "voiceId": None})
 
     if not is_sync or not is_force:
-        _save_pending(uid, link)
+        _save_pending(uid, link, object_path=obj)
         return jsonify({"ok": True, "status": "pendente", "voiceId": None})
 
     try:
@@ -190,17 +250,17 @@ def process_voz():
         name = f"cliente-{uid}-{int(time.time())}"
         voice_id = _eleven_add_voice(name, audio_bytes)
 
-        _save_ready(uid, voice_id, link)
+        _save_ready(uid, voice_id, link, object_path=obj)
 
         return jsonify({"ok": True, "status": "ready", "voiceId": voice_id})
 
     except FileNotFoundError as e:
         logging.exception("Objeto nao encontrado")
-        _save_pending(uid, link)
+        _save_pending(uid, link, object_path=obj)
         return jsonify({"ok": False, "status": "pendente", "error": str(e)}), 404
     except Exception as e:
         logging.exception("Erro no sync da voz")
-        _save_pending(uid, link)
+        _save_pending(uid, link, object_path=obj)
         return jsonify({"ok": False, "status": "pendente", "error": str(e)}), 502
 
 # -----------------------------------------------------------------------------

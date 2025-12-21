@@ -1162,6 +1162,32 @@ def tts_speak(uid: str, text: str, voice_hint: Optional[str] = None) -> Optional
     return None
 
 
+
+def _get_uid_voice_id(uid: str) -> Optional[str]:
+    """
+    Regra de produto (MEI Robô do usuário): só retorna voiceId se status == 'ready'.
+    Fonte canônica: profissionais/{uid}.vozClonada. Retrocompat: configuracao/{uid}.vozClonada.
+    """
+    try:
+        if not uid:
+            return None
+        from google.cloud import firestore as _fs  # type: ignore
+        _db = _fs.Client()
+        snap = _db.collection('profissionais').document(uid).get()
+        d = snap.to_dict() or {}
+        vc = d.get('vozClonada') or {}
+        if isinstance(vc, dict) and vc.get('status') == 'ready' and vc.get('voiceId'):
+            return str(vc.get('voiceId'))
+        snap2 = _db.collection('configuracao').document(uid).get()
+        d2 = snap2.to_dict() or {}
+        vc2 = d2.get('vozClonada') or {}
+        if isinstance(vc2, dict) and vc2.get('status') == 'ready' and vc2.get('voiceId'):
+            return str(vc2.get('voiceId'))
+        return None
+    except Exception as e:
+        logging.info('[voz] falha ao buscar voiceId do uid=%s: %s', uid, e)
+        return None
+
 def send_reply(uid: str, to: str, text: str, inbound_type: str, send_text_fn, send_audio_fn=None, voice_hint: Optional[str] = None):
     """
     Se o cliente mandou ÁUDIO e houver send_audio_fn + TTS ok -> responde em áudio.
@@ -1174,9 +1200,14 @@ def send_reply(uid: str, to: str, text: str, inbound_type: str, send_text_fn, se
         text = (text or "").strip()
 
     # tenta usar a voz configurada do MEI (env) se não vier dica explícita
-    voice_hint = voice_hint or os.getenv("ELEVEN_VOICE_ID") or None
+    # regra de produto: sem fallback para voz da plataforma; usa sempre a voz do próprio MEI
+    if not voice_hint:
+        voice_hint = _get_uid_voice_id(uid)
     prefer_audio = (inbound_type == "audio") and REPLY_AUDIO_WHEN_AUDIO and callable(send_audio_fn)
     if prefer_audio:
+        if not voice_hint:
+            msg = "Sua voz ainda não foi finalizada. Envie o áudio pelo WhatsApp e conclua o processamento da voz para ativar as respostas em áudio."
+            return send_text_fn(to, msg)
         tts_out = tts_speak(uid, text, voice_hint=voice_hint)
         if tts_out:
             audio_bytes, mime_type = tts_out
