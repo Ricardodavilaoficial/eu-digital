@@ -144,7 +144,8 @@ def upsert_sender_link(from_e164: str, uid: str, ttl_seconds: int = 3600, method
         "expiresAt": expires_at,
         "ttlSeconds": int(ttl_seconds or 3600),
     }
-    _db().collection("voice_links").document(from_e164).set(doc, merge=True)
+    for key in variants:
+        _db().collection("voice_links").document(key).set(doc, merge=True)
 
 def delete_sender_link(from_e164: str) -> None:
     from_e164 = normalize_e164_br(from_e164)
@@ -189,5 +190,6 @@ def sender_allowed(from_e164: str) -> bool:
         if p:
             allowed.add(p)
     return normalize_e164_br(from_e164) in allowed
+
 
 
