@@ -92,6 +92,15 @@ def _normalize_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     ev_type = _safe_str(payload.get("type"))
     msg = payload.get("whatsappInboundMessage") or {}
     msg_type = _safe_str(msg.get("type"))
+    
+    # YCloud às vezes não envia whatsappInboundMessage.type.
+    # Inferimos pelo conteúdo (seguro e retrocompatível).
+    if not msg_type:
+        if "text" in msg and msg.get("text") is not None:
+            msg_type = "text"
+        elif any(k in msg and msg.get(k) for k in ("audio", "voice", "ptt")):
+            msg_type = "audio"
+    
     from_msisdn = _safe_str(msg.get("from"))
     to_msisdn = _safe_str(msg.get("to"))
     wamid = _safe_str(msg.get("wamid") or msg.get("context", {}).get("wamid") or msg.get("context", {}).get("id"))
