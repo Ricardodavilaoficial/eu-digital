@@ -20,7 +20,6 @@ from services.storage_gcs import upload_bytes_and_get_url
 
 # DB service usado para salvar a config (mantém compat com teu serviço)
 from services import db as dbsvc
-from services.cnpj_client import fetch_cnpj_com_vinculo
 
 config_bp = Blueprint('config', __name__)
 
@@ -208,54 +207,6 @@ def _compute_perfil_publico(data: dict) -> dict:
 # GET /integracoes/cnpj/<cnpj> (público, com vínculo opcional)
 # ---------------------------
 
-@config_bp.route('/integracoes/cnpj/<cnpj_digits>', methods=['GET'], strict_slashes=False)
-def integracoes_cnpj_lookup(cnpj_digits):
-    """
-    Uso:
-      GET /integracoes/cnpj/00000000000191?nome=Joao+da+Silva
-
-    - Consulta CNPJ em fonte pública (ReceitaWS, via services.cnpj_client)
-    - Devolve dados básicos + cnae + qsa (quando houver)
-    - Se ?nome= for enviado, devolve também vinculoNome.avaliacao:
-        EXATO      → nome da pessoa bate forte com algum sócio/administrador
-        PROVAVEL   → nome razoavelmente compatível
-        NAO_ENCONTRADO → não achou nada forte o suficiente
-    """
-    try:
-        cnpj_raw = re.sub(r"\D+", "", str(cnpj_digits or ""))
-        if len(cnpj_raw) != 14:
-            return jsonify({"ok": False, "error": "cnpj_invalido"}), 400
-
-        nome_busca = (request.args.get("nome") or "").strip()
-        result = fetch_cnpj_com_vinculo(cnpj_raw, nome_busca or None)
-
-        if not result:
-            return jsonify({"ok": False, "error": "cnpj_nao_encontrado"}), 404
-
-        info = result.get("info") or {}
-        vinculo = result.get("vinculoNome")
-
-        # Monta payload "rico", mas estável
-        resp = {
-            "ok": True,
-            "cnpj": cnpj_raw,
-            "razaoSocial": info.get("razaoSocial") or "",
-            "nomeFantasia": info.get("nomeFantasia") or "",
-            "cnaePrincipal": {
-                "codigo": info.get("cnae") or "",
-                "descricao": info.get("cnaeDescricao") or "",
-            },
-            "qsa": info.get("qsa") or [],
-            "simples": info.get("simples") or {},
-            "simei": info.get("simei") or {},
-        }
-
-        if vinculo:
-            resp["vinculoNome"] = vinculo
-
-        return jsonify(resp), 200
-    except Exception as e:
-        return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
 
 # ---------------------------
 # GET /api/configuracao
@@ -559,3 +510,4 @@ def salvar_configuracao():
         resp["vozUrl"] = voz_url
 
     return jsonify(resp), 200
+
