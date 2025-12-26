@@ -33,14 +33,23 @@ BUILD_DATE = "2025-09-30"
 NLU_MODE = os.getenv("NLU_MODE", "legacy").strip().lower()  # "v1" | "legacy"
 DEMO_MODE = os.getenv("DEMO_MODE", "0").strip() in ("1", "true", "True")
 
-# Tentativa de carregar implementação legacy
-try:
-    from . import wa_bot_legacy as _legacy
-    _HAS_LEGACY = True
-except Exception as e:
-    _legacy = None  # type: ignore
-    _HAS_LEGACY = False
-    print(f"[WA_BOT][FACHADA] Aviso: não encontrei services/wa_bot_legacy.py ({e})", flush=True)
+# -------------------------------------------------------------------
+# Legacy deve ser "lazy": só importa quando realmente for necessário
+# -------------------------------------------------------------------
+_legacy = None  # type: ignore
+_HAS_LEGACY = True  # assume que existe; só marcamos False se o import falhar quando tentarmos usar
+
+def _get_legacy_module():
+    global _legacy, _HAS_LEGACY
+    if _legacy is not None:
+        return _legacy
+    try:
+        from . import wa_bot_legacy as mod  # import sob demanda
+        _legacy = mod
+        return _legacy
+    except Exception as e:
+        _HAS_LEGACY = False
+        raise RuntimeError(f"[WA_BOT][FACHADA] legacy indisponível: {e}")
 
 # Tentativa de carregar pipeline novo (opcional nestas etapas iniciais)
 try:
@@ -67,10 +76,8 @@ def _using_legacy() -> bool:
 
 
 def _ensure_legacy(func_name: str):
-    if not _HAS_LEGACY or _legacy is None:
-        raise RuntimeError(
-            f"[WA_BOT][FACHADA] '{func_name}' requisitou legacy, mas services/wa_bot_legacy.py não foi encontrado."
-        )
+    # força import sob demanda; se falhar, levanta erro claro
+    _get_legacy_module()
 
 
 # =============================
@@ -95,14 +102,16 @@ def process_inbound(event: Dict[str, Any]) -> Dict[str, Any]:
     try:
         if _using_legacy():
             _ensure_legacy("process_inbound")
-            if hasattr(_legacy, "process_inbound"):
-                return _legacy.process_inbound(event)  # type: ignore[attr-defined]
+            legacy = _get_legacy_module()
+            if hasattr(legacy, "process_inbound"):
+                return legacy.process_inbound(event)  # type: ignore[attr-defined]
             # Legacy não possui process_inbound: não tratar como erro; sinalizar e seguir
             return {"ok": False, "reason": "legacy_no_process_inbound", "stage": "fachada"}
         # v1 habilitado mas mantemos fallback no legacy nesta fase
         _ensure_legacy("process_inbound(v1-fallback)")
-        if hasattr(_legacy, "process_inbound"):
-            return _legacy.process_inbound(event)  # type: ignore[attr-defined]
+        legacy = _get_legacy_module()
+        if hasattr(legacy, "process_inbound"):
+            return legacy.process_inbound(event)  # type: ignore[attr-defined]
         return {"ok": False, "reason": "legacy_no_process_inbound(v1)", "stage": "fachada"}
     except Exception as e:
         print(f"[WA_BOT][FACHADA] process_inbound ERRO: {e}\n{traceback.format_exc()}", flush=True)
@@ -136,7 +145,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
     # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
     try:
-        from services import wa_bot_legacy as legacy
+        legacy = _get_legacy_module()
 
         captured = {"text": None}
 
@@ -168,7 +177,8 @@ def schedule_appointment(uid: str, ag: Dict[str, Any], *, allow_fallback: bool =
     """Cria um agendamento. Retorna (ok, motivo, ag_id)."""
     try:
         _ensure_legacy("schedule_appointment")
-        return _legacy.schedule_appointment(uid, ag, allow_fallback=allow_fallback)  # type: ignore[attr-defined]
+        legacy = _get_legacy_module()
+        return legacy.schedule_appointment(uid, ag, allow_fallback=allow_fallback)  # type: ignore[attr-defined]
     except Exception as e:
         print(f"[WA_BOT][FACHADA] schedule_appointment ERRO: {e}\n{traceback.format_exc()}", flush=True)
         return False, str(e), None
@@ -178,7 +188,8 @@ def reschedule_appointment(uid: str, ag_id: str, updates: Dict[str, Any]) -> Tup
     """Reagenda um registro existente. Assinatura enxuta e estável."""
     try:
         _ensure_legacy("reschedule_appointment")
-        return _legacy.reschedule_appointment(uid, ag_id, updates)  # type: ignore[attr-defined]
+        legacy = _get_legacy_module()
+        return legacy.reschedule_appointment(uid, ag_id, updates)  # type: ignore[attr-defined]
     except Exception as e:
         print(f"[WA_BOT][FACHADA] reschedule_appointment ERRO: {e}\n{traceback.format_exc()}", flush=True)
         return False, str(e)
@@ -278,20 +289,21 @@ def process_change(
 
     # 1) Delegação ao legacy (tentando corresponder à assinatura que o blueprint usa)
     try:
-        if _using_legacy() and _HAS_LEGACY and _legacy is not None:
-            if hasattr(_legacy, "process_change"):
+        if _using_legacy() and _HAS_LEGACY:
+            legacy = _get_legacy_module()
+            if hasattr(legacy, "process_change"):
                 try:
-                    ok = bool(_legacy.process_change(change, effective_send, uid_default, app_tag))  # type: ignore[attr-defined]
+                    ok = bool(legacy.process_change(change, effective_send, uid_default, app_tag))  # type: ignore[attr-defined]
                     if ok:
                         return True
                 except TypeError:
                     # Legacy pode ter assinatura diferente (apenas change). Tentar simples.
-                    ok = bool(_legacy.process_change(change))  # type: ignore[attr-defined]
+                    ok = bool(legacy.process_change(change))  # type: ignore[attr-defined]
                     if ok:
                         return True
             # Fallback para entrada genérica do legacy (somente se existir)
-            if hasattr(_legacy, "process_inbound"):
-                resp = _legacy.process_inbound(change)  # type: ignore[attr-defined]
+            if hasattr(legacy, "process_inbound"):
+                resp = legacy.process_inbound(change)  # type: ignore[attr-defined]
                 if isinstance(resp, dict) and resp.get("ok"):
                     return True
     except Exception as e:
@@ -321,4 +333,3 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
-
