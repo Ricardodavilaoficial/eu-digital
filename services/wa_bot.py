@@ -1,4 +1,4 @@
-﻿﻿# services/wa_bot.py
+# services/wa_bot.py
 # Façada v1 — MEI Robô (30/09/2025)
 # Objetivo: manter a fachada estável enquanto extraímos módulos internos.
 # - Se NLU_MODE != "v1", delega tudo para services/wa_bot_legacy.py (comportamento atual).
