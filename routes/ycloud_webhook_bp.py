@@ -263,6 +263,25 @@ def ycloud_webhook_ingress():
             # Opção B: áudio de número desconhecido vira VENDAS (wa_bot decide).
             if not uid:
                 logger.info("[ycloud_webhook] voice: uid não resolvido p/ from=%s (route=sales)", _safe_str(from_e164))
+                # Lead (uid vazio): NÃO faz ingest de voz do MEI (isso é só para MEI autenticado).
+                # Para lead, vamos apenas encaminhar para o wa_bot (vendas) e responder.
+                if not uid:
+                    # Encaminhar como lead/vendas (wa_bot decide). Não tocar em Firestore de voz.
+                    try:
+                        from services import wa_bot
+                        reply = wa_bot.reply_to_text("", "[áudio recebido]", {"from_e164": from_e164, "msg_type": "audio"})
+                        # reply deve conter replyText (texto). Por enquanto ok responder texto; áudio sai no próximo passo.
+                        reply_text = (reply or {}).get("replyText") or "Oi! Sou o MEI Robô. Quer conhecer os planos?"
+                    except Exception:
+                        reply_text = "Oi! Sou o MEI Robô. Quer conhecer os planos?"
+
+                    # Reutiliza o mesmo caminho de envio de texto já existente no webhook
+                    try:
+                        ycloud_send_text(from_e164, reply_text)
+                    except Exception:
+                        pass
+
+                    return jsonify({"ok": True}), 200
                 uid = ""  # encaminhar como lead/vendas
 
             if not (media.get("url") or "").strip():
