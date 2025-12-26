@@ -109,7 +109,12 @@ def _normalize_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     media: Dict[str, Any] = {}
 
     if msg_type == "text":
-        text = _safe_str((msg.get("text") or {}).get("body") or msg.get("text") or "", 2000)
+        t = msg.get("text")
+        if isinstance(t, dict):
+            text = _safe_str(t.get("body") or t.get("text") or t.get("message") or "", 2000)
+        else:
+            # string ou algo simples
+            text = _safe_str(t or msg.get("body") or msg.get("message") or "", 2000)
     elif msg_type in ("audio", "voice", "ptt"):
         a = (msg.get("audio") or msg.get("voice") or msg.get("ptt") or {})
         media = {
@@ -197,6 +202,33 @@ def ycloud_webhook_ingress():
         payload = payload["data"]
 
     env = _normalize_event(payload)
+
+# DEBUG inbound (best-effort): provar o que chegou normalizado
+try:
+    logger.info("[ycloud_webhook] inbound normalized: type=%s msgType=%s from=%s wamid=%s textLen=%s",
+        _safe_str(env.get("eventType")),
+        _safe_str(env.get("messageType")),
+        _safe_str(env.get("from")),
+        _safe_str(env.get("wamid")),
+        len(_safe_str(env.get("text"), 2000) or "")
+    )
+except Exception:
+    pass
+
+# opcional: log leve no Firestore para auditoria (não trava request)
+try:
+    _db().collection("platform_wa_logs").add({
+        "createdAt": _now_ts(),
+        "kind": "inbound",
+        "eventType": env.get("eventType"),
+        "messageType": env.get("messageType"),
+        "from": env.get("from"),
+        "to": env.get("to"),
+        "wamid": env.get("wamid"),
+        "textPreview": (env.get("text") or "")[:120],
+    })
+except Exception:
+    pass
 
     # ===================== INGESTÃO DE VOZ =====================
     try:
@@ -417,6 +449,7 @@ def ycloud_webhook_ingress():
     except Exception:
         logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
     return jsonify({"ok": True}), 200
+
 
 
 
