@@ -223,6 +223,19 @@ def process_change(
     # Sender efetivo (preferir o injetado pelo webhook)
     effective_send = send_fn or _send_text
 
+    # ✅ Opção B (Vendas com IA): se uid não veio resolvido, tratamos como LEAD.
+    # Importante: o webhook continua burro — aqui é o cérebro (wa_bot).
+    # Só responde para mensagens de TEXTO (conteúdo público) e não toca no pipeline de voz.
+    if not (uid_default or ""):
+        try:
+            from services.bot_handlers.sales_lead import handle_sales_lead  # type: ignore
+            if handle_sales_lead(change, effective_send, app_tag=app_tag):
+                return True
+        except Exception:
+            # fallback ultra conservador: se handler não existir, não quebra o fluxo
+            pass
+
+
     # 1) Delegação ao legacy (tentando corresponder à assinatura que o blueprint usa)
     try:
         if _using_legacy() and _HAS_LEGACY and _legacy is not None:
@@ -268,3 +281,4 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
+

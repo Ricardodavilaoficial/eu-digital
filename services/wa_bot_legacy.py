@@ -2209,6 +2209,18 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
     send_text_fn: função injetada por app.py para enviar texto
     send_audio_fn: (opcional) função para enviar áudio (to, audio_bytes, mime_type)
     """
+
+    # ✅ Opção B (Vendas com IA): se uid não foi resolvido, tratamos como LEAD (conteúdo público).
+    # Mantém webhook burro: decisão vive aqui no bot.
+    if not (uid_default or ""):
+        try:
+            from services.bot_handlers.sales_lead import handle_sales_lead  # type: ignore
+            if handle_sales_lead(value, send_text_fn, app_tag=app_tag):
+                return True
+        except Exception:
+            # fallback conservador: sem handler, não tenta responder
+            return
+
     messages = value.get("messages", [])
     if not messages:
         return
@@ -2493,3 +2505,4 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             f"[WA_BOT][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}",
             flush=True,
         )
+
