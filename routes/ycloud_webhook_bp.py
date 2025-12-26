@@ -197,12 +197,25 @@ def ycloud_webhook_ingress():
     if request.method == "GET":
         return jsonify({"ok": True, "method": "GET"}), 200
 
-    raw = request.get_data(cache=False) or b""
+    raw = request.get_data(cache=True) or b""  # <-- cache=True (importante)
 
     if not _verify_signature_if_enabled(raw):
         return jsonify({"ok": True, "ignored": True}), 200
 
-    payload = request.get_json(silent=True) or {}
+    payload = None
+    try:
+        payload = request.get_json(silent=True)
+    except Exception:
+        payload = None
+
+    if not isinstance(payload, dict) or not payload:
+        # fallback: parse manual do raw
+        try:
+            payload = json.loads(raw.decode("utf-8") or "{}")
+        except Exception:
+            payload = {}
+
+    # alguns providers embrulham em {"data": {...}}
     if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
         payload = payload["data"]
 
@@ -456,5 +469,6 @@ def ycloud_webhook_ingress():
         logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
 
     return jsonify({"ok": True}), 200
+
 
 
