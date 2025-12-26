@@ -1,4 +1,4 @@
-﻿# services/wa_bot.py
+﻿﻿# services/wa_bot.py
 # Façada v1 — MEI Robô (30/09/2025)
 # Objetivo: manter a fachada estável enquanto extraímos módulos internos.
 # - Se NLU_MODE != "v1", delega tudo para services/wa_bot_legacy.py (comportamento atual).
@@ -25,6 +25,9 @@ import os
 import traceback
 import logging
 from typing import Any, Dict, Optional, Tuple, Callable  # <- acrescentado Callable
+
+# >>> PATCH: gerar audioUrl institucional (lead + áudio)
+from services.institutional_tts_media import generate_institutional_audio_url
 
 __version__ = "1.0.0-fachada"
 BUILD_DATE = "2025-09-30"
@@ -138,7 +141,23 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             reply = sales_lead.generate_reply(text=text, ctx=ctx)  # deve retornar string
             if not reply:
                 reply = "Oi! Sou o MEI Robô. Quer conhecer os planos?"
-            return {"ok": True, "route": "sales_lead", "replyText": reply}
+
+            # >>> PATCH: quando lead + áudio, gerar audioUrl institucional (sem quebrar nada)
+            audio_url = None
+            if ctx.get("msg_type") == "audio":
+                try:
+                    audio_url = generate_institutional_audio_url(
+                        text=reply,
+                        base_url=os.environ.get("BACKEND_BASE_URL", "").rstrip("/")
+                    )
+                except Exception:
+                    audio_url = None
+
+            out = {"ok": True, "route": "sales_lead", "replyText": reply}
+            if audio_url:
+                out["audioUrl"] = audio_url
+            return out
+
         except Exception:
             # fallback ultra conservador (nunca fica mudo)
             return {"ok": True, "route": "sales_lead", "replyText": "Oi! Sou o MEI Robô. Quer conhecer os planos?"}

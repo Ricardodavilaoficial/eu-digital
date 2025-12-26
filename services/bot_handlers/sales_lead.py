@@ -49,7 +49,6 @@ def _extract_sender(change: Dict[str, Any]) -> str:
 def _fallback_pitch(app_tag: Optional[str] = None) -> str:
     brand = "MEI Robô"
     if app_tag:
-        # app_tag pode ser usado como rótulo, não como promessa
         brand = brand
     return (
         f"Oi! 👋 Eu sou o {brand}.\n\n"
@@ -67,10 +66,7 @@ def _openai_chat(prompt: str) -> Optional[str]:
     if not api_key:
         return None
 
-    # Modelo pode ser trocado por ENV sem mexer no código.
     model = os.getenv("LLM_MODEL_SALES") or os.getenv("LLM_MODEL_ACERVO") or "gpt-4o-mini"
-
-    # Mantém custo baixo: resposta curta e objetiva.
     max_tokens = int(os.getenv("LLM_MAX_TOKENS_SALES", "180") or "180")
     temperature = float(os.getenv("LLM_TEMPERATURE_SALES", "0.4") or "0.4")
 
@@ -132,11 +128,13 @@ def handle_sales_lead(
     to_raw = _extract_sender(change) or ""
     text_in = _extract_inbound_text(change)
 
-    # Só responde lead de vendas quando há texto (evita mexer em voz/imagem/etc.).
-    if not to_raw or not text_in:
+    # aceitar áudio como gatilho de resposta
+    if not text_in:
+        text_in = "Lead enviou um áudio."
+
+    if not to_raw:
         return False
 
-    # Prompt mínimo (público).
     prompt = (
         f"Mensagem do lead: {text_in}\n\n"
         "Responda como vendas do MEI Robô. "
