@@ -260,9 +260,10 @@ def ycloud_webhook_ingress():
             uid = _resolve_uid_for_sender(from_e164) if from_e164 else ""
             ttl_seconds = int(os.environ.get("VOICE_LINK_TTL_SECONDS", "86400") or "86400")
 
+            # Opção B: áudio de número desconhecido vira VENDAS (wa_bot decide).
             if not uid:
-                logger.info("[ycloud_webhook] voice: sem uid (ignore). from=%s", from_e164)
-                return jsonify({"ok": True, "ignored": True}), 200
+                logger.info("[ycloud_webhook] voice: uid não resolvido p/ from=%s (route=sales)", _safe_str(from_e164))
+                uid = ""  # encaminhar como lead/vendas
 
             if not (media.get("url") or "").strip():
                 logger.info("[ycloud_webhook] voice: sem media_url. uid=%s from=%s", uid, from_e164)
@@ -470,8 +471,3 @@ def ycloud_webhook_ingress():
         logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
 
     return jsonify({"ok": True}), 200
-
-
-
-
-
