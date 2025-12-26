@@ -110,18 +110,58 @@ def process_inbound(event: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": str(e), "stage": "fachada"}
 
 
+# ==========================================================
+# ✅ PATCH ÚNICO: substituir completamente reply_to_text(...)
+# ==========================================================
 def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Resposta a uma mensagem de texto (contexto opcional)."""
+    """
+    Retorna um dict com replyText (texto a ser enviado).
+    - uid vazio -> handler de vendas (lead)
+    - uid presente -> delega ao wa_bot_legacy.process_change capturando o texto gerado
+    """
     ctx = ctx or {}
+    from_e164 = (ctx.get("from_e164") or "").strip()
+
+    # 1) LEAD / VENDAS (uid ausente)
+    if not uid:
+        try:
+            from services.bot_handlers import sales_lead
+            reply = sales_lead.generate_reply(text=text, ctx=ctx)  # deve retornar string
+            if not reply:
+                reply = "Oi! Sou o MEI Robô. Quer conhecer os planos?"
+            return {"ok": True, "route": "sales_lead", "replyText": reply}
+        except Exception:
+            # fallback ultra conservador (nunca fica mudo)
+            return {"ok": True, "route": "sales_lead", "replyText": "Oi! Sou o MEI Robô. Quer conhecer os planos?"}
+
+    # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
     try:
-        if _using_legacy():
-            _ensure_legacy("reply_to_text")
-            return _legacy.reply_to_text(uid, text, ctx)  # type: ignore[attr-defined]
-        _ensure_legacy("reply_to_text(v1-fallback)")
-        return _legacy.reply_to_text(uid, text, ctx)  # type: ignore[attr-defined]
+        from services import wa_bot_legacy as legacy
+
+        captured = {"text": None}
+
+        def _capture_send_text(to: str, msg: str):
+            captured["text"] = msg
+            return msg
+
+        # payload mínimo compatível com process_change do legacy
+        value = {
+            "messages": [
+                {
+                    "from": from_e164 or uid,
+                    "type": "text",
+                    "text": {"body": text or ""},
+                }
+            ]
+        }
+
+        legacy.process_change(value, _capture_send_text, uid, app_tag=ctx.get("app_tag") or "wa_bot")
+        out = captured["text"] or "Certo."
+        return {"ok": True, "route": "support_legacy", "replyText": out}
+
     except Exception as e:
-        print(f"[WA_BOT][FACHADA] reply_to_text ERRO: {e}\n{traceback.format_exc()}", flush=True)
-        return {"ok": False, "error": str(e), "stage": "fachada"}
+        # fallback conservador (não quebra o webhook)
+        return {"ok": False, "route": "support_legacy", "replyText": "Certo.", "error": str(e)}
 
 
 def schedule_appointment(uid: str, ag: Dict[str, Any], *, allow_fallback: bool = True) -> Tuple[bool, str, Optional[str]]:
