@@ -190,8 +190,13 @@ def _resolve_uid_for_sender(from_e164: str) -> str:
             continue
     return ""
 
-@ycloud_webhook_bp.route("/integracoes/ycloud/webhook", methods=["POST"])
+
+@ycloud_webhook_bp.route("/integracoes/ycloud/webhook", methods=["POST", "GET"])
 def ycloud_webhook_ingress():
+    # PATCH 0: aceitar GET para evitar 405 no painel do provider (healthcheck/ping)
+    if request.method == "GET":
+        return jsonify({"ok": True, "method": "GET"}), 200
+
     raw = request.get_data(cache=False) or b""
 
     if not _verify_signature_if_enabled(raw):
@@ -203,34 +208,38 @@ def ycloud_webhook_ingress():
 
     env = _normalize_event(payload)
 
-# DEBUG inbound (best-effort): provar o que chegou normalizado
-try:
-    logger.info("[ycloud_webhook] inbound normalized: type=%s msgType=%s from=%s wamid=%s textLen=%s",
-        _safe_str(env.get("eventType")),
-        _safe_str(env.get("messageType")),
-        _safe_str(env.get("from")),
-        _safe_str(env.get("wamid")),
-        len(_safe_str(env.get("text"), 2000) or "")
-    )
-except Exception:
-    pass
+    # DEBUG inbound (best-effort): provar o que chegou normalizado
+    try:
+        logger.info(
+            "[ycloud_webhook] inbound normalized: type=%s msgType=%s from=%s wamid=%s textLen=%s",
+            _safe_str(env.get("eventType")),
+            _safe_str(env.get("messageType")),
+            _safe_str(env.get("from")),
+            _safe_str(env.get("wamid")),
+            len(_safe_str(env.get("text"), 2000) or ""),
+        )
+    except Exception:
+        pass
 
-# opcional: log leve no Firestore para auditoria (não trava request)
-try:
-    _db().collection("platform_wa_logs").add({
-        "createdAt": _now_ts(),
-        "kind": "inbound",
-        "eventType": env.get("eventType"),
-        "messageType": env.get("messageType"),
-        "from": env.get("from"),
-        "to": env.get("to"),
-        "wamid": env.get("wamid"),
-        "textPreview": (env.get("text") or "")[:120],
-    })
-except Exception:
-    pass
+    # Observabilidade mínima (best-effort): inbound audit log
+    try:
+        _db().collection("platform_wa_logs").add(
+            {
+                "createdAt": _now_ts(),
+                "kind": "inbound",
+                "eventType": env.get("eventType"),
+                "messageType": env.get("messageType"),
+                "from": env.get("from"),
+                "to": env.get("to"),
+                "wamid": env.get("wamid"),
+                "textPreview": (env.get("text") or "")[:120],
+            }
+        )
+    except Exception:
+        pass
 
     # ===================== INGESTÃO DE VOZ =====================
+    # (pipeline de voz já funcional — NÃO alterar comportamento)
     try:
         if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") in ("audio", "voice", "ptt"):
             from_e164 = (env.get("from") or "").strip()
@@ -244,13 +253,16 @@ except Exception:
 
             if not (media.get("url") or "").strip():
                 logger.info("[ycloud_webhook] voice: sem media_url. uid=%s from=%s", uid, from_e164)
-                _voice_status_ref(uid).set({
-                    "status": "failed",
-                    "lastError": "missing_media_url",
-                    "updatedAt": _now_ts(),
-                    "source": "whatsapp",
-                    "waFromE164": from_e164,
-                }, merge=True)
+                _voice_status_ref(uid).set(
+                    {
+                        "status": "failed",
+                        "lastError": "missing_media_url",
+                        "updatedAt": _now_ts(),
+                        "source": "whatsapp",
+                        "waFromE164": from_e164,
+                    },
+                    merge=True,
+                )
                 return jsonify({"ok": True}), 200
 
             voice_bytes, mime = download_media_bytes(provider="ycloud", media=media)
@@ -268,24 +280,26 @@ except Exception:
             upload_voice_bytes(
                 storage_path=storage_path,
                 content_type=(mime or media.get("mimeType") or "application/octet-stream"),
-                data=voice_bytes
+                data=voice_bytes,
             )
 
-            _voice_status_ref(uid).set({
-                "status": "received",
-                "updatedAt": _now_ts(),
-                "source": "whatsapp",
-                "waFromE164": from_e164,
-                "lastAudioGcsPath": storage_path,
-                "lastAudioMime": (mime or media.get("mimeType") or ""),
-                "lastInboundAt": _now_ts(),
-                "lastError": "",
-            }, merge=True)
+            _voice_status_ref(uid).set(
+                {
+                    "status": "received",
+                    "updatedAt": _now_ts(),
+                    "source": "whatsapp",
+                    "waFromE164": from_e164,
+                    "lastAudioGcsPath": storage_path,
+                    "lastAudioMime": (mime or media.get("mimeType") or ""),
+                    "lastInboundAt": _now_ts(),
+                    "lastError": "",
+                },
+                merge=True,
+            )
 
             logger.info("[ycloud_webhook] voice: salvo uid=%s path=%s", uid, storage_path)
 
-            # ===================== ACK (FLAGADO) =====================
-            # (Opção B) Após áudio válido, renova vínculo from→uid por um TTL curto (seguro e escalável)
+            # Renova vínculo from→uid por um TTL curto (safe)
             try:
                 upsert_sender_link(from_e164, uid, ttl_seconds=ttl_seconds, method="audio_auto")
             except Exception:
@@ -306,13 +320,7 @@ except Exception:
         return jsonify({"ok": True}), 200
 
     # ===================== TEXTO (BOT) =====================
-    # Safe mode: responder texto/áudio sem mexer no fluxo de voz.
     # Default ON; rollback instantâneo com YCLOUD_TEXT_REPLY=0
-    #
-    # Política (v1):
-    # - Se houver voz "ready" (voiceId) para o uid → responder em ÁUDIO (voz do MEI).
-    # - Caso contrário → responder em TEXTO.
-    # - O webhook não inventa intent/fallback: só chama o wa_bot e entrega a resposta.
     try:
         if os.environ.get("YCLOUD_TEXT_REPLY", "1") not in ("0", "false", "False"):
             if env.get("eventType") == "whatsapp.inbound_message.received" and env.get("messageType") == "text":
@@ -321,7 +329,6 @@ except Exception:
 
                 if not from_e164 or not text_in:
                     return jsonify({"ok": True}), 200
-
 
                 msg_key = (env.get("wamid") or "").strip()
                 if msg_key and not _dedupe_once("text:" + msg_key):
@@ -341,21 +348,25 @@ except Exception:
                 except Exception:
                     pass
 
-                # chama wa_bot para obter a resposta em texto (source of truth)
+                # chama wa_bot para obter a resposta (source of truth)
                 reply_text = "Certo."
                 wa_out = None
                 try:
                     from services import wa_bot as wa_bot_entry  # lazy import
                     if hasattr(wa_bot_entry, "reply_to_text"):
-                        wa_out = wa_bot_entry.reply_to_text(uid=uid, text=text_in, ctx={
-                            "channel": "whatsapp",
-                            "from_e164": from_e164,
-                            "wamid": env.get("wamid"),
-                        })
+                        wa_out = wa_bot_entry.reply_to_text(
+                            uid=uid,
+                            text=text_in,
+                            ctx={
+                                "channel": "whatsapp",
+                                "from_e164": from_e164,
+                                "wamid": env.get("wamid"),
+                            },
+                        )
                 except Exception:
                     logger.exception("[ycloud_webhook] text: falha ao chamar wa_bot uid=%s", uid)
 
-                # normaliza retorno do wa_bot (ele retorna dict)
+                # normaliza retorno do wa_bot
                 try:
                     if isinstance(wa_out, dict):
                         reply_text = (
@@ -373,15 +384,10 @@ except Exception:
 
                 reply_text = (reply_text or "").strip()[:1200] or "Certo."
 
-                # ---------------------------------------------------------
-                # ENCAMINHAMENTO SEGURO:
-                # - webhook NÃO faz TTS, NÃO sobe arquivo, NÃO lê vozClonada para decidir.
-                # - wa_bot decide: se quiser áudio, devolve uma URL (audioUrl/audio_url/audio.link).
-                # - webhook só tenta enviar áudio (se houver URL) e cai pra texto se falhar.
-                # ---------------------------------------------------------
+                # envia áudio somente se o bot devolveu URL; senão texto
                 sent_mode = "text"
                 send_ok = False
-                send_resp = {}
+                send_resp: Dict[str, Any] = {}
 
                 def _pick_audio_url(x: Any) -> str:
                     try:
@@ -400,11 +406,10 @@ except Exception:
                 audio_url = _pick_audio_url(wa_out)
                 allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
 
-                # 1) tenta áudio (somente se o bot devolveu URL) — import local seguro
                 if allow_audio and audio_url:
                     try:
                         try:
-                            from providers.ycloud import send_audio as _ycloud_send_audio  # import local (não derruba app)
+                            from providers.ycloud import send_audio as _ycloud_send_audio  # import local
                         except Exception:
                             _ycloud_send_audio = None  # type: ignore
 
@@ -418,7 +423,6 @@ except Exception:
                         logger.exception("[ycloud_webhook] text: falha ao enviar áudio via ycloud uid=%s", uid)
                         send_ok, send_resp = False, {"error": "send_audio_exception"}
 
-                # 2) se não enviou áudio, envia texto
                 if not send_ok:
                     try:
                         send_ok, send_resp = ycloud_send_text(from_e164, reply_text)
@@ -427,30 +431,30 @@ except Exception:
                         logger.exception("[ycloud_webhook] text: falha ao enviar resposta via ycloud (texto) uid=%s", uid)
                         send_ok, send_resp = False, {"error": "send_text_exception"}
 
-                # Log mínimo de outbound pra debug (best-effort)
+                # Log outbound somente quando tentar enviar resposta
                 try:
-                    _db().collection("platform_wa_outbox_logs").add({
-                        "createdAt": _now_ts(),
-                        "eventType": env.get("eventType"),
-                        "messageType": "text",
-                        "fromE164": from_e164,
-                        "uid": uid,
-                        "wamid": env.get("wamid"),
-                        "inTextPreview": text_in[:180],
-                        "outTextPreview": str(reply_text)[:180],
-                        "sentMode": sent_mode,
-                        "sendOk": bool(send_ok),
-                        "audioUrl": (audio_url or "")[:500],
-                    })
+                    _db().collection("platform_wa_outbox_logs").add(
+                        {
+                            "createdAt": _now_ts(),
+                            "eventType": env.get("eventType"),
+                            "messageType": "text",
+                            "fromE164": from_e164,
+                            "uid": uid,
+                            "wamid": env.get("wamid"),
+                            "inTextPreview": text_in[:180],
+                            "outTextPreview": str(reply_text)[:180],
+                            "sentMode": sent_mode,
+                            "sendOk": bool(send_ok),
+                            "audioUrl": (audio_url or "")[:500],
+                        }
+                    )
                 except Exception:
                     pass
 
                 return jsonify({"ok": True}), 200
     except Exception:
         logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
+
     return jsonify({"ok": True}), 200
-
-
-
 
 
