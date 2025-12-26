@@ -351,15 +351,16 @@ def ycloud_webhook_ingress():
                 uid = _resolve_uid_for_sender(from_e164) or ""
                 ttl_seconds = int(os.environ.get("VOICE_LINK_TTL_SECONDS", "86400") or "86400")
 
-# Opção B: uid ausente vira VENDAS (wa_bot decide). Não ignorar.
-if not uid:
-    logger.info("[ycloud_webhook] text: uid não resolvido p/ from=%s (route=sales)", _safe_str(from_e164))
-    uid = ""  # wa_bot trata uid vazio como lead/vendas
+                # Opção B: uid ausente vira VENDAS (wa_bot decide). Não ignorar.
+                if not uid:
+                    logger.info("[ycloud_webhook] text: uid não resolvido p/ from=%s (route=sales)", _safe_str(from_e164))
+                    # NÃO renova link quando uid é vazio (evita sujeira/risco bobo)
+                else:
+                    try:
+                        upsert_sender_link(from_e164, uid, ttl_seconds=ttl_seconds, method="text_renew")
+                    except Exception:
+                        pass
 
-                try:
-                    upsert_sender_link(from_e164, uid, ttl_seconds=ttl_seconds, method="text_renew")
-                except Exception:
-                    pass
 
                 # chama wa_bot para obter a resposta (source of truth)
                 reply_text = "Certo."
@@ -469,6 +470,7 @@ if not uid:
         logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
 
     return jsonify({"ok": True}), 200
+
 
 
 
