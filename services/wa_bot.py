@@ -143,25 +143,33 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
             # >>> PATCH: quando lead + áudio, gerar audioUrl institucional (best-effort)
             if (ctx.get("msg_type") or "").strip().lower() == "audio":
+                base_url = (os.environ.get("BACKEND_BASE_URL", "") or "").rstrip("/")
+                out["audioDebug"] = {"baseUrl": base_url, "ok": False, "err": ""}
+
                 try:
                     from services.institutional_tts_media import generate_institutional_audio_url
-                    base_url = os.environ.get("BACKEND_BASE_URL", "").rstrip("/")
                     audio_url = generate_institutional_audio_url(
                         text=reply,
                         base_url=base_url,
                     )
+                    audio_url = (audio_url or "").strip()
                     if audio_url:
                         out["audioUrl"] = audio_url
-                except Exception:
-                    pass
+                        out["audioDebug"]["ok"] = True
+                    else:
+                        out["audioDebug"]["err"] = "empty_audio_url"
+                except Exception as e:
+                    out["audioDebug"]["err"] = (str(e) or "exception")[:180]
 
             return out
 
         except Exception:
-                    
             # fallback ultra conservador (nunca fica mudo)
-            return {"ok": True, "route": "sales_lead", "replyText": "Oi! Sou o MEI Robô. Quer conhecer os planos?"}
-
+            return {
+                "ok": True,
+                "route": "sales_lead",
+                "replyText": "Oi! Sou o MEI Robô. Quer conhecer os planos?",
+            }
     # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
     try:
         legacy = _get_legacy_module()
