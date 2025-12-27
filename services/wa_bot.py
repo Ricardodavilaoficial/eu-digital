@@ -150,7 +150,6 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                     from services.institutional_tts_media import generate_institutional_audio_url
                     audio_url = generate_institutional_audio_url(
                         text=reply,
-                        base_url=base_url,
                     )
                     audio_url = (audio_url or "").strip()
                     if audio_url:
