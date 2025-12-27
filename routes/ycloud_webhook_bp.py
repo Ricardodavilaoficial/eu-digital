@@ -15,13 +15,24 @@ from flask import Blueprint, request, jsonify
 from google.cloud import firestore  # type: ignore
 
 from services.firebase_admin_init import ensure_firebase_admin
-from providers.ycloud import send_text as ycloud_send_text, send_audio as ycloud_send_audiofrom services.voice_wa_link import get_uid_for_sender, upsert_sender_link
+from providers.ycloud import send_text as ycloud_send_text
+
+try:
+    from providers.ycloud import send_audio as ycloud_send_audio  # opcional
+except Exception:
+    ycloud_send_audio = None  # type: ignore
+
+from services.voice_wa_link import get_uid_for_sender, upsert_sender_link
 from services.voice_wa_download import download_media_bytes
 from services.voice_wa_storage import upload_voice_bytes
 
 ycloud_webhook_bp = Blueprint("ycloud_webhook_bp", __name__)
 logger = logging.getLogger(__name__)
 
+@ycloud_webhook_bp.route("/integracoes/ycloud/ping", methods=["GET"])
+def ycloud_ping():
+    return jsonify({"ok": True, "ping": "ycloud_webhook_bp"}), 200
+    
 def _db():
     ensure_firebase_admin()
     return firestore.Client()
@@ -477,13 +488,8 @@ def ycloud_webhook_ingress():
 
                 if allow_audio and audio_url:
                     try:
-                        try:
-                            from providers.ycloud import send_audio as _ycloud_send_audio  # import local
-                        except Exception:
-                            _ycloud_send_audio = None  # type: ignore
-
-                        if _ycloud_send_audio is not None:
-                            send_ok, send_resp = _ycloud_send_audio(from_e164, audio_url)
+                        if ycloud_send_audio is not None:
+                            send_ok, send_resp = ycloud_send_audio(from_e164, audio_url)
                             if send_ok:
                                 sent_mode = "audio"
                         else:
