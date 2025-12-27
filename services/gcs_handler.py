@@ -30,18 +30,10 @@ except Exception:
 # Normalização de nome de bucket
 # ----------------------------
 def _normalize_bucket_name(name: str) -> str:
-    """
-    Converte DOMÍNIO WEB do Firebase Storage (*.firebasestorage.app)
-    para o NOME REAL do bucket GCS (*.appspot.com).
-    Se já estiver em *.appspot.com, mantém.
-    """
     name = (name or "").strip()
     if not name:
         return ""
-    if name.endswith(".firebasestorage.app"):
-        return re.sub(r"\.firebasestorage\.app$", ".appspot.com", name)
     return name
-
 
 # ----------------------------
 # Resolvedor de nome de bucket
