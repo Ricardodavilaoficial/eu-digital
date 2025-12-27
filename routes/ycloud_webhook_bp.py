@@ -15,8 +15,7 @@ from flask import Blueprint, request, jsonify
 from google.cloud import firestore  # type: ignore
 
 from services.firebase_admin_init import ensure_firebase_admin
-from providers.ycloud import send_text as ycloud_send_text  # sender oficial (já validado)
-from services.voice_wa_link import get_uid_for_sender, upsert_sender_link
+from providers.ycloud import send_text as ycloud_send_text, send_audio as ycloud_send_audiofrom services.voice_wa_link import get_uid_for_sender, upsert_sender_link
 from services.voice_wa_download import download_media_bytes
 from services.voice_wa_storage import upload_voice_bytes
 
@@ -263,26 +262,62 @@ def ycloud_webhook_ingress():
             # Opção B: áudio de número desconhecido vira VENDAS (wa_bot decide).
             if not uid:
                 logger.info("[ycloud_webhook] voice: uid não resolvido p/ from=%s (route=sales)", _safe_str(from_e164))
-                # Lead (uid vazio): NÃO faz ingest de voz do MEI (isso é só para MEI autenticado).
-                # Para lead, vamos apenas encaminhar para o wa_bot (vendas) e responder.
-                if not uid:
-                    # Encaminhar como lead/vendas (wa_bot decide). Não tocar em Firestore de voz.
-                    try:
-                        from services import wa_bot
-                        reply = wa_bot.reply_to_text("", "[áudio recebido]", {"from_e164": from_e164, "msg_type": "audio"})
-                        # reply deve conter replyText (texto). Por enquanto ok responder texto; áudio sai no próximo passo.
-                        reply_text = (reply or {}).get("replyText") or "Oi! Sou o MEI Robô. Quer conhecer os planos?"
-                    except Exception:
-                        reply_text = "Oi! Sou o MEI Robô. Quer conhecer os planos?"
 
-                    # Reutiliza o mesmo caminho de envio de texto já existente no webhook
+                # Encaminhar como lead/vendas (wa_bot decide). Não tocar em Firestore de voz.
+                reply_text = "Oi! Sou o MEI Robô. Quer conhecer os planos?"
+                wa_out = None
+                try:
+                    from services import wa_bot as wa_bot_entry  # lazy import
+                    if hasattr(wa_bot_entry, "reply_to_text"):
+                        wa_out = wa_bot_entry.reply_to_text(
+                            uid="",
+                            text="[áudio recebido]",
+                            ctx={"channel": "whatsapp", "from_e164": from_e164, "msg_type": "audio", "wamid": env.get("wamid")},
+                        )
+                except Exception:
+                    logger.exception("[ycloud_webhook] voice: falha ao chamar wa_bot (lead audio)")
+
+                # normaliza replyText
+                try:
+                    if isinstance(wa_out, dict):
+                        reply_text = (
+                            wa_out.get("replyText")
+                            or wa_out.get("text")
+                            or wa_out.get("reply")
+                            or wa_out.get("message")
+                            or reply_text
+                        )
+                    elif wa_out:
+                        reply_text = str(wa_out)
+                except Exception:
+                    pass
+
+                reply_text = (reply_text or "").strip()[:1200] or "Oi! Sou o MEI Robô. Quer conhecer os planos?"
+
+                # se tiver audioUrl, tenta enviar áudio; se falhar, cai no texto
+                audio_url = ""
+                try:
+                    if isinstance(wa_out, dict):
+                        audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
+                except Exception:
+                    audio_url = ""
+
+                allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
+                sent_ok = False
+
+                if allow_audio and audio_url:
+                    try:
+                        sent_ok, _ = ycloud_send_audio(from_e164, audio_url)
+                    except Exception:
+                        logger.exception("[ycloud_webhook] voice: falha ao enviar áudio via ycloud (lead)")
+
+                if not sent_ok:
                     try:
                         ycloud_send_text(from_e164, reply_text)
                     except Exception:
                         pass
 
-                    return jsonify({"ok": True}), 200
-                uid = ""  # encaminhar como lead/vendas
+                return jsonify({"ok": True}), 200
 
             if not (media.get("url") or "").strip():
                 logger.info("[ycloud_webhook] voice: sem media_url. uid=%s from=%s", uid, from_e164)
@@ -490,3 +525,4 @@ def ycloud_webhook_ingress():
         logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
 
     return jsonify({"ok": True}), 200
+
