@@ -316,7 +316,7 @@ def ycloud_webhook_ingress():
                 allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
                 sent_ok = False
 
-                if allow_audio and audio_url:
+                if allow_audio and audio_url and ycloud_send_audio:
                     try:
                         sent_ok, _ = ycloud_send_audio(from_e164, audio_url)
                     except Exception:
@@ -327,8 +327,25 @@ def ycloud_webhook_ingress():
                         ycloud_send_text(from_e164, reply_text)
                     except Exception:
                         pass
-
-                return jsonify({"ok": True}), 200
+                        
+                # DEBUG: log do modo de envio (lead)
+                try:
+                    _db().collection("platform_wa_outbox_logs").add(
+                        {
+                            "createdAt": _now_ts(),
+                            "kind": "outbound",
+                            "route": "lead_audio",
+                            "waFromE164": from_e164,
+                            "sentAudio": bool(allow_audio and bool(audio_url) and sent_ok),
+                            "audioUrl": (audio_url or "")[:500],
+                            "replyTextPreview": (reply_text or "")[:160],
+                            "hasYcloudSendAudio": bool(ycloud_send_audio),
+                        }
+                    )
+                except Exception:
+                    pass
+             
+            return jsonify({"ok": True}), 200
 
             if not (media.get("url") or "").strip():
                 logger.info("[ycloud_webhook] voice: sem media_url. uid=%s from=%s", uid, from_e164)
@@ -486,7 +503,7 @@ def ycloud_webhook_ingress():
                 audio_url = _pick_audio_url(wa_out)
                 allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
 
-                if allow_audio and audio_url:
+                if allow_audio and audio_url and ycloud_send_audio:
                     try:
                         if ycloud_send_audio is not None:
                             send_ok, send_resp = ycloud_send_audio(from_e164, audio_url)
