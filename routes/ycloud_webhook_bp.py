@@ -352,7 +352,7 @@ def ycloud_webhook_ingress():
                 except Exception:
                     pass
              
-            return jsonify({"ok": True}), 200
+            # uid resolvido: NÃO retornar aqui; seguir para baixar mídia e salvar no GCS/Firestore
 
             if not (media.get("url") or "").strip():
                 logger.info("[ycloud_webhook] voice: sem media_url. uid=%s from=%s", uid, from_e164)
@@ -556,4 +556,5 @@ def ycloud_webhook_ingress():
         logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
 
     return jsonify({"ok": True}), 200
+
 
