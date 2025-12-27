@@ -312,7 +312,14 @@ def ycloud_webhook_ingress():
                         audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
                 except Exception:
                     audio_url = ""
-
+                    
+                audio_debug = {}
+                try:
+                    if isinstance(wa_out, dict):
+                        audio_debug = wa_out.get("audioDebug") or {}
+                except Exception:
+                    audio_debug = {}
+                    
                 allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
                 sent_ok = False
 
@@ -538,6 +545,7 @@ def ycloud_webhook_ingress():
                             "sentMode": sent_mode,
                             "sendOk": bool(send_ok),
                             "audioUrl": (audio_url or "")[:500],
+                            "audioDebug": audio_debug,
                         }
                     )
                 except Exception:
