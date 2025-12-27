@@ -118,6 +118,25 @@ def _openai_chat(prompt: str) -> Optional[str]:
     except Exception:
         return None
     return None
+    
+def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
+    """Retorna apenas o texto de resposta (usado pelo wa_bot.reply_to_text)."""
+    ctx = ctx or {}
+
+    text_in = (text or "").strip()
+
+    # aceitar áudio como gatilho de resposta
+    if not text_in:
+        text_in = "Lead enviou um áudio."
+
+    prompt = (
+        f"Mensagem do lead: {text_in}\n\n"
+        "Responda como vendas do MEI Robô. "
+        "Finalize com uma pergunta curta para qualificar o lead."
+    )
+
+    out = _openai_chat(prompt) or _fallback_pitch(ctx.get("app_tag"))
+    return (out or "").strip() or _fallback_pitch(ctx.get("app_tag"))
 
 def handle_sales_lead(
     change: Dict[str, Any],

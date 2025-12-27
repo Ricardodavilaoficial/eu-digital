@@ -145,7 +145,11 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             if (ctx.get("msg_type") or "").strip().lower() == "audio":
                 try:
                     from services.institutional_tts_media import generate_institutional_audio_url
-                    audio_url = generate_institutional_audio_url(reply)
+                    base_url = os.environ.get("BACKEND_BASE_URL", "").rstrip("/")
+                    audio_url = generate_institutional_audio_url(
+                        text=reply,
+                        base_url=base_url,
+                    )
                     if audio_url:
                         out["audioUrl"] = audio_url
                 except Exception:
@@ -154,8 +158,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             return out
 
         except Exception:
-            return {"ok": True, "route": "sales_lead", "replyText": "Oi! Sou o MEI Robô. Quer conhecer os planos?"}
-        
+                    
             # fallback ultra conservador (nunca fica mudo)
             return {"ok": True, "route": "sales_lead", "replyText": "Oi! Sou o MEI Robô. Quer conhecer os planos?"}
 
