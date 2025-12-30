@@ -317,3 +317,49 @@ def fetch_media(media_id: str):
     except Exception as e:
         logging.exception("[WA][FETCH_MEDIA][ERROR] %s", e)
         return None, None
+# -----------------------------------------------------------------------------
+# Envio por TEMPLATE (YCloud) — obrigatório fora da janela de 24h
+# -----------------------------------------------------------------------------
+def send_template(
+    to: str,
+    template_name: str,
+    params: list,
+    language_code: str = "pt_BR",
+):
+    """
+    Envia template aprovado via YCloud.
+    Usar SEMPRE para mensagens outbound fora da janela de 24h.
+    """
+    try:
+        from providers.ycloud import send_template as _ycloud_send_template
+    except Exception as e:
+        logging.error("[WA][TEMPLATE] YCloud indisponível: %s", e)
+        return False, {"error": "ycloud_not_available"}
+
+    # normaliza telefone (mesma regra do resto do arquivo)
+    try:
+        cands = br_candidates(to)
+    except Exception:
+        cands = []
+
+    if not cands:
+        cands = [_normalize_br_msisdn_simple(to)]
+
+    seen = set()
+    cands = [c for c in cands if not (c in seen or seen.add(c))]
+
+    last = None
+    for cand in cands:
+        ok, resp = _ycloud_send_template(
+            to_e164=f"+{cand}",
+            template_name=template_name,
+            params=params,
+            language_code=language_code,
+        )
+        logging.info("[WA][OUT TEMPLATE] cand=%s ok=%s resp=%s", cand, ok, resp)
+        if ok:
+            return True, {"used": cand, "resp": resp}
+        last = {"used": cand, "resp": resp}
+
+    return False, {"tried": cands, "last": last}
+

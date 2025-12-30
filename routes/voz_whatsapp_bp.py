@@ -31,7 +31,7 @@ from services.voice_wa_download import (
     basic_audio_validate,
 )
 from services.voice_wa_storage import upload_voice_bytes
-from services.voice_wa_outbound import send_invite_message
+from services.wa_send import send_template
 
 voz_whatsapp_bp = Blueprint("voz_whatsapp_bp", __name__)
 
@@ -227,22 +227,27 @@ def voice_wa_invite():
         "lastError": "",
     })
 
-    sent = False
-    detail = ""
-    if _outbound_on():
-        try:
-            sent, detail = send_invite_message(to_e164)
-        except Exception as e:
-            sent, detail = False, f"send_failed:{type(e).__name__}"
+    # Invite sempre via template (Meta/YCloud happy)
+    codigo_convite = generate_link_code()
+    save_link_code(uid=uid, code=codigo_convite, ttl_seconds=ttl)
+
+    ok, out = send_template(
+        to=to_e164,
+        template_name="mei_robo_convite_voz_v1",
+        params=[
+            codigo_convite  # {{1}} do template
+        ],
+    )
+
+    if not ok:
+        return jsonify({"ok": False, "error": "template_send_failed", "detail": out}), 500
 
     return jsonify({
         "ok": True,
+        "sent": True,
+        "channel": "template",
+        "provider": "ycloud",
         "toE164": to_e164,
-        "ttlSeconds": ttl,
-        "outboundAttempted": _outbound_on(),
-        "sent": bool(sent),
-        "detail": detail,
-        "next": "Agora o MEI só precisa responder no WhatsApp com um áudio de 1–3 minutos.",
     }), 200
 
 @voz_whatsapp_bp.route("/api/voz/whatsapp/reset", methods=["POST"])
@@ -378,5 +383,6 @@ def voice_wa_webhook():
         _status_set_failed(uid, "download_or_storage_failed")
         _log(uid, payload, note="failed")
         return jsonify({"ok": True}), 200
+
 
 
