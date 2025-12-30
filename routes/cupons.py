@@ -198,4 +198,11 @@ def _ativar_cupom_impl(*, codigo: str, uid: str):
     except Exception:
         return jsonify({"erro": "Falha ao aplicar plano"}), 500
 
+    # Kickoff interno de voz (best-effort). Não quebra ativação.
+    try:
+        from services.voice_kickoff import kickoff_voice_process
+        kickoff_voice_process(uid, reason="cupom")
+    except Exception:
+        pass
+
     return jsonify({"mensagem": "Plano ativado com sucesso pelo cupom!", "plano": (plano or "start")}), 200

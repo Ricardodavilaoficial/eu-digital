@@ -97,6 +97,46 @@ def stripe_webhook():
                     current_app.logger.info(
                         f"[stripe:webhook] upgrade Starter+ aplicado uid={uid} maxBytes={max_bytes}"
                     )
+
+                # --------------------------------------------------------
+                # Ativação de plano (ex.: assinatura/checkout do produto base)
+                # Espera metadata.uid e metadata.activate_plan == "1" (ou plan)
+                # --------------------------------------------------------
+                try:
+                    activate_plan = (metadata.get("activate_plan") or "").strip().lower()
+                    plan = (metadata.get("plan") or "").strip().lower()
+
+                    # somente se pago
+                    payment_status = (session.get("payment_status") or "").strip().lower()
+                    if uid and payment_status == "paid" and (activate_plan in ("1", "true", "yes") or plan):
+                        now_iso = datetime.now(timezone.utc).isoformat()
+                        chosen_plan = plan or "start"
+
+                        db.collection("profissionais").document(uid).set(
+                            {
+                                "plan": chosen_plan,
+                                "licenca": {
+                                    "origem": "stripe",
+                                    "activatedAt": now_iso,
+                                    "checkoutSessionId": session.get("id"),
+                                },
+                                "updatedAt": now_iso,
+                            },
+                            merge=True,
+                        )
+
+                        # Kickoff interno da voz (best-effort)
+                        try:
+                            from services.voice_kickoff import kickoff_voice_process
+                            kickoff_voice_process(uid, reason="stripe_checkout_paid")
+                        except Exception:
+                            pass
+
+                        current_app.logger.info(
+                            f"[stripe:webhook] plano ativado via checkout uid={uid} plan={chosen_plan}"
+                        )
+                except Exception as e:
+                    current_app.logger.exception(f"[stripe:webhook] erro ao ativar plano/kickoff voz: {e}")
             except Exception as e:
                 current_app.logger.exception(f"[stripe:webhook] erro ao aplicar upgrade Starter+: {e}")
 
@@ -107,9 +147,42 @@ def stripe_webhook():
         elif event_type in ("invoice.payment_succeeded", "invoice.payment_failed"):
             inv = event["data"]["object"]
             current_app.logger.info(f"[stripe:webhook] invoice event id={inv.get('id')} status={inv.get('status')}")
+
+
+            if event_type == "invoice.payment_succeeded":
+                try:
+                    metadata = inv.get("metadata") or {}
+                    uid = (metadata.get("uid") or "").strip()
+                    plan = (metadata.get("plan") or "").strip().lower() or "start"
+
+                    if uid:
+                        now_iso = datetime.now(timezone.utc).isoformat()
+                        db.collection("profissionais").document(uid).set(
+                            {
+                                "plan": plan,
+                                "licenca": {
+                                    "origem": "stripe",
+                                    "activatedAt": now_iso,
+                                    "invoiceId": inv.get("id"),
+                                },
+                                "updatedAt": now_iso,
+                            },
+                            merge=True,
+                        )
+
+                        try:
+                            from services.voice_kickoff import kickoff_voice_process
+                            kickoff_voice_process(uid, reason="stripe_invoice_paid")
+                        except Exception:
+                            pass
+
+                        current_app.logger.info(f"[stripe:webhook] invoice paid -> plano+voz uid={uid} plan={plan}")
+                except Exception as e:
+                    current_app.logger.exception(f"[stripe:webhook] erro invoice paid plano/kickoff voz: {e}")
     except Exception as e:
         # Never fail the webhook because of business logic; just log.
         current_app.logger.exception(f"[stripe:webhook] post-process error (ignored): {e}")
 
     # Always respond 200 quickly so Stripe considers the delivery successful
     return jsonify({"received": True}), 200
+
