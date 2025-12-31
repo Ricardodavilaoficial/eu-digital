@@ -64,6 +64,25 @@ def _normalize_object(body: dict, qs: dict) -> Optional[str]:
     return obj[1:] if obj.startswith("/") else obj
 
 
+
+def _get_last_audio_from_firestore(uid: str) -> Optional[str]:
+    try:
+        if not uid:
+            return None
+        snap = (
+            db.collection("profissionais")
+            .document(uid)
+            .collection("voz")
+            .document("whatsapp")
+            .get()
+        )
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        return data.get("lastAudioGcsPath")
+    except Exception:
+        return None
+
 def _find_latest_voice_object(uid: str) -> Optional[str]:
     """Best-effort: encontra o último áudio salvo via WhatsApp em profissionais/{uid}/voz/original/."""
     try:
@@ -211,10 +230,21 @@ def process_voz():
     is_force = _is_truthy(force_flag)
 
     obj = _normalize_object(body, qs)
+
     if not obj and uid:
+        # 🔹 1) tenta Firestore (canônico)
+        obj = _get_last_audio_from_firestore(uid)
+
+    if not obj and uid:
+        # 🔹 2) fallback antigo (bucket)
         obj = _find_latest_voice_object(uid)
         if obj:
             logging.info("[voz/process] inferido object_path via listagem: %s", obj)
+
+    logging.info(
+      "[voz/process] resolved audio source uid=%s object=%s",
+      uid, obj
+    )
 
 
     link = body.get("arquivoUrl") or body.get("url") or qs.get("arquivoUrl") or qs.get("url")
@@ -267,3 +297,4 @@ def process_voz():
 # Retrocompatibilidade: alguns app.py importam "bp"
 # -----------------------------------------------------------------------------
 bp = voz_process_bp  # <— alias para não quebrar import antigo
+
