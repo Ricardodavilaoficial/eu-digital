@@ -26,6 +26,7 @@ import os
 from datetime import timedelta, datetime
 
 from flask import Blueprint, request, jsonify
+from services.storage_quota import reserve_bytes, adjust_bytes, QuotaExceeded
 from firebase_admin import firestore  # Firestore Admin
 
 from services.auth import auth_required, current_uid
@@ -104,13 +105,55 @@ def upload_foto_servico():
     bucket = client.bucket(bucket_name)
 
     blob = bucket.blob(object_path)
+# ---- QUOTA (best-effort) ----
+# Overwrite no mesmo path: reserva apenas o aumento (new_size - old_size)
+old_size = 0
+try:
+    if blob.exists(client):
+        blob.reload()
+        old_size = int(blob.size or 0)
+except Exception:
+    old_size = 0
+
+new_size = 0
+try:
+    file.stream.seek(0, 2)
+    new_size = int(file.stream.tell() or 0)
+    file.stream.seek(0)
+except Exception:
+    new_size = 0
+
+reserved = 0
+delta_est = int(new_size) - int(old_size)
+if delta_est > 0:
+    try:
+        reserve_bytes(uid, delta_est, category="servicos_foto")
+        reserved = delta_est
+    except QuotaExceeded as qe:
+        return jsonify(qe.to_dict()), 409
+
+try:
     blob.cache_control = "private, max-age=0, no-transform"
-
-    # Faz upload direto a partir do stream do Flask
     blob.upload_from_file(file.stream, content_type=content_type)
-
-    # Garantir meta atualizada
     blob.patch()
+except Exception:
+    # rollback da reserva (best-effort)
+    try:
+        if reserved:
+            adjust_bytes(uid, -int(reserved), category="servicos_foto")
+    except Exception:
+        pass
+    return jsonify({"ok": False, "error": "upload_failed"}), 500
+
+# Reconcilia delta real (se diferir do reservado)
+try:
+    blob.reload()
+    real_new = int(blob.size or 0)
+    real_delta = int(real_new) - int(old_size)
+    if reserved != real_delta:
+        adjust_bytes(uid, int(real_delta) - int(reserved), category="servicos_foto")
+except Exception:
+    pass
 
     # ---- Gerar Signed URL de leitura (conveniência) ----
     expires = timedelta(minutes=_EXPIRES_MINUTES)
@@ -158,3 +201,4 @@ def upload_foto_servico():
         ),
         200,
     )
+

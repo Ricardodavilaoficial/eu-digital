@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 import random
 
 from flask import Blueprint, request, jsonify, g
+from services.storage_quota import reserve_bytes, adjust_bytes, QuotaExceeded
 
 from services.db import db  # mesmo client usado em app.py
 
@@ -313,7 +314,52 @@ def upload_timbrado():
         client = storage.Client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(object_path)
-        blob.upload_from_file(f.stream, content_type=content_type)
+        # ---- QUOTA (best-effort) ----
+        old_size = 0
+        try:
+            if blob.exists(client):
+                blob.reload()
+                old_size = int(blob.size or 0)
+        except Exception:
+            old_size = 0
+
+        new_size = 0
+        try:
+            f.stream.seek(0, 2)
+            new_size = int(f.stream.tell() or 0)
+            f.stream.seek(0)
+        except Exception:
+            new_size = 0
+
+        reserved = 0
+        delta_est = int(new_size) - int(old_size)
+        if delta_est > 0:
+            try:
+                reserve_bytes(uid, delta_est, category="orcamentos_timbrado")
+                reserved = delta_est
+            except QuotaExceeded as qe:
+                return jsonify(qe.to_dict()), 409
+
+        try:
+            blob.upload_from_file(f.stream, content_type=content_type)
+        except Exception:
+            # rollback da reserva (best-effort). Não mascara o erro do upload.
+            try:
+                if reserved:
+                    adjust_bytes(uid, -int(reserved), category="orcamentos_timbrado")
+            except Exception:
+                pass
+            raise
+
+        # Reconcilia delta real (se diferir do reservado)
+        try:
+            blob.reload()
+            real_new = int(blob.size or 0)
+            real_delta = int(real_new) - int(old_size)
+            if reserved != real_delta:
+                adjust_bytes(uid, int(real_delta) - int(reserved), category="orcamentos_timbrado")
+        except Exception:
+            pass
 
         expires = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900") or "900")
         signed_url = blob.generate_signed_url(
