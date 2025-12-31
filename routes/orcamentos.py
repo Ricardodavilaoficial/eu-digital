@@ -12,6 +12,10 @@
 # - NÃO duplica CNPJ/nome/logo do MEI: isso continua em profissionais/{uid} e config/orcamentos.
 # - Guarda só o "evento" do orçamento + um snapshot leve do cliente.
 
+import os
+from datetime import timedelta
+from google.cloud import storage
+
 from datetime import datetime, timezone
 import random
 
@@ -268,3 +272,62 @@ def criar_orcamento():
 
     except Exception as e:
         return jsonify({"ok": False, "error": "internal_error", "detail": str(e)}), 500
+
+
+@orcamentos_bp.route("/timbrado", methods=["POST", "OPTIONS"])
+def upload_timbrado():
+    # Preflight CORS
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    uid, err = _require_uid()
+    if err:
+        return err
+
+    # form-data
+    kind = (request.form.get("kind") or "").strip().lower()
+    f = request.files.get("file")
+
+    if kind not in ("logo", "assinatura", "carimbo", "avatar"):
+        return jsonify({"ok": False, "error": "invalid_kind"}), 400
+    if not f:
+        return jsonify({"ok": False, "error": "missing_file"}), 400
+
+    # Extensão/mime conservador
+    filename = (f.filename or "").lower()
+    ext = "png"
+    if "." in filename:
+        ext = filename.rsplit(".", 1)[-1].strip() or "png"
+    if ext not in ("png", "jpg", "jpeg", "webp"):
+        return jsonify({"ok": False, "error": "invalid_ext"}), 400
+
+    content_type = f.mimetype or "application/octet-stream"
+    if content_type not in ("image/png", "image/jpeg", "image/webp", "application/octet-stream"):
+        return jsonify({"ok": False, "error": "invalid_mime"}), 400
+
+    # 1 por MEI (substitui sempre)
+    bucket_name = os.environ["STORAGE_BUCKET"]
+    object_path = f"profissionais/{uid}/orcamentos/{kind}.{ext}"
+
+    try:
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_path)
+        blob.upload_from_file(f.stream, content_type=content_type)
+
+        expires = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900") or "900")
+        signed_url = blob.generate_signed_url(
+            expiration=timedelta(seconds=expires),
+            method="GET",
+            version="v4",
+        )
+
+        return jsonify({
+            "ok": True,
+            "path": object_path,
+            "signedUrl": signed_url,
+        }), 200
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": "upload_failed", "detail": str(e)}), 500
+
