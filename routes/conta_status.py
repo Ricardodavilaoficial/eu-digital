@@ -477,6 +477,74 @@ def _vinculo_dict(score: int, limiar: int):
         "limiar": limiar,
     }
 
+def _activation_from_firestore(uid: str | None) -> tuple[bool, str]:
+    """
+    Decide se a conta está ATIVA (pagou ou cupom) de forma CONSERVADORA:
+    só retorna True quando existir um sinal explícito no Firestore.
+    Nunca infere por score/vínculo (isso seria perigoso).
+    """
+    if not uid or db is None:
+        return (False, "")
+
+    try:
+        doc_prof = db.collection("profissionais").document(uid).get()
+        prof = doc_prof.to_dict() if doc_prof.exists else {}
+        if not isinstance(prof, dict):
+            prof = {}
+
+        # Procurar sinais explícitos no doc principal
+        # (aceita variações comuns sem assumir demais)
+        if prof.get("isActive") is True or prof.get("active") is True:
+            return (True, "profissionais.isActive")
+
+        status = str(prof.get("status") or prof.get("statusConta") or "").lower().strip()
+        if status in ("active", "ativo", "ativado"):
+            return (True, "profissionais.status")
+
+        lic = prof.get("license") or prof.get("licenca") or {}
+        if isinstance(lic, dict):
+            lic_status = str(lic.get("status") or "").lower().strip()
+            if lic_status in ("active", "ativo", "ativado"):
+                return (True, "license.status")
+
+        pay = prof.get("payment") or prof.get("pagamento") or {}
+        if isinstance(pay, dict):
+            pay_status = str(pay.get("status") or "").lower().strip()
+            if pay_status in ("confirmed", "paid", "pago", "confirmado"):
+                return (True, "payment.status")
+
+        cup = prof.get("cupom") or {}
+        if isinstance(cup, dict):
+            cup_status = str(cup.get("status") or "").lower().strip()
+            if cup_status in ("active", "ativo", "aplicado", "used"):
+                return (True, "cupom.status")
+            if cup.get("isActive") is True or cup.get("active") is True:
+                return (True, "cupom.isActive")
+
+        # Também tenta config/conta (muita gente guarda estado lá)
+        try:
+            doc_cfg = (
+                db.collection("profissionais")
+                  .document(uid)
+                  .collection("config")
+                  .document("conta")
+                  .get()
+            )
+            cfg = doc_cfg.to_dict() if doc_cfg.exists else {}
+            if isinstance(cfg, dict):
+                if cfg.get("isActive") is True or cfg.get("active") is True:
+                    return (True, "config.conta.isActive")
+                cfg_status = str(cfg.get("status") or cfg.get("licenseStatus") or "").lower().strip()
+                if cfg_status in ("active", "ativo", "ativado", "confirmed", "paid", "pago", "confirmado"):
+                    return (True, "config.conta.status")
+        except Exception:
+            pass
+
+        return (False, "")
+
+    except Exception:
+        logging.exception("conta_status: erro ao ler ativação para uid=%s", uid)
+        return (False, "")
 
 # -------- endpoints --------
 @bp_conta.get("/api/stripe/gate")
@@ -506,12 +574,17 @@ def conta_status():
 
     vinculo = _vinculo_dict(score, limiar)
 
+    is_active, active_reason = _activation_from_firestore(uid)
+
     resp = make_response(
         jsonify({
             "empresa": empresa,
             "publico": publico,
             "vinculo": vinculo,
+            "isActive": bool(is_active),
+            "activeReason": active_reason,
         }),
         200,
     )
+
     return _no_store(resp)
