@@ -540,6 +540,24 @@ def _activation_from_firestore(uid: str | None) -> tuple[bool, str]:
         except Exception:
             pass
 
+        # Redeems (cupom de ativação): se houver redeem ok para este uid, consideramos ATIVO
+        try:
+            qs = (
+                db.collection("redeems")
+                  .where("uid", "==", uid)
+                  .where("tipo", "==", "ativacao")
+                  .limit(1)
+                  .stream()
+            )
+            for doc in qs:
+                r = doc.to_dict() or {}
+                ok_flag = (r.get("ok") is True)
+                st = str(r.get("status") or "").lower().strip()
+                if ok_flag or st == "ok":
+                    return (True, "redeems.ativacao")
+        except Exception:
+            pass
+
         return (False, "")
 
     except Exception:
