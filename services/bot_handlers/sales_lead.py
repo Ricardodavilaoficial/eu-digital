@@ -10,6 +10,8 @@ import os
 import time
 import json
 import re
+import hashlib
+import requests
 from typing import Any, Callable, Dict, Optional
 
 # =========================
@@ -27,6 +29,11 @@ OPENING_ASK_NAME = (
     "Antes de te explicar direitinho,\n"
     "me diz teu nome?"
 )
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+OPENAI_SALES_MODEL = os.getenv("OPENAI_SALES_MODEL", os.getenv("OPENAI_NLU_MODEL", "gpt-4o-mini"))
+
 
 ASK_SEGMENT = (
     "Prazer, {name} 😄\n\n"
@@ -316,6 +323,107 @@ def _ai_pitch(name: str, segment: str, user_text: str) -> str:
             f"Isso costuma dar mais tempo livre e mais dinheiro no fim do mês."
         )
 
+def _pitch_cache_key(segment: str, hint: str, user_text: str) -> str:
+    segment = (segment or "geral").strip().lower()
+    hint = (hint or "default").strip().lower()
+    base = f"{hint}|{segment}|{_norm(user_text)[:180]}"
+    h = hashlib.sha1(base.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    return f"sales:pitch:{segment}:{hint}:{h}"
+
+def _get_cached_pitch(segment: str, hint: str, user_text: str) -> Optional[str]:
+    try:
+        raw = _kv_get(_pitch_cache_key(segment, hint, user_text))
+        if isinstance(raw, dict):
+            v = raw.get("pitch") or ""
+            return str(v).strip() if v else None
+        if isinstance(raw, str):
+            return raw.strip() or None
+    except Exception:
+        return None
+    return None
+
+def _set_cached_pitch(segment: str, hint: str, user_text: str, pitch: str) -> None:
+    try:
+        ttl = int(os.getenv("SALES_PITCH_CACHE_TTL_SECONDS", "86400") or "86400")  # 24h
+        _kv_set(_pitch_cache_key(segment, hint, user_text), {"pitch": pitch}, ttl_seconds=ttl)
+    except Exception:
+        pass
+
+def _openai_chat(prompt: str, max_tokens: int = 140, temperature: float = 0.45) -> str:
+    """
+    Chamada mínima ao endpoint /chat/completions (igual padrão do repo em services/openai/nlu_intent.py).
+    Retorna texto. Se falhar, retorna "".
+    """
+    if not OPENAI_API_KEY:
+        return ""
+
+    url = f"{OPENAI_BASE_URL}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": OPENAI_SALES_MODEL,
+        "temperature": float(temperature),
+        "max_tokens": int(max_tokens),
+        "messages": [
+            {"role": "system", "content": "Você é um atendente de vendas via WhatsApp. Seja humano, curto e direto."},
+            {"role": "user", "content": prompt},
+        ],
+    }
+
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=20)
+        if r.status_code != 200:
+            return ""
+        data = r.json() or {}
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        msg = (choices[0] or {}).get("message") or {}
+        txt = (msg.get("content") or "").strip()
+        return txt
+    except Exception:
+        return ""
+
+def _ai_pitch(name: str, segment: str, user_text: str) -> str:
+    """
+    IA só no pitch (2 a 4 linhas). Proibido bastidores.
+    NÃO cita preço nem site (isso entra fixo fora).
+    """
+    name = (name or "").strip()
+    segment = (segment or "").strip()
+    user_text = (user_text or "").strip()
+
+    prompt = (
+        f"Lead: {name}\n"
+        f"Segmento do lead: {segment}\n"
+        f"Última mensagem do lead: {user_text}\n\n"
+        "Escreva um pitch curtinho (2 a 4 linhas) no estilo WhatsApp.\n"
+        "Fale simples, humano, com humor leve.\n"
+        "Mostre onde isso ajuda no dia a dia desse segmento.\n"
+        "Feche reforçando: mais tempo, rotina mais profissional e conta bancária mais positiva.\n"
+        "PROIBIDO mencionar tecnologia, IA, sistema, integração, processos ou bastidores.\n"
+        "NÃO cite preço e NÃO cite site.\n"
+    )
+
+    txt = _openai_chat(prompt, max_tokens=140, temperature=0.45).strip()
+    if not txt:
+        # fallback ultra conservador (humano, sem bastidor)
+        return (
+            f"Fechado, {name} 😄\n"
+            "Eu tiro do teu colo as mensagens repetidas e deixo o atendimento mais redondo.\n"
+            "Isso costuma dar mais tempo livre e mais dinheiro no fim do mês."
+        )
+
+    # limita a 4 linhas pra ficar WhatsApp e barato
+    lines = [l.strip() for l in txt.splitlines() if l.strip()]
+    if len(lines) > 4:
+        lines = lines[:4]
+    return "\n".join(lines).strip()
+
+
+
 def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     name = (st.get("name") or "").strip()
     segment = (st.get("segment") or "").strip()
@@ -371,21 +479,41 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         return PLUS_DIFF + "\n\n" + CTA_SITE
     if intent == "ACTIVATE":
         return CTA_SITE
-
-    # IA só no pitch (com cache)
-    hint = intent  # suficiente p/ cache barato
-    cached = _get_cached_pitch(segment, hint)
+    # IA só no pitch (com cache) — preço/CTA ficam fixos
+    hint = intent or "OTHER"
+    cached = _get_cached_pitch(segment, hint, text_in)
     if cached:
         pitch_txt = cached
     else:
         pitch_txt = _ai_pitch(name=name, segment=segment, user_text=text_in)
         pitch_txt = (pitch_txt or "").strip()
         if pitch_txt:
-            _set_cached_pitch(segment, hint, pitch_txt)
+            _set_cached_pitch(segment, hint, text_in, pitch_txt)
 
-    # bloco fixo (preço + CTA) – não varia
     add_value = f"Sendo bem sincero: por {PRICE_STARTER} por mês, costuma se pagar fácil."
     return f"{pitch_txt}\n\n{add_value}\n\n{CTA_SITE}"
+
+def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Retorna somente o texto de resposta (usado pelo wa_bot.reply_to_text).
+    ctx deve conter 'from_e164' (ou 'from') para manter o estado no cache.
+    """
+    ctx = ctx or {}
+    text_in = (text or "").strip()
+
+    # aceitar áudio como gatilho de resposta (mantém coerência)
+    if not text_in:
+        text_in = "Lead enviou um áudio."
+
+    from_e164 = str(ctx.get("from_e164") or ctx.get("from") or "").strip()
+    if not from_e164:
+        # sem remetente no ctx, responde padrão (sem estado)
+        return OPENING_ASK_NAME
+
+    st = _load_state(from_e164)
+    reply = _reply_from_state(text_in, st)
+    _save_state(from_e164, st)
+    return (reply or "").strip() or OPENING_ASK_NAME
 
 
 def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
@@ -403,4 +531,3 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
     _save_state(from_e164, st)
 
     return {"replyText": reply}
-
