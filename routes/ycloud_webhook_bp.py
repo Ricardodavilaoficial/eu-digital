@@ -410,9 +410,13 @@ def ycloud_webhook_ingress():
 
             if os.environ.get("VOICE_WA_ACK", "0") == "1":
                 msg_key = (env.get("wamid") or "").strip()
-                if _dedupe_once(msg_key):
+                # só confirma se houver wamid (evita duplicar em retries quando key vem vazia)
+                if msg_key and _dedupe_once("voice_ack:" + msg_key):
                     try:
-                        ycloud_send_text(from_e164, "Áudio recebido 👍 Agora estamos preparando sua voz.")
+                        ycloud_send_text(
+                            from_e164,
+                            "✅ Áudio recebido com sucesso.\nAgora volte para a tela de configuração e clique em Continuar."
+                        )
                     except Exception:
                         pass
 
@@ -556,5 +560,6 @@ def ycloud_webhook_ingress():
         logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
 
     return jsonify({"ok": True}), 200
+
 
 
