@@ -248,11 +248,23 @@ def _extract_segment(text: str) -> str:
     if not t:
         return ""
 
+    # mapeamento leve (humano): não substitui IA, só evita ruído óbvio
+    if any(k in t for k in ("cabelo", "cabeleireir", "barbear", "salão", "salao", "beleza", "unha", "estética", "estetica")):
+        return "beleza"
+    if "dent" in t or "odonto" in t:
+        return "dentista"
+    if any(k in t for k in ("lanche", "lanches", "hamburg", "pizza", "comida", "marmita", "delivery", "restaurante")):
+        return "lanches"
+    if any(k in t for k in ("serviço", "servico", "prestador", "conserto", "reforma", "instala", "manutenção", "manutencao")):
+        return "servico"
+    return ""
+
 
 def _extract_goal(text: str) -> str:
     t = _norm(text)
     if not t:
         return ""
+
     # objetivos típicos (bem curto; não vira regra-mãe)
     if any(k in t for k in ("agenda", "agendar", "horário", "horario", "marcar", "consulta")):
         return "agenda"
@@ -262,16 +274,6 @@ def _extract_goal(text: str) -> str:
         return "orcamento"
     if any(k in t for k in ("dúvida", "duvida", "perguntas", "triagem", "filtrar")):
         return "triagem"
-    return ""
-    # mapeamento leve
-    if any(k in t for k in ("cabelo", "cabeleireir", "barbear", "salão", "salao", "beleza", "unha", "estética", "estetica")):
-        return "beleza"
-    if "dent" in t or "odonto" in t:
-        return "dentista"
-    if any(k in t for k in ("lanche", "lanches", "hamburg", "pizza", "comida", "marmita", "delivery", "restaurante")):
-        return "lanches"
-    if any(k in t for k in ("serviço", "servico", "prestador", "conserto", "reforma", "instala", "manutenção", "manutencao")):
-        return "servico"
     return ""
 
 
@@ -729,20 +731,16 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             segment = seg
             st["stage"] = "PITCH"
         else:
-            # se o lead perguntou preço antes de dizer o ramo, responde e volta pra ramo
-            if intent in ("PRICE", "PLANS", "DIFF"):
+            # se o lead perguntou preço/planos/diferença antes de dizer o ramo, responde curto e volta pro ramo
+            if intent == "PRICE":
                 st["stage"] = "ASK_SEGMENT"
-    # Se a IA sugeriu claramente PRICE/CTA e foi aceito com segurança pelo stage, respeita.
-    if stage == "PRICE":
-        return PRICE_REPLY
-    if stage == "CTA":
-        return CTA_SITE
-
-                if intent == "PRICE":
-                    return PRICE_REPLY
-                if intent == "DIFF":
-                    return PLUS_DIFF + "\n\n" + "Agora me diz teu ramo que eu te explico onde isso encaixa 🙂"
+                return PRICE_REPLY
+            if intent == "PLANS":
+                st["stage"] = "ASK_SEGMENT"
                 return PLANS_SHORT
+            if intent == "DIFF":
+                st["stage"] = "ASK_SEGMENT"
+                return PLUS_DIFF + "\n\n" + "Agora me diz teu ramo que eu te explico onde isso encaixa 🙂"
 
             st["stage"] = "ASK_SEGMENT"
             st["nudges"] = nudges + 1
@@ -850,6 +848,7 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
     # Reusa o fluxo canônico (áudio como gatilho + TTL curto quando não é lead)
     reply = generate_reply(text_in, ctx={"from_e164": from_e164})
     return {"replyText": reply}
+
 
 
 
