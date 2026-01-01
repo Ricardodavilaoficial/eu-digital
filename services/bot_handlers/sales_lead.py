@@ -493,7 +493,22 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
         "}"
     )
 
-    user = f"Mensagem: {text}"
+    stage = (stage or "").strip().upper()
+
+    # Regra contextual (humana): se eu acabei de pedir o nome,
+    # uma resposta curta normalmente É o nome (mas não vale "oi/olá/bom dia").
+    if stage == "ASK_NAME" and text and len(text.strip()) <= 30:
+        t = text.strip().lower()
+        if t in ("oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "eai", "e aí", "opa"):
+            return {"route": "sales", "intent": "OTHER", "name": "", "segment": ""}
+        return {"route": "sales", "intent": "OTHER", "name": text.strip(), "segment": ""}
+
+    # Regra contextual (humana): se eu acabei de pedir o ramo,
+    # uma resposta curta normalmente É o segmento.
+    if stage == "ASK_SEGMENT" and text and len(text.strip()) <= 40:
+        return {"route": "sales", "intent": "OTHER", "name": "", "segment": text.strip()}
+
+    user = f"STAGE_ATUAL: {stage}\nMENSAGEM: {text}"
 
     content = _sales_nlu_http([
         {"role": "system", "content": system},
@@ -502,7 +517,7 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
 
     if not content:
         # fallback conservador: assume sales (pede nome) — mantém pilar, sem travar
-        return {"route": "offtopic", "intent": "OTHER", "name": "", "segment": ""}
+        return {"route": "sales", "intent": "OTHER", "name": "", "segment": ""}
 
     try:
         out = json.loads(content)
@@ -623,12 +638,28 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
 
     st = _load_state(from_e164)
     reply = _reply_from_state(text_in, st)
-    # Só salva estado se tiver nome (lead real)
-    if (st.get("name") or "").strip():
+
+    has_name = bool((st.get("name") or "").strip())
+
+    if has_name:
+        # Lead real: salva tudo normal
         _save_state(from_e164, st)
+    else:
+        # Ainda não é lead real: salva só o estágio por pouco tempo (pra conversa ficar humana)
+        # TTL curto evita "guardar contato" de quem não engajou de verdade.
+        st_min = {
+            "stage": (st.get("stage") or "ASK_NAME"),
+            "turns": int(st.get("turns") or 0),
+        }
+        try:
+            _save_state(from_e164, st_min, ttl_seconds=600)  # 10 min
+        except TypeError:
+            # Se _save_state não suportar ttl_seconds, salva sem TTL (melhor que perder o estágio)
+            _save_state(from_e164, st_min)
+        except Exception:
+            pass
 
     return (reply or "").strip() or OPENING_ASK_NAME
-
 
 def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -646,4 +677,5 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
         _save_state(from_e164, st)
 
     return {"replyText": reply}
+
 
