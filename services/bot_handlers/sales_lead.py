@@ -590,6 +590,11 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
     # uma resposta curta normalmente É o nome (mas não vale "oi/olá/bom dia").
     if stage == "ASK_NAME" and text and len(text.strip()) <= 30:
         t = text.strip().lower()
+
+        # Não trate perguntas como nome
+        if any(k in t for k in ("quanto custa", "preço", "preco", "planos", "valor", "mensal", "assinatura")):
+            return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": "ASK_NAME"}
+
         if t in ("oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "eai", "e aí", "opa"):
             return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": ""}
         return {"route": "sales", "intent": "OTHER", "name": text.strip(), "segment": "", "interest_level": "mid", "next_step": "ASK_SEGMENT"}
@@ -689,6 +694,14 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             st["goal"] = g
             goal = g
 
+    # Persistência canônica: tudo que foi capturado precisa ficar no estado
+    if name and (st.get("name") or "").strip() != name:
+        st["name"] = name
+    if segment and (st.get("segment") or "").strip() != segment:
+        st["segment"] = segment
+    if goal and (st.get("goal") or "").strip() != goal:
+        st["goal"] = goal
+
     has_name = bool(name)
     has_segment = bool(segment)
     has_goal = bool(goal)
@@ -785,13 +798,17 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     add_value = f"Sendo bem sincero: por {PRICE_STARTER} por mês, costuma se pagar fácil."
 
-    # Se está high, pode dar 1 linha extra de segurança/clareza (sem virar palestra)
-    if interest == "high":
-        extra = "Se tu quiser, eu te mostro um exemplo bem real com 2 mensagens e tu já sente o jeito."
+    # HIGH: pode aprofundar 1 linha + CTA
+    if interest == "high" or intent == "ACTIVATE":
+        extra = "Se tu quiser, eu te mostro um exemplo bem real em 2 mensagens e tu já sente o jeito."
         return f"{pitch_txt}\n{extra}\n\n{add_value}\n\n{CTA_SITE}"
 
-    # mid: padrão
-    return f"{pitch_txt}\n\n{add_value}\n\n{CTA_SITE}"
+    # MID: valor + preço (curto), SEM CTA (não vira panfleto)
+    if interest == "mid":
+        return f"{pitch_txt}\n\n{add_value}"
+
+    # LOW: segurança
+    return pitch_txt
 
 def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
     """
@@ -848,8 +865,3 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
     # Reusa o fluxo canônico (áudio como gatilho + TTL curto quando não é lead)
     reply = generate_reply(text_in, ctx={"from_e164": from_e164})
     return {"replyText": reply}
-
-
-
-
-
