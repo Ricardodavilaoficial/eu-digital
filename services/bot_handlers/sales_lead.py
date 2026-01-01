@@ -249,6 +249,73 @@ def _save_state(from_e164: str, st: Dict[str, Any]) -> None:
 # Core: gerar resposta
 # =========================
 
+
+def _pitch_cache_key(segment: str, hint: str) -> str:
+    segment = (segment or "geral").strip().lower()
+    hint = (hint or "default").strip().lower()
+    return f"sales:pitch:{segment}:{hint}"
+
+def _get_cached_pitch(segment: str, hint: str) -> Optional[str]:
+    try:
+        raw = _kv_get(_pitch_cache_key(segment, hint))
+        if isinstance(raw, dict):
+            v = raw.get("pitch") or ""
+            return str(v).strip() if v else None
+        if isinstance(raw, str):
+            return raw.strip() or None
+    except Exception:
+        return None
+    return None
+
+def _set_cached_pitch(segment: str, hint: str, pitch: str) -> None:
+    try:
+        ttl = int(os.getenv("SALES_PITCH_CACHE_TTL_SECONDS", "86400") or "86400")  # 24h
+        _kv_set(_pitch_cache_key(segment, hint), {"pitch": pitch}, ttl_seconds=ttl)
+    except Exception:
+        pass
+
+def _ai_pitch(name: str, segment: str, user_text: str) -> str:
+    """
+    Gera pitch curto via IA (somente aqui).
+    Regras:
+      - WhatsApp, frases curtas, humano, humor leve.
+      - Foco: conta bancária mais positiva / tempo / profissionalismo.
+      - Proibido: qualquer bastidor, tecnologia, IA, "como funciona por dentro".
+      - 2 a 4 linhas no máximo.
+    """
+    name = (name or "").strip()
+    segment = (segment or "").strip()
+
+    # >>> AQUI entra a tua chamada de IA padrão <<<
+    # Troca o bloco abaixo pela função/client que vocês já usam no pilar NLU.
+    # Exemplo: return call_llm(prompt, model="gpt-4o-mini", max_tokens=120, temperature=0.4)
+    try:
+        prompt = (
+            f"Você é o atendente de vendas do MEI Robô no WhatsApp.\n"
+            f"Fale com {name}.\n"
+            f"Segmento: {segment}.\n"
+            f"Mensagem do lead: {user_text}\n\n"
+            f"Escreva um pitch curto (2 a 4 linhas), humano, simples, com humor leve.\n"
+            f"Mostre onde isso ajuda no dia a dia do segmento e puxe para: mais tempo, rotina mais profissional e conta bancária mais positiva.\n"
+            f"NUNCA mencione tecnologia, IA, bastidores, processos, integrações.\n"
+            f"NÃO cite preços nem site.\n"
+        )
+
+        # TODO: Substituir por chamada real do teu LLM (pilar NLU).
+        # fallback ultra conservador se não conseguir chamar IA:
+        return (
+            f"Fechado, {name} 😄\n"
+            f"No teu negócio, eu tiro do teu colo as mensagens repetidas e deixo o atendimento mais redondo.\n"
+            f"Isso costuma dar mais tempo livre e mais dinheiro no fim do mês."
+        )
+
+    except Exception:
+        return (
+            f"Fechado, {name} 😄\n"
+            f"No teu negócio, eu tiro do teu colo as mensagens repetidas e deixo o atendimento mais redondo.\n"
+            f"Isso costuma dar mais tempo livre e mais dinheiro no fim do mês."
+        )
+
 def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     name = (st.get("name") or "").strip()
     segment = (st.get("segment") or "").strip()
@@ -280,6 +347,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         seg = _extract_segment(text_in)
         if seg:
             st["segment"] = seg
+            segment = seg
             st["stage"] = "PITCH"
         else:
             # se o lead perguntou preço antes de dizer o ramo, responde e volta pra ramo
@@ -290,4 +358,49 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                 if intent == "DIFF":
                     return PLUS_DIFF + "\n\n" + "Agora me diz teu ramo que eu te explico onde isso encaixa 🙂"
                 return PLANS_SHORT
-            st["stage"] = "
+
+            st["stage"] = "ASK_SEGMENT"
+            return f"Show, {name} 😄\n\nTeu negócio é do quê?"
+
+    # 3) Temos nome + segmento: entregar valor + preço como diferencial + CTA site
+    if intent == "PRICE":
+        return PRICE_REPLY
+    if intent == "PLANS":
+        return PLANS_SHORT
+    if intent == "DIFF":
+        return PLUS_DIFF + "\n\n" + CTA_SITE
+    if intent == "ACTIVATE":
+        return CTA_SITE
+
+    # IA só no pitch (com cache)
+    hint = intent  # suficiente p/ cache barato
+    cached = _get_cached_pitch(segment, hint)
+    if cached:
+        pitch_txt = cached
+    else:
+        pitch_txt = _ai_pitch(name=name, segment=segment, user_text=text_in)
+        pitch_txt = (pitch_txt or "").strip()
+        if pitch_txt:
+            _set_cached_pitch(segment, hint, pitch_txt)
+
+    # bloco fixo (preço + CTA) – não varia
+    add_value = f"Sendo bem sincero: por {PRICE_STARTER} por mês, costuma se pagar fácil."
+    return f"{pitch_txt}\n\n{add_value}\n\n{CTA_SITE}"
+
+
+def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Entrada única do handler de vendas (lead).
+    Recebe um payload compat (change.value) e devolve {replyText}.
+    """
+    text_in = _extract_inbound_text(change_value) or ""
+    from_e164 = _extract_sender(change_value) or ""
+    if not from_e164:
+        return {"replyText": OPENING_ASK_NAME}
+
+    st = _load_state(from_e164)
+    reply = _reply_from_state(text_in, st)
+    _save_state(from_e164, st)
+
+    return {"replyText": reply}
+
