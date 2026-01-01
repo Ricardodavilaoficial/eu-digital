@@ -447,7 +447,7 @@ def _sales_nlu_http(messages):
     except Exception:
         return None
 
-def sales_micro_nlu(text: str) -> Dict[str, Any]:
+def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
     """
     SEMPRE IA: classifica se é SALES / OFFTOPIC / EMERGENCY e extrai nome/segmento quando existirem.
     Não revela bastidores.
@@ -527,7 +527,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     st["turns"] = turns
 
     intent = _intent(text_in)
-    nlu = sales_micro_nlu(text_in)
+    nlu = sales_micro_nlu(text_in, stage=stage)
     # route (sales/offtopic/emergency) é decidido por IA
     route = nlu.get("route") or "sales"
 
