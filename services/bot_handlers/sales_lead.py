@@ -336,30 +336,62 @@ def _extract_inbound_text(change: Dict[str, Any]) -> str:
     return ""
 
 def _extract_sender(change: Dict[str, Any]) -> str:
+    """
+    Pega o sender em payload Meta/YCloud (messages[0].from) e também em payloads normalizados
+    (change['from'], change['from_e164'], etc).
+    """
     try:
         msgs = (change or {}).get("messages") or []
-        if msgs and isinstance(msgs, list):
+        if msgs and isinstance(msgs, list) and msgs:
             m0 = msgs[0] or {}
-            return str(m0.get("from") or "").strip()
+            v = str(m0.get("from") or "").strip()
+            if v:
+                return v
     except Exception:
         pass
+
+    # payload normalizado / compat
+    for k in ("from", "from_e164", "sender", "phone", "wa_from"):
+        try:
+            v = str((change or {}).get(k) or "").strip()
+            if v:
+                return v
+        except Exception:
+            pass
+
     return ""
 
 
+
 def _is_audio_inbound(change: Dict[str, Any]) -> bool:
-    """
-    Detecta se a mensagem inbound é áudio (Meta/YCloud compat).
-    """
     try:
+        # payload meta-style
         msgs = (change or {}).get("messages") or []
-        if msgs and isinstance(msgs, list):
+        if msgs and isinstance(msgs, list) and msgs:
             m0 = msgs[0] or {}
             mt = str(m0.get("type") or "").strip().lower()
-            return mt == "audio" or ("audio" in m0)
+            if mt == "audio":
+                return True
+            if "audio" in (m0 or {}):
+                return True
     except Exception:
         pass
-    # fallback: se não tem texto e veio payload sem body, pode ser áudio
+
+    # payload normalizado
+    try:
+        mt2 = str((change or {}).get("msg_type") or (change or {}).get("msgType") or "").strip().lower()
+        if mt2 == "audio":
+            return True
+    except Exception:
+        pass
+
     return False
+
+
+def _audio_fallback_text() -> str:
+    # Gatilho neutro pra IA: não inventa conteúdo, só mantém conversa viva
+    return "Lead enviou um áudio."
+
 
 
 def _stylize_for_sales_audio(text: str, st: Dict[str, Any]) -> str:
@@ -1024,42 +1056,59 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
 
 def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Entrada única do handler de vendas (lead).
-    Recebe um payload compat (change.value) e devolve:
-      - replyText: texto normal (WhatsApp)
-      - ttsText (opcional): texto otimizado para fala quando inbound é áudio
+    Handler de vendas (lead).
+    Retorna:
+      - replyText: texto normal
+      - ttsText (opcional): texto otimizado para fala (quando inbound é áudio)
+      - audioUrl (opcional): URL de áudio institucional (quando inbound é áudio)
     """
-    text_in = _extract_inbound_text(change_value) or ""
     from_e164 = _extract_sender(change_value) or ""
     if not from_e164:
         return {"replyText": OPENING_ASK_NAME}
 
     is_audio = _is_audio_inbound(change_value)
+    text_in = _extract_inbound_text(change_value) or ""
 
-    # Reusa o fluxo canônico (áudio como gatilho + TTL curto quando não é lead)
-    # Passa msg_type no ctx para permitir estilização de áudio
+    # Se veio áudio e não há texto, cria um gatilho neutro pra não resetar a conversa
+    if is_audio and not text_in:
+        text_in = _audio_fallback_text()
+
     ctx = {"from_e164": from_e164, "msg_type": "audio" if is_audio else "text"}
     reply = generate_reply(text_in, ctx=ctx)
 
-    out = {"replyText": reply}
+    out: Dict[str, Any] = {"replyText": reply}
 
-    # Se inbound foi áudio: gera texto “falável” (sorriso + ritmo)
-    # (Quem não usar ttsText ignora; backward-compatible)
     if is_audio:
+        # Texto "falável" (sorriso + ritmo) para TTS
+        tts_text = ""
         try:
-            st, _wa_key = _load_state(from_e164)
-            # garante que interest_level exista (não quebra se faltar)
+            st, _ = _load_state(from_e164)
             if not st.get("interest_level"):
                 try:
-                    nlu = sales_micro_nlu((text_in or "Lead enviou um áudio."), stage=(st.get("stage") or "ASK_NAME"))
+                    nlu = sales_micro_nlu(text_in, stage=(st.get("stage") or "ASK_NAME"))
                     st["interest_level"] = (nlu.get("interest_level") or "").strip().lower()
                 except Exception:
                     pass
             tts_text = _stylize_for_sales_audio(reply, st)
-            if tts_text:
-                out["ttsText"] = tts_text
+        except Exception:
+            tts_text = ""
+
+        if tts_text:
+            out["ttsText"] = tts_text
+
+        # Gera audioUrl (best-effort). Se falhar, não quebra.
+        try:
+            from services.institutional_tts_media import generate_institutional_audio_url
+            base_url = os.environ.get("BACKEND_BASE_URL", "").rstrip("/")
+            audio_url = generate_institutional_audio_url(
+                text=(tts_text or reply),
+                base_url=base_url,
+            )
+            if audio_url:
+                out["audioUrl"] = audio_url
         except Exception:
             pass
 
     return out
+
 
