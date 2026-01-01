@@ -64,10 +64,9 @@ PLANS_SHORT = (
 )
 
 PRICE_REPLY = (
-    f"Hoje o plano Starter tá {PRICE_STARTER}.\n"
-    f"E o Starter+ tá {PRICE_PLUS}.\n\n"
-    f"{PLUS_DIFF}\n\n"
-    "Me diz teu nome e teu ramo que eu te falo qual faz mais sentido 🙂"
+    "Hoje o plano Starter tá R$ 89/mês.\n"
+    "E o Starter+ tá R$ 119/mês.\n\n"
+    "A única diferença é o espaço de memória: Starter tem 2 GB e o Starter+ tem 10 GB. O resto é igual."
 )
 
 # Pitch por segmento (curto, WhatsApp)
@@ -836,7 +835,24 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         if not goal:
             return f"Tranquilo, {name} 🙂 Se quiser, me fala só o teu caso em 1 frase que eu te digo se encaixa."
     if intent == "PRICE":
-        return PRICE_REPLY
+        # Responde preço SEM resetar conversa
+        # Só pede o que estiver faltando (e de forma humana)
+        msg = PRICE_REPLY
+
+        name = (st.get("name") or "").strip()
+        segment = (st.get("segment") or "").strip()
+
+        if not name and not segment:
+            msg += "\n\nPra eu te indicar o melhor no teu caso: qual teu nome e teu ramo?"
+            st["stage"] = "ASK_NAME"
+        elif not segment:
+            msg += "\n\nE teu ramo é qual?"
+            st["stage"] = "ASK_SEGMENT"
+        else:
+            msg += f"\n\nNo teu ramo ({segment}), quer que eu te diga qual costuma valer mais a pena?"
+            st["stage"] = "PITCH"
+
+        return msg
     if intent == "PLANS":
         return PLANS_SHORT
     if intent == "DIFF":
@@ -933,4 +949,5 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
     # Reusa o fluxo canônico (áudio como gatilho + TTL curto quando não é lead)
     reply = generate_reply(text_in, ctx={"from_e164": from_e164})
     return {"replyText": reply}
+
 
