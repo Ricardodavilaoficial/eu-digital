@@ -345,6 +345,92 @@ def _extract_sender(change: Dict[str, Any]) -> str:
         pass
     return ""
 
+
+def _is_audio_inbound(change: Dict[str, Any]) -> bool:
+    """
+    Detecta se a mensagem inbound é áudio (Meta/YCloud compat).
+    """
+    try:
+        msgs = (change or {}).get("messages") or []
+        if msgs and isinstance(msgs, list):
+            m0 = msgs[0] or {}
+            mt = str(m0.get("type") or "").strip().lower()
+            return mt == "audio" or ("audio" in m0)
+    except Exception:
+        pass
+    # fallback: se não tem texto e veio payload sem body, pode ser áudio
+    return False
+
+
+def _stylize_for_sales_audio(text: str, st: Dict[str, Any]) -> str:
+    """
+    Converte a resposta em um texto mais falável (vendedor + sorriso),
+    sem mudar o sentido e sem virar palestra.
+
+    Regras:
+    - curto (≈ 8–18s)
+    - 1 ideia por frase
+    - pausas naturais
+    - sem links/site no áudio
+    """
+    t = (text or "").strip()
+    if not t:
+        return ""
+
+    name = (st.get("name") or "").strip()
+    segment = (st.get("segment") or "").strip()
+    interest = (st.get("interest_level") or "").strip().lower()
+
+    # remove CTA/links do áudio (site lido em voz = robô)
+    t = re.sub(r"https?://\S+", "", t).strip()
+    t = t.replace(SITE_URL, "").strip()
+
+    # remove excesso de quebras e espaços
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r"\n{3,}", "\n\n", t).strip()
+
+    # se ficou longo, corta mantendo sentido (até ~280 chars)
+    if len(t) > 280:
+        t = t[:277].rsplit(" ", 1)[0] + "…"
+
+    # “sorriso” e ritmo (bem leve)
+    # cria uma abertura falada se for contexto de vendas
+    opener = ""
+    if name and segment:
+        opener = f"{name}, rapidinho… no teu ramo ({segment}) é assim:"
+    elif name:
+        opener = f"{name}, rapidinho…"
+    else:
+        opener = "Rapidinho…"
+
+    # se já começa com “Hoje o plano…” não precisa opener grande
+    if t.lower().startswith("hoje o plano") or t.lower().startswith("hoje tem"):
+        opener = "Fechou 🙂"
+
+    # tom vendedor sob controle (sem gritaria)
+    closer = ""
+    if interest in ("high", "mid"):
+        # pergunta simples (puxa conversa)
+        if segment:
+            closer = f"Quer que eu te diga, no {segment}, o jeito mais simples de usar isso?"
+        else:
+            closer = "Quer que eu te diga o jeito mais simples no teu caso?"
+    else:
+        closer = "Se fizer sentido, me fala teu caso em 1 frase 🙂"
+
+    # monta em 2 blocos (pausa natural)
+    out = f"{opener}\n\n{t}"
+    # evita duplicar pergunta se já tem interrogação no final
+    if "?" not in out[-80:]:
+        out = out.strip() + f"\n\n{closer}"
+
+    # último corte pra não virar áudio longo
+    if len(out) > 420:
+        out = out[:417].rsplit(" ", 1)[0] + "…"
+
+    return out.strip()
+
+
 # =========================
 # Estado institucional (Firestore)
 # - sessão curta pra manter contexto
@@ -939,15 +1025,41 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
 def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
     """
     Entrada única do handler de vendas (lead).
-    Recebe um payload compat (change.value) e devolve {replyText}.
+    Recebe um payload compat (change.value) e devolve:
+      - replyText: texto normal (WhatsApp)
+      - ttsText (opcional): texto otimizado para fala quando inbound é áudio
     """
     text_in = _extract_inbound_text(change_value) or ""
     from_e164 = _extract_sender(change_value) or ""
     if not from_e164:
         return {"replyText": OPENING_ASK_NAME}
 
-    # Reusa o fluxo canônico (áudio como gatilho + TTL curto quando não é lead)
-    reply = generate_reply(text_in, ctx={"from_e164": from_e164})
-    return {"replyText": reply}
+    is_audio = _is_audio_inbound(change_value)
 
+    # Reusa o fluxo canônico (áudio como gatilho + TTL curto quando não é lead)
+    # Passa msg_type no ctx para permitir estilização de áudio
+    ctx = {"from_e164": from_e164, "msg_type": "audio" if is_audio else "text"}
+    reply = generate_reply(text_in, ctx=ctx)
+
+    out = {"replyText": reply}
+
+    # Se inbound foi áudio: gera texto “falável” (sorriso + ritmo)
+    # (Quem não usar ttsText ignora; backward-compatible)
+    if is_audio:
+        try:
+            st, _wa_key = _load_state(from_e164)
+            # garante que interest_level exista (não quebra se faltar)
+            if not st.get("interest_level"):
+                try:
+                    nlu = sales_micro_nlu((text_in or "Lead enviou um áudio."), stage=(st.get("stage") or "ASK_NAME"))
+                    st["interest_level"] = (nlu.get("interest_level") or "").strip().lower()
+                except Exception:
+                    pass
+            tts_text = _stylize_for_sales_audio(reply, st)
+            if tts_text:
+                out["ttsText"] = tts_text
+        except Exception:
+            pass
+
+    return out
 
