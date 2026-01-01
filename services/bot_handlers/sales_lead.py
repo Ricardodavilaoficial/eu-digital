@@ -347,7 +347,77 @@ def _extract_sender(change: Dict[str, Any]) -> str:
     return ""
 
 # =========================
-# Estado em cache/kv (TTL)
+# Estado institucional (Firestore)
+# - sessão curta pra manter contexto
+# - lead “desconhecido conhecido” pra retomar outro dia + marketing
+# =========================
+
+from services.institutional_leads_store import (
+    get_session, set_session,
+    get_lead, upsert_lead,
+)
+
+def _load_state(from_sender: str) -> tuple[dict, str]:
+    """
+    Retorna (state_dict, wa_key_escolhida).
+    - primeiro tenta sessão válida
+    - se não tiver sessão, tenta lead pra “retomar leve”
+    """
+    sess, wa_key = get_session(from_sender)
+    if isinstance(sess, dict) and sess:
+        return sess, wa_key
+
+    lead, wa_key2 = get_lead(from_sender)
+    wa_key = wa_key or wa_key2
+
+    # Se tem lead, sem sessão: retoma leve (não finge conversa no meio)
+    if isinstance(lead, dict) and lead:
+        st = {
+            "stage": "ASK_SEGMENT" if (lead.get("name") and not lead.get("segment")) else "PITCH",
+            "name": (lead.get("name") or "").strip(),
+            "segment": (lead.get("segment") or "").strip(),
+            "goal": (lead.get("goal") or "").strip(),
+            "turns": int(lead.get("turns") or 0),
+            "nudges": 0,
+            "last_user_at": time.time(),
+        }
+        # se não tem nada útil, volta pro início
+        if not (st.get("name") or st.get("segment")):
+            st["stage"] = "ASK_NAME"
+        return st, wa_key
+
+    # desconhecido mesmo
+    return {}, wa_key
+
+def _save_session(wa_key: str, st: dict, ttl_seconds: int) -> None:
+    set_session(wa_key, st, ttl_seconds=ttl_seconds)
+
+def _upsert_lead_from_state(wa_key: str, st: dict) -> None:
+    """
+    Só grava lead quando tiver pelo menos nome OU sinal forte + segmento.
+    Mantém compacto (sem histórico).
+    """
+    name = (st.get("name") or "").strip()
+    segment = (st.get("segment") or "").strip()
+    goal = (st.get("goal") or "").strip()
+    turns = int(st.get("turns") or 0)
+
+    if not name and not segment:
+        return
+
+    lead = {
+        "name": name,
+        "segment": segment,
+        "goal": goal,
+        "turns": turns,
+        "status": st.get("lead_status") or "new",
+        "interest_level": st.get("interest_level") or "",
+        "lastSeenAt": time.time(),
+    }
+    upsert_lead(wa_key, lead)
+
+# =========================
+# Cache KV (apenas para pitch; NÃO é estado de conversa)
 # =========================
 
 def _kv_get(key: str) -> Optional[Dict[str, Any]]:
@@ -371,23 +441,10 @@ def _kv_set(key: str, value: Dict[str, Any], ttl_seconds: int) -> None:
     except Exception:
         return
 
-def _state_key(from_e164: str) -> str:
-    return f"sales:lead:{from_e164}"
-
-def _load_state(from_e164: str) -> Dict[str, Any]:
-    st = _kv_get(_state_key(from_e164)) or {}
-    if not isinstance(st, dict):
-        st = {}
-    return st
-
-def _save_state(from_e164: str, st: Dict[str, Any], ttl_seconds: Optional[int] = None) -> None:
-    ttl = ttl_seconds if ttl_seconds is not None else int(os.getenv("SALES_LEAD_TTL_SECONDS", "604800") or "604800")  # 7 dias
-    st["updated_at"] = _now_iso()
-    _kv_set(_state_key(from_e164), st, ttl_seconds=int(ttl))
-
 # =========================
 # Core: gerar resposta
 # =========================
+
 
 
 def _pitch_cache_key(segment: str, hint: str, user_text: str) -> str:
@@ -647,6 +704,10 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     name = (st.get("name") or "").strip()
     segment = (st.get("segment") or "").strip()
     stage = (st.get("stage") or "").strip() or "ASK_NAME"
+    # Se já temos nome por “desconhecido conhecido”, não pede nome de novo
+    if stage == "ASK_NAME" and name:
+        st["stage"] = "ASK_SEGMENT" if not segment else "PITCH"
+        stage = st["stage"]
     goal = (st.get("goal") or "").strip()
     turns = int(st.get("turns") or 0)
     turns += 1
@@ -827,28 +888,35 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
         # sem remetente no ctx, responde padrão (sem estado)
         return OPENING_ASK_NAME
 
-    st = _load_state(from_e164)
+    st, wa_key = _load_state(from_e164)
     reply = _reply_from_state(text_in, st)
 
-    has_name = bool((st.get("name") or "").strip())
+    # marca interesse no state (pra lead store)
+    try:
+        # _reply_from_state já calcula interest, mas não guarda; guardamos leve
+        nlu = sales_micro_nlu(text_in, stage=(st.get("stage") or "ASK_NAME"))
+        st["interest_level"] = (nlu.get("interest_level") or "").strip().lower()
+    except Exception:
+        pass
 
-    if has_name:
-        # Lead real: salva tudo normal
-        _save_state(from_e164, st)
+    has_name = bool((st.get("name") or "").strip())
+    has_segment = bool((st.get("segment") or "").strip())
+
+    # Sessão: sempre salva stage/slots por um tempo curto (mantém contexto)
+    # Antes de virar lead real: TTL curto; depois: TTL maior
+    if has_name or has_segment:
+        _save_session(wa_key, st, ttl_seconds=int(os.getenv("INSTITUTIONAL_SESSION_TTL_KNOWN", "86400") or "86400"))  # 24h
+        # Lead store (marketing / “desconhecido conhecido”)
+        _upsert_lead_from_state(wa_key, st)
     else:
-        # Ainda não é lead real: salva só o estágio por pouco tempo (pra conversa ficar humana)
-        # TTL curto evita "guardar contato" de quem não engajou de verdade.
         st_min = {
             "stage": (st.get("stage") or "ASK_NAME"),
             "turns": int(st.get("turns") or 0),
+            "nudges": int(st.get("nudges") or 0),
+            "last_user_at": time.time(),
         }
-        try:
-            _save_state(from_e164, st_min, ttl_seconds=600)  # 10 min
-        except TypeError:
-            # Se _save_state não suportar ttl_seconds, salva sem TTL (melhor que perder o estágio)
-            _save_state(from_e164, st_min)
-        except Exception:
-            pass
+        _save_session(wa_key, st_min, ttl_seconds=int(os.getenv("INSTITUTIONAL_SESSION_TTL_UNKNOWN", "600") or "600"))  # 10 min
+
 
     return (reply or "").strip() or OPENING_ASK_NAME
 
@@ -865,3 +933,4 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
     # Reusa o fluxo canônico (áudio como gatilho + TTL curto quando não é lead)
     reply = generate_reply(text_in, ctx={"from_e164": from_e164})
     return {"replyText": reply}
+
