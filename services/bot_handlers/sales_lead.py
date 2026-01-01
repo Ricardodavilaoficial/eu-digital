@@ -32,6 +32,8 @@ OPENING_ASK_NAME = (
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+OPENAI_SALES_NLU_MODEL = os.getenv("OPENAI_SALES_NLU_MODEL", os.getenv("OPENAI_NLU_MODEL", "gpt-4o-mini"))
+SALES_NLU_TIMEOUT = 20
 OPENAI_SALES_MODEL = os.getenv("OPENAI_SALES_MODEL", os.getenv("OPENAI_NLU_MODEL", "gpt-4o-mini"))
 
 
@@ -424,6 +426,98 @@ def _ai_pitch(name: str, segment: str, user_text: str) -> str:
 
 
 
+def _sales_nlu_http(messages):
+    if not OPENAI_API_KEY:
+        return None
+    url = f"{OPENAI_BASE_URL}/chat/completions"
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+    data = {
+        "model": OPENAI_SALES_NLU_MODEL,
+        "temperature": 0.0,
+        "max_tokens": 140,
+        "response_format": {"type": "json_object"},
+        "messages": messages,
+    }
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=SALES_NLU_TIMEOUT)
+        r.raise_for_status()
+        js = r.json()
+        content = (js.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        return content
+    except Exception:
+        return None
+
+def sales_micro_nlu(text: str) -> Dict[str, Any]:
+    """
+    SEMPRE IA: classifica se é SALES / OFFTOPIC / EMERGENCY e extrai nome/segmento quando existirem.
+    Não revela bastidores.
+    """
+    text = (text or "").strip()
+    if not text:
+        # áudio vazio vira SALES (vai pedir nome)
+        return {"route": "sales", "intent": "OTHER", "name": "", "segment": ""}
+
+    system = (
+        "Você é um CLASSIFICADOR de mensagens do WhatsApp do MEI Robô (pt-BR). "
+        "Responda SOMENTE JSON válido (sem texto extra).\n\n"
+        "Objetivo: decidir se a mensagem é sobre o produto/serviço MEI Robô (vendas) "
+        "OU se é um assunto aleatório (caiu no número errado) "
+        "OU se é um pedido de emergência (bombeiros/polícia/SAMU).\n\n"
+        "REGRA MÃE (muito importante):\n"
+        "- Se NÃO for claramente sobre o MEI Robô, route DEVE ser 'offtopic'.\n"
+        "- Só use 'sales' quando for saudação (oi/bom dia etc.) OU quando a pessoa estiver falando do MEI Robô "
+        "(preço, plano, assinar, ativar, indicação, 'me falaram desse número', 'quero entender o serviço', etc.).\n\n"
+        "EMERGENCY:\n"
+        "- Se pedir telefone dos bombeiros/polícia/SAMU/ambulância, ou mencionar 190/192/193 => route='emergency'.\n"
+        "- Em emergency, intent='OTHER', name/segment vazios.\n\n"
+        "OFFTOPIC:\n"
+        "- Exemplos típicos: capital de país, previsão do tempo, perguntas escolares, assuntos gerais que não citam MEI Robô.\n"
+        "- Nesses casos: route='offtopic', intent='OTHER', name/segment vazios.\n\n"
+        "SALES intents:\n"
+        "- PRICE: preço/valor/mensalidade\n"
+        "- PLANS: planos/starter/starter+\n"
+        "- DIFF: diferença entre planos/memória 2GB vs 10GB\n"
+        "- ACTIVATE: ativar/criar conta/assinar/começar\n"
+        "- WHAT_IS: o que é / o que você faz (sobre MEI Robô)\n"
+        "- OTHER: conversa sobre MEI Robô sem cair nas categorias acima\n\n"
+        "Extração:\n"
+        "- name: só quando a pessoa realmente disser o nome (ex: 'Ricardo', 'me chamo Ana'). Nunca chute.\n"
+        "- segment: só quando a pessoa disser o ramo (ex: 'barbearia', 'sou barbeiro', 'dentista'). Nunca chute.\n"
+        "- Se a pessoa disser só 'Barbearia', isso é segment (não é name).\n\n"
+        "Formato de saída (obrigatório):\n"
+        "{"
+        "\"route\":\"sales|offtopic|emergency\","
+        "\"intent\":\"PRICE|PLANS|DIFF|ACTIVATE|WHAT_IS|OTHER\","
+        "\"name\":\"\","
+        "\"segment\":\"\""
+        "}"
+    )
+
+    user = f"Mensagem: {text}"
+
+    content = _sales_nlu_http([
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ])
+
+    if not content:
+        # fallback conservador: assume sales (pede nome) — mantém pilar, sem travar
+        return {"route": "offtopic", "intent": "OTHER", "name": "", "segment": ""}
+
+    try:
+        out = json.loads(content)
+        route = (out.get("route") or "sales").strip().lower()
+        if route not in ("sales", "offtopic", "emergency"):
+            route = "offtopic"  # default seguro: cai fora
+        intent = (out.get("intent") or "OTHER").strip().upper()
+        if intent not in ("PRICE", "PLANS", "DIFF", "ACTIVATE", "WHAT_IS", "OTHER"):
+            intent = "OTHER"
+        name = (out.get("name") or "").strip()
+        segment = (out.get("segment") or "").strip()
+        return {"route": route, "intent": intent, "name": name, "segment": segment}
+    except Exception:
+        return {"route": "offtopic", "intent": "OTHER", "name": "", "segment": ""}
+
 def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     name = (st.get("name") or "").strip()
     segment = (st.get("segment") or "").strip()
@@ -433,6 +527,27 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     st["turns"] = turns
 
     intent = _intent(text_in)
+    nlu = sales_micro_nlu(text_in)
+    # route (sales/offtopic/emergency) é decidido por IA
+    route = nlu.get("route") or "sales"
+
+    # se IA extraiu nome/segmento, aproveita
+    if not name and (nlu.get("name") or ""):
+        st["name"] = (nlu.get("name") or "").strip()
+        name = st["name"]
+    if not segment and (nlu.get("segment") or ""):
+        st["segment"] = (nlu.get("segment") or "").strip()
+        segment = st["segment"]
+
+    # intent canônico vindo da IA (não por palavra)
+    intent = (nlu.get("intent") or intent or "OTHER").strip().upper()
+
+    if route == "emergency":
+        return "Se for emergência, liga 193 agora. 🙏"
+
+    if route == "offtopic":
+        return "Oi! Esse WhatsApp é do MEI Robô 🙂 Acho que tu caiu no número errado."
+
 
     # 0) Intenções diretas (preço/planos/diferença) — mas ainda respeita coleta de nome/segmento
     if intent in ("WHAT_IS",):
@@ -440,13 +555,9 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         st["stage"] = "ASK_NAME"
         return WHAT_IS
 
-    # 1) Captura nome se não temos
+    # 1) Captura nome se não temos (IA decide; não usar heurística aqui)
     if not name:
-        maybe = _extract_name_freeform(text_in)
-        if maybe and not _looks_like_greeting(maybe):
-            st["name"] = maybe
-            st["stage"] = "ASK_SEGMENT"
-            return ASK_SEGMENT.format(name=maybe)
+        # Saudação pura = SALES -> pede nome, mas NÃO persiste ainda (persistência é fora daqui)
         st["stage"] = "ASK_NAME"
         return OPENING_ASK_NAME
 
@@ -512,7 +623,10 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
 
     st = _load_state(from_e164)
     reply = _reply_from_state(text_in, st)
-    _save_state(from_e164, st)
+    # Só salva estado se tiver nome (lead real)
+    if (st.get("name") or "").strip():
+        _save_state(from_e164, st)
+
     return (reply or "").strip() or OPENING_ASK_NAME
 
 
@@ -528,6 +642,8 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
 
     st = _load_state(from_e164)
     reply = _reply_from_state(text_in, st)
-    _save_state(from_e164, st)
+    if (st.get("name") or "").strip():
+        _save_state(from_e164, st)
 
     return {"replyText": reply}
+
