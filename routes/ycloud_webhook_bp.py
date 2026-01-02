@@ -201,7 +201,9 @@ def _resolve_uid_for_sender(from_e164: str) -> str:
     return ""
 
 
-@ycloud_webhook_bp.route("/integracoes/ycloud/webhook", methods=["POST", "GET"])
+@ycloud_webhook_bp.route("/integracoes/ycloud/webhook", methods=["POST"])
+@ycloud_webhook_bp.route("/integracoes/ycloud/webhook/", methods=["POST"])
+
 def ycloud_webhook_ingress():
     # PATCH 0: aceitar GET para evitar 405 no painel do provider (healthcheck/ping)
     if request.method == "GET":
