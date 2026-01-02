@@ -343,6 +343,13 @@ try:
 except Exception as e:
     print("[bp][warn] admin_ycloud_test_bp:", e)
 
+# === NOVO: Cloud Tasks Worker (YCloud inbound) — /tasks/ycloud-inbound ===
+try:
+    from routes.ycloud_tasks_bp import ycloud_tasks_bp
+    _register_bp(ycloud_tasks_bp, "ycloud_tasks_bp (/tasks/ycloud-inbound)")
+except Exception as e:
+    print("[bp][warn] ycloud_tasks_bp:", e)
+
 try:
     from routes.servicos_foto import servicos_foto_bp
     _register_bp(servicos_foto_bp, "servicos_foto_bp (/api/servicos/foto)")
