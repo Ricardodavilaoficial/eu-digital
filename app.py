@@ -219,9 +219,18 @@ try:
     from routes.ycloud_webhook_bp import ycloud_webhook_bp
     app.register_blueprint(ycloud_webhook_bp)
     print("[boot] ycloud_webhook_bp registrado ✓", flush=True)
+
+    # DEBUG: provar quais métodos o Flask registrou para o webhook
+    try:
+        rules = [r for r in app.url_map.iter_rules() if "integracoes/ycloud/webhook" in str(r.rule)]
+        for r in rules:
+            print(f"[boot] rule={r.rule} methods={sorted(list(r.methods or []))}", flush=True)
+    except Exception as _e:
+        print("[boot][warn] url_map inspect falhou:", _e, flush=True)
+
 except Exception as e:
     print("[boot] ycloud_webhook_bp não registrado:", e, flush=True)
-        
+
 from flask import jsonify as _jsonify  # já importado acima, mas evita shadowing
 _PUBLIC_ALLOW_EXACT = {
     "/health",
