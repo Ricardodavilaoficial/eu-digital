@@ -218,6 +218,34 @@ def ycloud_webhook_ingress():
     except Exception:
         payload = None
 
+# =========================
+# NOVO: webhook MAGRO (Cloud Tasks)
+# =========================
+try:
+    env = _normalize_event(payload or {})
+    # chave idempotente (preferir wamid)
+    from_raw = (env.get("from") or "").strip()
+    wamid = (env.get("wamid") or "").strip()
+    ev_type = (env.get("eventType") or "").strip()
+    msg_type = (env.get("messageType") or "").strip()
+
+    # fallback: se não tem wamid, usa hash do raw
+    if not wamid:
+        wamid = hashlib.sha1(raw).hexdigest()[:24]
+
+    event_key = f"ycloud:{ev_type}:{msg_type}:{from_raw}:{wamid}"
+
+    # enfileira e sai
+    from services.cloud_tasks import enqueue_ycloud_inbound  # lazy import
+    enqueue_ycloud_inbound(env, event_key=event_key)
+
+    return jsonify({"ok": True, "enqueued": True}), 200
+
+except Exception:
+    logger.exception("[ycloud_webhook] enqueue: falha (ignore)")
+    # nunca quebrar o webhook: responder ok pra evitar retry tempestade
+    return jsonify({"ok": True, "enqueued": False}), 200
+
     if not isinstance(payload, dict) or not payload:
         # fallback: parse manual do raw
         try:
@@ -571,6 +599,7 @@ def ycloud_webhook_ingress():
         logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
 
     return jsonify({"ok": True}), 200
+
 
 
 
