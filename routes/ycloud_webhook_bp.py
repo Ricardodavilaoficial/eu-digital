@@ -274,16 +274,27 @@ def ycloud_webhook_ingress():
             if not uid:
                 logger.info("[ycloud_webhook] voice: uid não resolvido p/ from=%s (route=sales)", _safe_str(from_e164))
 
+                # DEDUPE lead áudio (evita responder 2x em retries/updates)
+                msg_key = (env.get("wamid") or "").strip()
+                if msg_key and not _dedupe_once("lead_audio:" + msg_key):
+                    return jsonify({"ok": True, "deduped": True}), 200
+
                 # Encaminhar como lead/vendas (wa_bot decide). Não tocar em Firestore de voz.
-                reply_text = "Oi! Sou o MEI Robô. Quer conhecer os planos?"
+                reply_text = "Entendi 🙂 Me diz teu nome rapidinho e teu ramo?"
                 wa_out = None
                 try:
                     from services import wa_bot as wa_bot_entry  # lazy import
                     if hasattr(wa_bot_entry, "reply_to_text"):
                         wa_out = wa_bot_entry.reply_to_text(
                             uid="",
-                            text="[áudio recebido]",
-                            ctx={"channel": "whatsapp", "from_e164": from_e164, "msg_type": "audio", "wamid": env.get("wamid")},
+                            text="Lead enviou um áudio.",
+                            ctx={
+                                "channel": "whatsapp",
+                                "from_e164": from_e164,
+                                "msg_type": "audio",
+                                "wamid": env.get("wamid"),
+                                "route_hint": "sales",
+                            },
                         )
                 except Exception:
                     logger.exception("[ycloud_webhook] voice: falha ao chamar wa_bot (lead audio)")
@@ -303,7 +314,7 @@ def ycloud_webhook_ingress():
                 except Exception:
                     pass
 
-                reply_text = (reply_text or "").strip()[:1200] or "Oi! Sou o MEI Robô. Quer conhecer os planos?"
+                reply_text = (reply_text or "").strip()[:1200] or "Entendi 🙂 Me diz teu nome rapidinho e teu ramo?"
 
                 # se tiver audioUrl, tenta enviar áudio; se falhar, cai no texto
                 audio_url = ""
@@ -560,6 +571,7 @@ def ycloud_webhook_ingress():
         logger.exception("[ycloud_webhook] text: falha inesperada (ignore)")
 
     return jsonify({"ok": True}), 200
+
 
 
 
