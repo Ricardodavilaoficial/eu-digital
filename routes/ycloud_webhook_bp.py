@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 @ycloud_webhook_bp.route("/integracoes/ycloud/ping", methods=["GET"])
 def ycloud_ping():
-    return jsonify({"ok": True, "ping": "ycloud_webhook_bp"}), 200
+    return jsonify({"ok": True, "ping": "ycloud_webhook_bp", "code": "ycloud_webhook_v2026-01-02a"}), 200
     
 def _db():
     ensure_firebase_admin()
