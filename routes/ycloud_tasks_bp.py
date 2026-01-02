@@ -208,22 +208,24 @@ def ycloud_inbound_worker():
             allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
 
             try:
-                from providers.ycloud import ycloud_send_text, ycloud_send_audio  # type: ignore
+                from providers.ycloud import send_text, send_audio  # type: ignore
             except Exception:
-                ycloud_send_text = None
-                ycloud_send_audio = None
+                send_text = None  # type: ignore
+                send_audio = None  # type: ignore
 
-            if allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and ycloud_send_audio:
+            if allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
                 try:
-                    sent_ok, _ = ycloud_send_audio(from_e164, audio_url)
+                    sent_ok, _ = send_audio(from_e164, audio_url)
                 except Exception:
                     logger.exception("[tasks] lead: falha send_audio")
 
-            if not sent_ok and ycloud_send_text:
+            if (not sent_ok) and send_text:
                 try:
-                    ycloud_send_text(from_e164, reply_text)
+                    sent_ok, _ = send_text(from_e164, reply_text)
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text")
+
+            return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
 
             # log leve (debug)
             try:
@@ -251,3 +253,4 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
