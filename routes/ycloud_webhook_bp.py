@@ -216,6 +216,20 @@ def ycloud_webhook_ingress():
 
     env = _normalize_event(payload or {})
 
+    # ==========================================================
+    # FILTRO DE EVENTO (anti-eco / anti-loop)
+    # Só enfileirar mensagem inbound real do usuário.
+    # whatsapp.message.updated (read/delivered) deve ser ignorado.
+    # ==========================================================
+    ev_type = (env.get("eventType") or "").strip()
+    if ev_type != "whatsapp.inbound_message.received":
+        try:
+            logger.info("[ycloud_webhook] ignored eventType=%s", _safe_str(ev_type))
+        except Exception:
+            pass
+        return jsonify({"ok": True, "ignored": True, "eventType": ev_type}), 200
+
+
     from_raw = (env.get("from") or "").strip()
     wamid = (env.get("wamid") or "").strip()
     ev_type = (env.get("eventType") or "").strip()
@@ -274,3 +288,4 @@ def ycloud_webhook_ingress():
     # O webhook é MAGRO. Ele só normaliza + enfileira e retorna 200 rápido.
     # Qualquer processamento pesado (roteamento, IA, envio de texto/áudio, etc.)
     # acontece no worker: routes/ycloud_tasks_bp.py
+
