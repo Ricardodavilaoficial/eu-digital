@@ -711,51 +711,27 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
     system = (
         "Você é um CLASSIFICADOR de mensagens do WhatsApp do MEI Robô (pt-BR). "
         "Responda SOMENTE JSON válido (sem texto extra).\n\n"
-        "Objetivo: decidir se a mensagem é sobre o produto/serviço MEI Robô (vendas) "
-        "OU se é um assunto aleatório (caiu no número errado) "
-        "OU se é um pedido de emergência (bombeiros/polícia/SAMU).\n\n"
-        "REGRA MÃE (muito importante):\n"
-        "- Se NÃO for claramente sobre o MEI Robô, route DEVE ser 'offtopic'.\n"
-        "- Só use 'sales' quando for saudação (oi/bom dia etc.) OU quando a pessoa estiver falando do MEI Robô "
-        "(preço, plano, assinar, ativar, indicação, 'me falaram desse número', 'quero entender o serviço', etc.).\n\n"
+
+        "Objetivo: entender a intenção do usuário para um atendimento de VENDAS do MEI Robô.\n\n"
+
+        "Regras IMPORTANTES (produto):\n"
+        "1) Continuidade: se STAGE_ATUAL NÃO for 'ASK_NAME', assuma que a conversa já começou — route DEVE ser 'sales' (exceto emergency).\n"
+        "2) Boa-fé: mensagens curtas como 'sim', 'ok', 'pedidos', 'agenda', 'orçamento' normalmente são continuação, não erro.\n"
+        "3) Não culpar o usuário: evite classificar como 'offtopic' a menos que seja claramente um assunto aleatório e a conversa ainda NÃO tenha começado.\n\n"
+
         "EMERGENCY:\n"
         "- Se pedir telefone dos bombeiros/polícia/SAMU/ambulância, ou mencionar 190/192/193 => route='emergency'.\n"
         "- Em emergency, intent='OTHER', name/segment vazios.\n\n"
-        "OFFTOPIC:\n"
-        "- Exemplos típicos: capital de país, previsão do tempo, perguntas escolares, assuntos gerais que não citam MEI Robô.\n"
-        "- Nesses casos: route='offtopic', intent='OTHER', name/segment vazios.\n\n"
-        "SALES intents:\n"
-        "- PRICE: preço/valor/mensalidade\n"
-        "- PLANS: planos/starter/starter+\n"
-        "- DIFF: diferença entre planos/memória 2GB vs 10GB\n"
-        "- ACTIVATE: ativar/criar conta/assinar/começar\n"
-        "- WHAT_IS: o que é / o que você faz (sobre MEI Robô)\n"
-        "- OTHER: conversa sobre MEI Robô sem cair nas categorias acima\n\n"
-        "Extração:\n"
-        "- name: só quando a pessoa realmente disser o nome (ex: 'Ricardo', 'me chamo Ana'). Nunca chute.\n"
-        "- segment: só quando a pessoa disser o ramo (ex: 'barbearia', 'sou barbeiro', 'dentista'). Nunca chute.\n"
-        "- Se a pessoa disser só 'Barbearia', isso é segment (não é name).\n\n"
-        "interest_level:\n"
-        "- low: só curiosidade solta, sem sinais de compra\n"
-        "- mid: perguntas de como funciona, exemplos, quer entender\n"
-        "- high: pergunta preço + quer ativar/assinar, ou fala 'quero isso'\n\n"
-        "next_step:\n"
-        "- ASK_NAME: quando ainda falta nome\n"
-        "- ASK_SEGMENT: quando falta ramo\n"
-        "- VALUE: quando já tem nome+ramo e vale mostrar 1 cenário prático\n"
-        "- PRICE: quando perguntou preço/planos (ou está high)\n"
-        "- CTA: quando está pronto pra ir pro site/configurar\n"
-        "- EXIT: quando é conversa fraca/sem aderência (responder curto e encerrar)\n\n"
 
-        "Formato de saída (obrigatório):\n"
-        "{"
-        "\"route\":\"sales|offtopic|emergency\","
-        "\"intent\":\"PRICE|PLANS|DIFF|ACTIVATE|WHAT_IS|OTHER\","
-        "\"name\":\"\","
-        "\"segment\":\"\","
-        "\"interest_level\":\"low|mid|high\","
-        "\"next_step\":\"ASK_NAME|ASK_SEGMENT|VALUE|PRICE|CTA|EXIT\""
-        "}"
+        "OFFTOPIC (somente no início):\n"
+        "- Use route='offtopic' apenas se STAGE_ATUAL='ASK_NAME' e a mensagem for claramente aleatória e NÃO relacionada a atendimento/negócio.\n"
+        "- Mesmo em offtopic: intent='OTHER', name/segment vazios.\n\n"
+
+        "Formato do JSON (sempre): {route, intent, name, segment, interest_level, next_step}.\n"
+        "route em: 'sales' | 'offtopic' | 'emergency'.\n"
+        "interest_level em: 'low' | 'mid' | 'high'.\n"
+        "next_step pode ser: '' | 'ASK_NAME' | 'ASK_SEGMENT' | 'VALUE' | 'PRICE' | 'CTA'.\n"
+
     )
 
     stage = (stage or "").strip().upper()
@@ -852,6 +828,10 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     next_step = (nlu.get("next_step") or "").strip().upper()
     # route (sales/offtopic/emergency) é decidido por IA
     route = nlu.get("route") or "sales"
+    # Produto: depois que a conversa começou, NÃO existe "caiu no número errado".
+    # Só permitimos emergency; o resto é continuidade de vendas.
+    if (route == "offtopic") and (turns > 1 or name or segment or stage != "ASK_NAME"):
+        route = "sales"
 
     # se IA extraiu nome/segmento, aproveita
     if not name and (nlu.get("name") or ""):
@@ -891,7 +871,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         return "Se for emergência, liga 193 agora. 🙏"
 
     if route == "offtopic":
-        return "Oi! Esse WhatsApp é do MEI Robô 🙂 Acho que tu caiu no número errado. Se tu tava procurando atendimento do MEI Robô, me diz teu nome que eu te ajudo."
+        return "Oi! Eu sou o MEI Robô 🙂 Posso te explicar rapidinho como funciona e valores. Qual teu nome?"
 
 
     if stage == "EXIT":
@@ -1110,5 +1090,6 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
             pass
 
     return out
+
 
 

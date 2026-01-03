@@ -12,6 +12,8 @@ from typing import Any, Dict, Optional, Tuple
 import logging
 
 from flask import Blueprint, request, jsonify
+
+from services.phone_utils import digits_only as _digits_only_c, phone_variants_br as _phone_variants_c
 from google.cloud import firestore  # type: ignore
 
 from services.firebase_admin_init import ensure_firebase_admin
@@ -149,7 +151,7 @@ def _normalize_event(payload: Dict[str, Any]) -> Dict[str, Any]:
 # Phone helpers (BR): tolera dígito 9 (mobile) e variações comuns
 # =========================
 def _digits_only(s: str) -> str:
-    return "".join(ch for ch in (s or "") if ch.isdigit())
+    return _digits_only_c(s)
 
 def _phone_variants(e164: str) -> list[str]:
     """Gera variações do telefone para lookup (com/sem '9' após DDD no Brasil)."""
@@ -288,4 +290,5 @@ def ycloud_webhook_ingress():
     # O webhook é MAGRO. Ele só normaliza + enfileira e retorna 200 rápido.
     # Qualquer processamento pesado (roteamento, IA, envio de texto/áudio, etc.)
     # acontece no worker: routes/ycloud_tasks_bp.py
+
 

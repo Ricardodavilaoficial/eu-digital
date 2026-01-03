@@ -302,12 +302,18 @@ def process_change(
 
     # ✅ Opção B (Vendas com IA): se uid não veio resolvido, tratamos como LEAD.
     # Importante: o webhook continua burro — aqui é o cérebro (wa_bot).
-    # Só responde para mensagens de TEXTO (conteúdo público) e não toca no pipeline de voz.
+    # Segurança/produto: resposta pública e curta; sem "número errado".
     if not (uid_default or ""):
         try:
-            from services.bot_handlers.sales_lead import handle_sales_lead  # type: ignore
-            if handle_sales_lead(change, effective_send, app_tag=app_tag):
-                return True
+            from services.bot_handlers import sales_lead  # type: ignore
+
+            out = sales_lead.handle_sales_lead(change)  # retorna dict {replyText, ...}
+            reply_text = (out or {}).get("replyText") or ""
+            if reply_text and effective_send is not None:
+                from_id, _body = _extract_from_and_text_from_change(change)
+                if from_id:
+                    effective_send(from_id, str(reply_text))
+                    return True
         except Exception:
             # fallback ultra conservador: se handler não existir, não quebra o fluxo
             pass
@@ -359,3 +365,4 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
+

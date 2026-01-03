@@ -8,6 +8,8 @@ import logging
 from typing import Any, Dict
 
 from flask import Blueprint, request, jsonify
+
+from services.phone_utils import digits_only as _digits_only_c, to_plus_e164 as _to_plus_e164_c
 from google.cloud import firestore  # type: ignore
 
 logger = logging.getLogger("mei_robo.ycloud_tasks")
@@ -24,18 +26,11 @@ def _sha1_id(s: str) -> str:
 
 
 def _digits_only(s: str) -> str:
-    out = []
-    for ch in (s or ""):
-        if ch.isdigit():
-            out.append(ch)
-    return "".join(out)
+    return _digits_only_c(s)
 
 
 def _to_plus_e164(raw: str) -> str:
-    d = _digits_only(raw)
-    if not d:
-        return (raw or "").strip()
-    return ("+" + d) if not raw.strip().startswith("+") else ("+" + d)
+    return _to_plus_e164_c(raw)
 
 
 def _idempotency_once(event_key: str, ttl_seconds: int = 86400) -> bool:
@@ -261,5 +256,6 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
 
