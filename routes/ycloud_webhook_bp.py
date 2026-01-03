@@ -220,11 +220,16 @@ def ycloud_webhook_ingress():
     except Exception:
         payload = None
 
-# =========================
-# NOVO: webhook MAGRO (Cloud Tasks)
-# =========================
-try:
+    # =========================
+    # NOVO: webhook MAGRO (Cloud Tasks)
+    # =========================
+
+    # alguns providers embrulham em {"data": {...}}
+    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+        payload = payload["data"]
+
     env = _normalize_event(payload or {})
+
     # chave idempotente (preferir wamid)
     from_raw = (env.get("from") or "").strip()
     wamid = (env.get("wamid") or "").strip()
@@ -237,59 +242,61 @@ try:
 
     event_key = f"ycloud:{ev_type}:{msg_type}:{from_raw}:{wamid}"
 
-    # enfileira e sai
-    from services.cloud_tasks import enqueue_ycloud_inbound  # lazy import
-    enqueue_ycloud_inbound(env, event_key=event_key)
+    # enfileira e sai (best-effort, nunca quebra o webhook)
+    try:
+        from services.cloud_tasks import enqueue_ycloud_inbound  # lazy import
+        enqueue_ycloud_inbound(env, event_key=event_key)
 
-    return jsonify({"ok": True, "enqueued": True}), 200
-
-except Exception:
-    logger.exception("[ycloud_webhook] enqueue: falha (ignore)")
-    # nunca quebrar o webhook: responder ok pra evitar retry tempestade
-    return jsonify({"ok": True, "enqueued": False}), 200
-
-    if not isinstance(payload, dict) or not payload:
-        # fallback: parse manual do raw
+        # DEBUG inbound (best-effort): provar o que chegou normalizado
         try:
-            payload = json.loads(raw.decode("utf-8") or "{}")
+            logger.info(
+                "[ycloud_webhook] enqueued: type=%s msgType=%s from=%s wamid=%s textLen=%s",
+                _safe_str(env.get("eventType")),
+                _safe_str(env.get("messageType")),
+                _safe_str(env.get("from")),
+                _safe_str(env.get("wamid")),
+                len(_safe_str(env.get("text"), 2000) or ""),
+            )
         except Exception:
-            payload = {}
+            pass
 
-    # alguns providers embrulham em {"data": {...}}
-    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
-        payload = payload["data"]
+        # Observabilidade mínima (best-effort): inbound audit log
+        try:
+            _db().collection("platform_wa_logs").add(
+                {
+                    "createdAt": _now_ts(),
+                    "kind": "inbound",
+                    "eventType": env.get("eventType"),
+                    "messageType": env.get("messageType"),
+                    "from": env.get("from"),
+                    "to": env.get("to"),
+                    "wamid": env.get("wamid"),
+                    "textPreview": (env.get("text") or "")[:120],
+                }
+            )
+        except Exception:
+            pass
 
-    env = _normalize_event(payload)
+        return jsonify({"ok": True, "enqueued": True}), 200
 
-    # DEBUG inbound (best-effort): provar o que chegou normalizado
-    try:
-        logger.info(
-            "[ycloud_webhook] inbound normalized: type=%s msgType=%s from=%s wamid=%s textLen=%s",
-            _safe_str(env.get("eventType")),
-            _safe_str(env.get("messageType")),
-            _safe_str(env.get("from")),
-            _safe_str(env.get("wamid")),
-            len(_safe_str(env.get("text"), 2000) or ""),
-        )
     except Exception:
-        pass
+        logger.exception("[ycloud_webhook] enqueue: falha (ignore)")
 
-    # Observabilidade mínima (best-effort): inbound audit log
-    try:
-        _db().collection("platform_wa_logs").add(
-            {
-                "createdAt": _now_ts(),
-                "kind": "inbound",
-                "eventType": env.get("eventType"),
-                "messageType": env.get("messageType"),
-                "from": env.get("from"),
-                "to": env.get("to"),
-                "wamid": env.get("wamid"),
-                "textPreview": (env.get("text") or "")[:120],
-            }
-        )
-    except Exception:
-        pass
+        # DEBUG fail (best-effort)
+        try:
+            logger.info(
+                "[ycloud_webhook] enqueue_failed: type=%s msgType=%s from=%s wamid=%s",
+                _safe_str(env.get("eventType")),
+                _safe_str(env.get("messageType")),
+                _safe_str(env.get("from")),
+                _safe_str(env.get("wamid")),
+            )
+        except Exception:
+            pass
+
+        # nunca quebrar o webhook: responder ok pra evitar retry tempestade
+        return jsonify({"ok": True, "enqueued": False}), 200
+
 
     # ===================== INGESTÃO DE VOZ =====================
     # (pipeline de voz já funcional — NÃO alterar comportamento)
