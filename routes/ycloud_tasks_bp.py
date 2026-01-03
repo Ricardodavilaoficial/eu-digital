@@ -71,6 +71,14 @@ def ycloud_inbound_worker():
 
     if not event_key or not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "bad_request"}), 400
+    # ==========================================================
+    # FILTRO DE EVENTO (anti-eco / anti-loop)
+    # Worker só processa inbound real do usuário.
+    # ==========================================================
+    ev_type = (payload.get("eventType") or "").strip()
+    if ev_type != "whatsapp.inbound_message.received":
+        return jsonify({"ok": True, "ignored": True, "eventType": ev_type}), 200
+
 
     dedup_ttl = int(os.environ.get("CLOUD_TASKS_DEDUP_TTL_SECONDS", "86400") or "86400")
     if not _idempotency_once(event_key, ttl_seconds=dedup_ttl):
@@ -253,4 +261,5 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
