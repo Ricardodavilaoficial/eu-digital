@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 @ycloud_webhook_bp.route("/integracoes/ycloud/ping", methods=["GET"])
 def ycloud_ping():
     return jsonify({"ok": True, "ping": "ycloud_webhook_bp", "code": "ycloud_webhook_v2026-01-02a"}), 200
-    
+
 def _db():
     ensure_firebase_admin()
     return firestore.Client()
@@ -102,7 +102,7 @@ def _normalize_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     ev_type = _safe_str(payload.get("type"))
     msg = payload.get("whatsappInboundMessage") or {}
     msg_type = _safe_str(msg.get("type"))
-    
+
     # YCloud às vezes não envia whatsappInboundMessage.type.
     # Inferimos pelo conteúdo (seguro e retrocompatível).
     if not msg_type:
@@ -110,7 +110,7 @@ def _normalize_event(payload: Dict[str, Any]) -> Dict[str, Any]:
             msg_type = "text"
         elif any(k in msg and msg.get(k) for k in ("audio", "voice", "ptt")):
             msg_type = "audio"
-    
+
     from_msisdn = _safe_str(msg.get("from"))
     to_msisdn = _safe_str(msg.get("to"))
     wamid = _safe_str(msg.get("wamid") or msg.get("context", {}).get("wamid") or msg.get("context", {}).get("id"))
@@ -145,8 +145,6 @@ def _normalize_event(payload: Dict[str, Any]) -> Dict[str, Any]:
         "media": media,
     }
 
-
-
 # =========================
 # Phone helpers (BR): tolera dígito 9 (mobile) e variações comuns
 # =========================
@@ -158,12 +156,10 @@ def _phone_variants(e164: str) -> list[str]:
     s = (e164 or "").strip()
     if not s:
         return []
-    # mantém + no começo se existir
     plus = "+" if s.startswith("+") else ""
     digits = _digits_only(s)
     if not digits:
         return [s]
-    # normaliza para +<digits>
     base = plus + digits
     out = []
     def add(x):
@@ -171,15 +167,11 @@ def _phone_variants(e164: str) -> list[str]:
             out.append(x)
     add(base)
 
-    # heurística BR: +55 DDD (2) + número (8/9)
     if digits.startswith("55") and len(digits) in (12, 13):
-        # depois do '55' vem DDD (2)
         ddd = digits[2:4]
         num = digits[4:]
-        # se veio com 8 dígitos (sem 9) → tenta inserir 9
         if len(num) == 8:
             add("+" + "55" + ddd + "9" + num)
-        # se veio com 9 dígitos e começa com 9 → tenta remover 9
         if len(num) == 9 and num.startswith("9"):
             add("+" + "55" + ddd + num[1:])
 
@@ -200,12 +192,10 @@ def _resolve_uid_for_sender(from_e164: str) -> str:
             continue
     return ""
 
-
-@ycloud_webhook_bp.route("/integracoes/ycloud/webhook", methods=["POST"])
-@ycloud_webhook_bp.route("/integracoes/ycloud/webhook/", methods=["POST"])
-
+@ycloud_webhook_bp.route("/integracoes/ycloud/webhook", methods=["GET", "POST"])
+@ycloud_webhook_bp.route("/integracoes/ycloud/webhook/", methods=["GET", "POST"])
 def ycloud_webhook_ingress():
-    # PATCH 0: aceitar GET para evitar 405 no painel do provider (healthcheck/ping)
+    # GET é só pra sanity check manual; o healthcheck oficial é /integracoes/ycloud/ping
     if request.method == "GET":
         return jsonify({"ok": True, "method": "GET"}), 200
 
@@ -220,23 +210,17 @@ def ycloud_webhook_ingress():
     except Exception:
         payload = None
 
-    # =========================
-    # NOVO: webhook MAGRO (Cloud Tasks)
-    # =========================
-
     # alguns providers embrulham em {"data": {...}}
     if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
         payload = payload["data"]
 
     env = _normalize_event(payload or {})
 
-    # chave idempotente (preferir wamid)
     from_raw = (env.get("from") or "").strip()
     wamid = (env.get("wamid") or "").strip()
     ev_type = (env.get("eventType") or "").strip()
     msg_type = (env.get("messageType") or "").strip()
 
-    # fallback: se não tem wamid, usa hash do raw
     if not wamid:
         wamid = hashlib.sha1(raw).hexdigest()[:24]
 
@@ -247,7 +231,7 @@ def ycloud_webhook_ingress():
         from services.cloud_tasks import enqueue_ycloud_inbound  # lazy import
         enqueue_ycloud_inbound(env, event_key=event_key)
 
-        # DEBUG inbound (best-effort): provar o que chegou normalizado
+        # DEBUG inbound (best-effort)
         try:
             logger.info(
                 "[ycloud_webhook] enqueued: type=%s msgType=%s from=%s wamid=%s textLen=%s",
@@ -260,7 +244,7 @@ def ycloud_webhook_ingress():
         except Exception:
             pass
 
-        # Observabilidade mínima (best-effort): inbound audit log
+        # Observabilidade mínima (best-effort)
         try:
             _db().collection("platform_wa_logs").add(
                 {
@@ -277,10 +261,16 @@ def ycloud_webhook_ingress():
         except Exception:
             pass
 
-        return jsonify({"ok": True, "enqueued": True}), 200
+        return jsonify({"ok": True, "enqueued": True, "eventKey": event_key}), 200
+
+    except Exception:
+        try:
+            logger.exception("[ycloud_webhook] enqueue failed")
+        except Exception:
+            pass
+        return jsonify({"ok": True, "enqueued": False, "eventKey": event_key}), 200
 
     # IMPORTANTE:
     # O webhook é MAGRO. Ele só normaliza + enfileira e retorna 200 rápido.
     # Qualquer processamento pesado (roteamento, IA, envio de texto/áudio, etc.)
     # acontece no worker: routes/ycloud_tasks_bp.py
-
