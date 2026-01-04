@@ -18,170 +18,71 @@ from typing import Any, Callable, Dict, Optional
 # Conteúdo CANÔNICO (VENDAS)
 # =========================
 
-SITE_URL = "www.meirobo.com.br"
+SITE_URL = os.getenv("MEI_ROBO_SITE_URL", "www.meirobo.com.br")
 
-PRICE_STARTER = "R$ 89/mês"
-PRICE_PLUS = "R$ 119/mês"
-PLUS_DIFF = "A única diferença é o espaço de memória: Starter tem 2 GB e o Starter+ tem 10 GB. O resto é igual."
-
+# Mensagem mínima de entrada (mantida local por segurança operacional)
 OPENING_ASK_NAME = (
     "Oi! 👋 Eu sou o MEI Robô 🙂\n\n"
     "Antes de te explicar direitinho,\n"
     "me diz teu nome?"
 )
 
+# Fallback humano mínimo (nunca vazio; sem marketing longo)
+def _fallback_min_reply(name: str = "") -> str:
+    name = (name or "").strip()
+    if name:
+        return f"{name}, perfeito. Você quer falar de pedidos, agenda, orçamento ou só conhecer?"
+    return "Show 🙂 Me diz teu nome e o que você quer resolver: pedidos, agenda, orçamento ou conhecer?"
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_SALES_NLU_MODEL = os.getenv("OPENAI_SALES_NLU_MODEL", os.getenv("OPENAI_NLU_MODEL", "gpt-4o-mini"))
+OPENAI_SALES_MODEL = os.getenv("OPENAI_SALES_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
 SALES_NLU_TIMEOUT = 20
-OPENAI_SALES_MODEL = os.getenv("OPENAI_SALES_MODEL", os.getenv("OPENAI_NLU_MODEL", "gpt-4o-mini"))
 
+# Sales KB (Firestore-first)
+# Fonte de verdade: platform_kb/sales (doc único)
+_SALES_KB_CACHE: Optional[Dict[str, Any]] = None
+_SALES_KB_CACHE_AT: float = 0.0
+_SALES_KB_TTL_SECONDS: int = int(os.getenv("SALES_KB_TTL_SECONDS", "600"))
 
-ASK_SEGMENT = (
-    "Prazer, {name} 😄\n\n"
-    "Teu negócio é do quê?"
-)
+def _get_sales_kb() -> Dict[str, Any]:
+    """Carrega KB de vendas do Firestore com cache/TTL. Best-effort."""
+    global _SALES_KB_CACHE, _SALES_KB_CACHE_AT
+    now = time.time()
+    if _SALES_KB_CACHE and (now - _SALES_KB_CACHE_AT) < _SALES_KB_TTL_SECONDS:
+        return _SALES_KB_CACHE
 
-CTA_SITE = (
-    f"O melhor caminho agora é pelo site:\n{SITE_URL}\n\n"
-    "Se puder, faz a configuração num computador com internet — fica mais fácil e rapidinho.\n"
-    "Se precisar, dá pra fazer pelo celular também."
-)
+    kb: Dict[str, Any] = {}
+    try:
+        # Lazy import para não quebrar em ambientes sem Firestore libs
+        from google.cloud import firestore  # type: ignore
+        client = firestore.Client()
+        doc = client.collection("platform_kb").document("sales").get()
+        if doc and doc.exists:
+            kb = doc.to_dict() or {}
+    except Exception:
+        kb = {}
 
-WHAT_IS = (
-    "Eu ajudo MEI a atender melhor no WhatsApp, ganhar tempo e deixar o atendimento mais profissional.\n"
-    "Respondo clientes, organizo agenda/pedidos e deixo tudo mais redondo no dia a dia.\n\n"
-    "Me diz teu nome pra eu te explicar do jeito certo 🙂"
-)
-
-PLANS_SHORT = (
-    f"Hoje tem 2 opções bem diretas:\n"
-    f"• Starter: {PRICE_STARTER} (2 GB)\n"
-    f"• Starter+: {PRICE_PLUS} (10 GB)\n\n"
-    "Sem fidelidade: cancela quando quiser.\n"
-    "E a configuração inicial tá sem custo por tempo indeterminado.\n\n"
-    "Me diz teu nome e teu ramo que eu te digo qual combina mais contigo 🙂"
-)
-
-PRICE_REPLY = (
-    "Hoje o plano Starter tá R$ 89/mês.\n"
-    "E o Starter+ tá R$ 119/mês.\n\n"
-    "A única diferença é o espaço de memória: Starter tem 2 GB e o Starter+ tem 10 GB. O resto é igual."
-)
-
-# Pitch por segmento (curto, WhatsApp)
-PITCH = {
-    "beleza": (
-        "No teu caso, eu cuido da agenda, mostro horários livres, passo valores e marco tudo sem te incomodar.\n"
-        "Teu cliente marca e tu só confere.\n\n"
-        f"Sendo bem sincero: por {PRICE_STARTER} isso é barato pelo tempo que tu economiza.\n\n"
-        + CTA_SITE
-    ),
-    "cabeleireiro": (
-        "No teu caso, eu cuido da agenda, mostro horários livres, passo valores e marco tudo sem te incomodar.\n"
-        "Teu cliente marca e tu só confere.\n\n"
-        f"Sendo bem sincero: por {PRICE_STARTER} isso é barato pelo tempo que tu economiza.\n\n"
-        + CTA_SITE
-    ),
-    "dentista": (
-        "Puxa! Sendo dentista, eu marco consulta, confirmo horário e organizo o atendimento no WhatsApp.\n"
-        "Tu ganha tempo e passa mais confiança pro paciente.\n\n"
-        f"Por {PRICE_STARTER} por mês, é bem barato pelo resultado.\n\n"
-        + CTA_SITE
-    ),
-    "comida": (
-        "Pra quem vende comida, eu ajudo a anotar pedido certinho, confirmar, e deixar a rotina mais organizada.\n"
-        "Tu perde menos pedido e atende mais rápido.\n\n"
-        f"Por {PRICE_STARTER} por mês, costuma se pagar fácil.\n\n"
-        + CTA_SITE
-    ),
-    "lanches": (
-        "Pra quem vende lanches, eu ajudo a anotar pedido certinho, confirmar, e deixar a rotina mais organizada.\n"
-        "Tu perde menos pedido e atende mais rápido.\n\n"
-        f"Por {PRICE_STARTER} por mês, costuma se pagar fácil.\n\n"
-        + CTA_SITE
-    ),
-    "servico": (
-        "Pra prestador de serviço, eu respondo dúvidas, passo preços e organizo contatos.\n"
-        "Menos ligação fora de hora, mais atendimento profissional.\n\n"
-        f"Por {PRICE_STARTER} por mês, costuma se pagar fácil.\n\n"
-        + CTA_SITE
-    ),
-}
-
-# =========================
-# Catálogo CANÔNICO (repertório operacional)
-# - NÃO é resposta pronta
-# - É matéria-prima para a IA escolher 1 cenário real e escrever curto
-# =========================
-OPERATIONAL_SCENARIOS: Dict[str, list] = {
-    "geral": [
-        {
-            "situation": "Cliente chama no WhatsApp e pergunta coisas repetidas",
-            "pain": "Interrupção constante e demora pra responder todo mundo",
-            "action": "Responde o básico, organiza o atendimento e encaminha o que importa",
-            "outcome": "Mais tempo livre e atendimento mais profissional",
+    # KB mínimo neutro (sem marketing e sem números) — só pra não quebrar o prompt
+    if not isinstance(kb, dict) or not kb:
+        kb = {
+            "tone_rules": [
+                "Curto, humano, WhatsApp.",
+                "Sem tecnicês e sem bastidores.",
+                "Nunca culpar o cliente; sempre oferecer opções.",
+            ],
+            "value_props": [],
+            "how_it_works": [],
+            "segments": {},
+            "objections": {},
+            "pricing_teasers": [],
+            "version": "local_min",
         }
-    ],
-    "beleza": [
-        {
-            "situation": "Cliente pergunta horário o dia todo",
-            "pain": "Interrupção constante e agenda confusa",
-            "action": "Mostra horários livres, confirma o serviço e agenda",
-            "outcome": "O profissional trabalha sem parar pra responder",
-        },
-        {
-            "situation": "Cliente pergunta preço/serviço (corte, barba, etc.)",
-            "pain": "Responder a mesma coisa toda hora",
-            "action": "Explica serviços e valores automaticamente e já puxa pro agendamento",
-            "outcome": "Cliente vem mais decidido e fecha mais rápido",
-        },
-    ],
-    "lanches": [
-        {
-            "situation": "Pedidos chegam rápido no WhatsApp",
-            "pain": "Erro de item/valor e atraso na entrega",
-            "action": "Anota pedido, confirma itens e calcula o valor",
-            "outcome": "Menos erro e mais pedido fechado",
-        },
-        {
-            "situation": "Alguém só fica anotando pedido",
-            "pain": "Gargalo e custo (gente anotando em vez de produzir)",
-            "action": "Envia pro WhatsApp do MEI o pedido completo com valor, endereço e pagamento",
-            "outcome": "A pessoa vai produzir, não anotar",
-        },
-    ],
-    "dentista": [
-        {
-            "situation": "Paciente manda dúvidas longas antes de marcar",
-            "pain": "Conversa que não vira consulta",
-            "action": "Responde o básico, filtra e já oferece horários",
-            "outcome": "Agenda só quem realmente quer",
-        },
-        {
-            "situation": "Remarcação/confirmar horário vira um inferno",
-            "pain": "Secretaria presa no WhatsApp",
-            "action": "Confirma, remarca e organiza a agenda",
-            "outcome": "Menos faltas e rotina mais leve",
-        },
-    ],
-    "servico": [
-        {
-            "situation": "Cliente pergunta 'faz isso?' e some",
-            "pain": "Vai-e-volta e perda de tempo",
-            "action": "Coleta as informações essenciais e organiza o pedido",
-            "outcome": "Orçamento mais rápido e atendimento mais profissional",
-        },
-        {
-            "situation": "Contato e detalhes ficam perdidos no WhatsApp",
-            "pain": "Esquece cliente e perde histórico",
-            "action": "Organiza dados do cliente e o que foi combinado",
-            "outcome": "Menos retrabalho e mais confiança",
-        },
-    ],
-}
 
-
+    _SALES_KB_CACHE = kb
+    _SALES_KB_CACHE_AT = now
+    return kb
 
 # =========================
 # Helpers: parsing simples
@@ -530,6 +431,7 @@ def _upsert_lead_from_state(wa_key: str, st: dict) -> None:
         "status": st.get("lead_status") or "new",
         "interest_level": st.get("interest_level") or "",
         "lastSeenAt": time.time(),
+        "updatedAt": time.time(),
     }
     upsert_lead(wa_key, lead)
 
@@ -635,16 +537,67 @@ def _ai_pitch(name: str, segment: str, user_text: str) -> str:
     name = (name or "").strip()
     segment = (segment or "").strip()
     user_text = (user_text or "").strip()
+    kb = _get_sales_kb()
 
-    # Puxa repertório operacional do segmento (fallback: geral)
-    seg_key = _extract_segment(segment) or _extract_segment(user_text) or ""
-    if not seg_key:
-        seg_key = "geral"
-    scenarios = OPERATIONAL_SCENARIOS.get(seg_key) or OPERATIONAL_SCENARIOS.get("geral") or []
-    # manda no máx. 2 cenários pra não inflar tokens
-    scenarios = scenarios[:2]
+    # Repertório por segmento (Firestore-first). Mantém tokens baixos.
+    seg_bullets = []
+    try:
+        seg_map = kb.get("segments", {}) or {}
+        if isinstance(seg_map, dict):
+            seg_bullets = seg_map.get(seg_key) or seg_map.get("geral") or []
+    except Exception:
+        seg_bullets = []
+    # limita pra não inflar contexto
+    if isinstance(seg_bullets, list):
+        seg_bullets = seg_bullets[:6]
+    else:
+        seg_bullets = []
+
+    value_props = kb.get("value_props", [])
+    if isinstance(value_props, list):
+        value_props = value_props[:6]
+    else:
+        value_props = []
+
+    tone_rules = kb.get("tone_rules", [])
+    if isinstance(tone_rules, list):
+        tone_rules = tone_rules[:6]
+    else:
+        tone_rules = []
 
     prompt = (
+        f"Lead: {name}
+"
+        f"Segmento do lead (texto): {segment}
+"
+        f"Segmento normalizado: {seg_key}
+"
+        f"Última mensagem do lead: {user_text}
+
+"
+        "Repertório (use só o que fizer sentido; não listar tudo):
+"
+        f"- Value props: {json.dumps(value_props, ensure_ascii=False)}
+"
+        f"- Segment bullets: {json.dumps(seg_bullets, ensure_ascii=False)}
+
+"
+        "Escreva um pitch curtinho (2 a 4 linhas) no estilo WhatsApp.
+"
+        "Fale simples, humano, com humor leve.
+"
+        "Mostre a diferença na prática (um exemplo só).
+"
+        "PROIBIDO mencionar tecnologia, IA, sistema, integração, processos ou bastidores.
+"
+        "NÃO invente números, promessas ou políticas.
+"
+        "NÃO cite preço e NÃO cite site.
+"
+        f"Regras de tom: {json.dumps(tone_rules, ensure_ascii=False)}
+"
+    )
+
         f"Lead: {name}\n"
         f"Segmento do lead (texto): {segment}\n"
         f"Segmento normalizado: {seg_key}\n"
@@ -674,6 +627,61 @@ def _ai_pitch(name: str, segment: str, user_text: str) -> str:
     if len(lines) > 4:
         lines = lines[:4]
     return "\n".join(lines).strip()
+
+
+
+
+def _ai_sales_answer(name: str, segment: str, goal: str, user_text: str, intent_hint: str = "") -> str:
+    """
+    Resposta final SEMPRE via IA, usando textos fixos apenas como repertório.
+    - Curto, humano, WhatsApp.
+    - Não expulsa lead.
+    - Faz 1 pergunta objetiva para avançar.
+    """
+    name = (name or "").strip()
+    segment = (segment or "").strip()
+    goal = (goal or "").strip()
+    user_text = (user_text or "").strip()
+    intent_hint = (intent_hint or "").strip().upper()
+
+    # Repertório compacto (não copiar literal)
+    kb = _get_sales_kb()
+
+    # Contexto de repertório (Firestore-first). A IA decide o que usar.
+    # IMPORTANTÍSSIMO: não inventar números. Se não tiver preço no KB, falar sem valores.
+    repertoire = {
+        "site_url": SITE_URL,
+        "kb": {
+            "tone_rules": kb.get("tone_rules", []),
+            "value_props": kb.get("value_props", []),
+            "how_it_works": kb.get("how_it_works", []),
+            "segments": kb.get("segments", {}),
+            "objections": kb.get("objections", {}),
+            "pricing_teasers": kb.get("pricing_teasers", []),
+            "version": kb.get("version", ""),
+            "updatedAt": kb.get("updatedAt", ""),
+        },
+    }
+
+    prompt = (
+        f"Contexto do lead:\n"
+        f"- Nome (se houver): {name or '—'}\n"
+        f"- Segmento/ramo (se houver): {segment or '—'}\n"
+        f"- Objetivo (se houver): {goal or '—'}\n"
+        f"- Intent_hint: {intent_hint or '—'}\n"
+        f"- Última mensagem do lead: {user_text}\n\n"
+        "Tarefa: responda como atendente de vendas do MEI Robô no WhatsApp.\n"
+        "Regras:\n"
+        "1) Seja humano, curto (2 a 6 linhas), direto e gentil.\n"
+        "2) NÃO diga que o lead caiu no número errado. NÃO expulse.\n"
+        "3) Se faltar nome ou ramo, peça só 1 coisa por vez e ofereça 2–3 opções quando estiver confuso.\n"
+        "4) Use o repertório apenas como base; NÃO copie textos literalmente.\n"
+        "5) Se perguntarem de preço/planos, explique de forma simples e em seguida faça 1 pergunta para avançar (ramo/objetivo).\n\n"
+        f"Repertório (use como base, não copie):\n{json.dumps(repertoire, ensure_ascii=False)}\n"
+    )
+
+    return (_openai_chat(prompt, max_tokens=220, temperature=0.45) or "").strip()
+
 
 
 
@@ -876,15 +884,30 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     if stage == "EXIT":
         return "Beleza 🙂 Se quiser retomar sobre o MEI Robô, é só mandar aqui."
-
-
-    # 0) Intenções diretas (preço/planos/diferença) — mas ainda respeita coleta de nome/segmento
-    if intent in ("WHAT_IS",):
-        # sempre puxa pra nome depois
-        st["stage"] = "ASK_NAME"
-        return WHAT_IS
+    # 0) Intenções diretas (preço/planos/o que é) — IA escreve o texto final.
+    # Regras:
+    # - Nada de "return" com textos prontos
+    # - Se a IA falhar, fallback humano mínimo (sem marketing longo)
+    if intent in ("WHAT_IS", "PLANS", "PRICE", "PLUS_DIFF"):
+        # mantém conversa fluida: puxa pra nome depois, mas responde já
+        st["stage"] = "ASK_NAME" if not name else st.get("stage", "VALUE")
+        hint_map = {
+            "WHAT_IS": "what_is",
+            "PLANS": "plans",
+            "PRICE": "pricing",
+            "PLUS_DIFF": "plans_diff",
+        }
+        txt = _ai_sales_answer(
+            name=name,
+            segment=segment,
+            goal=goal,
+            user_text=text_in,
+            intent_hint=hint_map.get(intent, intent),
+        )
+        return (txt or "").strip() or _fallback_min_reply(name)
 
     # 1) Captura nome se não temos (IA decide; não usar heurística aqui)
+ se não temos (IA decide; não usar heurística aqui)
     if not name:
         # Saudação pura = SALES -> pede nome, mas NÃO persiste ainda (persistência é fora daqui)
         st["stage"] = "ASK_NAME"
@@ -903,15 +926,29 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             st["stage"] = "PITCH"
         else:
             # se o lead perguntou preço/planos/diferença antes de dizer o ramo, responde curto e volta pro ramo
-            if intent == "PRICE":
+    if intent == "PRICE":
+        # Continuidade: responde com IA e mantém coleta de info sem resetar conversa
+        name = (st.get("name") or "").strip()
+        segment = (st.get("segment") or "").strip()
+
+        if not name and not segment:
+            st["stage"] = "ASK_NAME"
+        elif not segment:
+            st["stage"] = "ASK_SEGMENT"
+        else:
+            st["stage"] = "PITCH"
+
+        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="pricing")
+        return (txt or "").strip() or _fallback_min_reply(name)
+
+    if intent == "PLANS":
                 st["stage"] = "ASK_SEGMENT"
-                return PRICE_REPLY
-            if intent == "PLANS":
-                st["stage"] = "ASK_SEGMENT"
-                return PLANS_SHORT
+                txt = _ai_sales_answer(name=name, segment="", goal=goal, user_text=text_in, intent_hint="PLANS")
+                return (txt or '').strip() or _fallback_min_reply(name)
             if intent == "DIFF":
                 st["stage"] = "ASK_SEGMENT"
-                return PLUS_DIFF + "\n\n" + "Agora me diz teu ramo que eu te explico onde isso encaixa 🙂"
+                txt = _ai_sales_answer(name=name, segment="", goal=goal, user_text=text_in, intent_hint="DIFF")
+                return (txt or '').strip() or _fallback_min_reply(name)
 
             st["stage"] = "ASK_SEGMENT"
             st["nudges"] = nudges + 1
@@ -933,32 +970,30 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         if not goal:
             return f"Tranquilo, {name} 🙂 Se quiser, me fala só o teu caso em 1 frase que eu te digo se encaixa."
     if intent == "PRICE":
-        # Responde preço SEM resetar conversa
-        # Só pede o que estiver faltando (e de forma humana)
-        msg = PRICE_REPLY
-
+        # Continuidade: responde com IA e mantém coleta de info sem resetar conversa
         name = (st.get("name") or "").strip()
         segment = (st.get("segment") or "").strip()
 
         if not name and not segment:
-            msg += "\n\nPra eu te indicar o melhor no teu caso: qual teu nome e teu ramo?"
             st["stage"] = "ASK_NAME"
         elif not segment:
-            msg += "\n\nE teu ramo é qual?"
             st["stage"] = "ASK_SEGMENT"
         else:
-            msg += f"\n\nNo teu ramo ({segment}), quer que eu te diga qual costuma valer mais a pena?"
             st["stage"] = "PITCH"
 
-        return msg
+        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="pricing")
+        return (txt or "").strip() or _fallback_min_reply(name)
+
     if intent == "PLANS":
-        return PLANS_SHORT
+        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="PLANS")
+        return (txt or '').strip() or _fallback_min_reply(name)
     if intent == "DIFF":
-        return PLUS_DIFF + "\n\n" + CTA_SITE
+        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="DIFF")
+        return (txt or '').strip() or _fallback_min_reply(name)
     if intent == "ACTIVATE":
         # Só manda CTA direto quando o lead estiver quente
         if interest == "high":
-            return CTA_SITE
+            return f"Se fizer sentido, dá uma olhada em {SITE_URL} e me chama aqui que eu te guio."
         return f"Fechado, {name} 😄 Me diz teu objetivo principal no WhatsApp (agenda, pedidos, orçamento...) que eu te aponto o caminho certo."
     # IA só no pitch (com cache) — preço/CTA ficam fixos
     hint = intent or "OTHER"
@@ -971,19 +1006,35 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         if pitch_txt:
             _set_cached_pitch(segment, hint, text_in, pitch_txt)
 
-    add_value = f"Sendo bem sincero: por {PRICE_STARTER} por mês, costuma se pagar fácil."
+    # Teaser de preço/planos vem do KB (Firestore). Se não tiver, não inventa.
+    kb = _get_sales_kb()
+    teasers = kb.get("pricing_teasers", [])
+    teaser = ""
+    if isinstance(teasers, list) and teasers:
+        teaser = str(teasers[0]).strip()
+    if teaser:
+        teaser = teaser.strip()
 
-    # HIGH: pode aprofundar 1 linha + CTA
+    cta = f"Se fizer sentido, dá uma olhada em {SITE_URL} e me chama aqui que eu te guio."
+
+    # HIGH: pode aprofundar 1 linha + CTA opcional
     if interest == "high" or intent == "ACTIVATE":
-        extra = "Se tu quiser, eu te mostro um exemplo bem real em 2 mensagens e tu já sente o jeito."
-        return f"{pitch_txt}\n{extra}\n\n{add_value}\n\n{CTA_SITE}"
+        extra = "Se tu quiser, me diz teu ramo e eu te mostro um exemplo bem real em 2 mensagens."
+        parts = [p for p in [pitch_txt, extra, teaser, cta] if (p or '').strip()]
+        return "
 
-    # MID: valor + preço (curto), SEM CTA (não vira panfleto)
+".join(parts).strip() or _fallback_min_reply(name)
+
+    # MID: valor + teaser (sem virar panfleto)
     if interest == "mid":
-        return f"{pitch_txt}\n\n{add_value}"
+        parts = [p for p in [pitch_txt, teaser] if (p or '').strip()]
+        return "
 
-    # LOW: segurança
-    return pitch_txt
+".join(parts).strip() or _fallback_min_reply(name)
+
+    # LOW: só mantém curto e seguro
+    return (pitch_txt or '').strip() or _fallback_min_reply(name)
+
 
 def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
     """
@@ -1090,6 +1141,7 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
             pass
 
     return out
+
 
 
 

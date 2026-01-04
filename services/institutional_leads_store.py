@@ -131,10 +131,13 @@ def get_lead(raw_sender: str) -> Tuple[Optional[Dict[str, Any]], str]:
             exp = float(data.get("expiresAt") or 0.0)
             if exp and exp < now_ts():
                 continue
+            data = dict(data or {})
+            data.setdefault('resolvedWaKey', k)
+            data.setdefault('leadDocId', doc_id)
             return data, k
     return None, keys[0]
 
-def upsert_lead(wa_key: str, lead: Dict[str, Any], ttl_seconds: Optional[int] = None) -> None:
+def upsert_lead(wa_key: str, lead: Dict[str, Any], ttl_seconds: Optional[int] = None) -> Dict[str, Any]:
     ttl = int(ttl_seconds) if ttl_seconds is not None else LEAD_TTL_SECONDS
     exp = now_ts() + max(3600, ttl)  # mínimo 1h
     db = _db()
@@ -147,4 +150,9 @@ def upsert_lead(wa_key: str, lead: Dict[str, Any], ttl_seconds: Optional[int] = 
     })
     # firstSeenAt se não existir
     payload.setdefault("firstSeenAt", now_ts())
+    # metadados só no retorno (debug); NÃO persistimos isso no Firestore
+    payload.setdefault('resolvedWaKey', wa_key)
+    payload.setdefault('leadDocId', doc_id)
     db.collection(COLL_LEADS).document(doc_id).set(payload, merge=True)
+    return payload
+

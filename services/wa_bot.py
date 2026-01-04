@@ -119,6 +119,35 @@ def process_inbound(event: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": str(e), "stage": "fachada"}
 
 
+
+# -------------------------------------------------------------------
+# Helpers (VENDAS / lead): fallback neutro + logs específicos
+# -------------------------------------------------------------------
+
+def _sales_lead_neutral_fallback(name: str = "") -> str:
+    name = (name or "").strip()
+    if name:
+        return f"{name}, perfeito. Você quer falar de pedidos, agenda, orçamento ou só conhecer?"
+    return "Show 🙂 Me diz teu nome e o que você quer resolver: pedidos, agenda, orçamento ou conhecer?"
+
+def _log_sales_lead_fallback(ctx: Optional[Dict[str, Any]], *, reason: str, err: Optional[Exception] = None):
+    try:
+        ctx = ctx or {}
+        payload = {
+            "route": "sales_lead_fallback",
+            "reason": reason,
+            "from_e164": (ctx.get("from_e164") or "").strip(),
+            "waKey": (ctx.get("waKey") or ctx.get("wa_key") or "").strip(),
+            "event_key": (ctx.get("event_key") or ctx.get("eventKey") or "").strip(),
+            "wamid": (ctx.get("wamid") or ctx.get("message_id") or ctx.get("msg_id") or "").strip(),
+        }
+        if err is not None:
+            payload["err"] = (str(err) or err.__class__.__name__)[:220]
+        logging.info("[WA_BOT][VENDAS] fallback: %s", payload)
+    except Exception:
+        # nunca quebrar por log
+        pass
+
 # ==========================================================
 # ✅ PATCH ÚNICO: substituir completamente reply_to_text(...)
 # ==========================================================
@@ -135,9 +164,20 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
     if not uid:
         try:
             from services.bot_handlers import sales_lead
-            reply = sales_lead.generate_reply(text=text, ctx=ctx)  # deve retornar string
+            reply_obj = sales_lead.generate_reply(text=text, ctx=ctx)
+            # harmoniza retorno: string OU dict {replyText,...}
+            lead_name = ""
+            reply = ""
+            if isinstance(reply_obj, dict):
+                reply = str((reply_obj or {}).get("replyText") or "").strip()
+                # tenta extrair nome se o handler tiver colocado
+                lead_name = str((reply_obj or {}).get("name") or (reply_obj or {}).get("leadName") or "").strip()
+            else:
+                reply = str(reply_obj or "").strip()
+
             if not reply:
-                reply = "Oi! Sou o MEI Robô. Quer conhecer os planos?"
+                _log_sales_lead_fallback(ctx, reason="empty_reply")
+                reply = _sales_lead_neutral_fallback(lead_name)
 
             out = {"ok": True, "route": "sales_lead", "replyText": reply}
 
@@ -162,12 +202,13 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
             return out
 
-        except Exception:
-            # fallback ultra conservador (nunca fica mudo)
+        except Exception as e:
+            # fallback ultra conservador (nunca fica mudo) — neutro, sem marketing
+            _log_sales_lead_fallback(ctx, reason="exception", err=e)
             return {
                 "ok": True,
                 "route": "sales_lead",
-                "replyText": "Oi! Sou o MEI Robô. Quer conhecer os planos?",
+                "replyText": _sales_lead_neutral_fallback(),
             }
     # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
     try:
@@ -304,18 +345,42 @@ def process_change(
     # Importante: o webhook continua burro — aqui é o cérebro (wa_bot).
     # Segurança/produto: resposta pública e curta; sem "número errado".
     if not (uid_default or ""):
+        from_id, _body = _extract_from_and_text_from_change(change)
+        # tenta capturar IDs do evento para observabilidade
+        try:
+            value = (change or {}).get("value") or {}
+            msgs = value.get("messages") or []
+            msg0 = msgs[0] if msgs else {}
+            ctx_local = {
+                "from_e164": from_id or "",
+                "wamid": (msg0.get("id") or "").strip(),
+                "event_key": (change or {}).get("event_key") or (change or {}).get("eventKey") or "",
+            }
+        except Exception:
+            ctx_local = {"from_e164": from_id or ""}
+
         try:
             from services.bot_handlers import sales_lead  # type: ignore
 
             out = sales_lead.handle_sales_lead(change)  # retorna dict {replyText, ...}
-            reply_text = (out or {}).get("replyText") or ""
-            if reply_text and effective_send is not None:
-                from_id, _body = _extract_from_and_text_from_change(change)
-                if from_id:
-                    effective_send(from_id, str(reply_text))
-                    return True
-        except Exception:
-            # fallback ultra conservador: se handler não existir, não quebra o fluxo
+            lead_name = str((out or {}).get("name") or (out or {}).get("leadName") or "").strip()
+            reply_text = str((out or {}).get("replyText") or "").strip()
+
+            if not reply_text:
+                _log_sales_lead_fallback(ctx_local, reason="empty_reply")
+                reply_text = _sales_lead_neutral_fallback(lead_name)
+
+            if reply_text and effective_send is not None and from_id:
+                effective_send(from_id, reply_text)
+                return True
+
+        except Exception as e:
+            # fallback ultra conservador: neutro e humano (sem marketing), com log
+            _log_sales_lead_fallback(ctx_local, reason="exception", err=e)
+            if effective_send is not None and from_id:
+                effective_send(from_id, _sales_lead_neutral_fallback())
+                return True
+            # sem sender/from_id, segue fluxo (não quebra)
             pass
 
 
@@ -365,4 +430,5 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
+
 
