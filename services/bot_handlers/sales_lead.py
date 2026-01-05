@@ -531,104 +531,85 @@ def _openai_chat(prompt: str, max_tokens: int = 140, temperature: float = 0.45) 
 
 def _ai_pitch(name: str, segment: str, user_text: str) -> str:
     """
-    IA só no pitch (2 a 4 linhas). Proibido bastidores.
-    NÃO cita preço nem site (isso entra fixo fora).
+    Gera um pitch curto e humano (WhatsApp) usando o "cérebro único".
+    Mantém best-effort e não quebra o fluxo.
     """
     name = (name or "").strip()
-    segment = (segment or "").strip()
     user_text = (user_text or "").strip()
-    kb = _get_sales_kb()
 
-    # Repertório por segmento (Firestore-first). Mantém tokens baixos.
-    seg_bullets = []
+    seg_key = (segment or "").strip().lower()
+    if not seg_key:
+        seg_key = "geral"
+
+    hint = "pitch_v1"
+    cached = _get_cached_pitch(seg_key, hint, user_text)
+    if cached:
+        return cached
+
+    kb = _get_sales_kb() or {}
+    segments = kb.get("segments") or {}
+    seg_info = segments.get(seg_key) or {}
+    seg_title = (seg_info.get("title") or segment or seg_key).strip()
+
+    bullets = seg_info.get("bullets") or []
+    if not isinstance(bullets, list):
+        bullets = []
+
+    scenarios = kb.get("scenarios") or []
+    if not isinstance(scenarios, list):
+        scenarios = []
+
+    system = (
+        "Você é o MEI Robô institucional de VENDAS.\n"
+        "Objetivo: converter o lead com conversa curta, humana e objetiva.\n"
+        "Regras:\n"
+        "- Nada de bastidores técnicos.\n"
+        "- Sem textão.\n"
+        "- Faça 1 pergunta por vez.\n"
+        "- Se faltar dado, pergunte.\n"
+        "- CTA leve: preço/horários/endereço ou agendar.\n"
+    )
+
+    parts = []
+    parts.append(f"Segmento: {seg_title}")
+    if name:
+        parts.append(f"Lead: {name}")
+    if user_text:
+        parts.append(f"Mensagem do lead: {user_text}")
+
+    if bullets:
+        parts.append("Pontos fortes do segmento (use só se ajudar agora):")
+        parts.extend([f"- {b}" for b in bullets[:8]])
+
+    if scenarios:
+        # só um cheirinho, pra não virar palestra
+        parts.append("Exemplos rápidos de uso por segmento (referência):")
+        for s in scenarios[:5]:
+            try:
+                t = (s.get("title") or "").strip()
+                d = (s.get("desc") or "").strip()
+                if t or d:
+                    parts.append(f"- {t}: {d}".strip(": "))
+            except Exception:
+                pass
+
+    prompt = "\n".join(parts).strip()
+
+    out = ""
     try:
-        seg_map = kb.get("segments", {}) or {}
-        if isinstance(seg_map, dict):
-            seg_bullets = seg_map.get(seg_key) or seg_map.get("geral") or []
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ]
+        out = (_openai_chat(messages) or "").strip()
     except Exception:
-        seg_bullets = []
-    # limita pra não inflar contexto
-    if isinstance(seg_bullets, list):
-        seg_bullets = seg_bullets[:6]
-    else:
-        seg_bullets = []
+        out = ""
 
-    value_props = kb.get("value_props", [])
-    if isinstance(value_props, list):
-        value_props = value_props[:6]
-    else:
-        value_props = []
+    if not out:
+        out = "Posso te passar valores, endereço/horários ou já marcar um horário. O que você prefere?"
 
-    tone_rules = kb.get("tone_rules", [])
-    if isinstance(tone_rules, list):
-        tone_rules = tone_rules[:6]
-    else:
-        tone_rules = []
-
-    prompt = (
-        f"Lead: {name}
-"
-        f"Segmento do lead (texto): {segment}
-"
-        f"Segmento normalizado: {seg_key}
-"
-        f"Última mensagem do lead: {user_text}
-
-"
-        "Repertório (use só o que fizer sentido; não listar tudo):
-"
-        f"- Value props: {json.dumps(value_props, ensure_ascii=False)}
-"
-        f"- Segment bullets: {json.dumps(seg_bullets, ensure_ascii=False)}
-
-"
-        "Escreva um pitch curtinho (2 a 4 linhas) no estilo WhatsApp.
-"
-        "Fale simples, humano, com humor leve.
-"
-        "Mostre a diferença na prática (um exemplo só).
-"
-        "PROIBIDO mencionar tecnologia, IA, sistema, integração, processos ou bastidores.
-"
-        "NÃO invente números, promessas ou políticas.
-"
-        "NÃO cite preço e NÃO cite site.
-"
-        f"Regras de tom: {json.dumps(tone_rules, ensure_ascii=False)}
-"
-    )
-
-        f"Lead: {name}\n"
-        f"Segmento do lead (texto): {segment}\n"
-        f"Segmento normalizado: {seg_key}\n"
-        f"Última mensagem do lead: {user_text}\n\n"
-        "Use APENAS 1 dos cenários operacionais abaixo como exemplo prático (não liste todos):\n"
-        f"{json.dumps(scenarios, ensure_ascii=False)}\n\n"
-        "Escreva um pitch curtinho (2 a 4 linhas) no estilo WhatsApp.\n"
-        "Fale simples, humano, com humor leve.\n"
-        "Mostre a diferença na prática (exemplo real do cenário escolhido).\n"
-        "Feche reforçando: mais tempo, rotina mais profissional e conta bancária mais positiva.\n"
-        "PROIBIDO mencionar tecnologia, IA, sistema, integração, processos ou bastidores.\n"
-        "NÃO cite preço e NÃO cite site.\n"
-    )
-
-
-    txt = _openai_chat(prompt, max_tokens=140, temperature=0.45).strip()
-    if not txt:
-        # fallback ultra conservador (humano, sem bastidor)
-        return (
-            f"Fechado, {name} 😄\n"
-            "Eu tiro do teu colo as mensagens repetidas e deixo o atendimento mais redondo.\n"
-            "Isso costuma dar mais tempo livre e mais dinheiro no fim do mês."
-        )
-
-    # limita a 4 linhas pra ficar WhatsApp e barato
-    lines = [l.strip() for l in txt.splitlines() if l.strip()]
-    if len(lines) > 4:
-        lines = lines[:4]
-    return "\n".join(lines).strip()
-
-
+    _set_cached_pitch(seg_key, hint, user_text, out)
+    return out
 
 
 def _ai_sales_answer(name: str, segment: str, goal: str, user_text: str, intent_hint: str = "") -> str:
@@ -884,30 +865,41 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     if stage == "EXIT":
         return "Beleza 🙂 Se quiser retomar sobre o MEI Robô, é só mandar aqui."
-    # 0) Intenções diretas (preço/planos/o que é) — IA escreve o texto final.
+    # 0) Intenções diretas (preço/planos/diferença/o que é) — IA escreve o texto final.
     # Regras:
     # - Nada de "return" com textos prontos
     # - Se a IA falhar, fallback humano mínimo (sem marketing longo)
-    if intent in ("WHAT_IS", "PLANS", "PRICE", "PLUS_DIFF"):
-        # mantém conversa fluida: puxa pra nome depois, mas responde já
+
+    # intents diretos primeiro
+    if intent == "PRICE":
+        # Responde já, e depois segue coletando info (sem resetar)
+        if not name and not segment:
+            st["stage"] = "ASK_NAME"
+        elif not segment:
+            st["stage"] = "ASK_SEGMENT"
+        else:
+            st["stage"] = "PITCH"
+
+        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="pricing")
+        return (txt or "").strip() or _fallback_min_reply(name)
+
+    if intent == "PLANS":
+        # Explica e puxa o ramo (se faltar)
+        st["stage"] = "ASK_NAME" if not name else ("ASK_SEGMENT" if not segment else st.get("stage", "PITCH"))
+        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="PLANS")
+        return (txt or "").strip() or _fallback_min_reply(name)
+
+    if intent in ("DIFF", "PLUS_DIFF"):
+        st["stage"] = "ASK_NAME" if not name else ("ASK_SEGMENT" if not segment else st.get("stage", "PITCH"))
+        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="DIFF")
+        return (txt or "").strip() or _fallback_min_reply(name)
+
+    if intent == "WHAT_IS":
         st["stage"] = "ASK_NAME" if not name else st.get("stage", "VALUE")
-        hint_map = {
-            "WHAT_IS": "what_is",
-            "PLANS": "plans",
-            "PRICE": "pricing",
-            "PLUS_DIFF": "plans_diff",
-        }
-        txt = _ai_sales_answer(
-            name=name,
-            segment=segment,
-            goal=goal,
-            user_text=text_in,
-            intent_hint=hint_map.get(intent, intent),
-        )
+        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="what_is")
         return (txt or "").strip() or _fallback_min_reply(name)
 
     # 1) Captura nome se não temos (IA decide; não usar heurística aqui)
- se não temos (IA decide; não usar heurística aqui)
     if not name:
         # Saudação pura = SALES -> pede nome, mas NÃO persiste ainda (persistência é fora daqui)
         st["stage"] = "ASK_NAME"
@@ -925,31 +917,6 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             segment = seg
             st["stage"] = "PITCH"
         else:
-            # se o lead perguntou preço/planos/diferença antes de dizer o ramo, responde curto e volta pro ramo
-    if intent == "PRICE":
-        # Continuidade: responde com IA e mantém coleta de info sem resetar conversa
-        name = (st.get("name") or "").strip()
-        segment = (st.get("segment") or "").strip()
-
-        if not name and not segment:
-            st["stage"] = "ASK_NAME"
-        elif not segment:
-            st["stage"] = "ASK_SEGMENT"
-        else:
-            st["stage"] = "PITCH"
-
-        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="pricing")
-        return (txt or "").strip() or _fallback_min_reply(name)
-
-    if intent == "PLANS":
-                st["stage"] = "ASK_SEGMENT"
-                txt = _ai_sales_answer(name=name, segment="", goal=goal, user_text=text_in, intent_hint="PLANS")
-                return (txt or '').strip() or _fallback_min_reply(name)
-            if intent == "DIFF":
-                st["stage"] = "ASK_SEGMENT"
-                txt = _ai_sales_answer(name=name, segment="", goal=goal, user_text=text_in, intent_hint="DIFF")
-                return (txt or '').strip() or _fallback_min_reply(name)
-
             st["stage"] = "ASK_SEGMENT"
             st["nudges"] = nudges + 1
             if st["nudges"] >= 4:
@@ -957,7 +924,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                 return f"Fechado, {name} 🙂 Se tu quiser retomar depois, me diz só teu ramo e eu te ajudo."
             return f"Show, {name} 😄\n\nTeu negócio é do quê?"
 
-    # 3) Temos nome + segmento: entregar valor + preço como diferencial + CTA site
+# 3) Temos nome + segmento: entregar valor + preço como diferencial + CTA site
 
     # Se o lead está frio, não despeja pitch. Responde curto e deixa a porta aberta.
     if interest == "low" and intent not in ("PRICE", "PLANS", "DIFF", "ACTIVATE"):
@@ -969,27 +936,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         # se já perguntou e ainda não veio goal, não insiste
         if not goal:
             return f"Tranquilo, {name} 🙂 Se quiser, me fala só o teu caso em 1 frase que eu te digo se encaixa."
-    if intent == "PRICE":
-        # Continuidade: responde com IA e mantém coleta de info sem resetar conversa
-        name = (st.get("name") or "").strip()
-        segment = (st.get("segment") or "").strip()
-
-        if not name and not segment:
-            st["stage"] = "ASK_NAME"
-        elif not segment:
-            st["stage"] = "ASK_SEGMENT"
-        else:
-            st["stage"] = "PITCH"
-
-        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="pricing")
-        return (txt or "").strip() or _fallback_min_reply(name)
-
-    if intent == "PLANS":
-        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="PLANS")
-        return (txt or '').strip() or _fallback_min_reply(name)
-    if intent == "DIFF":
-        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="DIFF")
-        return (txt or '').strip() or _fallback_min_reply(name)
+    
     if intent == "ACTIVATE":
         # Só manda CTA direto quando o lead estiver quente
         if interest == "high":
@@ -1021,16 +968,12 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     if interest == "high" or intent == "ACTIVATE":
         extra = "Se tu quiser, me diz teu ramo e eu te mostro um exemplo bem real em 2 mensagens."
         parts = [p for p in [pitch_txt, extra, teaser, cta] if (p or '').strip()]
-        return "
-
-".join(parts).strip() or _fallback_min_reply(name)
+        return "\n\n".join(parts).strip() or _fallback_min_reply(name)
 
     # MID: valor + teaser (sem virar panfleto)
     if interest == "mid":
         parts = [p for p in [pitch_txt, teaser] if (p or '').strip()]
-        return "
-
-".join(parts).strip() or _fallback_min_reply(name)
+        return "\n\n".join(parts).strip() or _fallback_min_reply(name)
 
     # LOW: só mantém curto e seguro
     return (pitch_txt or '').strip() or _fallback_min_reply(name)
@@ -1141,6 +1084,8 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
             pass
 
     return out
+
+
 
 
 
