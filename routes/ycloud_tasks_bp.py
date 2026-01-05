@@ -189,7 +189,7 @@ def ycloud_inbound_worker():
                         "route_hint": route_hint,
                         "event_key": event_key,
                     },
-                )
+            )
 
             reply_text = ""
         except Exception as e:
@@ -198,58 +198,58 @@ def ycloud_inbound_worker():
             audio_url = ""
             audio_debug = {"err": str(e)}
 
-if isinstance(wa_out, dict):
-    reply_text = (
+        if isinstance(wa_out, dict):
+            reply_text = (
         wa_out.get("replyText")
         or wa_out.get("text")
         or wa_out.get("reply")
         or wa_out.get("message")
         or ""
-    )
-    audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
-    audio_debug = wa_out.get("audioDebug") or {}
-elif wa_out:
-    reply_text = str(wa_out)
+            )
+            audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
+            audio_debug = wa_out.get("audioDebug") or {}
+        elif wa_out:
+            reply_text = str(wa_out)
 
-# Não sobrescrever resposta do wa_bot com "texto pronto".
-# Fallback mínimo só quando for lead/VENDAS (uid ausente).
-reply_text = (reply_text or "").strip()[:1200]
-if not reply_text:
-    if not uid:
-        logger.warning(
-            '[tasks] route=tasks_empty_reply reason=empty_reply from=%s to=%s wamid=%s eventKey=%s',
-            from_e164, to_e164, wamid, event_key
-        )
-        reply_text = "Entendi 🙂 Me diz rapidinho o que você quer agora: pedidos, agenda, orçamento ou conhecer?"
-    else:
-        # Preserva o comportamento atual para usuário autenticado
-        reply_text = "Entendi 🙂 Me diz teu nome rapidinho e teu ramo?"
+        # Não sobrescrever resposta do wa_bot com "texto pronto".
+        # Fallback mínimo só quando for lead/VENDAS (uid ausente).
+        reply_text = (reply_text or "").strip()[:1200]
+        if not reply_text:
+            if not uid:
+                logger.warning(
+                    '[tasks] route=tasks_empty_reply reason=empty_reply from=%s to=%s wamid=%s eventKey=%s',
+                    from_e164, to_e164, wamid, event_key
+                )
+                reply_text = "Entendi 🙂 Me diz rapidinho o que você quer agora: pedidos, agenda, orçamento ou conhecer?"
+            else:
+                # Preserva o comportamento atual para usuário autenticado
+                reply_text = "Entendi 🙂 Me diz teu nome rapidinho e teu ramo?"
 
-# envia resposta: se lead mandou áudio, tentamos áudio (se veio audioUrl), senão texto
-sent_ok = False
-allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
+        # envia resposta: se lead mandou áudio, tentamos áudio (se veio audioUrl), senão texto
+        sent_ok = False
+        allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
 
-try:
-    from providers.ycloud import send_text, send_audio  # type: ignore
-except Exception:
-    send_text = None  # type: ignore
-    send_audio = None  # type: ignore
+        try:
+            from providers.ycloud import send_text, send_audio  # type: ignore
+        except Exception:
+            send_text = None  # type: ignore
+            send_audio = None  # type: ignore
 
-if allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
-    try:
-        sent_ok, _ = send_audio(from_e164, audio_url)
-    except Exception:
-        logger.exception("[tasks] lead: falha send_audio")
+        if allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
+            try:
+                sent_ok, _ = send_audio(from_e164, audio_url)
+            except Exception:
+                logger.exception("[tasks] lead: falha send_audio")
 
-if (not sent_ok) and send_text:
-    try:
-        sent_ok, _ = send_text(from_e164, reply_text)
-    except Exception:
-        logger.exception("[tasks] lead: falha send_text")
+        if (not sent_ok) and send_text:
+            try:
+                sent_ok, _ = send_text(from_e164, reply_text)
+            except Exception:
+                logger.exception("[tasks] lead: falha send_text")
 
-# log leve (auditoria). Precisa ocorrer antes do return.
-try:
-    _db().collection("platform_wa_outbox_logs").add({
+        # log leve (auditoria). Precisa ocorrer antes do return.
+        try:
+            _db().collection("platform_wa_outbox_logs").add({
         "createdAt": time.time(),
         "from": from_e164,
         "to": to_e164,
@@ -261,21 +261,14 @@ try:
         "audioDebug": audio_debug,
         "eventKey": event_key,
         "sentOk": bool(sent_ok),
-    })
-except Exception:
-    pass
-
-return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
-
-
+            })
         except Exception:
-            logger.exception("[tasks] wa_bot/send: falha")
-            return jsonify({"ok": True, "sent": False}), 200
+            pass
+
+        return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
 
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
-
-
 
 
