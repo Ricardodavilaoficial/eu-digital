@@ -163,6 +163,10 @@ def ycloud_inbound_worker():
                 return jsonify({"ok": True, "voice": "failed"}), 200
 
         # --- 2) LEAD / TEXTO: chama WA_BOT (vendas se uid vazio) ---
+        reply_text = ""
+        audio_url = ""
+        audio_debug = {}
+
         try:
             from services import wa_bot as wa_bot_entry  # lazy import
             route_hint = "sales" if not uid else "customer"
@@ -188,8 +192,11 @@ def ycloud_inbound_worker():
                 )
 
             reply_text = ""
-audio_url = ""
-audio_debug = {}
+        except Exception as e:
+            # Best-effort: não derruba o worker se o wa_bot falhar/import quebrar
+            reply_text = ""
+            audio_url = ""
+            audio_debug = {"err": str(e)}
 
 if isinstance(wa_out, dict):
     reply_text = (
