@@ -121,7 +121,7 @@ def ycloud_inbound_worker():
                     logger.warning("[tasks] voice: sem media.url uid=%s wamid=%s", uid, wamid)
                     return jsonify({"ok": True, "voice": "no_url"}), 200
 
-                b, info = download_media_bytes(url)
+                b, info = download_media_bytes(media, url)
                 storage_path = upload_voice_bytes(uid=uid, audio_bytes=b, ext_hint=(info.get("ext") or "ogg"))
 
                 # status em doc do profissional (compat com o que já existe no webhook)
@@ -198,7 +198,7 @@ def ycloud_inbound_worker():
 
                         try:
                             from services.voice_wa_download import download_media_bytes  # type: ignore
-                            audio_bytes, info = download_media_bytes(url)
+                            audio_bytes, info = download_media_bytes(media, url)
                             # info pode trazer ext, mas STT precisa mais do Content-Type; usamos fallback por ext
                             ext = (info.get("ext") or "").lower()
                             if ext in ("ogg", "opus"):
