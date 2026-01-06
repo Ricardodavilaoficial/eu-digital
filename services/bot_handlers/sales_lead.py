@@ -942,37 +942,44 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         if interest == "high":
             return f"Se fizer sentido, dá uma olhada em {SITE_URL} e me chama aqui que eu te guio."
         return f"Fechado, {name} 😄 Me diz teu objetivo principal no WhatsApp (agenda, pedidos, orçamento...) que eu te aponto o caminho certo."
+
+    # 🔒 PRIORIDADE ABSOLUTA: quando IA sabe a intenção, não volta para pitch genérico
+    if intent in ("PRICE", "PLANS", "DIFF", "WHAT_IS"):
+        txt = _ai_sales_answer(
+            name=name,
+            segment=segment,
+            goal=goal,
+            user_text=text_in,
+            intent_hint=intent
+        )
+        return (txt or "").strip() or _fallback_min_reply(name)
+
     # IA só no pitch (com cache) — preço/CTA ficam fixos
     hint = intent or "OTHER"
     cached = _get_cached_pitch(segment, hint, text_in)
     if cached:
         pitch_txt = cached
     else:
-        pitch_txt = _ai_pitch(name=name, segment=f"{segment} | objetivo: {goal}" if goal else segment, user_text=text_in)
+        pitch_txt = _ai_pitch(
+            name=name,
+            segment=segment,
+            user_text=text_in
+        )
         pitch_txt = (pitch_txt or "").strip()
         if pitch_txt:
             _set_cached_pitch(segment, hint, text_in, pitch_txt)
-
-    # Teaser de preço/planos vem do KB (Firestore). Se não tiver, não inventa.
-    kb = _get_sales_kb()
-    teasers = kb.get("pricing_teasers", [])
-    teaser = ""
-    if isinstance(teasers, list) and teasers:
-        teaser = str(teasers[0]).strip()
-    if teaser:
-        teaser = teaser.strip()
 
     cta = f"Se fizer sentido, dá uma olhada em {SITE_URL} e me chama aqui que eu te guio."
 
     # HIGH: pode aprofundar 1 linha + CTA opcional
     if interest == "high" or intent == "ACTIVATE":
         extra = "Se tu quiser, me diz teu ramo e eu te mostro um exemplo bem real em 2 mensagens."
-        parts = [p for p in [pitch_txt, extra, teaser, cta] if (p or '').strip()]
+        parts = [p for p in [pitch_txt, extra, cta] if (p or '').strip()]
         return "\n\n".join(parts).strip() or _fallback_min_reply(name)
 
-    # MID: valor + teaser (sem virar panfleto)
+    # MID: valor direto (sem virar panfleto)
     if interest == "mid":
-        parts = [p for p in [pitch_txt, teaser] if (p or '').strip()]
+        parts = [p for p in [pitch_txt] if (p or '').strip()]
         return "\n\n".join(parts).strip() or _fallback_min_reply(name)
 
     # LOW: só mantém curto e seguro
@@ -1084,6 +1091,7 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
             pass
 
     return out
+
 
 
 
