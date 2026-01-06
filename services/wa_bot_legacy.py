@@ -2495,8 +2495,14 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
        
         # Fallback -> ajuda humanizada
         logging.info("[NLU] fallback -> help")
-        help_msg = H("help", {"raw": say(uid_default, "help")}, mode=("audio" if channel_mode=="audio" else "text"))
-        send_reply(uid_default, to_raw, help_msg, msg_type, send_text_fn, send_audio_fn)
+        
+        if uid_default:
+            reply = "Oi 🙂 Em que posso te ajudar?"
+        else:
+            reply = fallback_text(app_tag, context)
+            
+        send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)      
+        return True       
 
     # statuses
     for st in value.get("statuses", []):
