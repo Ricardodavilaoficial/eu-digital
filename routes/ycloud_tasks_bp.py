@@ -166,6 +166,7 @@ def ycloud_inbound_worker():
         reply_text = ""
         audio_url = ""
         audio_debug = {}
+        wa_out = None
 
         try:
             from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
@@ -178,7 +179,6 @@ def ycloud_inbound_worker():
                 # Áudio de lead: mantém o cérebro único sem exigir STT agora
                 text_in = "Lead enviou um áudio."
 
-            wa_out = None
             if hasattr(wa_bot_entry, "reply_to_text"):
                 wa_out = wa_bot_entry.reply_to_text(
                     uid=uid,
@@ -192,9 +192,8 @@ def ycloud_inbound_worker():
                         "route_hint": route_hint,
                         "event_key": event_key,
                     },
-            )
+                )
 
-            reply_text = ""
         except Exception as e:
             # Best-effort: não derruba o worker se o wa_bot falhar/import quebrar
             logger.exception("[tasks] wa_bot_failed route_hint=%s from=%s wamid=%s", ("sales" if not uid else "customer"), from_e164, wamid)
@@ -204,12 +203,12 @@ def ycloud_inbound_worker():
 
         if isinstance(wa_out, dict):
             reply_text = (
-        wa_out.get("replyText")
-        or wa_out.get("text")
-        or wa_out.get("reply")
-        or wa_out.get("message")
-        or ""
-            )
+                wa_out.get("replyText")
+                or wa_out.get("text")
+                or wa_out.get("reply")
+                or wa_out.get("message")
+                or ""
+                )
             audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
             audio_debug = wa_out.get("audioDebug") or {}
         elif wa_out:
@@ -274,6 +273,7 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
 
 

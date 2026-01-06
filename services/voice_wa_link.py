@@ -19,73 +19,13 @@ from typing import Any, Dict, Optional
 
 from google.cloud import firestore  # type: ignore
 
+from services.phone_utils import normalize_e164_br, phone_variants_br
+
 def _db():
     return firestore.Client()
 
 def _now():
     return datetime.now(timezone.utc)
-
-def normalize_e164_br(e164: str) -> str:
-    """Normaliza para algo tipo E164 (+<digits>), com heurística BR.
-
-    - Aceita: +55..., 55..., 00..., (51) 9xxxx-xxxx, etc.
-    - Para BR com DDI 55:
-        * Se tiver DDD + 9 + 8 dígitos (celular 11 dígitos nacionais), remove o '9' móvel e
-          canonicaliza para +55DDXXXXXXXX.
-        * Se tiver DDD + 8 dígitos (fixo), mantém.
-    """
-    s = re.sub(r"[^\d+]", "", (e164 or "").strip())
-    if not s:
-        return ""
-
-    # 00xx... -> +xx...
-    if s.startswith("00"):
-        s = "+" + s[2:]
-
-    # se veio sem '+', tenta inferir BR
-    if not s.startswith("+"):
-        digits = re.sub(r"\D+", "", s)
-        if digits.startswith("55"):
-            s = "+" + digits
-        elif len(digits) in (10, 11):  # DDD + (8|9) dígitos
-            s = "+55" + digits
-        else:
-            s = "+" + digits
-
-    # garante só dígitos após '+'
-    s = "+" + re.sub(r"\D+", "", s)
-
-    # Heurística BR: canonicalizar removendo o '9' móvel (DDD + 9 + 8)
-    digits = s[1:]
-    if digits.startswith("55"):
-        national = digits[2:]  # tudo após 55
-        if len(national) == 11:
-            ddd = national[:2]
-            num = national[2:]
-            if num.startswith("9") and len(num) == 9:
-                s = "+55" + ddd + num[1:]
-    return s
-
-def _br_sender_variants(e164: str) -> list[str]:
-    """Gera variantes BR (com/sem 9) para compatibilidade no vínculo."""
-    base = normalize_e164_br(e164)
-    if not base:
-        return []
-    out = {base}
-
-    digits = base[1:]
-    if digits.startswith("55"):
-        national = digits[2:]
-        if len(national) == 10:
-            ddd = national[:2]
-            num = national[2:]
-            out.add("+55" + ddd + "9" + num)
-        elif len(national) == 11:
-            ddd = national[:2]
-            num = national[2:]
-            if num.startswith("9") and len(num) == 9:
-                out.add("+55" + ddd + num[1:])
-    return [x for x in out if x]
 
 
 def generate_link_code(length: int = 6) -> str:
@@ -131,7 +71,7 @@ def consume_link_code(code: str) -> Optional[Dict[str, Any]]:
     return {"uid": data.get("uid"), "ttlSeconds": int(data.get("ttlSeconds") or 3600)}
 
 def upsert_sender_link(from_e164: str, uid: str, ttl_seconds: int = 3600, method: str = "code") -> None:
-    variants = _br_sender_variants(from_e164)
+    variants = phone_variants_br(from_e164)
     if not variants:
         raise ValueError("empty_sender")
     canon = variants[0]
@@ -154,7 +94,7 @@ def delete_sender_link(from_e164: str) -> None:
     _db().collection("voice_links").document(from_e164).delete()
 
 def get_uid_for_sender(from_e164: str) -> Optional[str]:
-    variants = _br_sender_variants(from_e164)
+    variants = phone_variants_br(from_e164)
     if not variants:
         return None
     col = _db().collection("voice_links")
@@ -190,6 +130,7 @@ def sender_allowed(from_e164: str) -> bool:
         if p:
             allowed.add(p)
     return normalize_e164_br(from_e164) in allowed
+
 
 
 
