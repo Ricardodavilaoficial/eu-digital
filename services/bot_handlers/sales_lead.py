@@ -99,6 +99,20 @@ def _norm(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
+def _hash_reply(text: str) -> str:
+    t = _norm(text or "")
+    if not t:
+        return ""
+    return hashlib.sha1(t.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+def _excerpt(text: str, max_len: int = 240) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:max_len]
+
+
 def _looks_like_greeting(t: str) -> bool:
     t = _norm(t)
     return t in ("oi", "olá", "ola", "e aí", "eai", "bom dia", "boa tarde", "boa noite", "oii", "oiii")
@@ -637,7 +651,7 @@ def _ai_pitch(name: str, segment: str, user_text: str) -> str:
     return out
 
 
-def _ai_sales_answer(name: str, segment: str, goal: str, user_text: str, intent_hint: str = "") -> str:
+def _ai_sales_answer(name: str, segment: str, goal: str, user_text: str, intent_hint: str = "", state: Optional[Dict[str, Any]] = None) -> str:
     """
     Resposta final SEMPRE via IA, usando textos fixos apenas como repertório.
     - Curto, humano, WhatsApp.
@@ -649,6 +663,23 @@ def _ai_sales_answer(name: str, segment: str, goal: str, user_text: str, intent_
     goal = (goal or "").strip()
     user_text = (user_text or "").strip()
     intent_hint = (intent_hint or "").strip().upper()
+
+    state = state or {}
+    last_bot = (state.get("last_bot_reply_excerpt") or "").strip()
+    stage = (state.get("stage") or "").strip()
+    turns = int(state.get("turns") or 0)
+    has_name = bool((name or "").strip())
+    has_segment = bool((segment or "").strip())
+    has_goal = bool((goal or "").strip())
+
+    continuity = (
+        f"- STAGE: {stage or '—'}\n"
+        f"- TURNS: {turns}\n"
+        f"- Já coletado: nome={has_name}, segmento={has_segment}, objetivo={has_goal}\n"
+    )
+    if last_bot:
+        continuity += f"- Última resposta do bot (não repita): {last_bot}\n"
+
 
     # Repertório compacto (não copiar literal)
     kb = _get_sales_kb()
@@ -676,13 +707,15 @@ def _ai_sales_answer(name: str, segment: str, goal: str, user_text: str, intent_
         f"- Objetivo (se houver): {goal or '—'}\n"
         f"- Intent_hint: {intent_hint or '—'}\n"
         f"- Última mensagem do lead: {user_text}\n\n"
+        f"Continuidade:\n{continuity}\n"
         "Tarefa: responda como atendente de vendas do MEI Robô no WhatsApp.\n"
         "Regras:\n"
         "1) Seja humano, curto (2 a 6 linhas), direto e gentil.\n"
         "2) NÃO diga que o lead caiu no número errado. NÃO expulse.\n"
-        "3) Se faltar nome ou ramo, peça só 1 coisa por vez e ofereça 2–3 opções quando estiver confuso.\n"
-        "4) Use o repertório apenas como base; NÃO copie textos literalmente.\n"
-        "5) Se perguntarem de preço/planos, explique de forma simples e em seguida faça 1 pergunta para avançar (ramo/objetivo).\n\n"
+        "3) Se faltar nome ou ramo, peça só 1 coisa por vez.\n"
+        "4) Faça APENAS 1 pergunta por resposta.\n"
+        "5) Não reinicie a conversa se já houver contexto.\n"
+        "6) Se intent_hint='ANTI_LOOP', avance com uma pergunta diferente e mais específica.\n\n"
         f"Repertório (use como base, não copie):\n{json.dumps(repertoire, ensure_ascii=False)}\n"
     )
 
@@ -918,24 +951,108 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         else:
             st["stage"] = "PITCH"
 
-        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="pricing")
-        return (txt or "").strip() or _fallback_min_reply(name)
+        txt = (_ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="pricing", state=st) or "").strip()
+        if not txt:
+            txt = _fallback_min_reply(name)
+
+        # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
+        prev_h = (st.get("last_bot_reply_hash") or "").strip()
+        cur_h = _hash_reply(txt)
+        if prev_h and cur_h and prev_h == cur_h:
+            alt = (_ai_sales_answer(
+                name=name,
+                segment=segment,
+                goal=goal,
+                user_text=text_in,
+                intent_hint="ANTI_LOOP",
+                state=st,
+            ) or "").strip()
+            if alt and _hash_reply(alt) != cur_h:
+                txt = alt
+
+        st["last_bot_reply_hash"] = _hash_reply(txt)
+        st["last_bot_reply_excerpt"] = _excerpt(txt)
+
+        return txt
 
     if intent == "PLANS":
         # Explica e puxa o ramo (se faltar)
         st["stage"] = "ASK_NAME" if not name else ("ASK_SEGMENT" if not segment else st.get("stage", "PITCH"))
-        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="PLANS")
-        return (txt or "").strip() or _fallback_min_reply(name)
+        txt = (_ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="PLANS", state=st) or "").strip()
+        if not txt:
+            txt = _fallback_min_reply(name)
+
+        # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
+        prev_h = (st.get("last_bot_reply_hash") or "").strip()
+        cur_h = _hash_reply(txt)
+        if prev_h and cur_h and prev_h == cur_h:
+            alt = (_ai_sales_answer(
+                name=name,
+                segment=segment,
+                goal=goal,
+                user_text=text_in,
+                intent_hint="ANTI_LOOP",
+                state=st,
+            ) or "").strip()
+            if alt and _hash_reply(alt) != cur_h:
+                txt = alt
+
+        st["last_bot_reply_hash"] = _hash_reply(txt)
+        st["last_bot_reply_excerpt"] = _excerpt(txt)
+
+        return txt
 
     if intent in ("DIFF", "PLUS_DIFF"):
         st["stage"] = "ASK_NAME" if not name else ("ASK_SEGMENT" if not segment else st.get("stage", "PITCH"))
-        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="DIFF")
-        return (txt or "").strip() or _fallback_min_reply(name)
+        txt = (_ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="DIFF", state=st) or "").strip()
+        if not txt:
+            txt = _fallback_min_reply(name)
+
+        # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
+        prev_h = (st.get("last_bot_reply_hash") or "").strip()
+        cur_h = _hash_reply(txt)
+        if prev_h and cur_h and prev_h == cur_h:
+            alt = (_ai_sales_answer(
+                name=name,
+                segment=segment,
+                goal=goal,
+                user_text=text_in,
+                intent_hint="ANTI_LOOP",
+                state=st,
+            ) or "").strip()
+            if alt and _hash_reply(alt) != cur_h:
+                txt = alt
+
+        st["last_bot_reply_hash"] = _hash_reply(txt)
+        st["last_bot_reply_excerpt"] = _excerpt(txt)
+
+        return txt
 
     if intent == "WHAT_IS":
         st["stage"] = "ASK_NAME" if not name else st.get("stage", "VALUE")
-        txt = _ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="what_is")
-        return (txt or "").strip() or _fallback_min_reply(name)
+        txt = (_ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="what_is", state=st) or "").strip()
+        if not txt:
+            txt = _fallback_min_reply(name)
+
+        # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
+        prev_h = (st.get("last_bot_reply_hash") or "").strip()
+        cur_h = _hash_reply(txt)
+        if prev_h and cur_h and prev_h == cur_h:
+            alt = (_ai_sales_answer(
+                name=name,
+                segment=segment,
+                goal=goal,
+                user_text=text_in,
+                intent_hint="ANTI_LOOP",
+                state=st,
+            ) or "").strip()
+            if alt and _hash_reply(alt) != cur_h:
+                txt = alt
+
+        st["last_bot_reply_hash"] = _hash_reply(txt)
+        st["last_bot_reply_excerpt"] = _excerpt(txt)
+
+        return txt
 
     # 1) Captura nome se não temos (IA decide; não usar heurística aqui)
     if not name:
@@ -983,14 +1100,29 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     # 🔒 PRIORIDADE ABSOLUTA: quando IA sabe a intenção, não volta para pitch genérico
     if intent in ("PRICE", "PLANS", "DIFF", "WHAT_IS"):
-        txt = _ai_sales_answer(
-            name=name,
-            segment=segment,
-            goal=goal,
-            user_text=text_in,
-            intent_hint=intent
-        )
-        return (txt or "").strip() or _fallback_min_reply(name)
+        txt = (_ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint=intent, state=st) or "").strip()
+        if not txt:
+            txt = _fallback_min_reply(name)
+
+        # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
+        prev_h = (st.get("last_bot_reply_hash") or "").strip()
+        cur_h = _hash_reply(txt)
+        if prev_h and cur_h and prev_h == cur_h:
+            alt = (_ai_sales_answer(
+                name=name,
+                segment=segment,
+                goal=goal,
+                user_text=text_in,
+                intent_hint="ANTI_LOOP",
+                state=st,
+            ) or "").strip()
+            if alt and _hash_reply(alt) != cur_h:
+                txt = alt
+
+        st["last_bot_reply_hash"] = _hash_reply(txt)
+        st["last_bot_reply_excerpt"] = _excerpt(txt)
+
+        return txt
 
     # IA só no pitch (com cache) — preço/CTA ficam fixos
     hint = intent or "OTHER"
@@ -1010,24 +1142,43 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     cta = f"Se fizer sentido, dá uma olhada em {SITE_URL} e me chama aqui que eu te guio."
 
     # HIGH: pode aprofundar 1 linha + CTA opcional
+    txt_final = ""
     if interest == "high" or intent == "ACTIVATE":
         extra = "Se tu quiser, me diz teu ramo e eu te mostro um exemplo bem real em 2 mensagens."
         parts = [p for p in [pitch_txt, extra, cta] if (p or '').strip()]
-        return "\n\n".join(parts).strip() or _fallback_min_reply(name)
-
-    # MID: valor direto (sem virar panfleto)
-    if interest == "mid":
+        txt_final = "\n\n".join(parts).strip() or _fallback_min_reply(name)
+    elif interest == "mid":
         parts = [p for p in [pitch_txt] if (p or '').strip()]
-        return "\n\n".join(parts).strip() or _fallback_min_reply(name)
+        txt_final = "\n\n".join(parts).strip() or _fallback_min_reply(name)
+    else:
+        # LOW: curto + 1 pergunta objetiva (sem link)
+        pitch_txt2 = (pitch_txt or "").strip()
+        if not pitch_txt2:
+            txt_final = _fallback_min_reply(name)
+        elif "?" in pitch_txt2[-120:]:
+            txt_final = pitch_txt2
+        else:
+            txt_final = f"{pitch_txt2}\n\n{name}, teu foco hoje é pedidos, agenda ou orçamento?"
 
-    # LOW: curto + 1 pergunta objetiva (sem link)
-    pitch_txt = (pitch_txt or "").strip()
-    if not pitch_txt:
-        return _fallback_min_reply(name)
-    # evita repetir pergunta se já tiver uma no final
-    if "?" in pitch_txt[-120:]:
-        return pitch_txt
-    return f"{pitch_txt}\n\n{name}, teu foco hoje é pedidos, agenda ou orçamento?"
+    # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
+    prev_h = (st.get("last_bot_reply_hash") or "").strip()
+    cur_h = _hash_reply(txt_final)
+    if prev_h and cur_h and prev_h == cur_h:
+        alt = (_ai_sales_answer(
+            name=name,
+            segment=segment,
+            goal=goal,
+            user_text=text_in,
+            intent_hint="ANTI_LOOP",
+            state=st,
+        ) or "").strip()
+        if alt and _hash_reply(alt) != cur_h:
+            txt_final = alt
+
+    st["last_bot_reply_hash"] = _hash_reply(txt_final)
+    st["last_bot_reply_excerpt"] = _excerpt(txt_final)
+
+    return txt_final
 
 
 def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
@@ -1135,3 +1286,4 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
             pass
 
     return out
+

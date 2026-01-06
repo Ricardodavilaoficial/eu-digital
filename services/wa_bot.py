@@ -275,11 +275,10 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
         except Exception as e:
             # fallback ultra conservador (nunca fica mudo) — neutro, sem marketing
             _log_sales_lead_fallback(ctx, reason="exception", err=e)
-            return {
-                "ok": True,
-                "route": "sales_lead",
-                "replyText": _sales_lead_neutral_fallback(),
-            }
+            reply = _sales_lead_neutral_fallback()
+            out = {"ok": True, "route": "sales_lead", "replyText": reply}
+            _force_audio_reply_if_needed(out, reply)
+            return out
     # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
     try:
         legacy = _get_legacy_module()
@@ -309,7 +308,10 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
     except Exception as e:
         # fallback conservador (não quebra o webhook)
-        return {"ok": False, "route": "support_legacy", "replyText": "Certo.", "error": str(e)}
+        reply_text = "Certo."
+        out = {"ok": False, "route": "support_legacy", "replyText": reply_text, "error": str(e)}
+        _force_audio_reply_if_needed(out, reply_text)
+        return out
 
 
 def schedule_appointment(uid: str, ag: Dict[str, Any], *, allow_fallback: bool = True) -> Tuple[bool, str, Optional[str]]:
@@ -422,12 +424,17 @@ def process_change(
             value = (change or {}).get("value") or {}
             msgs = value.get("messages") or []
             msg0 = msgs[0] if msgs else {}
+            msg_type = (msg0.get("type") or "").strip().lower()
             ctx_local = {
                 "from_e164": from_id or "",
-                "msg_type": (msg0.get("type") or "").strip().lower(),
+                "wa_id": from_id or "",  # ajuda o reply_to_text a formar sender_id
+                "msg_type": msg_type,
                 "wamid": (msg0.get("id") or "").strip(),
                 "event_key": (change or {}).get("event_key") or (change or {}).get("eventKey") or "",
                 "app_tag": app_tag or "",
+                # contexto mínimo pra IA (sem “frases prontas”)
+                "actor_type": "unknown_or_lead",
+                "route_hint": "vendas",
             }
         except Exception:
             ctx_local = {"from_e164": from_id or "", "app_tag": app_tag or ""}
@@ -526,10 +533,3 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
-
-
-
-
-
-
-
