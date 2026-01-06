@@ -345,43 +345,70 @@ def process_change(
     # Importante: o webhook continua burro — aqui é o cérebro (wa_bot).
     # Segurança/produto: resposta pública e curta; sem "número errado".
     if not (uid_default or ""):
-        from_id, _body = _extract_from_and_text_from_change(change)
-        # tenta capturar IDs do evento para observabilidade
-        try:
-            value = (change or {}).get("value") or {}
-            msgs = value.get("messages") or []
-            msg0 = msgs[0] if msgs else {}
-            ctx_local = {
-                "from_e164": from_id or "",
-                "wamid": (msg0.get("id") or "").strip(),
-                "event_key": (change or {}).get("event_key") or (change or {}).get("eventKey") or "",
-            }
-        except Exception:
-            ctx_local = {"from_e164": from_id or ""}
 
-        try:
-            from services.bot_handlers import sales_lead  # type: ignore
+from_id, _body = _extract_from_and_text_from_change(change)
 
-            out = sales_lead.handle_sales_lead(change)  # retorna dict {replyText, ...}
-            lead_name = str((out or {}).get("name") or (out or {}).get("leadName") or "").strip()
-            reply_text = str((out or {}).get("replyText") or "").strip()
+# tenta capturar IDs do evento para observabilidade
+try:
+    value = (change or {}).get("value") or {}
+    msgs = value.get("messages") or []
+    msg0 = msgs[0] if msgs else {}
+    ctx_local = {
+        "from_e164": from_id or "",
+        "msg_type": (msg0.get("type") or "").strip().lower(),
+        "wamid": (msg0.get("id") or "").strip(),
+        "event_key": (change or {}).get("event_key") or (change or {}).get("eventKey") or "",
+        "app_tag": app_tag or "",
+    }
+except Exception:
+    ctx_local = {"from_e164": from_id or "", "app_tag": app_tag or ""}
 
-            if not reply_text:
-                _log_sales_lead_fallback(ctx_local, reason="empty_reply")
-                reply_text = _sales_lead_neutral_fallback(lead_name)
+# ✅ Unificar núcleo de VENDAS: mesma lógica do reply_to_text(...)
+# - extrai texto
+# - monta ctx
+# - sales_lead.generate_reply(text, ctx)
+# Mantém handle_sales_lead(change) como fallback/compat.
+try:
+    from services.bot_handlers import sales_lead  # type: ignore
 
-            if reply_text and effective_send is not None and from_id:
-                effective_send(from_id, reply_text)
-                return True
+    reply_obj = sales_lead.generate_reply(text=_body or "", ctx=ctx_local)
 
-        except Exception as e:
-            # fallback ultra conservador: neutro e humano (sem marketing), com log
-            _log_sales_lead_fallback(ctx_local, reason="exception", err=e)
-            if effective_send is not None and from_id:
-                effective_send(from_id, _sales_lead_neutral_fallback())
-                return True
-            # sem sender/from_id, segue fluxo (não quebra)
-            pass
+    lead_name = ""
+    reply_text = ""
+    if isinstance(reply_obj, dict):
+        reply_text = str((reply_obj or {}).get("replyText") or "").strip()
+        lead_name = str((reply_obj or {}).get("name") or (reply_obj or {}).get("leadName") or "").strip()
+    else:
+        reply_text = str(reply_obj or "").strip()
+
+    if not reply_text:
+        _log_sales_lead_fallback(ctx_local, reason="empty_reply")
+        reply_text = _sales_lead_neutral_fallback(lead_name)
+
+    if reply_text and effective_send is not None and from_id:
+        effective_send(from_id, reply_text)
+        return True
+
+except Exception as e:
+    # fallback compat: tentar o handler antigo (change -> replyText)
+    try:
+        from services.bot_handlers import sales_lead  # type: ignore
+        out = sales_lead.handle_sales_lead(change)  # type: ignore
+        lead_name = str((out or {}).get("name") or (out or {}).get("leadName") or "").strip()
+        reply_text = str((out or {}).get("replyText") or "").strip()
+        if not reply_text:
+            _log_sales_lead_fallback(ctx_local, reason="empty_reply_fallback")
+            reply_text = _sales_lead_neutral_fallback(lead_name)
+        if reply_text and effective_send is not None and from_id:
+            effective_send(from_id, reply_text)
+            return True
+    except Exception as e2:
+        _log_sales_lead_fallback(ctx_local, reason="exception", err=e2 or e)
+        if effective_send is not None and from_id:
+            effective_send(from_id, _sales_lead_neutral_fallback())
+            return True
+    # sem sender/from_id, segue fluxo (não quebra)
+    pass
 
 
     # 1) Delegação ao legacy (tentando corresponder à assinatura que o blueprint usa)
@@ -430,5 +457,6 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
+
 
 
