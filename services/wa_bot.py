@@ -160,89 +160,6 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
     ctx = ctx or {}
     from_e164 = (ctx.get("from_e164") or "").strip()
 
-
-def _force_audio_reply_if_needed(out: Dict[str, Any], reply_text: str) -> None:
-    """
-    Regra de produto: inbound em áudio => responder em áudio (best-effort).
-    - Se já existe audioUrl, não mexe.
-    - Tenta voz do MEI (uid) via /api/voz/tts (se voiceId existir).
-    - Fallback: TTS institucional (gera signed URL).
-    """
-    msg_type = (ctx.get("msg_type") or "").strip().lower()
-    if msg_type not in ("audio", "voice", "ptt"):
-        return
-
-    # Se já tem áudio, OK.
-    existing = (out.get("audioUrl") or "").strip()
-    if existing:
-        return
-
-    # Sem texto final -> nada pra falar.
-    t = (reply_text or "").strip()
-    if not t:
-        return
-
-    # 1) Tenta voz do MEI (quando uid existe e há voiceId)
-    try:
-        voice_id = ""
-        if uid:
-            try:
-                from firebase_admin import firestore  # type: ignore
-                db = firestore.client()
-                snap = db.collection("profissionais").document(uid).get()
-                data = snap.to_dict() or {}
-                voz = data.get("vozClonada") or {}
-                voice_id = (voz.get("voiceId") or "").strip()
-            except Exception:
-                voice_id = ""
-
-        if voice_id:
-            try:
-                import requests  # local import (não quebra se faltar)
-                base = (os.environ.get("BACKEND_BASE_URL") or os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
-                if not base:
-                    base = (os.environ.get("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
-                if not base:
-                    try:
-                        from flask import request  # type: ignore
-                        base = (request.host_url or "").strip().rstrip("/")
-                    except Exception:
-                        base = ""
-
-                if base:
-                    r = requests.post(
-                        f"{base}/api/voz/tts",
-                        json={"text": t, "voice_id": voice_id, "reason": "inbound_audio"},
-                        timeout=25,
-                    )
-                    if r.status_code == 200:
-                        j = r.json() or {}
-                        url = (j.get("audioUrl") or j.get("url") or "").strip()
-                        if url:
-                            out["audioUrl"] = url
-                            out.setdefault("audioDebug", {})
-                            out["audioDebug"].update({"ok": True, "mode": "mei"})
-                            return
-            except Exception:
-                # cai pro institucional
-                pass
-    except Exception:
-        pass
-
-    # 2) Fallback: voz institucional (não deixa o lead no vácuo)
-    try:
-        from services.institutional_tts_media import generate_institutional_audio_url
-        url = (generate_institutional_audio_url(text=t) or "").strip()
-        out.setdefault("audioDebug", {})
-        if url:
-            out["audioUrl"] = url
-            out["audioDebug"].update({"ok": True, "mode": "institutional"})
-        else:
-            out["audioDebug"].update({"ok": False, "mode": "institutional", "err": "empty_audio_url"})
-    except Exception as e:
-        out.setdefault("audioDebug", {})
-        out["audioDebug"].update({"ok": False, "mode": "institutional", "err": (str(e) or "exception")[:180]})
-
     # 1) LEAD / VENDAS (uid ausente)
     if not uid:
         try:
@@ -265,7 +182,7 @@ def _force_audio_reply_if_needed(out: Dict[str, Any], reply_text: str) -> None:
             out = {"ok": True, "route": "sales_lead", "replyText": reply}
 
             # >>> PATCH: quando lead + áudio, gerar audioUrl institucional (best-effort)
-            if (ctx.get("msg_type") or "").strip().lower() in ("audio", "voice", "ptt"):
+            if (ctx.get("msg_type") or "").strip().lower() == "audio":
                 base_url = (os.environ.get("BACKEND_BASE_URL", "") or "").rstrip("/")
                 out["audioDebug"] = {"baseUrl": base_url, "ok": False, "err": ""}
 
@@ -283,7 +200,6 @@ def _force_audio_reply_if_needed(out: Dict[str, Any], reply_text: str) -> None:
                 except Exception as e:
                     out["audioDebug"]["err"] = (str(e) or "exception")[:180]
 
-            _force_audio_reply_if_needed(out, reply)
             return out
 
         except Exception as e:
@@ -316,10 +232,8 @@ def _force_audio_reply_if_needed(out: Dict[str, Any], reply_text: str) -> None:
         }
 
         legacy.process_change(value, _capture_send_text, uid, app_tag=ctx.get("app_tag") or "wa_bot")
-        reply_text = captured["text"] or "Certo."
-        out = {"ok": True, "route": "support_legacy", "replyText": reply_text}
-        _force_audio_reply_if_needed(out, reply_text)
-        return out
+        out = captured["text"] or "Certo."
+        return {"ok": True, "route": "support_legacy", "replyText": out}
 
     except Exception as e:
         # fallback conservador (não quebra o webhook)
@@ -543,7 +457,6 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
-
 
 
 
