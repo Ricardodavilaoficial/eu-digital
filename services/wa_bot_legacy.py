@@ -2421,7 +2421,6 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
                         ctx = build_contact_context(
                             uid_default,
                             cliente_id,
-                            max_anexos=10,
                         )
                     except Exception as e_ctx:
                         logging.info("[ACERVO][CONTACT_MEMORY] erro ao montar contexto do contato: %s", e_ctx)

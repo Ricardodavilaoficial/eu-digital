@@ -95,3 +95,17 @@ def can_book(uid: str, data: dict):
     ok, reason, _novo = validar_agendamento_v1(uid, data or {})
     return ok, reason
 
+
+# -------------------------------------------------------------------
+# Compat shim (legacy): save_booking
+# -------------------------------------------------------------------
+def save_booking(uid: str, data: dict):
+    """
+    Compatibilidade com wa_bot_legacy.
+    Apenas delega para o fluxo existente.
+    """
+    ok, reason, booking = validar_agendamento_v1(uid, data or {})
+    if not ok:
+        raise ValueError(reason or "booking_failed")
+    return booking
+

@@ -299,12 +299,11 @@ def ycloud_inbound_worker():
                 )
                 reply_text = "Entendi 🙂 Me diz rapidinho o que você quer agora: pedidos, agenda, orçamento ou conhecer?"
             else:
-                # Customer: nunca “vira lead” por fallback.
                 logger.warning(
-                    '[tasks] route=customer_empty_reply reason=empty_reply from=%s to=%s wamid=%s eventKey=%s',
-                    from_e164, to_e164, wamid, event_key
+                    "[tasks] customer_empty_reply from=%s wamid=%s",
+                    from_e164, wamid
                 )
-                reply_text = "Ops! Aqui deu um erro rápido do meu lado. Pode mandar de novo essa mensagem?"
+                reply_text = "Não consegui responder agora 😕 Pode tentar de novo ou me explicar um pouco melhor?"
 
         # envia resposta: se lead mandou áudio, tentamos áudio (se veio audioUrl), senão texto
         sent_ok = False
@@ -351,10 +350,3 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
-
-
-
-
-
-
-
