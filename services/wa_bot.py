@@ -385,7 +385,7 @@ def _basic_autoreply(from_id: Optional[str], body: str, send_fn: Optional[Callab
         if not from_id or send_fn is None:
             return False
 
-        msg = "Entendi 🙂 Pode me dizer rapidinho o que você precisa? (preços, agenda, pedido ou informação)"
+        msg = "Entendi 🙂 Me diz rapidinho o que você precisa e eu te ajudo."
         send_fn(from_id, msg)
         return True
     except Exception as e:
@@ -526,6 +526,7 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
+
 
 
 

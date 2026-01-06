@@ -73,3 +73,14 @@ def analyze_message(text: str, services: List[str]) -> Dict[str, Any]:
     res = {"intent":intent,"serviceName":svc,"dateText":date_text,"is_price_question":is_price}
     # não expomos notas; mantemos o mínimo necessário
     return res
+# -------------------------------------------------------------------
+# Compat shim (legacy): alguns módulos importam "detect_intent"
+# -------------------------------------------------------------------
+def detect_intent(text: str, services: List[str] = None) -> Dict[str, Any]:
+    """
+    Compatibilidade com wa_bot_legacy.py:
+    - Mantém assinatura simples: (text, services)
+    - Retorna dict com chaves: intent, serviceName, dateText, is_price_question
+    """
+    return analyze_message(text or "", services or [])
+

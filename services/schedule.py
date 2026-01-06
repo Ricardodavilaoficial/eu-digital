@@ -84,3 +84,14 @@ def atualizar_estado_agendamento(uid: str, ag_id: str, body: dict):
     ref.set(ag, merge=True)
     ag["id"] = ag_id
     return ag
+# -------------------------------------------------------------------
+# Compat shim (legacy): alguns módulos esperam "can_book"
+# -------------------------------------------------------------------
+def can_book(uid: str, data: dict):
+    """
+    Compatibilidade com wa_bot_legacy.
+    Retorna (ok: bool, reason: str).
+    """
+    ok, reason, _novo = validar_agendamento_v1(uid, data or {})
+    return ok, reason
+
