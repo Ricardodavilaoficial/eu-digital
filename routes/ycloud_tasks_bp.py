@@ -7,6 +7,8 @@ import hashlib
 import logging
 from typing import Any, Dict
 
+import requests
+
 from flask import Blueprint, request, jsonify
 
 from services.phone_utils import digits_only as _digits_only_c, to_plus_e164 as _to_plus_e164_c
@@ -176,8 +178,80 @@ def ycloud_inbound_worker():
             route_hint = "sales" if not uid else "customer"
 
             if msg_type in ("audio", "voice", "ptt") and not text_in:
-                # Áudio de lead: mantém o cérebro único sem exigir STT agora
-                text_in = "Lead enviou um áudio."
+                # Áudio de lead: baixar mídia e transcrever (STT) antes da IA
+                transcript = ""
+                stt_err = ""
+
+                try:
+                    url = ""
+                    try:
+                        url = (media.get("url") or "").strip()
+                    except Exception:
+                        url = ""
+
+                    if not url:
+                        stt_err = "no_media_url"
+                    else:
+                        # Preferir o downloader já usado no fluxo de voz (tende a lidar melhor com headers/auth)
+                        audio_bytes = b""
+                        ctype = ""
+
+                        try:
+                            from services.voice_wa_download import download_media_bytes  # type: ignore
+                            audio_bytes, info = download_media_bytes(url=url)
+                            # info pode trazer ext, mas STT precisa mais do Content-Type; usamos fallback por ext
+                            ext = (info.get("ext") or "").lower()
+                            if ext in ("ogg", "opus"):
+                                ctype = "audio/ogg"
+                            elif ext in ("wav",):
+                                ctype = "audio/wav"
+                            elif ext in ("mp3", "mpeg"):
+                                ctype = "audio/mpeg"
+                        except Exception:
+                            # Fallback: download direto
+                            r = requests.get(url, timeout=12)
+                            r.raise_for_status()
+                            audio_bytes = r.content
+                            ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+
+                        if not audio_bytes or len(audio_bytes) < 200:
+                            stt_err = "empty_audio_bytes"
+                        else:
+                            # Chama STT interno via HTTP (mesmo serviço)
+                            try:
+                                base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+                                if not base:
+                                    # tenta inferir pelo request atual
+                                    base = (request.host_url or "").strip().rstrip("/")
+                                stt_url = f"{base}/api/voz/stt"
+
+                                headers = {"Content-Type": ctype or "audio/ogg"}
+                                rr = requests.post(stt_url, data=audio_bytes, headers=headers, timeout=25)
+                                if rr.status_code == 200:
+                                    j = rr.json() or {}
+                                    if j.get("ok"):
+                                        transcript = (j.get("transcript") or "").strip()
+                                    else:
+                                        stt_err = f"stt_not_ok:{j.get('error')}"
+                                else:
+                                    stt_err = f"stt_http_{rr.status_code}"
+                            except Exception as e:
+                                stt_err = f"stt_exc:{e}"
+
+                except Exception as e:
+                    stt_err = f"stt_outer_exc:{e}"
+
+                if transcript:
+                    text_in = transcript
+                    # opcional: dá um debug leve no outbox
+                    audio_debug = dict(audio_debug or {})
+                    audio_debug["stt"] = {"ok": True}
+                else:
+                    # fallback curto e humano, sem travar o fluxo
+                    logger.warning("[tasks] lead: stt_failed from=%s wamid=%s reason=%s", from_e164, wamid, stt_err)
+                    text_in = "Não consegui entender esse áudio. Pode mandar em texto ou repetir rapidinho?"
+                    audio_debug = dict(audio_debug or {})
+                    audio_debug["stt"] = {"ok": False, "reason": stt_err}
 
             if hasattr(wa_bot_entry, "reply_to_text"):
                 wa_out = wa_bot_entry.reply_to_text(
@@ -273,6 +347,7 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
 
 

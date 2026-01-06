@@ -29,11 +29,15 @@ def stt_post():
 
     ctype = (request.headers.get("Content-Type") or "").split(";")[0].strip().lower()
     # Mapeia encoding para Google STT
-    if ctype == "audio/mpeg" or ctype == "audio/mp3":
+    if ctype in ("audio/mpeg", "audio/mp3"):
         encoding = "MP3"
         sample_rate_hz = None  # deixa o Google inferir
-    elif ctype == "audio/wav" or ctype == "audio/x-wav":
+    elif ctype in ("audio/wav", "audio/x-wav"):
         encoding = "LINEAR16"
+        sample_rate_hz = None
+    elif ctype in ("audio/ogg", "application/ogg", "audio/opus"):
+        # WhatsApp geralmente envia voice note como OGG/OPUS
+        encoding = "OGG_OPUS"
         sample_rate_hz = None
     else:
         # aceita mesmo assim tentando MP3 como fallback
@@ -79,3 +83,4 @@ def stt_post():
 @voz_stt_bp.route("/api/voz/stt/ping", methods=["GET"])
 def stt_ping():
     return jsonify({"ok": True, "service": "voz_stt"})
+
