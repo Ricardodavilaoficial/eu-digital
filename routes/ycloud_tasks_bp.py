@@ -81,7 +81,7 @@ def ycloud_inbound_worker():
 
     try:
         # --- normalização mínima do evento ---
-        msg_type = (payload.get("messageType") or "").strip().lower()
+        msg_type = (payload.get("messageType") or payload.get("msgType") or "").strip().lower()
         from_raw = (payload.get("from") or "").strip()
         to_raw = (payload.get("to") or "").strip()
         wamid = (payload.get("wamid") or "").strip()
@@ -168,6 +168,9 @@ def ycloud_inbound_worker():
         audio_debug = {}
 
         try:
+            from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
+            ensure_firebase_admin()
+
             from services import wa_bot as wa_bot_entry  # lazy import
             route_hint = "sales" if not uid else "customer"
 
@@ -194,6 +197,7 @@ def ycloud_inbound_worker():
             reply_text = ""
         except Exception as e:
             # Best-effort: não derruba o worker se o wa_bot falhar/import quebrar
+            logger.exception("[tasks] wa_bot_failed route_hint=%s from=%s wamid=%s", ("sales" if not uid else "customer"), from_e164, wamid)
             reply_text = ""
             audio_url = ""
             audio_debug = {"err": str(e)}
@@ -263,12 +267,13 @@ def ycloud_inbound_worker():
         "sentOk": bool(sent_ok),
             })
         except Exception:
-            pass
+            logger.warning("[tasks] outbox_log_failed from=%s to=%s wamid=%s eventKey=%s", from_e164, to_e164, wamid, event_key, exc_info=True)
 
         return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
 
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
 
