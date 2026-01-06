@@ -12,16 +12,26 @@ TIMEOUT = 20
 
 _SYSTEM = """Você é o NLU do MEI Robô (pt-BR). Responda SOMENTE JSON válido.
 Objetivo: extrair intenção, serviço e data/hora de mensagens reais (texto curto ou transcrição de áudio).
+
 Campos:
-- intent: oneof["precos","agendar","reagendar","cancelar","saudacao","smalltalk","fallback"]
+- intent: oneof[
+  "precos","agendar","reagendar","cancelar",
+  "suporte",
+  "saudacao","smalltalk","fallback"
+]
 - serviceName: string|null  (nome curto do serviço citado)
 - dateText: string|null     (ex.: "01/09 14:00", "amanhã 10h", "terça 15:30")
 - is_price_question: boolean
 
-Regras:
+Regras de intenção:
 - Se perguntar preço (ex.: "quanto custa", "quanto tá", "valor de..."), marque is_price_question=true (mesmo se intent="precos").
+- Se o usuário falar de CONFIGURAÇÃO/CONTA/ATIVAÇÃO/CADASTRO/LOGIN/EMAIL/CUPOM/PAGAMENTO/ASSINATURA, use intent="suporte".
+- Se o usuário falar de VOZ (ex.: "voz", "áudio", "invite", "convite", "configuração de voz", "template", "whatsapp da voz"), use intent="suporte".
+- Se o usuário perguntar "sabe com quem está falando?", "quem é você?", "você sabe quem eu sou?", isso é meta de atendimento → intent="suporte" (não é vendas).
 - Nunca invente serviço fora da lista conhecida; se não tiver claro, deixe serviceName=null.
 - Se não entender, use intent="fallback".
+
+Responda SOMENTE JSON.
 """
 
 def _allowed_services_block(services: List[str]) -> str:
@@ -61,7 +71,7 @@ def analyze_message(text: str, services: List[str]) -> Dict[str, Any]:
     ]
     out = _http_chat(messages)
     intent = (out.get("intent") or "fallback").strip().lower()
-    if intent not in {"precos","agendar","reagendar","cancelar","saudacao","smalltalk","fallback"}:
+    if intent not in {"precos","agendar","reagendar","cancelar","suporte","saudacao","smalltalk","fallback"}:
         intent = "fallback"
     svc = out.get("serviceName")
     if isinstance(svc, str):
