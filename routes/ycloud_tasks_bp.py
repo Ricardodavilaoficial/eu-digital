@@ -254,14 +254,14 @@ def ycloud_inbound_worker():
         # log leve (auditoria). Precisa ocorrer antes do return.
         try:
             _db().collection("platform_wa_outbox_logs").add({
-        "createdAt": time.time(),
+        "createdAt": firestore.SERVER_TIMESTAMP,
         "from": from_e164,
         "to": to_e164,
         "wamid": wamid,
         "msgType": msg_type,
         "route": "sales" if not uid else "customer",
-        "replyText": reply_text[:400],
-        "audioUrl": audio_url[:300],
+        "replyText": (reply_text or "")[:400],
+        "audioUrl": (audio_url or "")[:300],
         "audioDebug": audio_debug,
         "eventKey": event_key,
         "sentOk": bool(sent_ok),
@@ -274,6 +274,7 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
 
 
