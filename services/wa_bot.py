@@ -160,6 +160,89 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
     ctx = ctx or {}
     from_e164 = (ctx.get("from_e164") or "").strip()
 
+
+def _force_audio_reply_if_needed(out: Dict[str, Any], reply_text: str) -> None:
+    """
+    Regra de produto: inbound em áudio => responder em áudio (best-effort).
+    - Se já existe audioUrl, não mexe.
+    - Tenta voz do MEI (uid) via /api/voz/tts (se voiceId existir).
+    - Fallback: TTS institucional (gera signed URL).
+    """
+    msg_type = (ctx.get("msg_type") or "").strip().lower()
+    if msg_type not in ("audio", "voice", "ptt"):
+        return
+
+    # Se já tem áudio, OK.
+    existing = (out.get("audioUrl") or "").strip()
+    if existing:
+        return
+
+    # Sem texto final -> nada pra falar.
+    t = (reply_text or "").strip()
+    if not t:
+        return
+
+    # 1) Tenta voz do MEI (quando uid existe e há voiceId)
+    try:
+        voice_id = ""
+        if uid:
+            try:
+                from firebase_admin import firestore  # type: ignore
+                db = firestore.client()
+                snap = db.collection("profissionais").document(uid).get()
+                data = snap.to_dict() or {}
+                voz = data.get("vozClonada") or {}
+                voice_id = (voz.get("voiceId") or "").strip()
+            except Exception:
+                voice_id = ""
+
+        if voice_id:
+            try:
+                import requests  # local import (não quebra se faltar)
+                base = (os.environ.get("BACKEND_BASE_URL") or os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+                if not base:
+                    base = (os.environ.get("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+                if not base:
+                    try:
+                        from flask import request  # type: ignore
+                        base = (request.host_url or "").strip().rstrip("/")
+                    except Exception:
+                        base = ""
+
+                if base:
+                    r = requests.post(
+                        f"{base}/api/voz/tts",
+                        json={"text": t, "voice_id": voice_id, "reason": "inbound_audio"},
+                        timeout=25,
+                    )
+                    if r.status_code == 200:
+                        j = r.json() or {}
+                        url = (j.get("audioUrl") or j.get("url") or "").strip()
+                        if url:
+                            out["audioUrl"] = url
+                            out.setdefault("audioDebug", {})
+                            out["audioDebug"].update({"ok": True, "mode": "mei"})
+                            return
+            except Exception:
+                # cai pro institucional
+                pass
+    except Exception:
+        pass
+
+    # 2) Fallback: voz institucional (não deixa o lead no vácuo)
+    try:
+        from services.institutional_tts_media import generate_institutional_audio_url
+        url = (generate_institutional_audio_url(text=t) or "").strip()
+        out.setdefault("audioDebug", {})
+        if url:
+            out["audioUrl"] = url
+            out["audioDebug"].update({"ok": True, "mode": "institutional"})
+        else:
+            out["audioDebug"].update({"ok": False, "mode": "institutional", "err": "empty_audio_url"})
+    except Exception as e:
+        out.setdefault("audioDebug", {})
+        out["audioDebug"].update({"ok": False, "mode": "institutional", "err": (str(e) or "exception")[:180]})
+
     # 1) LEAD / VENDAS (uid ausente)
     if not uid:
         try:
@@ -182,7 +265,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             out = {"ok": True, "route": "sales_lead", "replyText": reply}
 
             # >>> PATCH: quando lead + áudio, gerar audioUrl institucional (best-effort)
-            if (ctx.get("msg_type") or "").strip().lower() == "audio":
+            if (ctx.get("msg_type") or "").strip().lower() in ("audio", "voice", "ptt"):
                 base_url = (os.environ.get("BACKEND_BASE_URL", "") or "").rstrip("/")
                 out["audioDebug"] = {"baseUrl": base_url, "ok": False, "err": ""}
 
@@ -200,6 +283,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 except Exception as e:
                     out["audioDebug"]["err"] = (str(e) or "exception")[:180]
 
+            _force_audio_reply_if_needed(out, reply)
             return out
 
         except Exception as e:
@@ -232,8 +316,10 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
         }
 
         legacy.process_change(value, _capture_send_text, uid, app_tag=ctx.get("app_tag") or "wa_bot")
-        out = captured["text"] or "Certo."
-        return {"ok": True, "route": "support_legacy", "replyText": out}
+        reply_text = captured["text"] or "Certo."
+        out = {"ok": True, "route": "support_legacy", "replyText": reply_text}
+        _force_audio_reply_if_needed(out, reply_text)
+        return out
 
     except Exception as e:
         # fallback conservador (não quebra o webhook)
@@ -346,69 +432,69 @@ def process_change(
     # Segurança/produto: resposta pública e curta; sem "número errado".
     if not (uid_default or ""):
 
-from_id, _body = _extract_from_and_text_from_change(change)
+        from_id, _body = _extract_from_and_text_from_change(change)
 
-# tenta capturar IDs do evento para observabilidade
-try:
-    value = (change or {}).get("value") or {}
-    msgs = value.get("messages") or []
-    msg0 = msgs[0] if msgs else {}
-    ctx_local = {
-        "from_e164": from_id or "",
-        "msg_type": (msg0.get("type") or "").strip().lower(),
-        "wamid": (msg0.get("id") or "").strip(),
-        "event_key": (change or {}).get("event_key") or (change or {}).get("eventKey") or "",
-        "app_tag": app_tag or "",
-    }
-except Exception:
-    ctx_local = {"from_e164": from_id or "", "app_tag": app_tag or ""}
+        # tenta capturar IDs do evento para observabilidade
+        try:
+            value = (change or {}).get("value") or {}
+            msgs = value.get("messages") or []
+            msg0 = msgs[0] if msgs else {}
+            ctx_local = {
+                "from_e164": from_id or "",
+                "msg_type": (msg0.get("type") or "").strip().lower(),
+                "wamid": (msg0.get("id") or "").strip(),
+                "event_key": (change or {}).get("event_key") or (change or {}).get("eventKey") or "",
+                "app_tag": app_tag or "",
+            }
+        except Exception:
+            ctx_local = {"from_e164": from_id or "", "app_tag": app_tag or ""}
 
-# ✅ Unificar núcleo de VENDAS: mesma lógica do reply_to_text(...)
-# - extrai texto
-# - monta ctx
-# - sales_lead.generate_reply(text, ctx)
-# Mantém handle_sales_lead(change) como fallback/compat.
-try:
-    from services.bot_handlers import sales_lead  # type: ignore
+        # ✅ Unificar núcleo de VENDAS: mesma lógica do reply_to_text(...)
+        # - extrai texto
+        # - monta ctx
+        # - sales_lead.generate_reply(text, ctx)
+        # Mantém handle_sales_lead(change) como fallback/compat.
+        try:
+            from services.bot_handlers import sales_lead  # type: ignore
 
-    reply_obj = sales_lead.generate_reply(text=_body or "", ctx=ctx_local)
+            reply_obj = sales_lead.generate_reply(text=_body or "", ctx=ctx_local)
 
-    lead_name = ""
-    reply_text = ""
-    if isinstance(reply_obj, dict):
-        reply_text = str((reply_obj or {}).get("replyText") or "").strip()
-        lead_name = str((reply_obj or {}).get("name") or (reply_obj or {}).get("leadName") or "").strip()
-    else:
-        reply_text = str(reply_obj or "").strip()
+            lead_name = ""
+            reply_text = ""
+            if isinstance(reply_obj, dict):
+                reply_text = str((reply_obj or {}).get("replyText") or "").strip()
+                lead_name = str((reply_obj or {}).get("name") or (reply_obj or {}).get("leadName") or "").strip()
+            else:
+                reply_text = str(reply_obj or "").strip()
 
-    if not reply_text:
-        _log_sales_lead_fallback(ctx_local, reason="empty_reply")
-        reply_text = _sales_lead_neutral_fallback(lead_name)
+            if not reply_text:
+                _log_sales_lead_fallback(ctx_local, reason="empty_reply")
+                reply_text = _sales_lead_neutral_fallback(lead_name)
 
-    if reply_text and effective_send is not None and from_id:
-        effective_send(from_id, reply_text)
-        return True
+            if reply_text and effective_send is not None and from_id:
+                effective_send(from_id, reply_text)
+                return True
 
-except Exception as e:
-    # fallback compat: tentar o handler antigo (change -> replyText)
-    try:
-        from services.bot_handlers import sales_lead  # type: ignore
-        out = sales_lead.handle_sales_lead(change)  # type: ignore
-        lead_name = str((out or {}).get("name") or (out or {}).get("leadName") or "").strip()
-        reply_text = str((out or {}).get("replyText") or "").strip()
-        if not reply_text:
-            _log_sales_lead_fallback(ctx_local, reason="empty_reply_fallback")
-            reply_text = _sales_lead_neutral_fallback(lead_name)
-        if reply_text and effective_send is not None and from_id:
-            effective_send(from_id, reply_text)
-            return True
-    except Exception as e2:
-        _log_sales_lead_fallback(ctx_local, reason="exception", err=e2 or e)
-        if effective_send is not None and from_id:
-            effective_send(from_id, _sales_lead_neutral_fallback())
-            return True
-    # sem sender/from_id, segue fluxo (não quebra)
-    pass
+        except Exception as e:
+            # fallback compat: tentar o handler antigo (change -> replyText)
+            try:
+                from services.bot_handlers import sales_lead  # type: ignore
+                out = sales_lead.handle_sales_lead(change)  # type: ignore
+                lead_name = str((out or {}).get("name") or (out or {}).get("leadName") or "").strip()
+                reply_text = str((out or {}).get("replyText") or "").strip()
+                if not reply_text:
+                    _log_sales_lead_fallback(ctx_local, reason="empty_reply_fallback")
+                    reply_text = _sales_lead_neutral_fallback(lead_name)
+                if reply_text and effective_send is not None and from_id:
+                    effective_send(from_id, reply_text)
+                    return True
+            except Exception as e2:
+                _log_sales_lead_fallback(ctx_local, reason="exception", err=e2 or e)
+                if effective_send is not None and from_id:
+                    effective_send(from_id, _sales_lead_neutral_fallback())
+                    return True
+            # sem sender/from_id, segue fluxo (não quebra)
+            pass
 
 
     # 1) Delegação ao legacy (tentando corresponder à assinatura que o blueprint usa)
@@ -457,6 +543,7 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
+
 
 
 
