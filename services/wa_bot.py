@@ -159,89 +159,93 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
     """
     ctx = ctx or {}
     from_e164 = (ctx.get("from_e164") or "").strip()
+    uid = (uid or "").strip()
+    text = text or ""
+    # Identidade do remetente para sessão do legacy: prefira wa_id (somente dígitos).
+    sender_id = "".join(ch for ch in ((ctx.get("wa_id") or ctx.get("from_id") or from_e164 or "")) if ch.isdigit())
 
+    def _force_audio_reply_if_needed(out: Dict[str, Any], reply_text: str) -> None:
+        """
+        Regra de produto: inbound em áudio => responder em áudio (best-effort).
+        - Se já existe audioUrl, não mexe.
+        - Tenta voz do MEI (uid) via /api/voz/tts (se voiceId existir).
+        - Fallback: TTS institucional (gera signed URL).
+        """
+        msg_type = (ctx.get("msg_type") or "").strip().lower()
+        if msg_type not in ("audio", "voice", "ptt"):
+            return
 
-def _force_audio_reply_if_needed(out: Dict[str, Any], reply_text: str) -> None:
-    """
-    Regra de produto: inbound em áudio => responder em áudio (best-effort).
-    - Se já existe audioUrl, não mexe.
-    - Tenta voz do MEI (uid) via /api/voz/tts (se voiceId existir).
-    - Fallback: TTS institucional (gera signed URL).
-    """
-    msg_type = (ctx.get("msg_type") or "").strip().lower()
-    if msg_type not in ("audio", "voice", "ptt"):
-        return
+        # Se já tem áudio, OK.
+        existing = (out.get("audioUrl") or "").strip()
+        if existing:
+            return
 
-    # Se já tem áudio, OK.
-    existing = (out.get("audioUrl") or "").strip()
-    if existing:
-        return
+        # Sem texto final -> nada pra falar.
+        t = (reply_text or "").strip()
+        if not t:
+            return
 
-    # Sem texto final -> nada pra falar.
-    t = (reply_text or "").strip()
-    if not t:
-        return
+        # 1) Tenta voz do MEI (quando uid existe e há voiceId)
+        try:
+            voice_id = ""
+            if uid:
+                try:
+                    from firebase_admin import firestore  # type: ignore
+                    db = firestore.client()
+                    snap = db.collection("profissionais").document(uid).get()
+                    data = snap.to_dict() or {}
+                    voz = data.get("vozClonada") or {}
+                    voice_id = (voz.get("voiceId") or "").strip()
+                except Exception:
+                    voice_id = ""
 
-    # 1) Tenta voz do MEI (quando uid existe e há voiceId)
-    try:
-        voice_id = ""
-        if uid:
-            try:
-                from firebase_admin import firestore  # type: ignore
-                db = firestore.client()
-                snap = db.collection("profissionais").document(uid).get()
-                data = snap.to_dict() or {}
-                voz = data.get("vozClonada") or {}
-                voice_id = (voz.get("voiceId") or "").strip()
-            except Exception:
-                voice_id = ""
+            if voice_id:
+                try:
+                    import requests  # local import (não quebra se faltar)
+                    base = (os.environ.get("BACKEND_BASE_URL") or os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+                    if not base:
+                        base = (os.environ.get("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+                    if not base:
+                        try:
+                            from flask import request  # type: ignore
+                            base = (request.host_url or "").strip().rstrip("/")
+                        except Exception:
+                            base = ""
 
-        if voice_id:
-            try:
-                import requests  # local import (não quebra se faltar)
-                base = (os.environ.get("BACKEND_BASE_URL") or os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
-                if not base:
-                    base = (os.environ.get("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
-                if not base:
-                    try:
-                        from flask import request  # type: ignore
-                        base = (request.host_url or "").strip().rstrip("/")
-                    except Exception:
-                        base = ""
+                    if base:
+                        r = requests.post(
+                            f"{base}/api/voz/tts",
+                            json={"text": t, "voice_id": voice_id, "reason": "inbound_audio"},
+                            timeout=25,
+                        )
+                        if r.status_code == 200:
+                            j = r.json() or {}
+                            url = (j.get("audioUrl") or j.get("url") or "").strip()
+                            if url:
+                                out["audioUrl"] = url
+                                out.setdefault("audioDebug", {})
+                                out["audioDebug"].update({"ok": True, "mode": "mei"})
+                                return
+                except Exception:
+                    # cai pro institucional
+                    pass
+        except Exception:
+            pass
 
-                if base:
-                    r = requests.post(
-                        f"{base}/api/voz/tts",
-                        json={"text": t, "voice_id": voice_id, "reason": "inbound_audio"},
-                        timeout=25,
-                    )
-                    if r.status_code == 200:
-                        j = r.json() or {}
-                        url = (j.get("audioUrl") or j.get("url") or "").strip()
-                        if url:
-                            out["audioUrl"] = url
-                            out.setdefault("audioDebug", {})
-                            out["audioDebug"].update({"ok": True, "mode": "mei"})
-                            return
-            except Exception:
-                # cai pro institucional
-                pass
-    except Exception:
-        pass
+        # 2) Fallback: voz institucional (não deixa o lead no vácuo)
+        try:
+            from services.institutional_tts_media import generate_institutional_audio_url
+            url = (generate_institutional_audio_url(text=t) or "").strip()
+            out.setdefault("audioDebug", {})
+            if url:
+                out["audioUrl"] = url
+                out["audioDebug"].update({"ok": True, "mode": "institutional"})
+            else:
+                out["audioDebug"].update({"ok": False, "mode": "institutional", "err": "empty_audio_url"})
+        except Exception as e:
+            out.setdefault("audioDebug", {})
+            out["audioDebug"].update({"ok": False, "mode": "institutional", "err": (str(e) or "exception")[:180]})
 
-    # 2) Fallback: voz institucional (não deixa o lead no vácuo)
-    try:
-        from services.institutional_tts_media import generate_institutional_audio_url
-        url = (generate_institutional_audio_url(text=t) or "").strip()
-        out.setdefault("audioDebug", {})
-        if url:
-            out["audioUrl"] = url
-            out["audioDebug"].update({"ok": True, "mode": "institutional"})
-        else:
-            out["audioDebug"].update({"ok": False, "mode": "institutional", "err": "empty_audio_url"})
-    except Exception as e:
-        out.setdefault("audioDebug", {})
-        out["audioDebug"].update({"ok": False, "mode": "institutional", "err": (str(e) or "exception")[:180]})
 
     # 1) LEAD / VENDAS (uid ausente)
     if not uid:
@@ -264,25 +268,7 @@ def _force_audio_reply_if_needed(out: Dict[str, Any], reply_text: str) -> None:
 
             out = {"ok": True, "route": "sales_lead", "replyText": reply}
 
-            # >>> PATCH: quando lead + áudio, gerar audioUrl institucional (best-effort)
-            if (ctx.get("msg_type") or "").strip().lower() in ("audio", "voice", "ptt"):
-                base_url = (os.environ.get("BACKEND_BASE_URL", "") or "").rstrip("/")
-                out["audioDebug"] = {"baseUrl": base_url, "ok": False, "err": ""}
-
-                try:
-                    from services.institutional_tts_media import generate_institutional_audio_url
-                    audio_url = generate_institutional_audio_url(
-                        text=reply,
-                    )
-                    audio_url = (audio_url or "").strip()
-                    if audio_url:
-                        out["audioUrl"] = audio_url
-                        out["audioDebug"]["ok"] = True
-                    else:
-                        out["audioDebug"]["err"] = "empty_audio_url"
-                except Exception as e:
-                    out["audioDebug"]["err"] = (str(e) or "exception")[:180]
-
+                        
             _force_audio_reply_if_needed(out, reply)
             return out
 
@@ -308,7 +294,7 @@ def _force_audio_reply_if_needed(out: Dict[str, Any], reply_text: str) -> None:
         value = {
             "messages": [
                 {
-                    "from": from_e164 or uid,
+                    "from": sender_id or (from_e164 or ""),
                     "type": "text",
                     "text": {"body": text or ""},
                 }
@@ -375,7 +361,12 @@ except Exception as _e:
 def _extract_from_and_text_from_change(change: Dict[str, Any]) -> Tuple[Optional[str], str]:
     """Extrai wa_id do remetente e o texto, seguindo o shape da Cloud API."""
     try:
-        value = (change or {}).get("value") or {}
+        # Aceitar dois formatos:
+        # (1) {"value": {...}}  (Meta-style)
+        # (2) {...}            (já normalizado)
+        value = change.get("value") if isinstance(change, dict) else None
+        if not isinstance(value, dict) or not value:
+            value = change if isinstance(change, dict) else {}
         msgs = value.get("messages") or []
         if not msgs:
             return None, ""
@@ -393,17 +384,9 @@ def _basic_autoreply(from_id: Optional[str], body: str, send_fn: Optional[Callab
     try:
         if not from_id or send_fn is None:
             return False
-        t = (body or "").strip().lower()
-        if t in ("oi", "ola", "olá", "oie", "hello", "hi", "hey"):
-            send_fn(from_id, "Oi! Estou ligado ✅. Posso te ajudar com *agendamento* ou digite *precos*.")
-            return True
-        if t == "precos" or "preço" in t or "precos" in t or "preços" in t or "preco" in t:
-            send_fn(from_id, "Tabela: Corte masc R$50 | Barba R$35 | Combo R$75. Diga *agendar* para marcar.")
-            return True
-        if "agendar" in t or "agenda" in t:
-            send_fn(from_id, "Me diga o dia e hora (ex.: *amanhã 15h*) que eu verifico disponibilidade.")
-            return True
-        send_fn(from_id, "Recebi ✅. Para preços, digite *precos*. Para marcar, diga *agendar* + horário.")
+
+        msg = "Entendi 🙂 Pode me dizer rapidinho o que você precisa? (preços, agenda, pedido ou informação)"
+        send_fn(from_id, msg)
         return True
     except Exception as e:
         logging.exception("[WA_BOT][FACHADA] basic_autoreply erro: %s", e)
@@ -543,6 +526,8 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
+
+
 
 
 
