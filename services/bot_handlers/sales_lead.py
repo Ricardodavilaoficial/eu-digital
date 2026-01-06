@@ -492,9 +492,12 @@ def _set_cached_pitch(segment: str, hint: str, user_text: str, pitch: str) -> No
     except Exception:
         pass
 
-def _openai_chat(prompt: str, max_tokens: int = 140, temperature: float = 0.45) -> str:
+def _openai_chat(prompt_or_messages, max_tokens: int = 140, temperature: float = 0.45) -> str:
     """
-    Chamada mínima ao endpoint /chat/completions (igual padrão do repo em services/openai/nlu_intent.py).
+    Chamada mínima ao endpoint /chat/completions.
+    - Aceita `prompt_or_messages` como:
+        * str: mantém comportamento atual (wrap em system+user)
+        * list[dict]: usa diretamente como `messages` (para quem já monta messages)
     Retorna texto. Se falhar, retorna "".
     """
     if not OPENAI_API_KEY:
@@ -505,14 +508,23 @@ def _openai_chat(prompt: str, max_tokens: int = 140, temperature: float = 0.45) 
         "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json",
     }
+
+    # Compat: quem chama com messages (list[dict]) passa direto
+    messages = None
+    if isinstance(prompt_or_messages, list):
+        messages = prompt_or_messages
+    else:
+        prompt = str(prompt_or_messages or "").strip()
+        messages = [
+            {"role": "system", "content": "Você é um atendente de vendas via WhatsApp. Seja humano, curto e direto."},
+            {"role": "user", "content": prompt},
+        ]
+
     payload = {
         "model": OPENAI_SALES_MODEL,
         "temperature": float(temperature),
         "max_tokens": int(max_tokens),
-        "messages": [
-            {"role": "system", "content": "Você é um atendente de vendas via WhatsApp. Seja humano, curto e direto."},
-            {"role": "user", "content": prompt},
-        ],
+        "messages": messages,
     }
 
     try:
@@ -529,19 +541,18 @@ def _openai_chat(prompt: str, max_tokens: int = 140, temperature: float = 0.45) 
     except Exception:
         return ""
 
+
 def _ai_pitch(name: str, segment: str, user_text: str) -> str:
     """
-    Gera um pitch curto e humano (WhatsApp) usando o "cérebro único".
+    Gera um pitch curto e humano (WhatsApp) usando a KB real do Firestore (platform_kb/sales).
     Mantém best-effort e não quebra o fluxo.
     """
     name = (name or "").strip()
     user_text = (user_text or "").strip()
 
-    seg_key = (segment or "").strip().lower()
-    if not seg_key:
-        seg_key = "geral"
+    seg_key = (segment or "").strip().lower() or "geral"
 
-    hint = "pitch_v1"
+    hint = "pitch_v2"
     cached = _get_cached_pitch(seg_key, hint, user_text)
     if cached:
         return cached
@@ -551,49 +562,63 @@ def _ai_pitch(name: str, segment: str, user_text: str) -> str:
     seg_info = segments.get(seg_key) or {}
     seg_title = (seg_info.get("title") or segment or seg_key).strip()
 
-    bullets = seg_info.get("bullets") or []
-    if not isinstance(bullets, list):
-        bullets = []
+    use_cases = seg_info.get("use_cases") or []
+    if not isinstance(use_cases, list):
+        use_cases = []
 
-    scenarios = kb.get("scenarios") or []
-    if not isinstance(scenarios, list):
-        scenarios = []
+    example_openers = seg_info.get("example_openers") or []
+    if not isinstance(example_openers, list):
+        example_openers = []
+
+    handoff_format = seg_info.get("handoff_format") or ""
+    if isinstance(handoff_format, list):
+        # às vezes vem como lista de linhas
+        handoff_format = "\n".join([str(x).strip() for x in handoff_format if str(x).strip()])
+    if not isinstance(handoff_format, str):
+        handoff_format = ""
 
     system = (
-        "Você é o MEI Robô institucional de VENDAS.\n"
-        "Objetivo: converter o lead com conversa curta, humana e objetiva.\n"
-        "Regras:\n"
-        "- Nada de bastidores técnicos.\n"
-        "- Sem textão.\n"
-        "- Faça 1 pergunta por vez.\n"
-        "- Se faltar dado, pergunte.\n"
-        "- CTA leve: preço/horários/endereço ou agendar.\n"
+        "Você é o MEI Robô institucional de VENDAS (WhatsApp).
+"
+        "Objetivo: conversar curto, humano e objetivo.
+"
+        "Regras:
+"
+        "- Nada de bastidores técnicos.
+"
+        "- Sem textão.
+"
+        "- 2 a 6 linhas.
+"
+        "- Faça 1 pergunta por vez.
+"
+        "- No fim, puxe a conversa com uma pergunta: pedidos, agenda ou orçamento.
+"
     )
 
-    parts = []
-    parts.append(f"Segmento: {seg_title}")
+    # Monta contexto compacto (sem virar palestra)
+    lines = []
+    lines.append(f"Segmento: {seg_title}")
     if name:
-        parts.append(f"Lead: {name}")
+        lines.append(f"Lead: {name}")
     if user_text:
-        parts.append(f"Mensagem do lead: {user_text}")
+        lines.append(f"Mensagem do lead: {user_text}")
 
-    if bullets:
-        parts.append("Pontos fortes do segmento (use só se ajudar agora):")
-        parts.extend([f"- {b}" for b in bullets[:8]])
+    if use_cases:
+        lines.append("Use cases (escolha 2–4, só os mais relevantes agora):")
+        lines.extend([f"- {str(x).strip()}" for x in use_cases[:6] if str(x).strip()])
 
-    if scenarios:
-        # só um cheirinho, pra não virar palestra
-        parts.append("Exemplos rápidos de uso por segmento (referência):")
-        for s in scenarios[:5]:
-            try:
-                t = (s.get("title") or "").strip()
-                d = (s.get("desc") or "").strip()
-                if t or d:
-                    parts.append(f"- {t}: {d}".strip(": "))
-            except Exception:
-                pass
+    if example_openers:
+        lines.append("Exemplos de abertura (use 1–2 como inspiração):")
+        lines.extend([f"- {str(x).strip()}" for x in example_openers[:3] if str(x).strip()])
 
-    prompt = "\n".join(parts).strip()
+    if handoff_format:
+        lines.append("Formato de handoff (se fizer sentido usar):")
+        lines.append(str(handoff_format).strip()[:400])
+
+    lines.append("Agora escreva a resposta final em pt-BR, natural de WhatsApp.")
+
+    prompt = "\n".join([l for l in lines if l]).strip()
 
     out = ""
     try:
@@ -601,12 +626,12 @@ def _ai_pitch(name: str, segment: str, user_text: str) -> str:
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ]
-        out = (_openai_chat(messages) or "").strip()
+        out = (_openai_chat(messages, max_tokens=180, temperature=0.45) or "").strip()
     except Exception:
         out = ""
 
     if not out:
-        out = "Posso te passar valores, endereço/horários ou já marcar um horário. O que você prefere?"
+        out = "Posso te passar valores ou te mostrar um exemplo bem real no teu caso. Teu foco hoje é pedidos, agenda ou orçamento?"
 
     _set_cached_pitch(seg_key, hint, user_text, out)
     return out
@@ -830,7 +855,20 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         st["segment"] = (nlu.get("segment") or "").strip()
         segment = st["segment"]
 
-    # intent canônico vindo da IA (não por palavra)
+    
+    # PATCH (nome/segmento não escapam): fallback determinístico de extração
+    if not name:
+        nm = _extract_name_freeform(text_in)
+        if nm:
+            st["name"] = nm
+            name = nm
+    if not segment:
+        sg = _extract_segment(text_in)
+        if sg:
+            st["segment"] = sg
+            segment = sg
+
+# intent canônico vindo da IA (não por palavra)
     intent = (nlu.get("intent") or intent or "OTHER").strip().upper()
 
 
@@ -982,8 +1020,14 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         parts = [p for p in [pitch_txt] if (p or '').strip()]
         return "\n\n".join(parts).strip() or _fallback_min_reply(name)
 
-    # LOW: só mantém curto e seguro
-    return (pitch_txt or '').strip() or _fallback_min_reply(name)
+    # LOW: curto + 1 pergunta objetiva (sem link)
+    pitch_txt = (pitch_txt or "").strip()
+    if not pitch_txt:
+        return _fallback_min_reply(name)
+    # evita repetir pergunta se já tiver uma no final
+    if "?" in pitch_txt[-120:]:
+        return pitch_txt
+    return f"{pitch_txt}\n\n{name}, teu foco hoje é pedidos, agenda ou orçamento?"
 
 
 def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
@@ -1091,10 +1135,3 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
             pass
 
     return out
-
-
-
-
-
-
-
