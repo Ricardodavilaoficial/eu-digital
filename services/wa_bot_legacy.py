@@ -368,6 +368,80 @@ except Exception as e_abs:
         def can_use_gpt4o():
             return False
             
+
+# ==== SUPORTE (IA) ==========================================================
+def _support_ai_reply(uid: str, user_text: str, *, mode: str = "text") -> str:
+    """
+    Resposta de suporte por IA (gpt-4o-mini), best-effort.
+    - Não quebra o fluxo se OpenAI estiver indisponível.
+    - Não faz vendas para uid autenticado.
+    """
+    user_text = (user_text or "").strip()
+    if not user_text:
+        return "Entendi 🙂 Me diz só qual é a parte: voz, cadastro, pagamento ou agenda?"
+
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    base_url = (os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip()
+    model = (os.getenv("OPENAI_SUPPORT_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
+
+    if not api_key:
+        # fallback curto (sem loop)
+        return "Beleza. Me conta rapidinho: qual erro aparece ou em que passo trava?"
+
+    # Contexto essencial do cliente (Bible = Firestore, mas sem palestrar)
+    prof = _get_doc_safe(f"profissionais/{uid}") or {}
+    nome = (prof.get("nome") or prof.get("display_name") or "").strip()
+    cnpj = (prof.get("cnpj") or "").strip()
+    voz = prof.get("vozClonada") or {}
+    voz_status = (voz.get("status") or "").strip()
+    voz_provider = (voz.get("provider") or "").strip()
+
+    ctx_parts = []
+    if nome: ctx_parts.append(f"nome={nome}")
+    if cnpj: ctx_parts.append(f"cnpj={cnpj}")
+    if voz_status or voz_provider:
+        ctx_parts.append(f"voz.status={voz_status or '-'} voz.provider={voz_provider or '-'}")
+
+    ctx_line = ("; ".join(ctx_parts)).strip()
+
+    sys_msg = (
+        "Você é o MEI Robô (suporte). Responda como humano no WhatsApp, em português do Brasil. "
+        "Seja objetivo e resolutivo. "
+        "Nunca faça vendas nem ofereça plano quando o contato é cliente autenticado. "
+        "Se faltar dado, faça 1 pergunta curta e prática. "
+        "Não exponha detalhes técnicos internos. "
+    )
+
+    if ctx_line:
+        sys_msg += f"Contexto do cliente: {ctx_line}. "
+
+    payload = {
+        "model": model,
+        "temperature": 0.35,
+        "max_tokens": 180,
+        "messages": [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": user_text},
+        ],
+    }
+
+    try:
+        r = requests.post(
+            f"{base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=10,
+        )
+        data = r.json() if hasattr(r, "json") else {}
+        txt = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        if txt:
+            return txt
+    except Exception:
+        pass
+
+    return "Entendi 🙂 Me diz só um detalhe a mais pra eu te ajudar: é sobre voz, cadastro, pagamento ou agenda?"
+
+
 # ==== ACERVO / MINI-RAG (helpers) ==========================================
 def _acervo_mode() -> str:
     try:
@@ -2270,7 +2344,7 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
 
                 if not audio_bytes:
                     send_reply(uid_default, to_raw, fallback_text(app_tag, "audio:bytes=0"), msg_type, send_text_fn, send_audio_fn)
-                continue
+                    continue
 
                 mt = (audio.get("mime_type") or content_type or "audio/ogg").split(";")[0].strip()
                 text_in = stt_transcribe(audio_bytes, mime_type=mt, language="pt-BR")
@@ -2324,7 +2398,27 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         # --- hard override para reagendamento por palavras-chave ---
         if re.search(r"\b(reagendar|remarcar|trocar\s+(?:o|de)?\s*horario|mudar\s+(?:o|de)?\s*horario)\b", text_norm):
             intent = "reagendar"
-    
+
+        # PATCH CRÍTICO: cliente autenticado falando de configuração/voz/pagamento => SUPORTE (não vendas)
+        if uid_default and intent in ("fallback", "saudacao", "smalltalk") and re.search(
+            r"\b(configur|configura(c|ç)ao|voz|convite|pagamento|boleto|cupom|assinatura|cadastro)\b",
+            text_norm,
+        ):
+            intent = "suporte"
+
+        # Fallback de intenção (PATCH CRÍTICO)
+        if not intent:
+            if uid_default:
+                intent = "suporte"
+            else:
+                intent = "vendas"
+
+        # -------- SUPORTE (IA) ----------
+        if intent == "suporte":
+            reply_suporte = _support_ai_reply(uid_default, text_in, mode=channel_mode)
+            send_reply(uid_default, to_raw, reply_suporte, msg_type, send_text_fn, send_audio_fn)
+            continue
+
         # comandos rápidos de sessão
         if re.search(r"\b(cancelar|limpar|resetar|apagar\s+(conversa|sess[aã]o))\b", text_norm):
             try:
@@ -2492,17 +2586,19 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
         except Exception:
             # Nunca deixa o acervo derrubar o bot; loga e segue para fallback
             logging.exception("[ACERVO] erro inesperado ao tentar usar o acervo; seguindo para fallback.")
-       
-        # Fallback -> ajuda humanizada
-        logging.info("[NLU] fallback -> help")
-        
-        if uid_default:
-            reply = "Oi 🙂 Em que posso te ajudar?"
-        else:
-            reply = fallback_text(app_tag, context)
-            
-        send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)      
-        return True       
+
+        # Sem rota + sem acervo: fallback por IA (cliente autenticado => SUPORTE)
+        logging.info("[NLU] fallback -> suporte_ia")
+        try:
+            if uid_default:
+                reply = _support_ai_reply(uid_default, text_in, mode=channel_mode)
+            else:
+                reply = "Oi 🙂 Me diz teu nome rapidinho e teu ramo?"
+        except Exception:
+            reply = "Entendi 🙂 Me diz só um detalhe a mais pra eu te ajudar: é sobre voz, cadastro, pagamento ou agenda?"
+
+        send_reply(uid_default, to_raw, reply, msg_type, send_text_fn, send_audio_fn)
+        return True
 
     # statuses
     for st in value.get("statuses", []):
@@ -2510,4 +2606,5 @@ def process_change(value: Dict[str, Any], send_text_fn, uid_default: str, app_ta
             f"[WA_BOT][STATUS] id={st.get('id')} status={st.get('status')} ts={st.get('timestamp')} recipient={st.get('recipient_id')} errors={st.get('errors')}",
             flush=True,
         )
+
 
