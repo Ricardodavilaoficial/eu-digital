@@ -111,18 +111,15 @@ def ycloud_inbound_worker():
 
                 ensure_firebase_admin()
 
-                url = ""
+                provider = (payload.get("provider") or "ycloud")
+                b, mime = download_media_bytes(provider, media)
+                ext_hint = "ogg"
                 try:
-                    url = (media.get("url") or "").strip()
+                    from services.voice_wa_download import sniff_extension  # type: ignore
+                    ext_hint = sniff_extension(mime or "", fallback="ogg")
                 except Exception:
-                    url = ""
-
-                if not url:
-                    logger.warning("[tasks] voice: sem media.url uid=%s wamid=%s", uid, wamid)
-                    return jsonify({"ok": True, "voice": "no_url"}), 200
-
-                b, info = download_media_bytes(media, url)
-                storage_path = upload_voice_bytes(uid=uid, audio_bytes=b, ext_hint=(info.get("ext") or "ogg"))
+                    pass
+                storage_path = upload_voice_bytes(uid=uid, audio_bytes=b, ext_hint=ext_hint)
 
                 # status em doc do profissional (compat com o que já existe no webhook)
                 try:
@@ -198,15 +195,9 @@ def ycloud_inbound_worker():
 
                         try:
                             from services.voice_wa_download import download_media_bytes  # type: ignore
-                            audio_bytes, info = download_media_bytes(media, url)
-                            # info pode trazer ext, mas STT precisa mais do Content-Type; usamos fallback por ext
-                            ext = (info.get("ext") or "").lower()
-                            if ext in ("ogg", "opus"):
-                                ctype = "audio/ogg"
-                            elif ext in ("wav",):
-                                ctype = "audio/wav"
-                            elif ext in ("mp3", "mpeg"):
-                                ctype = "audio/mpeg"
+                            provider = (payload.get("provider") or "ycloud")
+                            audio_bytes, mime = download_media_bytes(provider, media)
+                            ctype = (mime or "audio/ogg").split(";")[0].strip() or "audio/ogg"
                         except Exception:
                             # Fallback: download direto
                             r = requests.get(url, timeout=12)
@@ -350,3 +341,4 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+

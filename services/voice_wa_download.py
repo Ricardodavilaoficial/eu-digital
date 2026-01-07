@@ -87,6 +87,13 @@ def _meta_media_url(media_id: str) -> Tuple[str, str]:
     return url, mime
 
 def download_media_bytes(provider: str, media: Dict[str, Any]) -> Tuple[bytes, str]:
+    # PATCH: blindagem — provider pode chegar em formatos inesperados (ex.: dict)
+    if isinstance(provider, dict):
+        provider = provider.get("provider") or provider.get("name") or provider.get("source") or "unknown"
+    elif provider is None:
+        provider = "unknown"
+    elif not isinstance(provider, str):
+        provider = str(provider)
     provider = (provider or "unknown").lower()
     url = (media.get("url") or "").strip()
     mime = (media.get("mimeType") or media.get("mime_type") or "").split(";")[0].strip()
@@ -141,3 +148,4 @@ def basic_audio_validate(data: bytes, mime_type: str = "") -> Tuple[bool, str]:
         # não bloqueia se mime vier vazio; mas se vier e não for áudio, rejeita
         return (False, "unsupported_media_type")
     return (True, "")
+
