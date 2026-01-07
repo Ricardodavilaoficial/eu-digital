@@ -119,7 +119,7 @@ def ycloud_inbound_worker():
                     ext_hint = sniff_extension(mime or "", fallback="ogg")
                 except Exception:
                     pass
-                storage_path = upload_voice_bytes(uid=uid, audio_bytes=b, ext_hint=ext_hint)
+                storage_path = upload_voice_bytes(uid, b, ext_hint=ext_hint)
 
                 # status em doc do profissional (compat com o que já existe no webhook)
                 try:
