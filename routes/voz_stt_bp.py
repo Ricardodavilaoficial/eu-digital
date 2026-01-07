@@ -71,7 +71,14 @@ def stt_post():
             cfg_kwargs["sample_rate_hertz"] = sample_rate_hz
 
         config = speech.RecognitionConfig(**cfg_kwargs)
-        resp = client.recognize(config=config, audio=audio)
+
+        # PATCH B: OGG/Opus (WhatsApp) às vezes volta transcript vazio no recognize().
+        # long_running_recognize costuma ser bem mais estável para esse caso.
+        if encoding == "OGG_OPUS":
+            op = client.long_running_recognize(config=config, audio=audio)
+            resp = op.result(timeout=int(os.environ.get("STT_OP_TIMEOUT", "25")))
+        else:
+            resp = client.recognize(config=config, audio=audio)
 
         # Consolida as alternativas
         transcript = ""
