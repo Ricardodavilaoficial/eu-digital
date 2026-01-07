@@ -112,16 +112,23 @@ def ycloud_inbound_worker():
                 ensure_firebase_admin()
 
                 provider = (payload.get("provider") or "ycloud")
+
+                # Baixa bytes + mime do provedor (ycloud)
                 b, mime = download_media_bytes(provider, media)
+
                 ext_hint = "ogg"
                 try:
                     from services.voice_wa_download import sniff_extension  # type: ignore
                     ext_hint = sniff_extension(mime or "", fallback="ogg")
                 except Exception:
                     pass
-                storage_path = upload_voice_bytes(uid, b, ext_hint, content_type=(mime or "audio/ogg"))
 
-                # status em doc do profissional (compat com o que já existe no webhook)
+                # Caminho padrão já usado no projeto (não muda contrato)
+                storage_path = f"profissionais/{uid}/voz/original/whatsapp_{int(time.time())}.{ext_hint}"
+
+                # Assinatura correta: (storage_path, content_type, data)
+                storage_path = upload_voice_bytes(storage_path, (mime or "audio/ogg"), b)
+# status em doc do profissional (compat com o que já existe no webhook)
                 try:
                     _db().collection("profissionais").document(uid).set(
                         {
@@ -341,4 +348,5 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
