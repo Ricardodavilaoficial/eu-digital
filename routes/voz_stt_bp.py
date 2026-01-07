@@ -38,7 +38,7 @@ def stt_post():
     elif ctype in ("audio/ogg", "application/ogg", "audio/opus"):
         # WhatsApp geralmente envia voice note como OGG/OPUS
         encoding = "OGG_OPUS"
-        sample_rate_hz = None
+        sample_rate_hz = 48000
     else:
         # aceita mesmo assim tentando MP3 como fallback
         encoding = "MP3"
@@ -83,4 +83,5 @@ def stt_post():
 @voz_stt_bp.route("/api/voz/stt/ping", methods=["GET"])
 def stt_ping():
     return jsonify({"ok": True, "service": "voz_stt"})
+
 

@@ -297,7 +297,7 @@ def ycloud_inbound_worker():
                 else:
                     # fallback curto e humano, sem travar o fluxo
                     logger.warning("[tasks] lead: stt_failed from=%s wamid=%s reason=%s", from_e164, wamid, stt_err)
-                    text_in = "Não consegui entender esse áudio. Pode mandar em texto ou repetir rapidinho?"
+                    text_in = "Não consegui entender sua mensagem. Pode escrever em texto ou mandar de novo rapidinho?"
                     audio_debug = dict(audio_debug or {})
                     audio_debug["stt"] = {"ok": False, "reason": stt_err}
 
