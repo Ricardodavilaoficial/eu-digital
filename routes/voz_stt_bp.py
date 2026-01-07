@@ -60,6 +60,13 @@ def stt_post():
             language_code=language_code,
             enable_automatic_punctuation=True,
         )
+        
+        # PATCH A: Opus (WhatsApp) costuma ser mono. Declarar 1 canal ajuda o Google STT a não voltar vazio.
+        if encoding == "OGG_OPUS":
+            cfg_kwargs["audio_channel_count"] = 1
+            # Opcional: fala curta (melhora perguntas rápidas)
+            cfg_kwargs["model"] = os.environ.get("STT_MODEL", "latest_short")      
+        
         if sample_rate_hz:
             cfg_kwargs["sample_rate_hertz"] = sample_rate_hz
 
