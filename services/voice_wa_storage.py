@@ -22,5 +22,16 @@ def upload_voice_bytes(storage_path: str, content_type: str, data: bytes) -> str
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(storage_path)
 
+    # PATCH: GCS espera content_type como str; às vezes chega como bytes
+    if isinstance(content_type, (bytes, bytearray)):
+        try:
+            content_type = content_type.decode("utf-8", errors="ignore")
+        except Exception:
+            content_type = ""
+    elif content_type is None:
+        content_type = ""
+    elif not isinstance(content_type, str):
+        content_type = str(content_type)
+
     blob.upload_from_string(data, content_type=(content_type or "application/octet-stream"))
     return storage_path
