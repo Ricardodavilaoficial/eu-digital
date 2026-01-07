@@ -154,14 +154,30 @@ def ycloud_inbound_worker():
                 # ACK opcional (mesmo comportamento do webhook antigo)
                 if os.environ.get("VOICE_WA_ACK", "0") == "1":
                     try:
-                        from providers.ycloud import ycloud_send_text  # type: ignore
-                        ycloud_send_text(
-                            from_e164,
-                            "✅ Áudio recebido com sucesso.\nAgora volte para a tela de configuração e clique em Continuar."
+                        from providers.ycloud import send_text  # type: ignore
+                        send_text(
+                            to_e164=from_e164,
+                            text="✅ Áudio recebido com sucesso.\nAgora volte para a tela de configuração e clique em Continuar."
                         )
                     except Exception:
-                        pass
+                        logger.exception("[tasks] voice: falha ao enviar ACK via WhatsApp")
 
+                try:
+                    _db().collection("platform_wa_outbox_logs").add({
+                        "createdAt": firestore.SERVER_TIMESTAMP,
+                        "from": from_e164,
+                        "to": to_e164,
+                        "wamid": wamid,
+                        "msgType": msg_type,
+                        "route": "voice_ingest",
+                        "replyText": "ACK: voz recebida (configuração)",
+                        "audioUrl": "",
+                        "audioDebug": {},
+                        "eventKey": event_key,
+                        "sentOk": True,
+                    })
+                except Exception:
+                    pass
                 return jsonify({"ok": True, "voice": "stored"}), 200
 
             except Exception:
@@ -348,5 +364,6 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
 
