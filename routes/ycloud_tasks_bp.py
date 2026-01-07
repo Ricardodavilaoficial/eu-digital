@@ -353,6 +353,51 @@ def ycloud_inbound_worker():
                 )
                 reply_text = "Não consegui responder agora 😕 Pode tentar de novo ou me explicar um pouco melhor?"
 
+        # ==========================================================
+        # TTS automático: se entrou por áudio, deve sair por áudio.
+        # Gera audioUrl quando o wa_bot não devolveu um.
+        # ==========================================================
+        if msg_type in ("audio", "voice", "ptt") and not audio_url and reply_text:
+            try:
+                base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+                if not base:
+                    base = (request.host_url or "").strip().rstrip("/")
+
+                tts_url = f"{base}/api/voz/tts"
+
+                # tenta usar a voz clonada do cliente; fallback fica por conta do endpoint
+                voice_id = ""
+                try:
+                    if uid:
+                        prof = _db().collection("profissionais").document(uid).get()
+                        prof_data = prof.to_dict() or {}
+                        vc = prof_data.get("vozClonada") or {}
+                        voice_id = (vc.get("voiceId") or "").strip()
+                except Exception:
+                    voice_id = ""
+
+                body = {"text": reply_text}
+                if voice_id:
+                    body["voice_id"] = voice_id
+
+                rr = requests.post(tts_url, json=body, timeout=35)
+                if rr.status_code == 200:
+                    j = rr.json() or {}
+                    if j.get("ok") and (j.get("audioUrl") or j.get("audio_url")):
+                        audio_url = (j.get("audioUrl") or j.get("audio_url") or "").strip()
+                        audio_debug = dict(audio_debug or {})
+                        audio_debug["tts"] = {"ok": True, "voice_id": (voice_id or "")}
+                    else:
+                        audio_debug = dict(audio_debug or {})
+                        audio_debug["tts"] = {"ok": False, "reason": f"tts_not_ok:{j.get('error')}"}
+                else:
+                    audio_debug = dict(audio_debug or {})
+                    audio_debug["tts"] = {"ok": False, "reason": f"tts_http_{rr.status_code}"}
+            except Exception as e:
+                logger.exception("[tasks] tts_failed uid=%s wamid=%s", uid, wamid)
+                audio_debug = dict(audio_debug or {})
+                audio_debug["tts"] = {"ok": False, "reason": f"tts_exc:{e}"}
+
         # envia resposta: se lead mandou áudio, tentamos áudio (se veio audioUrl), senão texto
         sent_ok = False
         allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
@@ -398,4 +443,5 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
