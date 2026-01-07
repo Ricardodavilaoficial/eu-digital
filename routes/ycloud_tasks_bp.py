@@ -355,7 +355,7 @@ def ycloud_inbound_worker():
                     '[tasks] route=tasks_empty_reply reason=empty_reply from=%s to=%s wamid=%s eventKey=%s',
                     from_e164, to_e164, wamid, event_key
                 )
-                reply_text = "Entendi 🙂 Me diz rapidinho o que você quer agora: pedidos, agenda, orçamento ou conhecer?"
+                reply_text = "Não consegui entender direitinho 🙂 Você quer: conhecer a plataforma, ver preços/planos, ou falar de um uso no seu negócio?"
             else:
                 logger.warning(
                     "[tasks] customer_empty_reply from=%s wamid=%s",
@@ -363,7 +363,7 @@ def ycloud_inbound_worker():
                 )
                 reply_text = "Não consegui responder agora 😕 Pode tentar de novo ou me explicar um pouco melhor?"
 
-                # ==========================================================
+        # ==========================================================
         # TTS automático (universal): se entrou por áudio, deve sair por áudio.
         # Se o wa_bot não devolveu audioUrl, geramos via /api/voz/tts.
         #
@@ -390,31 +390,50 @@ def ycloud_inbound_worker():
                 else:
                     # voz institucional para VENDAS (defina esta ENV)
                     voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
-
                 # se não há voice_id, não forçamos TTS (cai para texto, nunca mudo)
                 if voice_id:
-                    rr = requests.post(tts_url, json={"text": reply_text, "voice_id": voice_id}, timeout=35)
+                    rr = requests.post(
+                        tts_url,
+                        headers={"Accept": "application/json"},
+                        json={"text": reply_text, "voice_id": voice_id},
+                        timeout=35,
+                    )
+
                     if rr.status_code == 200:
-                        j = rr.json() or {}
+                        try:
+                            j = rr.json() or {}
+                        except Exception:
+                            j = {}
+
                         got = (j.get("audioUrl") or j.get("audio_url") or "").strip()
                         if j.get("ok") and got:
                             audio_url = got
                             audio_debug = dict(audio_debug or {})
                             audio_debug["tts"] = {"ok": True, "voice_id": voice_id}
                         else:
+                            # se veio 200 mas não veio JSON/ok/audioUrl, registra motivo sem quebrar
+                            reason = j.get("error") if isinstance(j, dict) else None
+                            if not reason:
+                                # ajuda debug: corta corpo enorme, mas dá uma pista
+                                body_hint = (rr.text or "").strip()
+                                if len(body_hint) > 200:
+                                    body_hint = body_hint[:200] + "..."
+                                reason = f"tts_not_ok_or_nonjson:{body_hint or 'empty_body'}"
+
                             audio_debug = dict(audio_debug or {})
-                            audio_debug["tts"] = {"ok": False, "reason": f"tts_not_ok:{j.get('error')}"}
+                            audio_debug["tts"] = {"ok": False, "reason": reason}
                     else:
                         audio_debug = dict(audio_debug or {})
                         audio_debug["tts"] = {"ok": False, "reason": f"tts_http_{rr.status_code}"}
                 else:
                     audio_debug = dict(audio_debug or {})
                     audio_debug["tts"] = {"ok": False, "reason": "missing_voice_id"}
+                    
             except Exception as e:
                 logger.exception("[tasks] tts_failed uid=%s wamid=%s", uid, wamid)
                 audio_debug = dict(audio_debug or {})
                 audio_debug["tts"] = {"ok": False, "reason": f"tts_exc:{e}"}
-
+                    
         # envia resposta: se lead mandou áudio, tentamos áudio (se veio audioUrl), senão texto
         sent_ok = False
         allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
@@ -460,4 +479,5 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
