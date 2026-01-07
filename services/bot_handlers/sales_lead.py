@@ -392,15 +392,23 @@ from services.institutional_leads_store import (
 def _load_state(from_sender: str) -> tuple[dict, str]:
     """
     Retorna (state_dict, wa_key_escolhida).
-    - primeiro tenta sessão válida
-    - se não tiver sessão, tenta lead pra “retomar leve”
+    - sessão é cache curto
+    - se existir lead em institutional_leads, ele é canônico
     """
     sess, wa_key = get_session(from_sender)
-    if isinstance(sess, dict) and sess:
-        return sess, wa_key
-
     lead, wa_key2 = get_lead(from_sender)
     wa_key = wa_key or wa_key2
+
+    # Se tem sessão, ainda assim busca/mescla o lead (lead vence no que for canônico e estiver preenchido)
+    if isinstance(sess, dict) and sess:
+        if isinstance(lead, dict) and lead:
+            for k in ("name", "segment", "goal", "interest_level"):
+                v = lead.get(k)
+                if isinstance(v, str):
+                    v = v.strip()
+                if v:
+                    sess[k] = v
+        return sess, wa_key
 
     # Se tem lead, sem sessão: retoma leve (não finge conversa no meio)
     if isinstance(lead, dict) and lead:
@@ -1286,4 +1294,5 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
             pass
 
     return out
+
 

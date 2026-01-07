@@ -231,6 +231,8 @@ def ycloud_inbound_worker():
             from services import wa_bot as wa_bot_entry  # lazy import
             route_hint = "sales" if not uid else "customer"
 
+            skip_wa_bot = False
+
             if msg_type in ("audio", "voice", "ptt") and not text_in:
                 # Áudio de lead: baixar mídia e transcrever (STT) antes da IA
                 transcript = ""
@@ -295,30 +297,34 @@ def ycloud_inbound_worker():
                     audio_debug = dict(audio_debug or {})
                     audio_debug["stt"] = {"ok": True}
                 else:
-                    # fallback curto e humano, sem travar o fluxo
+                    # PATCH 1 (worker): se STT não trouxe transcript, NÃO chama IA.
                     logger.warning("[tasks] lead: stt_failed from=%s wamid=%s reason=%s", from_e164, wamid, stt_err)
-                    text_in = "Não consegui entender sua mensagem. Pode escrever em texto ou mandar de novo rapidinho?"
+                    reply_text = "Não consegui entender esse áudio. Pode mandar em texto ou repetir rapidinho?"
+                    skip_wa_bot = True
                     audio_debug = dict(audio_debug or {})
                     audio_debug["stt"] = {"ok": False, "reason": stt_err}
 
             if hasattr(wa_bot_entry, "reply_to_text"):
-                ctx_for_bot = {
-                    "channel": "whatsapp",
-                    "from_e164": from_e164,
-                    "to_e164": to_e164,
-                    "msg_type": msg_type,
-                    "wamid": wamid,
-                    "route_hint": route_hint,
-                    "event_key": event_key,
-                }
-                # PATCH A (obrigatório): garantir msg_type no ctx do wa_bot
-                ctx_for_bot["msg_type"] = msg_type  # "audio" | "voice" | "ptt" | "text"
-
-                wa_out = wa_bot_entry.reply_to_text(
-                    uid=uid,
-                    text=text_in,
-                    ctx=ctx_for_bot,
-                )
+                if skip_wa_bot:
+                    wa_out = {"replyText": reply_text, "audioUrl": "", "audioDebug": audio_debug}
+                else:
+                    ctx_for_bot = {
+                        "channel": "whatsapp",
+                        "from_e164": from_e164,
+                        "to_e164": to_e164,
+                        "msg_type": msg_type,
+                        "wamid": wamid,
+                        "route_hint": route_hint,
+                        "event_key": event_key,
+                    }
+                    # PATCH A (obrigatório): garantir msg_type no ctx do wa_bot
+                    ctx_for_bot["msg_type"] = msg_type  # "audio" | "voice" | "ptt" | "text"
+    
+                    wa_out = wa_bot_entry.reply_to_text(
+                        uid=uid,
+                        text=text_in,
+                        ctx=ctx_for_bot,
+                    )
 
         except Exception as e:
             # Best-effort: não derruba o worker se o wa_bot falhar/import quebrar
@@ -454,3 +460,4 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
