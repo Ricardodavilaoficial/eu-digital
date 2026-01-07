@@ -101,8 +101,19 @@ def ycloud_inbound_worker():
         except Exception:
             uid = ""
 
-        # --- 1) ÁUDIO: se tem UID -> trata como fluxo de VOZ (ingest) ---
-        if uid and msg_type in ("audio", "voice", "ptt"):
+        # --- 1) ÁUDIO: fluxo de VOZ (ingest) SOMENTE se onboarding estiver "waiting" ---
+        voice_waiting = False
+        try:
+            prof = _db().collection("profissionais").document(uid).get()
+            prof_data = prof.to_dict() or {}
+            voz = prof_data.get("voz") or {}
+            wa = voz.get("whatsapp") or {}
+            # regra saudável: só é onboarding de voz se estiver explicitamente aguardando áudio
+            voice_waiting = (str(wa.get("status") or "").strip().lower() == "waiting")
+        except Exception:
+            voice_waiting = False
+
+        if uid and msg_type in ("audio", "voice", "ptt") and voice_waiting:
             try:
                 from services.voice_wa_download import download_media_bytes  # type: ignore
                 from services.voice_wa_storage import upload_voice_bytes  # type: ignore
@@ -137,6 +148,29 @@ def ycloud_inbound_worker():
                                 "object_key": storage_path,
                                 "updatedAt": time.time(),
                                 "lastError": "",
+                            }
+                        },
+                        merge=True,
+                    )
+                except Exception:
+                    pass
+
+
+                # ✅ IMPORTANTÍSSIMO: encerra o modo "waiting" após receber 1 áudio válido.
+                # Isso destrava SUPORTE imediatamente, sem precisar esperar TTL.
+                try:
+                    _db().collection("profissionais").document(uid).set(
+                        {
+                            "voz": {
+                                "whatsapp": {
+                                    "status": "received",
+                                    "lastError": "",
+                                    "lastAudioGcsPath": storage_path,
+                                    "lastAudioMime": (mime or "audio/ogg"),
+                                    "lastInboundAt": firestore.SERVER_TIMESTAMP,
+                                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                                    "waFromE164": from_e164,
+                                }
                             }
                         },
                         merge=True,
@@ -364,6 +398,4 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
-
-
 
