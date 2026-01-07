@@ -302,18 +302,22 @@ def ycloud_inbound_worker():
                     audio_debug["stt"] = {"ok": False, "reason": stt_err}
 
             if hasattr(wa_bot_entry, "reply_to_text"):
+                ctx_for_bot = {
+                    "channel": "whatsapp",
+                    "from_e164": from_e164,
+                    "to_e164": to_e164,
+                    "msg_type": msg_type,
+                    "wamid": wamid,
+                    "route_hint": route_hint,
+                    "event_key": event_key,
+                }
+                # PATCH A (obrigatório): garantir msg_type no ctx do wa_bot
+                ctx_for_bot["msg_type"] = msg_type  # "audio" | "voice" | "ptt" | "text"
+
                 wa_out = wa_bot_entry.reply_to_text(
                     uid=uid,
                     text=text_in,
-                    ctx={
-                        "channel": "whatsapp",
-                        "from_e164": from_e164,
-                        "to_e164": to_e164,
-                        "msg_type": msg_type,
-                        "wamid": wamid,
-                        "route_hint": route_hint,
-                        "event_key": event_key,
-                    },
+                    ctx=ctx_for_bot,
                 )
 
         except Exception as e:
@@ -450,6 +454,3 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
-
-
-
