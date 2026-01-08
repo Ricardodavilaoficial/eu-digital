@@ -278,9 +278,15 @@ def ycloud_inbound_worker():
                                 headers = {"Content-Type": ctype or "audio/ogg"}
                                 rr = requests.post(stt_url, data=audio_bytes, headers=headers, timeout=25)
                                 if rr.status_code == 200:
-                                    j = rr.json() or {}
+                                    try:
+                                        j = rr.json() or {}
+                                    except Exception:
+                                        j = {}
                                     if j.get("ok"):
                                         transcript = (j.get("transcript") or "").strip()
+                                        if not transcript:
+                                            # 200 ok, mas transcript vazio => falha real (áudio curto/silêncio/decoder)
+                                            stt_err = "empty_transcript"
                                     else:
                                         stt_err = f"stt_not_ok:{j.get('error')}"
                                 else:
@@ -297,12 +303,17 @@ def ycloud_inbound_worker():
                     audio_debug = dict(audio_debug or {})
                     audio_debug["stt"] = {"ok": True}
                 else:
-                    # PATCH 1 (worker): se STT não trouxe transcript, NÃO chama IA.
-                    logger.warning("[tasks] lead: stt_failed from=%s wamid=%s reason=%s", from_e164, wamid, stt_err)
-                    reply_text = "Não consegui entender esse áudio. Pode mandar em texto ou repetir rapidinho?"
-                    skip_wa_bot = True
+                    # STT falhou (ou transcript vazio): ainda assim, deixamos a IA responder com fallback humano/curto.
+                    logger.warning("[tasks] stt_failed from=%s wamid=%s reason=%s", from_e164, wamid, stt_err)
                     audio_debug = dict(audio_debug or {})
                     audio_debug["stt"] = {"ok": False, "reason": stt_err}
+                    # Importante: não inventar contexto quando STT falha. Pedir reenvio (áudio) ou texto.
+                    text_in = (
+                        "⚠️ O usuário enviou um áudio no WhatsApp, mas não foi possível transcrever (falha de STT). "
+                        "Responda de forma curta e humana pedindo para reenviar o áudio com mais clareza (ou mandar em texto). "
+                        "Não invente detalhes do negócio nem assuma intenção."
+                    )
+                    skip_wa_bot = False
 
             if hasattr(wa_bot_entry, "reply_to_text"):
                 if skip_wa_bot:
@@ -317,6 +328,14 @@ def ycloud_inbound_worker():
                         "route_hint": route_hint,
                         "event_key": event_key,
                     }
+                    # Contexto extra (sem regras): ajuda o wa_bot a decidir fallback sem inventar.
+                    try:
+                        ctx_for_bot["audio"] = {
+                            "input_was_audio": msg_type in ("audio", "voice", "ptt"),
+                            "stt": (audio_debug or {}).get("stt") or {},
+                        }
+                    except Exception:
+                        pass
                     # PATCH A (obrigatório): garantir msg_type no ctx do wa_bot
                     ctx_for_bot["msg_type"] = msg_type  # "audio" | "voice" | "ptt" | "text"
     
@@ -390,7 +409,18 @@ def ycloud_inbound_worker():
                 else:
                     # voz institucional para VENDAS (defina esta ENV)
                     voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
-                # se não há voice_id, não forçamos TTS (cai para texto, nunca mudo)
+                # Fallback de voice_id: mesmo sem voz clonada pronta, tentamos responder em áudio.
+                # - customer (uid): SUPPORT_FALLBACK_VOICE_ID (se existir) senão INSTITUTIONAL_VOICE_ID
+                # - sales (uid vazio): INSTITUTIONAL_VOICE_ID (se existir) senão SUPPORT_FALLBACK_VOICE_ID
+                if not voice_id:
+                    if uid:
+                        voice_id = (os.environ.get("SUPPORT_FALLBACK_VOICE_ID") or "").strip()
+                        if not voice_id:
+                            voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
+                    else:
+                        voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
+                        if not voice_id:
+                            voice_id = (os.environ.get("SUPPORT_FALLBACK_VOICE_ID") or "").strip()
                 if voice_id:
                     rr = requests.post(
                         tts_url,
@@ -479,5 +509,3 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
-
-
