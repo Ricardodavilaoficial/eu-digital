@@ -1,16 +1,37 @@
 # routes/voz_stt_bp.py
 # Blueprint: STT via Google Cloud Speech (POST /api/voz/stt)
 # - Aceita audio/mpeg (MP3) e audio/wav (LINEAR16) via body binário
+# - Suporta audio/ogg (OGG/OPUS) do WhatsApp
 # - Sem dependência de Storage/Firestore
 # - Falha elegante se biblioteca não estiver instalada
+#
+# Robustez v1 (2026-01):
+# - transcript vazio (mesmo com 200/ok) é tratado como falha real: empty_transcript
+# - retry leve para OGG_OPUS (WhatsApp): 2 tentativas com configs ligeiramente diferentes
+# - limiar mínimo de bytes configurável para evitar STT em áudio curto/silêncio
+#
+# Obs: Mantém compatibilidade com o worker. Se ok=false, worker faz fallback humano e (quando entrada é áudio) responde em áudio.
 
 from flask import Blueprint, request, jsonify
 import os
 
 voz_stt_bp = Blueprint("voz_stt_bp", __name__)
 
+
 def _env_true(v: str) -> bool:
-    return str(v or "").strip().lower() in ("1","true","yes","y","on")
+    return str(v or "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(str(os.environ.get(name, default)).strip())
+    except Exception:
+        return default
+
+
+def _content_type_base() -> str:
+    return (request.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+
 
 @voz_stt_bp.route("/api/voz/stt", methods=["POST", "OPTIONS"])
 def stt_post():
@@ -24,10 +45,34 @@ def stt_post():
 
     # Conteúdo binário obrigatório
     raw = request.get_data(cache=False, as_text=False)
-    if not raw or len(raw) < 100:
+    if not raw:
         return jsonify({"ok": False, "error": "empty_audio"}), 400
 
-    ctype = (request.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    ctype = _content_type_base()
+
+    # Limiar de bytes (ajuda muito em áudio curtinho/silêncio; evita "empty transcript" enganoso)
+    # Defaults conservadores para não quebrar: WhatsApp OGG geralmente > ~4KB
+    min_bytes_default = 100
+    if ctype in ("audio/ogg", "application/ogg", "audio/opus"):
+        min_bytes_default = _env_int("STT_MIN_BYTES_OGG", 800)  # ajuste fino via ENV se quiser
+    elif ctype in ("audio/wav", "audio/x-wav"):
+        min_bytes_default = _env_int("STT_MIN_BYTES_WAV", 200)
+    else:
+        min_bytes_default = _env_int("STT_MIN_BYTES_GENERIC", 100)
+
+    if len(raw) < min_bytes_default:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "too_short_or_silence",
+                    "bytes": len(raw),
+                    "minBytes": min_bytes_default,
+                }
+            ),
+            400,
+        )
+
     # Mapeia encoding para Google STT
     if ctype in ("audio/mpeg", "audio/mp3"):
         encoding = "MP3"
@@ -38,7 +83,7 @@ def stt_post():
     elif ctype in ("audio/ogg", "application/ogg", "audio/opus"):
         # WhatsApp geralmente envia voice note como OGG/OPUS
         encoding = "OGG_OPUS"
-        sample_rate_hz = 48000
+        sample_rate_hz = 48000  # tentativa 1; tentativa 2 omite isso se vier vazio
     else:
         # aceita mesmo assim tentando MP3 como fallback
         encoding = "MP3"
@@ -52,35 +97,39 @@ def stt_post():
     except Exception as e:
         return jsonify({"ok": False, "error": "speech_lib_missing", "detail": str(e)}), 501
 
-    try:
-        client = speech.SpeechClient()  # credenciais já vêm do gcp_creds/ADC/inline
-        audio = speech.RecognitionAudio(content=raw)
+    # Helpers internos
+    def _make_config(*, enc: str, sr: int | None, model: str | None):
         cfg_kwargs = dict(
-            encoding=getattr(speech.RecognitionConfig.AudioEncoding, encoding, speech.RecognitionConfig.AudioEncoding.MP3),
+            encoding=getattr(
+                speech.RecognitionConfig.AudioEncoding,
+                enc,
+                speech.RecognitionConfig.AudioEncoding.MP3,
+            ),
             language_code=language_code,
             enable_automatic_punctuation=True,
         )
-        
-        # PATCH A: Opus (WhatsApp) costuma ser mono. Declarar 1 canal ajuda o Google STT a não voltar vazio.
-        if encoding == "OGG_OPUS":
+
+        # WhatsApp/Opus costuma ser mono. Declarar 1 canal ajuda consistência.
+        if enc == "OGG_OPUS":
             cfg_kwargs["audio_channel_count"] = 1
-            # Opcional: fala curta (melhora perguntas rápidas)
-            cfg_kwargs["model"] = os.environ.get("STT_MODEL", "latest_short")      
-        
-        if sample_rate_hz:
-            cfg_kwargs["sample_rate_hertz"] = sample_rate_hz
+            cfg_kwargs["model"] = model or os.environ.get("STT_MODEL", "latest_short")
 
-        config = speech.RecognitionConfig(**cfg_kwargs)
+        if sr:
+            cfg_kwargs["sample_rate_hertz"] = sr
 
-        # PATCH B: OGG/Opus (WhatsApp) às vezes volta transcript vazio no recognize().
-        # long_running_recognize costuma ser bem mais estável para esse caso.
+        return speech.RecognitionConfig(**cfg_kwargs)
+
+    def _run_once(config):
+        client = speech.SpeechClient()  # credenciais já vêm do ADC/inline
+        audio = speech.RecognitionAudio(content=raw)
+
+        # Para OGG/OPUS: long_running_recognize costuma ser mais estável.
         if encoding == "OGG_OPUS":
             op = client.long_running_recognize(config=config, audio=audio)
-            resp = op.result(timeout=int(os.environ.get("STT_OP_TIMEOUT", "25")))
+            resp = op.result(timeout=_env_int("STT_OP_TIMEOUT", 25))
         else:
             resp = client.recognize(config=config, audio=audio)
 
-        # Consolida as alternativas
         transcript = ""
         confidence = None
         for result in resp.results:
@@ -88,14 +137,58 @@ def stt_post():
                 alt = result.alternatives[0]
                 transcript += (alt.transcript or "")
                 if confidence is None:
-                    confidence = alt.confidence
+                    confidence = getattr(alt, "confidence", None)
+        return transcript.strip(), confidence
 
-        return jsonify({"ok": True, "transcript": transcript.strip(), "confidence": confidence})
+    # Execução com retry leve (apenas para OGG/OPUS)
+    attempts_meta = []
+    try:
+        if encoding == "OGG_OPUS":
+            # Tentativa 1: sample_rate=48000 (como estava), model latest_short
+            cfg1 = _make_config(enc=encoding, sr=sample_rate_hz, model=os.environ.get("STT_MODEL", "latest_short"))
+            t1, c1 = _run_once(cfg1)
+            attempts_meta.append({"n": 1, "sr": sample_rate_hz, "model": os.environ.get("STT_MODEL", "latest_short"), "len": len(t1)})
+            if t1:
+                return jsonify({"ok": True, "transcript": t1, "confidence": c1})
+
+            # Tentativa 2: omitir sample_rate_hertz (deixar o decoder inferir pelo header OGG)
+            cfg2 = _make_config(enc=encoding, sr=None, model=os.environ.get("STT_MODEL", "latest_short"))
+            t2, c2 = _run_once(cfg2)
+            attempts_meta.append({"n": 2, "sr": None, "model": os.environ.get("STT_MODEL", "latest_short"), "len": len(t2)})
+            if t2:
+                return jsonify({"ok": True, "transcript": t2, "confidence": c2})
+
+            # (Opcional) Tentativa 3: latest_long para áudios maiores (ativar via ENV)
+            if _env_true(os.environ.get("STT_RETRY_LONG", "false")):
+                cfg3 = _make_config(enc=encoding, sr=None, model="latest_long")
+                t3, c3 = _run_once(cfg3)
+                attempts_meta.append({"n": 3, "sr": None, "model": "latest_long", "len": len(t3)})
+                if t3:
+                    return jsonify({"ok": True, "transcript": t3, "confidence": c3})
+
+            # Nada transcreveu: falha real
+            payload = {"ok": False, "error": "empty_transcript"}
+            if _env_true(os.environ.get("STT_DEBUG", "false")):
+                payload["debug"] = {"ctype": ctype, "bytes": len(raw), "attempts": attempts_meta}
+            return jsonify(payload), 200  # 200 pra não quebrar caller; worker trata ok=false
+        else:
+            # MP3/WAV e outros: comportamento original
+            cfg = _make_config(enc=encoding, sr=sample_rate_hz, model=None)
+            t, c = _run_once(cfg)
+            if not t:
+                payload = {"ok": False, "error": "empty_transcript"}
+                if _env_true(os.environ.get("STT_DEBUG", "false")):
+                    payload["debug"] = {"ctype": ctype, "bytes": len(raw), "attempts": [{"n": 1, "sr": sample_rate_hz, "len": 0}]}
+                return jsonify(payload), 200
+            return jsonify({"ok": True, "transcript": t, "confidence": c})
     except Exception as e:
-        return jsonify({"ok": False, "error": "stt_failed", "detail": str(e)}), 500
+        payload = {"ok": False, "error": "stt_failed", "detail": str(e)}
+        if _env_true(os.environ.get("STT_DEBUG", "false")):
+            payload["debug"] = {"ctype": ctype, "bytes": len(raw), "attempts": attempts_meta}
+        return jsonify(payload), 500
+
 
 @voz_stt_bp.route("/api/voz/stt/ping", methods=["GET"])
 def stt_ping():
     return jsonify({"ok": True, "service": "voz_stt"})
-
 
