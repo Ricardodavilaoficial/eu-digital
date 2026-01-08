@@ -309,9 +309,8 @@ def ycloud_inbound_worker():
                     audio_debug["stt"] = {"ok": False, "reason": stt_err}
                     # Importante: não inventar contexto quando STT falha. Pedir reenvio (áudio) ou texto.
                     text_in = (
-                        "⚠️ O usuário enviou um áudio no WhatsApp, mas não foi possível transcrever (falha de STT). "
-                        "Responda de forma curta e humana pedindo para reenviar o áudio com mais clareza (ou mandar em texto). "
-                        "Não invente detalhes do negócio nem assuma intenção."
+                        "Não consegui entender bem esse áudio."
+                        "Pode reenviar um pouquinho mais claro ou, se preferir, mandar em texto?"
                     )
                     skip_wa_bot = False
 
