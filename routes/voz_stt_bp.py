@@ -182,13 +182,17 @@ def stt_post():
                 return jsonify(payload), 200
             return jsonify({"ok": True, "transcript": t, "confidence": c})
     except Exception as e:
-        payload = {"ok": False, "error": "stt_failed", "detail": str(e)}
+        # Nunca devolver 500 aqui: mantém o pipeline resiliente.
+        # O worker trata ok=false e segue com fallback humano (e em áudio quando a entrada é áudio).
+        payload = {"ok": False, "error": "stt_failed"}
         if _env_true(os.environ.get("STT_DEBUG", "false")):
+            payload["detail"] = str(e)
             payload["debug"] = {"ctype": ctype, "bytes": len(raw), "attempts": attempts_meta}
-        return jsonify(payload), 500
+        return jsonify(payload), 200
 
 
 @voz_stt_bp.route("/api/voz/stt/ping", methods=["GET"])
 def stt_ping():
     return jsonify({"ok": True, "service": "voz_stt"})
+
 
