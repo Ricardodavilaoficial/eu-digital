@@ -211,3 +211,4 @@ def stt_post():
 def stt_ping():
     return jsonify({"ok": True, "service": "voz_stt"})
 
+
