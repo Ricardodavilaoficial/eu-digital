@@ -32,6 +32,7 @@ BUILD_DATE = "2025-09-30"
 # Feature flags (com defaults seguros)
 NLU_MODE = os.getenv("NLU_MODE", "legacy").strip().lower()  # "v1" | "legacy"
 DEMO_MODE = os.getenv("DEMO_MODE", "0").strip() in ("1", "true", "True")
+SUPPORT_V2 = os.getenv("SUPPORT_V2", "0").strip() in ("1", "true", "True")
 
 # -------------------------------------------------------------------
 # Legacy deve ser "lazy": só importa quando realmente for necessário
@@ -281,6 +282,21 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             return out
     # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
     try:
+        # 2) SUPORTE (uid presente) — tenta SUPPORT_V2 (Action Map / Artigo), com fallback no legacy
+        try:
+            if SUPPORT_V2:
+                from services.bot_handlers import support_v2  # type: ignore
+                v2 = support_v2.generate_reply(uid=uid, text=text, ctx=ctx)  # type: ignore
+                if isinstance(v2, dict):
+                    reply_text = str(v2.get("replyText") or "").strip()
+                    if reply_text:
+                        out = {"ok": True, "route": v2.get("route") or "support_v2", "replyText": reply_text}
+                        _force_audio_reply_if_needed(out, reply_text)
+                        return out
+        except Exception as e:
+            # Nunca quebrar suporte por causa do v2; cai no legacy
+            logging.exception("[WA_BOT][SUPPORT_V2] falhou, caindo no legacy: %s", e)
+
         legacy = _get_legacy_module()
 
         captured = {"text": None}
@@ -487,6 +503,27 @@ def process_change(
             pass
 
 
+    # ✅ SUPORTE V2: se uid_default existe e SUPPORT_V2 está ligado, tenta responder direto (sem legacy).
+    try:
+        if SUPPORT_V2 and (uid_default or ""):
+            from_id, body = _extract_from_and_text_from_change(change)
+            if body and effective_send is not None and from_id:
+                ctx_local = {
+                    "from_e164": from_id or "",
+                    "wa_id": from_id or "",
+                    "app_tag": app_tag or "",
+                    "msg_type": ((((change or {}).get("value") or {}).get("messages") or [{}])[0].get("type") or "").strip().lower(),
+                }
+                out = reply_to_text(uid_default, body, ctx_local)
+                txt = str((out or {}).get("replyText") or "").strip()
+                if txt:
+                    effective_send(from_id, txt)
+                    # Se reply_to_text gerou audioUrl, o sender de áudio é feito em outro ponto do pipeline;
+                    # aqui mantemos compat e só enviamos texto.
+                    return True
+    except Exception as e:
+        logging.exception("[WA_BOT][SUPPORT_V2] process_change falhou, caindo no legacy: %s", e)
+
     # 1) Delegação ao legacy (tentando corresponder à assinatura que o blueprint usa)
     try:
         if _using_legacy() and _HAS_LEGACY:
@@ -533,3 +570,4 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
+
