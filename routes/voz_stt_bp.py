@@ -50,6 +50,11 @@ def stt_post():
 
     ctype = _content_type_base()
 
+    # WhatsApp/YCloud às vezes não manda Content-Type confiável.
+    # Se for OGG, o arquivo começa com "OggS".
+    if not ctype and raw[:4] == b"OggS":
+        ctype = "audio/ogg"
+
     # Limiar de bytes (ajuda muito em áudio curtinho/silêncio; evita "empty transcript" enganoso)
     # Defaults conservadores para não quebrar: WhatsApp OGG geralmente > ~4KB
     min_bytes_default = 100
@@ -77,15 +82,6 @@ def stt_post():
     if ctype in ("audio/mpeg", "audio/mp3"):
         encoding = "MP3"
         sample_rate_hz = None  # deixa o Google inferir
-
-        # Guard: nunca mandar sample rate inválido (0) para o Google Speech
-        supported = {8000, 12000, 16000, 24000, 48000}
-        if not sample_rate_hz or int(sample_rate_hz) <= 0 or int(sample_rate_hz) not in supported:
-            # Para Opus/OGG, 48k é o default mais seguro
-            if str(encoding).upper() in ("OGG_OPUS", "WEBM_OPUS"):
-                sample_rate_hz = 48000
-            else:
-                sample_rate_hz = 16000
 
     elif ctype in ("audio/wav", "audio/x-wav"):
         encoding = "LINEAR16"
@@ -124,8 +120,18 @@ def stt_post():
             cfg_kwargs["audio_channel_count"] = 1
             cfg_kwargs["model"] = model or os.environ.get("STT_MODEL", "latest_short")
 
-        if sr:
-            cfg_kwargs["sample_rate_hertz"] = sr
+        # Guard definitivo: nunca enviar sample_rate_hertz inválido (0/"0"/None)
+        supported = {8000, 12000, 16000, 24000, 48000}
+        try:
+            sr_i = int(sr) if sr is not None else 0
+        except Exception:
+            sr_i = 0
+
+        if sr_i in supported:
+            cfg_kwargs["sample_rate_hertz"] = sr_i
+        else:
+            # Para OPUS/OGG é melhor omitir do que mandar 0/ruim.
+            cfg_kwargs.pop("sample_rate_hertz", None)
 
         return speech.RecognitionConfig(**cfg_kwargs)
 
@@ -204,3 +210,4 @@ def stt_post():
 @voz_stt_bp.route("/api/voz/stt/ping", methods=["GET"])
 def stt_ping():
     return jsonify({"ok": True, "service": "voz_stt"})
+
