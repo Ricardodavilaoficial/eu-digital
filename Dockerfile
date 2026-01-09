@@ -1,39 +1,68 @@
-# Dockerfile - produção (Render + Gunicorn) - estável p/ pydub + ffmpeg
+# Dockerfile - produção (Render + Gunicorn)
+# Blindado contra cache fantasma e deploy silencioso
+
 FROM python:3.11-slim
 
-# Logs sem buffer / sem .pyc
+# -------------------------
+# Identidade da imagem (BLINDAGEM)
+# -------------------------
+ARG APP_TAG=prod
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+ENV APP_TAG=${APP_TAG} \
+    GIT_COMMIT=${GIT_COMMIT} \
+    BUILD_TIME=${BUILD_TIME}
+
+# -------------------------
+# Python runtime hygiene
+# -------------------------
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Dependências do sistema (enxutas)
-# - ffmpeg: necessário pro pydub
-# - build-essential: compila wheels nativas quando necessário
-# - libsndfile1: algumas libs de áudio usam
-# - git/curl: úteis p/ instalar deps e diagnósticos
+# -------------------------
+# Dependências do sistema
+# -------------------------
+# ffmpeg        -> pydub / áudio
+# libsndfile1   -> libs de áudio
+# build-essential / libffi-dev -> wheels nativas
+# git / curl    -> diagnósticos e deps
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ffmpeg git curl libffi-dev libsndfile1 build-essential \
+        ffmpeg \
+        git \
+        curl \
+        libffi-dev \
+        libsndfile1 \
+        build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Path padrão do Render; mantém imports relativos do projeto
-WORKDIR /opt/render/project/src
-ENV PYTHONPATH=/opt/render/project/src
+# -------------------------
+# Diretório da aplicação
+# -------------------------
+WORKDIR /app
 
-# Instala deps primeiro p/ melhor cache
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+# -------------------------
+# Dependências Python (camada separada = cache saudável)
+# -------------------------
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia o restante do app
-COPY . .
+# -------------------------
+# Código da aplicação (ANTI-CACHE SILENCIOSO)
+# -------------------------
+COPY . /app
 
-# Render define $PORT em runtime (EXPOSE é opcional, mas ajuda em DX)
+# -------------------------
+# Porta (Render injeta PORT em runtime)
+# -------------------------
 EXPOSE 10000
 ENV PORT=10000
 
-# Inicia o app PRINCIPAL carregado via server.py (ponte para app.py)
-# - gthread p/ IO (webhook/HTTP) + threads extras
-# - logs no stdout/stderr (Render capta)
+# -------------------------
+# Inicialização (único ponto de entrada)
+# server.py -> app.py (como vocês já usam)
+# -------------------------
 CMD gunicorn server:app \
     -k gthread \
     --workers 2 \
