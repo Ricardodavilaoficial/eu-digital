@@ -211,8 +211,7 @@ def stt_ping():
     return jsonify({
         "ok": True,
         "service": "voz_stt",
-        "app_tag": "PING_V2_OK",
-        "debug": "DOCKER_REBUILD_TEST_2026_01_09"
+        "app_tag": (os.getenv("APP_TAG") or "").strip()
     })
 
 
