@@ -286,6 +286,28 @@ def ycloud_inbound_worker():
                                 stt_url = f"{base}/api/voz/stt"
 
                                 headers = {"Content-Type": ctype or "audio/ogg"}
+                                from subprocess import Popen, PIPE
+
+                                def normalize_audio_for_stt(raw: bytes) -> bytes:
+                                    p = Popen(
+                                        [
+                                            "ffmpeg",
+                                            "-i", "pipe:0",
+                                            "-ac", "1",
+                                            "-ar", "16000",
+                                            "-f", "wav",
+                                            "pipe:1",
+                                        ],
+                                        stdin=PIPE,
+                                        stdout=PIPE,
+                                        stderr=PIPE,
+                                    )
+                                    out, _ = p.communicate(raw)
+                                    return out if out else raw
+
+                                audio_bytes = normalize_audio_for_stt(audio_bytes)
+                                headers = {"Content-Type": "audio/wav"}
+
                                 rr = requests.post(stt_url, data=audio_bytes, headers=headers, timeout=25)
                                 stt_payload = {}
                                 try:
@@ -523,4 +545,5 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
