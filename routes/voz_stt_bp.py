@@ -167,7 +167,7 @@ def stt_post():
                     return jsonify({"ok": True, "transcript": t3, "confidence": c3})
 
             # Nada transcreveu: falha real
-            payload = {"ok": False, "error": "empty_transcript"}
+            payload = {"ok": False, "error": "empty_transcript", "detail": "no_speech_or_too_noisy"}
             if _env_true(os.environ.get("STT_DEBUG", "false")):
                 payload["debug"] = {"ctype": ctype, "bytes": len(raw), "attempts": attempts_meta}
             return jsonify(payload), 200  # 200 pra não quebrar caller; worker trata ok=false
@@ -176,7 +176,7 @@ def stt_post():
             cfg = _make_config(enc=encoding, sr=sample_rate_hz, model=None)
             t, c = _run_once(cfg)
             if not t:
-                payload = {"ok": False, "error": "empty_transcript"}
+                payload = {"ok": False, "error": "empty_transcript", "detail": "no_speech_or_too_noisy"}
                 if _env_true(os.environ.get("STT_DEBUG", "false")):
                     payload["debug"] = {"ctype": ctype, "bytes": len(raw), "attempts": [{"n": 1, "sr": sample_rate_hz, "len": 0}]}
                 return jsonify(payload), 200
@@ -184,9 +184,9 @@ def stt_post():
     except Exception as e:
         # Nunca devolver 500 aqui: mantém o pipeline resiliente.
         # O worker trata ok=false e segue com fallback humano (e em áudio quando a entrada é áudio).
-        payload = {"ok": False, "error": "stt_failed"}
+        payload = {"ok": False, "error": "stt_failed", "detail": str(e)[:160]}
         if _env_true(os.environ.get("STT_DEBUG", "false")):
-            payload["detail"] = str(e)
+            payload["detail_full"] = str(e)
             payload["debug"] = {"ctype": ctype, "bytes": len(raw), "attempts": attempts_meta}
         return jsonify(payload), 200
 
@@ -194,5 +194,4 @@ def stt_post():
 @voz_stt_bp.route("/api/voz/stt/ping", methods=["GET"])
 def stt_ping():
     return jsonify({"ok": True, "service": "voz_stt"})
-
 

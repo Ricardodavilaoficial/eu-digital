@@ -287,14 +287,47 @@ def ycloud_inbound_worker():
 
                                 headers = {"Content-Type": ctype or "audio/ogg"}
                                 rr = requests.post(stt_url, data=audio_bytes, headers=headers, timeout=25)
-                                if rr.status_code == 200:
-                                    j = rr.json() or {}
-                                    if j.get("ok"):
-                                        transcript = (j.get("transcript") or "").strip()
+                                stt_payload = {}
+                                try:
+                                    if rr.status_code == 200:
+                                        # tenta JSON (sem explodir)
+                                        try:
+                                            stt_payload = rr.json() if rr.headers.get("content-type","").startswith("application/json") else {}
+                                        except Exception:
+                                            stt_payload = {}
+
+                                        ok_flag = bool(stt_payload.get("ok"))
+                                        transcript = (stt_payload.get("transcript") or "").strip() if ok_flag else ""
+                                        if ok_flag and transcript:
+                                            text_in = transcript
+                                            audio_debug["stt"] = {
+                                                "ok": True,
+                                                "confidence": stt_payload.get("confidence"),
+                                                "transcriptLen": len(transcript),
+                                                "preview": transcript[:120],
+                                            }
+                                        else:
+                                            # motivo real (ex.: empty_transcript / stt_failed)
+                                            err_code = (stt_payload.get("error") or "").strip() or f"http_{rr.status_code}"
+                                            detail = (stt_payload.get("detail") or "").strip()
+                                            stt_err = f"stt_not_ok:{err_code}" + (f":{detail[:80]}" if detail else "")
+                                            audio_debug["stt"] = {
+                                                "ok": False,
+                                                "error": err_code,
+                                                "detail": detail[:160],
+                                                "http": rr.status_code,
+                                                "bodyHint": (rr.text or "")[:160],
+                                            }
+                                            logger.warning(
+                                                "[tarefas] stt_not_ok from=%s wamid=%s err=%s detail=%s",
+                                                from_e164, wamid, err_code, detail[:120]
+                                            )
                                     else:
-                                        stt_err = f"stt_not_ok:{j.get('error')}"
-                                else:
-                                    stt_err = f"stt_http_{rr.status_code}"
+                                        stt_err = f"stt_http_{rr.status_code}"
+                                        audio_debug["stt"] = {"ok": False, "http": rr.status_code, "bodyHint": (rr.text or "")[:160]}
+                                except Exception as e:
+                                    stt_err = f"stt_exc:{type(e).__name__}"
+                                    audio_debug["stt"] = {"ok": False, "reason": stt_err}
                             except Exception as e:
                                 stt_err = f"stt_exc:{e}"
 
@@ -303,16 +336,16 @@ def ycloud_inbound_worker():
 
                 if transcript:
                     text_in = transcript
-                    # opcional: dá um debug leve no outbox
+                    # mantém detalhes do STT (não sobrescreve)
                     audio_debug = dict(audio_debug or {})
-                    audio_debug["stt"] = {"ok": True}
+                    audio_debug.setdefault("stt", {"ok": True})
                 else:
                     # PATCH 1 (worker): se STT não trouxe transcript, NÃO chama IA.
                     logger.warning("[tasks] lead: stt_failed from=%s wamid=%s reason=%s", from_e164, wamid, stt_err)
                     reply_text = "Não consegui entender esse áudio. Pode mandar em texto ou repetir rapidinho?"
                     skip_wa_bot = True
                     audio_debug = dict(audio_debug or {})
-                    audio_debug["stt"] = {"ok": False, "reason": stt_err}
+                    audio_debug.setdefault("stt", {"ok": False, "reason": stt_err})
 
             if hasattr(wa_bot_entry, "reply_to_text"):
                 if skip_wa_bot:
@@ -490,5 +523,4 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
-
 
