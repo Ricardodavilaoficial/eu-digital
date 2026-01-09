@@ -85,8 +85,8 @@ def get_session(raw_sender: str) -> Tuple[Optional[Dict[str, Any]], str]:
 
     db = _db()
     for k in keys:
-        doc_id = _sha1_id(k)
-        snap = db.collection(COLL_SESSIONS).document(doc_id).get()
+        # 1) canônico: doc_id = waKey
+        snap = db.collection(COLL_SESSIONS).document(k).get()
         if snap.exists:
             data = snap.to_dict() or {}
             # Expiração lógica
@@ -96,25 +96,46 @@ def get_session(raw_sender: str) -> Tuple[Optional[Dict[str, Any]], str]:
                 continue
             return data, k
 
+        # 2) legado: doc_id = sha1(waKey)
+        doc_id_legacy = _sha1_id(k)
+        snap2 = db.collection(COLL_SESSIONS).document(doc_id_legacy).get()
+        if snap2.exists:
+            data = snap2.to_dict() or {}
+            exp = float(data.get("expiresAt") or 0.0)
+            if exp and exp < now_ts():
+                continue
+            # migra para canônico
+            try:
+                data2 = dict(data)
+                data2["waKey"] = k
+                db.collection(COLL_SESSIONS).document(k).set(data2, merge=True)
+            except Exception:
+                pass
+            return data, k
+
     return None, keys[0]
 
 def set_session(wa_key: str, session: Dict[str, Any], ttl_seconds: Optional[int] = None) -> None:
     ttl = int(ttl_seconds) if ttl_seconds is not None else SESS_TTL_SECONDS
     exp = now_ts() + max(60, ttl)  # mínimo 60s
     db = _db()
-    doc_id = _sha1_id(wa_key)
     payload = dict(session or {})
     payload.update({
         "waKey": wa_key,
         "updatedAt": now_ts(),
         "expiresAt": exp,
     })
-    db.collection(COLL_SESSIONS).document(doc_id).set(payload, merge=True)
+    db.collection(COLL_SESSIONS).document(wa_key).set(payload, merge=True)
 
 def delete_session(wa_key: str) -> None:
     db = _db()
-    doc_id = _sha1_id(wa_key)
-    db.collection(COLL_SESSIONS).document(doc_id).delete()
+    # apaga canônico
+    db.collection(COLL_SESSIONS).document(wa_key).delete()
+    # best-effort apaga legado também
+    try:
+        db.collection(COLL_SESSIONS).document(_sha1_id(wa_key)).delete()
+    except Exception:
+        pass
 
 def get_lead(raw_sender: str) -> Tuple[Optional[Dict[str, Any]], str]:
     keys = br_wa_key_candidates(raw_sender)
@@ -123,8 +144,8 @@ def get_lead(raw_sender: str) -> Tuple[Optional[Dict[str, Any]], str]:
 
     db = _db()
     for k in keys:
-        doc_id = _sha1_id(k)
-        snap = db.collection(COLL_LEADS).document(doc_id).get()
+        # canônico
+        snap = db.collection(COLL_LEADS).document(k).get()
         if snap.exists:
             data = snap.to_dict() or {}
             # TTL opcional para lead (se tu quiser limpar “curiosos” depois)
@@ -132,16 +153,37 @@ def get_lead(raw_sender: str) -> Tuple[Optional[Dict[str, Any]], str]:
             if exp and exp < now_ts():
                 continue
             data = dict(data or {})
-            data.setdefault('resolvedWaKey', k)
-            data.setdefault('leadDocId', doc_id)
+            data.setdefault("resolvedWaKey", k)
+            data.setdefault("leadDocId", k)  # agora docId canônico
             return data, k
+
+        # legado
+        doc_id_legacy = _sha1_id(k)
+        snap2 = db.collection(COLL_LEADS).document(doc_id_legacy).get()
+        if snap2.exists:
+            data = snap2.to_dict() or {}
+            exp = float(data.get("expiresAt") or 0.0)
+            if exp and exp < now_ts():
+                continue
+            data = dict(data)
+            data.setdefault("resolvedWaKey", k)
+            data.setdefault("leadDocId", k)  # agora docId canônico
+            # migra para canônico
+            try:
+                data2 = dict(data)
+                data2["waKey"] = k
+                db.collection(COLL_LEADS).document(k).set(data2, merge=True)
+            except Exception:
+                pass
+            return data, k
+
     return None, keys[0]
 
 def upsert_lead(wa_key: str, lead: Dict[str, Any], ttl_seconds: Optional[int] = None) -> Dict[str, Any]:
     ttl = int(ttl_seconds) if ttl_seconds is not None else LEAD_TTL_SECONDS
     exp = now_ts() + max(3600, ttl)  # mínimo 1h
     db = _db()
-    doc_id = _sha1_id(wa_key)
+    doc_id = wa_key  # canônico
     payload = dict(lead or {})
     payload.update({
         "waKey": wa_key,
@@ -151,8 +193,7 @@ def upsert_lead(wa_key: str, lead: Dict[str, Any], ttl_seconds: Optional[int] = 
     # firstSeenAt se não existir
     payload.setdefault("firstSeenAt", now_ts())
     # metadados só no retorno (debug); NÃO persistimos isso no Firestore
-    payload.setdefault('resolvedWaKey', wa_key)
-    payload.setdefault('leadDocId', doc_id)
+    payload.setdefault("resolvedWaKey", wa_key)
+    payload.setdefault("leadDocId", doc_id)
     db.collection(COLL_LEADS).document(doc_id).set(payload, merge=True)
     return payload
-
