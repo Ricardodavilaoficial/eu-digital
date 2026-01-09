@@ -674,6 +674,34 @@ def br_equivalence_key(msisdn: str) -> str:
         return f"{cc}{ddd}{local8}"
     return d[-8:]
 
+# =====================================
+# Sender UID links (identidade permanente por waKey)
+# =====================================
+def _wa_key_from_phone_digits(phone_digits: str) -> str:
+    """Gera waKey canônico (somente dígitos) para BR: 55 + DDD + 8 dígitos."""
+    d = _only_digits(phone_digits or "")
+    if not d:
+        return ""
+    # Se vier nacional (DDD + número), prefixa 55
+    if not d.startswith("55") and len(d) in (10, 11):
+        d = "55" + d
+    # Remove '9' móvel se presente (55DD9XXXXXXXX => 55DDXXXXXXXX)
+    if d.startswith("55") and len(d) == 13:
+        d = d[:4] + d[5:]
+    # Normaliza para cc+ddd+local8 (mesma ideia do br_equivalence_key)
+    return br_equivalence_key(d)
+
+def _link_sender_uid_best_effort(telefone_digits: str, uid: str, nome: str = "", source: str = "signup") -> None:
+    """Best-effort: grava sender_uid_links/{waKey} => uid. Nunca quebra o cadastro."""
+    try:
+        wa_key = _wa_key_from_phone_digits(telefone_digits)
+        if not wa_key or not uid:
+            return
+        from services.sender_uid_links import upsert_customer  # type: ignore
+        upsert_customer(wa_key, uid, display_name=(nome or ""), source=source)
+    except Exception:
+        return
+
 from services.wa_send import send_text as wa_send_text
 
 @app.route("/api/send-text", methods=["GET", "POST"])
@@ -1235,6 +1263,7 @@ def api_cadastro():
         if uid:
             # Caminho idempotente autenticado (front já criou user via SDK)
             _ensure_profissional_doc(uid, nome, email, cnpj)
+            _link_sender_uid_best_effort(telefone, uid, nome=nome, source="signup")
             # 🚫 Não enviar por mailer legado (evitar caminho B)
             app.logger.info("[cadastro] skip legacy mailer; send_via=frontend_sendgrid_pretty; uid=%s", uid)
             return jsonify({"ok": True, "created": True, "uid": uid, "mode": "auth", "next": "frontend_should_call_send_verification_email"}), 201
@@ -1267,6 +1296,7 @@ def api_cadastro():
 
         # Criar doc do profissional (sem enviar verificação aqui)
         _ensure_profissional_doc(uid, nome, email, cnpj)
+        _link_sender_uid_best_effort(telefone, uid, nome=nome, source="signup")
         app.logger.info("[cadastro] created profissional; skip legacy mailer; send_via=frontend_sendgrid_pretty; uid=%s", uid)
 
         return jsonify({"ok": True, "created": True, "uid": uid, "mode": "public", "next": "frontend_should_call_send_verification_email"}), 201

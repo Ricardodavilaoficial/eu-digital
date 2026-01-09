@@ -456,6 +456,14 @@ def _upsert_lead_from_state(wa_key: str, st: dict) -> None:
         "updatedAt": time.time(),
     }
     upsert_lead(wa_key, lead)
+    # Índice permanente de identidade (lead): sender_uid_links/{waKey}
+    # Não grava UID aqui (a promoção para customer ocorre no /api/cadastro quando existir uid).
+    try:
+        from services.sender_uid_links import upsert_lead as _upsert_sender_lead  # type: ignore
+        _upsert_sender_lead(wa_key, display_name=name, source="sales_lead")
+    except Exception:
+        pass
+
 
 # =========================
 # Cache KV (apenas para pitch; NÃO é estado de conversa)
@@ -1294,5 +1302,6 @@ def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
             pass
 
     return out
+
 
 
