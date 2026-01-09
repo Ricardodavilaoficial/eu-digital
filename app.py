@@ -352,6 +352,14 @@ try:
 except Exception as e:
     print("[bp][warn] admin_ycloud_test_bp:", e)
 
+
+# === NOVO: Admin job Aniversário (MVP) — /admin/jobs/birthday ===
+try:
+    from routes.admin_birthday_job_bp import admin_birthday_job_bp
+    _register_bp(admin_birthday_job_bp, "admin_birthday_job_bp (/admin/jobs/birthday)")
+except Exception as e:
+    print("[bp][warn] admin_birthday_job_bp:", e)
+
 # === NOVO: Cloud Tasks Worker (YCloud inbound) — /tasks/ycloud-inbound ===
 try:
     from routes.ycloud_tasks_bp import ycloud_tasks_bp
@@ -1412,4 +1420,5 @@ def __adc_debug():
 # =====================================
 # EOF
 # =====================================
+
 
