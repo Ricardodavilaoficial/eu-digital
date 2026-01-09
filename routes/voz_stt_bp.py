@@ -77,6 +77,16 @@ def stt_post():
     if ctype in ("audio/mpeg", "audio/mp3"):
         encoding = "MP3"
         sample_rate_hz = None  # deixa o Google inferir
+
+        # Guard: nunca mandar sample rate inválido (0) para o Google Speech
+        supported = {8000, 12000, 16000, 24000, 48000}
+        if not sample_rate_hz or int(sample_rate_hz) <= 0 or int(sample_rate_hz) not in supported:
+            # Para Opus/OGG, 48k é o default mais seguro
+            if str(encoding).upper() in ("OGG_OPUS", "WEBM_OPUS"):
+                sample_rate_hz = 48000
+            else:
+                sample_rate_hz = 16000
+
     elif ctype in ("audio/wav", "audio/x-wav"):
         encoding = "LINEAR16"
         sample_rate_hz = None
@@ -194,4 +204,3 @@ def stt_post():
 @voz_stt_bp.route("/api/voz/stt/ping", methods=["GET"])
 def stt_ping():
     return jsonify({"ok": True, "service": "voz_stt"})
-
