@@ -206,9 +206,13 @@ def stt_post():
             payload["debug"] = {"ctype": ctype, "bytes": len(raw), "attempts": attempts_meta}
         return jsonify(payload), 200
 
-
 @voz_stt_bp.route("/api/voz/stt/ping", methods=["GET"])
 def stt_ping():
-    return jsonify({"ok": True, "service": "voz_stt"})
+    return jsonify({
+        "ok": True,
+        "service": "voz_stt",
+        "app_tag": "PING_V2_OK",
+        "debug": "DOCKER_REBUILD_TEST_2026_01_09"
+    })
 
 
