@@ -438,6 +438,8 @@ def ycloud_inbound_worker():
                 nm = _detect_name_override(text_in)
                 if nm and wa_key_effective:
                     _set_name_override(wa_key_effective, nm)
+                    audio_debug = dict(audio_debug or {})
+                    audio_debug["nameOverrideProbe_set"] = {"waKey": wa_key_effective, "name": nm}
             except Exception:
                 pass
 
@@ -540,7 +542,29 @@ def ycloud_inbound_worker():
 
         # Aplica override de nome (se existir) para manter consistência na conversa
         try:
-            override = _get_name_override(wa_key_effective) if wa_key_effective else ""
+            override = ""
+            try:
+                if wa_key_effective:
+                    # prova se doc existe e o que ele contém
+                    snap = _db().collection("platform_name_overrides").document(wa_key_effective).get()
+                    data = snap.to_dict() or {}
+                    override = str(data.get("name") or "").strip()
+                    exp = float(data.get("expiresAt") or 0.0)
+                    audio_debug = dict(audio_debug or {})
+                    audio_debug["nameOverrideProbe_get"] = {
+                        "waKey": wa_key_effective,
+                        "docExists": bool(snap.exists),
+                        "name": override,
+                        "expiresAt": exp,
+                        "now": time.time(),
+                    }
+                    if exp and time.time() > exp:
+                        override = ""
+            except Exception as e:
+                audio_debug = dict(audio_debug or {})
+                audio_debug["nameOverrideProbe_get_err"] = str(e)[:120]
+                override = ""
+
             if override:
                 reply_text = _apply_name_override(reply_text, override)
                 audio_debug = dict(audio_debug or {})
@@ -678,4 +702,5 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
