@@ -6,7 +6,7 @@ import time
 import re
 import hashlib
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 
 import requests
 
@@ -18,6 +18,9 @@ from google.cloud import firestore  # type: ignore
 logger = logging.getLogger("mei_robo.ycloud_tasks")
 
 ycloud_tasks_bp = Blueprint("ycloud_tasks_bp", __name__)
+
+
+_IDENTITY_MODE = (os.environ.get("IDENTITY_MODE") or "on").strip().lower()  # on|off
 
 
 def _db():
@@ -46,6 +49,177 @@ def _to_plus_e164(raw: str) -> str:
 
 
 _NAME_OVERRIDE_TTL = int(os.environ.get("SUPPORT_NAME_OVERRIDE_TTL_SECONDS", "3600") or "3600")  # 1h
+
+
+
+# ==========================================================
+# IDENTIDADE PREMIUM (interlocutor ativo por waKey)
+# - Filtro econômico por gatilhos (barato)
+# - IA só quando necessário (curta, JSON)
+# - Estado persistido garante 2ª mensagem certa
+# ==========================================================
+_SPEAKER_TTL = int(os.environ.get("SUPPORT_SPEAKER_TTL_SECONDS", "21600") or "21600")  # 6h
+_SPEAKER_COLL = (os.environ.get("SPEAKER_STATE_COLL") or "platform_speaker_state").strip()
+
+def _speaker_db():
+    return _db_admin() or _db()
+
+def _get_owner_name(uid: str) -> str:
+    """Tenta inferir nome do MEI (dono da conta) para permitir 'voltei / sou o Ricardo' etc."""
+    if not uid:
+        return ""
+    try:
+        prof = _db().collection("profissionais").document(uid).get()
+        data = prof.to_dict() or {}
+        # tenta chaves comuns no teu projeto
+        for k in ("display_name", "displayName", "nome", "name"):
+            v = (data.get(k) or "").strip()
+            if v:
+                return v
+    except Exception:
+        pass
+    return ""
+
+def _get_active_speaker(wa_key: str) -> str:
+    if not wa_key:
+        return ""
+    try:
+        snap = _speaker_db().collection(_SPEAKER_COLL).document(wa_key).get()
+        if not snap.exists:
+            return ""
+        data = snap.to_dict() or {}
+        exp = float(data.get("expiresAt") or 0.0)
+        if exp and time.time() > exp:
+            return ""
+        nm = str(data.get("displayName") or "").strip()
+        return nm
+    except Exception:
+        return ""
+
+def _set_active_speaker(wa_key: str, display_name: str, source: str, confidence: float = 0.0) -> None:
+    if not wa_key or not display_name:
+        return
+    now = time.time()
+    try:
+        _speaker_db().collection(_SPEAKER_COLL).document(wa_key).set(
+            {
+                "displayName": display_name,
+                "source": source,
+                "confidence": float(confidence or 0.0),
+                "updatedAt": now,
+                "expiresAt": now + _SPEAKER_TTL,
+            },
+            merge=True,
+        )
+    except Exception as e:
+        logger.warning("[speaker] falha ao salvar waKey=%s err=%s", wa_key, str(e)[:120])
+
+def _looks_like_identity_signal(text: str) -> bool:
+    """Filtro econômico: só chama IA quando tem cheiro de troca/auto-identificação."""
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    # sinais fortes e baratos
+    signals = (
+        "meu nome é",
+        "aqui é",
+        "quem fala é",
+        "sou o",
+        "sou a",
+        "prazer",
+        "voltei",
+        "sou eu",
+        "de novo",
+        "me chama de",
+        "pode me chamar",
+        "fala com",
+        "passa pro",
+        "agora é",
+        "agora sou",
+        "é o",
+        "é a",
+    )
+    return any(s in t for s in signals)
+
+def _openai_extract_speaker(text: str, owner_name: str = "", active_name: str = "") -> Tuple[str, float, str]:
+    """
+    IA focada: decide nome do interlocutor ativo.
+    Retorna: (name, confidence, reason) — name vazio = não identificou.
+    """
+    api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        return ("", 0.0, "missing_api_key")
+
+    # Modelo: barato e suficiente
+    model = (os.environ.get("IDENTITY_LLM_MODEL") or "gpt-4o-mini").strip()
+    t = (text or "").strip()
+    if not t:
+        return ("", 0.0, "empty_text")
+
+    # prompt curto e objetivo (JSON-only)
+    sys = """You extract the ACTIVE speaker name from a single WhatsApp message in Portuguese.
+    Return ONLY valid JSON.
+    Rules:
+    - If the message is self-identification, return that name.
+    - If the message indicates returning to the owner (e.g., \"voltei\", \"agora sou eu de novo\") and owner_name is known, return owner_name.
+    - Avoid third-person mentions (e.g., \"o papo é com o José\") unless it\'s clearly the speaker.
+    - Name can be nickname (e.g., \"Banana\", \"Zé\").
+    JSON schema:
+    { "identified": true|false, "name": "...", "confidence": 0..1, "reason": "..." }
+    """
+    user = {
+        "text": t[:300],
+        "owner_name": (owner_name or "")[:60],
+        "current_active_name": (active_name or "")[:60],
+    }
+
+    try:
+        r = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "temperature": 0.0,
+                "max_tokens": 120,
+                "messages": [
+                    {"role": "system", "content": sys},
+                    {"role": "user", "content": str(user)},
+                ],
+            },
+            timeout=18,
+        )
+        if r.status_code != 200:
+            return ("", 0.0, f"http_{r.status_code}")
+        j = r.json() or {}
+        content = (((j.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
+        content = (content or "").strip()
+        # parse JSON safely
+        try:
+            import json as _json
+            data = _json.loads(content)
+        except Exception:
+            # tenta extrair bloco {...}
+            m = re.search(r"\{.*\}", content, flags=re.DOTALL)
+            if not m:
+                return ("", 0.0, "non_json")
+            import json as _json
+            data = _json.loads(m.group(0))
+
+        identified = bool(data.get("identified"))
+        name = str(data.get("name") or "").strip()
+        conf = float(data.get("confidence") or 0.0)
+        reason = str(data.get("reason") or "").strip()[:120]
+        if not identified or not name:
+            return ("", conf, reason or "not_identified")
+        # hard cap: evita string gigante
+        name = name[:40]
+        return (name, conf, reason or "ok")
+    except Exception as e:
+        return ("", 0.0, f"exc:{type(e).__name__}")
+
 
 def _detect_name_override(text: str) -> str:
     t = (text or "").strip()
@@ -193,6 +367,7 @@ def ycloud_inbound_worker():
         
         # wa_key_effective: chave canônica para memória por remetente (override etc.)
         wa_key_effective = (wa_key or _digits_only(from_e164)).strip()
+        owner_name = _get_owner_name(uid) if uid else ""
 
 # --- 1) ÁUDIO: fluxo de VOZ (ingest) SOMENTE se onboarding estiver "waiting" ---
         voice_waiting = False
@@ -453,13 +628,59 @@ def ycloud_inbound_worker():
                     audio_debug.setdefault("stt", {"ok": False, "reason": stt_err})
 
 
-            # --- Nome do interlocutor (override com TTL) ---
+                        # ==========================================================
+            # IDENTIDADE PREMIUM (interlocutor ativo)
+            # - Primeiro tenta override por regex (barato)
+            # - Se não tiver, e houver gatilho, chama IA (curta) e persiste
+            # ==========================================================
             try:
                 nm = _detect_name_override(text_in)
                 if nm and wa_key_effective:
                     _set_name_override(wa_key_effective, nm)
+                    # também seta interlocutor ativo (garante 2ª mensagem)
+                    if _IDENTITY_MODE != "off":
+                        _set_active_speaker(wa_key_effective, nm, source="regex", confidence=0.70)
                     audio_debug = dict(audio_debug or {})
                     audio_debug["nameOverrideProbe_set"] = {"waKey": wa_key_effective, "name": nm}
+            except Exception:
+                pass
+
+            # IA: só quando tem sinal de troca/apresentação e ainda não temos speaker bom
+            try:
+                if _IDENTITY_MODE != "off" and wa_key_effective and text_in:
+                    active_now = _get_active_speaker(wa_key_effective)
+                    # se já temos active speaker e não há sinal, não gasta IA
+                    if _looks_like_identity_signal(text_in) and (not active_now):
+                        name_ai, conf_ai, reason_ai = _openai_extract_speaker(
+                            text_in,
+                            owner_name=owner_name,
+                            active_name=active_now,
+                        )
+                        audio_debug = dict(audio_debug or {})
+                        audio_debug["speakerAI"] = {
+                            "triggered": True,
+                            "ownerName": owner_name,
+                            "activeBefore": active_now,
+                            "identifiedName": name_ai,
+                            "confidence": conf_ai,
+                            "reason": reason_ai,
+                        }
+                        # Persistir se confiança razoável
+                        if name_ai and conf_ai >= 0.65:
+                            _set_active_speaker(wa_key_effective, name_ai, source="ai", confidence=conf_ai)
+                            # mantém override antigo também (compat)
+                            _set_name_override(wa_key_effective, name_ai)
+                            audio_debug["speakerAI"]["persisted"] = True
+                        else:
+                            audio_debug["speakerAI"]["persisted"] = False
+                    else:
+                        # debug leve (sem custo)
+                        audio_debug = dict(audio_debug or {})
+                        audio_debug["speakerAI"] = {
+                            "triggered": False,
+                            "activeBefore": active_now,
+                            "hasSignal": bool(_looks_like_identity_signal(text_in)),
+                        }
             except Exception:
                 pass
 
@@ -564,9 +785,13 @@ def ycloud_inbound_worker():
         try:
             override = ""
             try:
-                # ✅ PATCH 3: usa a função (fonte única) para buscar o nome
+                # 1) Preferir interlocutor ativo (premium)
+                if _IDENTITY_MODE != "off" and wa_key_effective:
+                    override = _get_active_speaker(wa_key_effective) or ""
+
+                # 2) Fallback: override legado (compat)
                 if wa_key_effective:
-                    override = _get_name_override(wa_key_effective)
+                    override = override or _get_name_override(wa_key_effective)
 
                 # Probe só para debug (não decide comportamento)
                 if wa_key_effective:
@@ -583,6 +808,21 @@ def ycloud_inbound_worker():
                         "expiresAt": exp,
                         "now": time.time(),
                     }
+
+                    # speaker state probe
+                    try:
+                        sp = _speaker_db().collection(_SPEAKER_COLL).document(wa_key_effective).get()
+                        spd = sp.to_dict() or {}
+                        audio_debug["speakerStateProbe_get"] = {
+                            "docExists": bool(sp.exists),
+                            "displayName": str(spd.get("displayName") or "").strip(),
+                            "expiresAt": float(spd.get("expiresAt") or 0.0),
+                            "source": str(spd.get("source") or "").strip(),
+                            "confidence": float(spd.get("confidence") or 0.0),
+                            "now": time.time(),
+                        }
+                    except Exception:
+                        pass
                     if exp and time.time() > exp:
                         override = ""
             except Exception as e:
@@ -727,3 +967,4 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
