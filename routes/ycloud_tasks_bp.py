@@ -24,6 +24,14 @@ def _db():
     return firestore.Client()
 
 
+def _db_admin():
+    try:
+        from firebase_admin import firestore as admin_fs  # type: ignore
+        return admin_fs.client()
+    except Exception:
+        return None
+
+
 def _sha1_id(s: str) -> str:
     return hashlib.sha1((s or "").encode("utf-8")).hexdigest()
 
@@ -59,17 +67,28 @@ def _set_name_override(wa_key: str, name: str) -> None:
     if not wa_key or not name:
         return
     now = time.time()
-    _db().collection("platform_name_overrides").document(wa_key).set({
-        "name": name,
-        "updatedAt": now,
-        "expiresAt": now + _NAME_OVERRIDE_TTL,
-    }, merge=True)
+    db = _db_admin()
+    if not db:
+        logger.warning("[nameOverride] admin firestore indisponível; não salvou waKey=%s", wa_key)
+        return
+    try:
+        db.collection("platform_name_overrides").document(wa_key).set({
+            "name": name,
+            "updatedAt": now,
+            "expiresAt": now + _NAME_OVERRIDE_TTL,
+        }, merge=True)
+    except Exception as e:
+        logger.warning("[nameOverride] falha ao salvar waKey=%s err=%s", wa_key, str(e)[:120])
+
 
 def _get_name_override(wa_key: str) -> str:
     if not wa_key:
         return ""
+    db = _db_admin()
+    if not db:
+        return ""
     try:
-        doc = _db().collection("platform_name_overrides").document(wa_key).get()
+        doc = db.collection("platform_name_overrides").document(wa_key).get()
         data = doc.to_dict() or {}
         exp = float(data.get("expiresAt") or 0.0)
         if exp and time.time() <= exp:
@@ -702,5 +721,3 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
-
-
