@@ -831,9 +831,16 @@ def ycloud_inbound_worker():
                 override = ""
 
             if override:
+                reply_text_before_override = reply_text
                 reply_text = _apply_name_override(reply_text, override)
                 audio_debug = dict(audio_debug or {})
                 audio_debug["nameOverride"] = {"applied": True, "name": override}
+
+                # 🔥 CRÍTICO: se já tinha áudio pronto (ex.: vindo do wa_bot),
+                # mas o texto mudou por override, invalida áudio pra regenerar com o nome certo.
+                if audio_url and reply_text != reply_text_before_override:
+                    audio_debug["ttsRegen"] = {"forced": True, "reason": "name_override_changed_text"}
+                    audio_url = ""
         except Exception:
             pass
 
@@ -967,4 +974,5 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
+
 
