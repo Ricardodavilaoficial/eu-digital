@@ -437,6 +437,35 @@ def ycloud_inbound_worker():
                 reply_text = "Não consegui responder agora 😕 Pode tentar de novo ou me explicar um pouco melhor?"
 
         # ==========================================================
+        # Guardrail (customer): suporte NÃO pede CNPJ.
+        # Se algum caminho legado tentar validar identidade, trocamos
+        # por um pedido humano de "como te chamo" (sem números).
+        # ==========================================================
+        def _looks_like_cnpj_request(s: str) -> bool:
+            t = (s or "").strip().lower()
+            if "cnpj" not in t:
+                return False
+            # padrões comuns do texto problemático
+            bad = (
+                "me informar seu cnpj",
+                "me informar o cnpj",
+                "poderia me informar seu cnpj",
+                "poderia me informar o cnpj",
+                "preciso confirmar",
+                "confirmar se você é",
+            )
+            return any(k in t for k in bad)
+
+        if uid and _looks_like_cnpj_request(reply_text):
+            # mantém humanização (nome do MEI é ok), mas sem pedir CNPJ
+            reply_text = (
+                "Entendi 🙂 Eu não preciso do teu CNPJ pra te ajudar aqui. "
+                "Só pra eu te chamar certinho: você é o Edson mesmo ou é outra pessoa falando por este WhatsApp?"
+            )
+            audio_debug = dict(audio_debug or {})
+            audio_debug["identity_guard"] = {"applied": True, "reason": "removed_cnpj_request_for_customer"}
+
+        # ==========================================================
         # Se o usuário pediu "somente texto", respeita.
         if prefers_text and msg_type in ("audio", "voice", "ptt"):
             audio_debug = dict(audio_debug or {})
