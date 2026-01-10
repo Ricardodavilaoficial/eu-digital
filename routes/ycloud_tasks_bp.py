@@ -165,7 +165,11 @@ def ycloud_inbound_worker():
             except Exception:
                 uid = ""
 
-        # --- 1) ÁUDIO: fluxo de VOZ (ingest) SOMENTE se onboarding estiver "waiting" ---
+        
+        # wa_key_effective: chave canônica para memória por remetente (override etc.)
+        wa_key_effective = (wa_key or _digits_only(from_e164)).strip()
+
+# --- 1) ÁUDIO: fluxo de VOZ (ingest) SOMENTE se onboarding estiver "waiting" ---
         voice_waiting = False
         try:
             prof = _db().collection("profissionais").document(uid).get()
@@ -424,11 +428,11 @@ def ycloud_inbound_worker():
                     audio_debug.setdefault("stt", {"ok": False, "reason": stt_err})
 
 
-            # Se o usuário se apresentou/corrigiu nome, salva override por waKey (TTL)
+            # --- Nome do interlocutor (override com TTL) ---
             try:
                 nm = _detect_name_override(text_in)
-                if nm and wa_key:
-                    _set_name_override(wa_key, nm)
+                if nm and wa_key_effective:
+                    _set_name_override(wa_key_effective, nm)
             except Exception:
                 pass
 
@@ -439,7 +443,7 @@ def ycloud_inbound_worker():
                     ctx_for_bot = {
                         "channel": "whatsapp",
                         "from_e164": from_e164,
-                        "waKey": wa_key or _digits_only_c(from_e164),
+                        "waKey": wa_key_effective,
                         "to_e164": to_e164,
                         "msg_type": msg_type,
                         "wamid": wamid,
@@ -531,12 +535,11 @@ def ycloud_inbound_worker():
 
         # Aplica override de nome (se existir) para manter consistência na conversa
         try:
-            if wa_key:
-                override = _get_name_override(wa_key)
-                if override:
-                    reply_text = _apply_name_override(reply_text, override)
-                    audio_debug = dict(audio_debug or {})
-                    audio_debug["nameOverride"] = {"applied": True, "name": override}
+            override = _get_name_override(wa_key_effective) if wa_key_effective else ""
+            if override:
+                reply_text = _apply_name_override(reply_text, override)
+                audio_debug = dict(audio_debug or {})
+                audio_debug["nameOverride"] = {"applied": True, "name": override}
         except Exception:
             pass
 
