@@ -733,6 +733,10 @@ def ycloud_inbound_worker():
         if isinstance(wa_out, dict):
             prefers_text = bool(wa_out.get("prefersText"))
             display_name = (wa_out.get("displayName") or "").strip()
+        # Se entrou por áudio, nunca preferir texto (mantém "entra áudio → sai áudio")
+        if msg_type in ("audio", "voice", "ptt"):
+            prefers_text = False
+
 
         # Não sobrescrever resposta do wa_bot com "texto pronto".
         # Fallback mínimo só quando for lead/VENDAS (uid ausente).
@@ -979,5 +983,3 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
-
-
