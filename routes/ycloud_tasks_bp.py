@@ -52,8 +52,8 @@ def _detect_name_override(text: str) -> str:
     if not t:
         return ""
     patterns = [
-        r"\bmeu nome é\s+([A-Za-zÀ-ÿ]{2,})\b",
-        r"\baqui é\s+([A-Za-zÀ-ÿ]{2,})\b",
+        r"\bmeu nome é\s+(?:o|a|os|as)?\s*([A-Za-zÀ-ÿ]{2,}(?:\s+[A-Za-zÀ-ÿ]{2,}){0,2})\b",
+        r"\baqui é\s+(?:o|a|os|as)?\s*([A-Za-zÀ-ÿ]{2,}(?:\s+[A-Za-zÀ-ÿ]{2,}){0,2})\b",
         r"\baqui quem fala é\s+([A-Za-zÀ-ÿ]{2,})\b",
         r"\bnão é\s+[A-Za-zÀ-ÿ]{2,}\s*,?\s*é\s+([A-Za-zÀ-ÿ]{2,})\b",
         r"\bnão sou\s+[A-Za-zÀ-ÿ]{2,}\s*,?\s*sou\s+([A-Za-zÀ-ÿ]{2,})\b",
