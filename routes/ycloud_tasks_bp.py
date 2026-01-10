@@ -412,6 +412,13 @@ def ycloud_inbound_worker():
         elif wa_out:
             reply_text = str(wa_out)
 
+        # PATCH B: respeitar prefersText / displayName vindo do wa_bot
+        prefers_text = False
+        display_name = ""
+        if isinstance(wa_out, dict):
+            prefers_text = bool(wa_out.get("prefersText"))
+            display_name = (wa_out.get("displayName") or "").strip()
+
         # Não sobrescrever resposta do wa_bot com "texto pronto".
         # Fallback mínimo só quando for lead/VENDAS (uid ausente).
         reply_text = (reply_text or "").strip()[:1200]
@@ -430,13 +437,20 @@ def ycloud_inbound_worker():
                 reply_text = "Não consegui responder agora 😕 Pode tentar de novo ou me explicar um pouco melhor?"
 
         # ==========================================================
+        # Se o usuário pediu "somente texto", respeita.
+        if prefers_text and msg_type in ("audio", "voice", "ptt"):
+            audio_debug = dict(audio_debug or {})
+            audio_debug["mode"] = "text_only_requested"
+            audio_url = ""  # garante que não envia áudio
+
+        # ==========================================================
         # TTS automático (universal): se entrou por áudio, deve sair por áudio.
         # Se o wa_bot não devolveu audioUrl, geramos via /api/voz/tts.
         #
         # - customer (uid): usa vozClonada.voiceId se existir
         # - sales (uid vazio): usa INSTITUTIONAL_VOICE_ID (ENV) se existir
         # ==========================================================
-        if msg_type in ("audio", "voice", "ptt") and (not audio_url) and reply_text:
+        if msg_type in ("audio", "voice", "ptt") and (not audio_url) and reply_text and (not prefers_text):
             try:
                 base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
                 if not base:
@@ -510,7 +524,14 @@ def ycloud_inbound_worker():
             send_text = None  # type: ignore
             send_audio = None  # type: ignore
 
-        if allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
+        # PATCH B: se prefersText, manda direto texto e não tenta áudio
+        if prefers_text and send_text:
+            try:
+                sent_ok, _ = send_text(from_e164, reply_text)
+            except Exception:
+                logger.exception("[tasks] lead: falha send_text (prefersText)")
+        
+        if (not prefers_text) and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
             try:
                 sent_ok, _ = send_audio(from_e164, audio_url)
             except Exception:
@@ -545,5 +566,4 @@ def ycloud_inbound_worker():
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
-
 

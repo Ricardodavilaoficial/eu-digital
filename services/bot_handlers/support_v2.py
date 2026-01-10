@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import time
 import logging
+import re
 from typing import Any, Dict, Optional, Tuple
 
 _SUPPORT_TTL_SECONDS = int(os.getenv("SUPPORT_KB_TTL_SECONDS", "600") or "600")
@@ -74,6 +75,78 @@ def _get_article(page: str) -> str:
 
 def _norm(s: str) -> str:
     return (s or "").strip().lower()
+
+
+def _user_wants_text(text: str) -> bool:
+    t = _norm(text)
+    triggers = (
+        "só texto", "somente texto", "apenas texto",
+        "manda por texto", "me manda por texto", "por texto",
+        "manda por escrito", "por escrito", "me manda escrito",
+        "detalha por texto", "detalhe por texto", "passo a passo por texto",
+        "me manda a mensagem", "me manda a instrução"
+    )
+    return any(k in t for k in triggers)
+
+
+def _get_profile_name_from_ctx(uid: str, ctx: Optional[Dict[str, Any]]) -> str:
+    if not ctx:
+        return ""
+    wa_key = str(ctx.get("waKey") or "").strip()
+    if not wa_key:
+        return ""
+    db = _fs_client()
+    if not db:
+        return ""
+    try:
+        doc = db.collection("platform_support_profiles").document(wa_key).get()
+        data = doc.to_dict() or {}
+        name = str(data.get("displayName") or "").strip()
+        return name.split()[0].strip() if name else ""
+    except Exception:
+        return ""
+
+
+def _maybe_update_name_from_text(ctx: Optional[Dict[str, Any]], text: str) -> str:
+    if not ctx:
+        return ""
+    wa_key = str(ctx.get("waKey") or "").strip()
+    if not wa_key:
+        return ""
+    t = (text or "").strip()
+
+    # padrões comuns:
+    # "meu nome é Miguel"
+    # "aqui é Miguel"
+    # "não é João, é Miguel"
+    patterns = [
+        r"\bmeu nome é\s+([A-Za-zÀ-ÿ]{2,})\b",
+        r"\baqui é\s+([A-Za-zÀ-ÿ]{2,})\b",
+        r"\bnão é\s+[A-Za-zÀ-ÿ]{2,}\s*,?\s*é\s+([A-Za-zÀ-ÿ]{2,})\b",
+        r"\bnão sou\s+[A-Za-zÀ-ÿ]{2,}\s*,?\s*sou\s+([A-Za-zÀ-ÿ]{2,})\b",
+    ]
+    new_name = ""
+    for p in patterns:
+        mm = re.search(p, t, flags=re.IGNORECASE)
+        if mm:
+            new_name = (mm.group(1) or "").strip()
+            break
+
+    if not new_name:
+        return ""
+
+    db = _fs_client()
+    if not db:
+        return new_name
+
+    try:
+        db.collection("platform_support_profiles").document(wa_key).set(
+            {"displayName": new_name, "updatedAt": time.time()},
+            merge=True,
+        )
+    except Exception:
+        pass
+    return new_name
 
 def _detect_page(text: str) -> Optional[str]:
     t = _norm(text)
@@ -186,6 +259,11 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
     if not q:
         return None
 
+    # Preferência explícita do usuário + memória simples de nome (por waKey)
+    learned_name = _maybe_update_name_from_text(ctx, q)
+    prefers_text = _user_wants_text(q)
+    display_name = learned_name or _get_profile_name_from_ctx(uid, ctx)
+
     page = _detect_page(q)
     if not page:
         return None
@@ -193,13 +271,14 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
     # 1) Action Map
     ans = _try_answer_from_action_map(page, q)
     if ans:
-        return {"ok": True, "route": f"support_v2:{page}:action_map", "replyText": ans}
+        return {"ok": True, "route": f"support_v2:{page}:action_map", "replyText": ans, "prefersText": bool(prefers_text), "displayName": display_name}
 
     # 2) Artigo (conceitual)
     ans2 = _try_answer_from_article(page, q)
     if ans2:
-        return {"ok": True, "route": f"support_v2:{page}:article", "replyText": ans2}
+        return {"ok": True, "route": f"support_v2:{page}:article", "replyText": ans2, "prefersText": bool(prefers_text), "displayName": display_name}
 
     # 3) Sem match: pedir 1 clarificação (curta) OU cair no legacy.
     # Aqui vamos cair no legacy para manter comportamento e qualidade.
     return None
+
