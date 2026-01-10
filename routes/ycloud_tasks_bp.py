@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import time
+import re
 import hashlib
 import logging
 from typing import Any, Dict
@@ -33,6 +34,59 @@ def _digits_only(s: str) -> str:
 
 def _to_plus_e164(raw: str) -> str:
     return _to_plus_e164_c(raw)
+
+
+_NAME_OVERRIDE_TTL = int(os.environ.get("SUPPORT_NAME_OVERRIDE_TTL_SECONDS", "3600") or "3600")  # 1h
+
+def _detect_name_override(text: str) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    patterns = [
+        r"\bmeu nome é\s+([A-Za-zÀ-ÿ]{2,})\b",
+        r"\baqui é\s+([A-Za-zÀ-ÿ]{2,})\b",
+        r"\baqui quem fala é\s+([A-Za-zÀ-ÿ]{2,})\b",
+        r"\bnão é\s+[A-Za-zÀ-ÿ]{2,}\s*,?\s*é\s+([A-Za-zÀ-ÿ]{2,})\b",
+        r"\bnão sou\s+[A-Za-zÀ-ÿ]{2,}\s*,?\s*sou\s+([A-Za-zÀ-ÿ]{2,})\b",
+    ]
+    for p in patterns:
+        m = re.search(p, t, flags=re.IGNORECASE)
+        if m:
+            return (m.group(1) or "").strip()
+    return ""
+
+def _set_name_override(wa_key: str, name: str) -> None:
+    if not wa_key or not name:
+        return
+    now = time.time()
+    _db().collection("platform_name_overrides").document(wa_key).set({
+        "name": name,
+        "updatedAt": now,
+        "expiresAt": now + _NAME_OVERRIDE_TTL,
+    }, merge=True)
+
+def _get_name_override(wa_key: str) -> str:
+    if not wa_key:
+        return ""
+    try:
+        doc = _db().collection("platform_name_overrides").document(wa_key).get()
+        data = doc.to_dict() or {}
+        exp = float(data.get("expiresAt") or 0.0)
+        if exp and time.time() <= exp:
+            return str(data.get("name") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+def _apply_name_override(reply_text: str, override_name: str) -> str:
+    if not override_name:
+        return reply_text
+    s = (reply_text or "").strip()
+
+    # Só troca saudação no começo (não mexe no corpo)
+    # "Oi, Edson!" / "Olá Edson!" / "Olá, Edson!"
+    s2 = re.sub(r"^(oi|olá)\s*,?\s+[A-Za-zÀ-ÿ' ]{2,}!", rf"\1, {override_name}!", s, flags=re.IGNORECASE)
+    return s2
 
 
 def _idempotency_once(event_key: str, ttl_seconds: int = 86400) -> bool:
@@ -369,6 +423,15 @@ def ycloud_inbound_worker():
                     audio_debug = dict(audio_debug or {})
                     audio_debug.setdefault("stt", {"ok": False, "reason": stt_err})
 
+
+            # Se o usuário se apresentou/corrigiu nome, salva override por waKey (TTL)
+            try:
+                nm = _detect_name_override(text_in)
+                if nm and wa_key:
+                    _set_name_override(wa_key, nm)
+            except Exception:
+                pass
+
             if hasattr(wa_bot_entry, "reply_to_text"):
                 if skip_wa_bot:
                     wa_out = {"replyText": reply_text, "audioUrl": "", "audioDebug": audio_debug}
@@ -464,6 +527,18 @@ def ycloud_inbound_worker():
             )
             audio_debug = dict(audio_debug or {})
             audio_debug["identity_guard"] = {"applied": True, "reason": "removed_cnpj_request_for_customer"}
+
+
+        # Aplica override de nome (se existir) para manter consistência na conversa
+        try:
+            if wa_key:
+                override = _get_name_override(wa_key)
+                if override:
+                    reply_text = _apply_name_override(reply_text, override)
+                    audio_debug = dict(audio_debug or {})
+                    audio_debug["nameOverride"] = {"applied": True, "name": override}
+        except Exception:
+            pass
 
         # ==========================================================
         # Se o usuário pediu "somente texto", respeita.
