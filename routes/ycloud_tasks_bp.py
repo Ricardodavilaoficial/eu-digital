@@ -85,7 +85,12 @@ def _apply_name_override(reply_text: str, override_name: str) -> str:
 
     # Só troca saudação no começo (não mexe no corpo)
     # "Oi, Edson!" / "Olá Edson!" / "Olá, Edson!"
-    s2 = re.sub(r"^(oi|olá)\s*,?\s+[A-Za-zÀ-ÿ' ]{2,}!", rf"\1, {override_name}!", s, flags=re.IGNORECASE)
+    s2 = re.sub(
+        r"^(oi|olá)\s*,?\s*[^!?.\n]{1,60}([!?.])",
+        rf"\1, {override_name}\2",
+        s,
+        flags=re.IGNORECASE,
+    )
     return s2
 
 
