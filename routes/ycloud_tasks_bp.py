@@ -875,9 +875,14 @@ def ycloud_inbound_worker():
                         voice_id = (vc.get("voiceId") or "").strip()
                     except Exception:
                         voice_id = ""
-                else:
-                    # voz institucional para VENDAS (defina esta ENV)
+
+                # Fallback universal: se entrou por áudio e não há voiceId do MEI, usa voz institucional
+                if not voice_id:
                     voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
+                    if uid and voice_id:
+                        audio_debug = dict(audio_debug or {})
+                        audio_debug["ttsVoiceFallback"] = "institutional_for_customer_no_voiceId"
+
                 # se não há voice_id, não forçamos TTS (cai para texto, nunca mudo)
                 if voice_id:
                     rr = requests.post(
