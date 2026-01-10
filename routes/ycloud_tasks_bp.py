@@ -21,7 +21,8 @@ ycloud_tasks_bp = Blueprint("ycloud_tasks_bp", __name__)
 
 
 def _db():
-    return firestore.Client()
+    project_id = (os.getenv("FIREBASE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "").strip() or None
+    return firestore.Client(project=project_id)
 
 
 def _db_admin():
@@ -84,11 +85,11 @@ def _set_name_override(wa_key: str, name: str) -> None:
 def _get_name_override(wa_key: str) -> str:
     if not wa_key:
         return ""
-    db = _db_admin()
-    if not db:
-        return ""
+    db_read = _db_admin() or _db()
     try:
-        doc = db.collection("platform_name_overrides").document(wa_key).get()
+        doc = db_read.collection("platform_name_overrides").document(wa_key).get()
+        if not doc.exists:
+            return ""
         data = doc.to_dict() or {}
         exp = float(data.get("expiresAt") or 0.0)
         if exp and time.time() <= exp:
@@ -563,17 +564,22 @@ def ycloud_inbound_worker():
         try:
             override = ""
             try:
+                # ✅ PATCH 3: usa a função (fonte única) para buscar o nome
                 if wa_key_effective:
-                    # prova se doc existe e o que ele contém
-                    snap = _db().collection("platform_name_overrides").document(wa_key_effective).get()
+                    override = _get_name_override(wa_key_effective)
+
+                # Probe só para debug (não decide comportamento)
+                if wa_key_effective:
+                    db_read = _db_admin() or _db()
+                    snap = db_read.collection("platform_name_overrides").document(wa_key_effective).get()
                     data = snap.to_dict() or {}
-                    override = str(data.get("name") or "").strip()
+                    name_probe = str(data.get("name") or "").strip()
                     exp = float(data.get("expiresAt") or 0.0)
                     audio_debug = dict(audio_debug or {})
                     audio_debug["nameOverrideProbe_get"] = {
                         "waKey": wa_key_effective,
                         "docExists": bool(snap.exists),
-                        "name": override,
+                        "name": name_probe,
                         "expiresAt": exp,
                         "now": time.time(),
                     }
