@@ -6,6 +6,9 @@ import time
 import re
 import hashlib
 import logging
+import uuid
+import datetime
+from google.cloud import storage as gcs_storage  # type: ignore
 from typing import Any, Dict, Optional, Tuple
 
 import requests
@@ -897,28 +900,51 @@ def ycloud_inbound_worker():
                     )
 
                     if rr.status_code == 200:
+                        # 1) Tentativa normal: JSON com audioUrl
                         try:
-                            j = rr.json() or {}
+                            j = rr.json()
+                            if isinstance(j, dict) and j.get("ok") is True and (j.get("audioUrl") or ""):
+                                audio_url = (j.get("audioUrl") or "").strip()
+                                audio_debug = dict(audio_debug or {})
+                                audio_debug["tts"] = {"ok": True, "mode": "json_audioUrl"}
+                            else:
+                                raise ValueError("json_missing_audioUrl")
                         except Exception:
-                            j = {}
+                            # 2) Fallback premium: MP3 bytes (ex.: começa com ID3)
+                            try:
+                                b = rr.content or b""
+                                head = b[:3]
+                                ct = (rr.headers.get("content-type") or "").lower()
 
-                        got = (j.get("audioUrl") or j.get("audio_url") or "").strip()
-                        if j.get("ok") and got:
-                            audio_url = got
-                            audio_debug = dict(audio_debug or {})
-                            audio_debug["tts"] = {"ok": True, "voice_id": voice_id}
-                        else:
-                            # se veio 200 mas não veio JSON/ok/audioUrl, registra motivo sem quebrar
-                            reason = j.get("error") if isinstance(j, dict) else None
-                            if not reason:
-                                # ajuda debug: corta corpo enorme, mas dá uma pista
-                                body_hint = (rr.text or "").strip()
-                                if len(body_hint) > 200:
-                                    body_hint = body_hint[:200] + "..."
-                                reason = f"tts_not_ok_or_nonjson:{body_hint or 'empty_body'}"
+                                is_mp3 = (head == b"ID3") or ("audio" in ct) or b.startswith(b"\xff\xfb")
+                                if not is_mp3 or len(b) < 256:
+                                    raise ValueError("not_mp3_bytes")
 
-                            audio_debug = dict(audio_debug or {})
-                            audio_debug["tts"] = {"ok": False, "reason": reason}
+                                bucket_name = (os.environ.get("STORAGE_BUCKET") or "").strip()
+                                if not bucket_name:
+                                    raise ValueError("missing_STORAGE_BUCKET")
+
+                                # upload em um caminho estável (não conflita)
+                                now = datetime.datetime.utcnow()
+                                obj = f"sandbox/institutional_tts/{now:%Y/%m/%d}/{uuid.uuid4().hex}.mp3"
+
+                                client = gcs_storage.Client()
+                                bucket = client.bucket(bucket_name)
+                                blob = bucket.blob(obj)
+                                blob.upload_from_string(b, content_type="audio/mpeg")
+
+                                exp_s = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900") or "900")
+                                audio_url = blob.generate_signed_url(
+                                    expiration=datetime.timedelta(seconds=exp_s),
+                                    method="GET",
+                                )
+
+                                audio_debug = dict(audio_debug or {})
+                                audio_debug["tts"] = {"ok": True, "mode": "bytes_upload_signed", "bytes": len(b), "ct": ct[:40]}
+                            except Exception as e2:
+                                # erro real: não conseguimos obter uma URL pra mandar ao WhatsApp
+                                audio_debug = dict(audio_debug or {})
+                                audio_debug["tts"] = {"ok": False, "reason": f"tts_bytes_fail:{type(e2).__name__}:{str(e2)[:80]}"}
                     else:
                         audio_debug = dict(audio_debug or {})
                         audio_debug["tts"] = {"ok": False, "reason": f"tts_http_{rr.status_code}"}
