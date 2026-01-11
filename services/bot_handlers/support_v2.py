@@ -77,6 +77,48 @@ def _norm(s: str) -> str:
     return (s or "").strip().lower()
 
 
+def _speakable_compact_from_article(body: str, max_chars: int = 520) -> str:
+    """
+    Compacta o artigo para fala (TTS): 15–30s.
+    Não é "resumo perfeito", é um 'jeito humano' curto.
+    Mantém compatibilidade: se o resto do sistema só usa replyText,
+    ele já melhora bastante sem virar audiobook.
+    """
+    if not body:
+        return ""
+
+    # limpar excesso (linhas vazias, bullets longos)
+    txt = re.sub(r"\n{3,}", "\n\n", body.strip())
+    # pega os 1–2 primeiros parágrafos (normalmente definem o conceito)
+    parts = [p.strip() for p in txt.split("\n\n") if p.strip()]
+    head = " ".join(parts[:2]).strip()
+
+    # corta em uma janela segura e fecha frase
+    head = re.sub(r"\s+", " ", head).strip()
+    if len(head) > max_chars:
+        head = head[:max_chars].rsplit(" ", 1)[0].strip()
+
+    # garantir final "falável"
+    if head and head[-1] not in ".!?":
+        head += "."
+
+    return head
+
+
+def _compose_conceptual_reply(q: str, body: str) -> str:
+    """
+    Resposta falada canônica (curta).
+    Estrutura: o que é / pra que serve / como usa / pergunta de fechamento.
+    """
+    base = _speakable_compact_from_article(body, max_chars=520)
+    if not base:
+        return ""
+
+    # Fechamento curto (evita monólogo e puxa conversa)
+    close = "Se tu me disser teu objetivo (ex.: organizar contatos, anexar arquivos ou importar CSV), eu te digo o caminho mais rápido."
+    return f"{base} {close}"
+
+
 def _user_wants_text(text: str) -> bool:
     t = _norm(text)
     triggers = (
@@ -243,7 +285,7 @@ def _try_answer_from_article(page: str, text: str) -> Optional[str]:
     # Resposta curta: para começar, devolve o corpo inteiro (magrinho).
     # Depois podemos fazer recorte por trechos/embeddings sem mudar contrato.
     if _looks_conceptual(text):
-        return body.strip()
+        return _compose_conceptual_reply(text, body)
     return None
 
 def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -276,9 +318,18 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
     # 2) Artigo (conceitual)
     ans2 = _try_answer_from_article(page, q)
     if ans2:
-        return {"ok": True, "route": f"support_v2:{page}:article", "replyText": ans2, "prefersText": bool(prefers_text), "displayName": display_name}
+        # kbContext é o artigo completo (cérebro). replyText é fala curta (boca).
+        return {
+            "ok": True,
+            "route": f"support_v2:{page}:article",
+            "replyText": ans2,
+            "kbContext": _get_article(page),  # corpo completo
+            "kind": "conceptual",
+            "prefersText": bool(prefers_text),
+            "displayName": display_name,
+            "nameToSay": display_name,  # sugestão; decisão final fica no layer do áudio
+        }
 
     # 3) Sem match: pedir 1 clarificação (curta) OU cair no legacy.
     # Aqui vamos cair no legacy para manter comportamento e qualidade.
     return None
-

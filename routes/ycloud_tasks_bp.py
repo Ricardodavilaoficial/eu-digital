@@ -29,6 +29,13 @@ _SUPPORT_TTS_SUMMARY_MODE = (os.environ.get("SUPPORT_TTS_SUMMARY_MODE") or "off"
 _SUPPORT_TTS_SUMMARY_MODEL = (os.environ.get("SUPPORT_TTS_SUMMARY_MODEL") or "gpt-4o-mini").strip()
 _SUPPORT_TTS_SUMMARY_MAX_TOKENS = int(os.environ.get("SUPPORT_TTS_SUMMARY_MAX_TOKENS", "140") or "140")
 
+# TTS conceitual (quando há kbContext): gera fala humana usando o artigo como CONTEXTO (não script)
+_SUPPORT_TTS_CONCEPT_MODE = (os.environ.get("SUPPORT_TTS_CONCEPT_MODE") or "on").strip().lower()  # on|off
+_SUPPORT_TTS_CONCEPT_MODEL = (os.environ.get("SUPPORT_TTS_CONCEPT_MODEL") or _SUPPORT_TTS_SUMMARY_MODEL).strip()
+_SUPPORT_TTS_CONCEPT_MAX_TOKENS = int(os.environ.get("SUPPORT_TTS_CONCEPT_MAX_TOKENS", "220") or "220")
+_SUPPORT_TTS_CONCEPT_KB_MAX_CHARS = int(os.environ.get("SUPPORT_TTS_CONCEPT_KB_MAX_CHARS", "1400") or "1400")
+
+
 
 # Humanização (nome só de vez em quando)
 _SUPPORT_NAME_MIN_GAP_SECONDS = int(os.environ.get("SUPPORT_NAME_MIN_GAP_SECONDS", "600") or "600")  # 10min
@@ -455,6 +462,81 @@ def _openai_rewrite_for_speech(text: str, display_name: str = "") -> str:
         # guarda rail simples
         if len(out) < 10:
             return ""
+        return out[:900]
+    except Exception:
+        return ""
+
+
+
+def _openai_generate_concept_speech(question: str, kb_context: str, display_name: str = "") -> str:
+    """
+    Gera fala curta e humana (15–30s) para perguntas conceituais.
+    Usa kb_context como CONTEXTO (não como texto a ser lido).
+    Só roda quando canal é áudio e SUPPORT_TTS_CONCEPT_MODE=on.
+    """
+    api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        return ""
+    q = (question or "").strip()
+    ctx = (kb_context or "").strip()
+    if not q or not ctx:
+        return ""
+
+    persona = _get_support_persona()
+    persona_desc = str(persona.get("persona_description") or "").strip()
+    tone_rules = persona.get("tone_rules") or []
+    taboos = persona.get("taboos") or []
+    spice = persona.get("persona_spice") or {}
+
+    ctx = ctx[: max(200, int(_SUPPORT_TTS_CONCEPT_KB_MAX_CHARS))]
+
+    sys = (
+        "Você é um atendente humano de suporte falando por áudio no WhatsApp.\n"
+        "Sua missão: responder de forma CALMA e EXPLICATIVA, sem virar manual.\n"
+        f"PERSONA: {persona_desc}\n"
+        f"TOM (regras): {tone_rules}\n"
+        f"EVITE (tabu): {taboos}\n"
+        f"TEMPEROS (use raramente e só se combinar): {spice}\n"
+        "\n"
+        "REGRAS DA RESPOSTA (obrigatório):\n"
+        "- 15 a 30 segundos de fala (curto, mas completo)\n"
+        "- 2 a 4 frases curtas + 1 pergunta final bem curta\n"
+        "- sem listas, sem passo a passo longo, sem 'manualzão'\n"
+        "- use o CONTEXTO apenas para não inventar, NÃO leia o texto\n"
+        "- português do Brasil, tom humano\n"
+        "- se tiver nome, use no máximo 1 vez (e só se fizer sentido)\n"
+        "Responda SOMENTE com o texto final."
+    )
+
+    user = {
+        "name": (display_name or "")[:40],
+        "pergunta": q[:240],
+        "contexto_base": ctx,
+    }
+
+    try:
+        r = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": _SUPPORT_TTS_CONCEPT_MODEL,
+                "temperature": 0.2,
+                "max_tokens": int(_SUPPORT_TTS_CONCEPT_MAX_TOKENS),
+                "messages": [
+                    {"role": "system", "content": sys},
+                    {"role": "user", "content": str(user)},
+                ],
+            },
+            timeout=18,
+        )
+        if r.status_code != 200:
+            return ""
+        j = r.json() or {}
+        content = (((j.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
+        out = (content or "").strip()
+        if len(out) < 10:
+            return ""
+        # hard cap para não estourar TTS
         return out[:900]
     except Exception:
         return ""
@@ -930,6 +1012,8 @@ def ycloud_inbound_worker():
             reply_text = ""
             audio_url = ""
             audio_debug = {"err": str(e)}
+            kb_context = ""
+            wa_kind = ""
 
         if isinstance(wa_out, dict):
             reply_text = (
@@ -941,6 +1025,9 @@ def ycloud_inbound_worker():
                 )
             audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
             audio_debug = wa_out.get("audioDebug") or {}
+            kb_context = (wa_out.get("kbContext") or wa_out.get("kb_context") or "")
+            wa_kind = (wa_out.get("kind") or wa_out.get("type") or "")
+
         elif wa_out:
             reply_text = str(wa_out)
 
@@ -1158,8 +1245,33 @@ def ycloud_inbound_worker():
                                 name_to_use = tts_name
                                 _LAST_NAME_SPOKEN_AT[wa_key_effective] = time.time()
 
-                        # 1) texto falável base (limpo)
-                        tts_text = _make_tts_text(tts_text, name_to_use)
+                        # 1) Se for conceitual e houver kbContext: gera fala humana a partir do CONTEXTO (não lê artigo)
+                        concept_generated = False
+                        try:
+                            if _SUPPORT_TTS_CONCEPT_MODE == "on" and str(wa_kind or "").strip().lower() == "conceptual" and (kb_context or "").strip():
+                                gen = _openai_generate_concept_speech(text_in, kb_context, name_to_use)
+                                if gen:
+                                    tts_text = gen
+                                    concept_generated = True
+                                    audio_debug = dict(audio_debug or {})
+                                    audio_debug["ttsConcept"] = {"ok": True, "model": _SUPPORT_TTS_CONCEPT_MODEL}
+                                else:
+                                    audio_debug = dict(audio_debug or {})
+                                    audio_debug["ttsConcept"] = {"ok": False}
+                        except Exception:
+                            pass
+
+                        # 2) texto falável base (limpo + nome opcional)
+                        if concept_generated:
+                            tts_text = _clean_for_speech(tts_text)
+                            # garantir nome no início quando liberado pelo gap
+                            if name_to_use:
+                                low = (tts_text or "").lstrip().lower()
+                                if not low.startswith((name_to_use.lower() + ",", name_to_use.lower() + " ")):
+                                    tts_text = f"{name_to_use}, {tts_text}".strip()
+                        else:
+                            tts_text = _make_tts_text(tts_text, name_to_use)
+
 
                         # 2) IA reescreve para fala humana (agora com persona do Firestore)
                         if _SUPPORT_TTS_SUMMARY_MODE == "on":
@@ -1172,7 +1284,17 @@ def ycloud_inbound_worker():
                                 audio_debug = dict(audio_debug or {})
                                 audio_debug["ttsRewrite"] = {"ok": False}
 
-                        # Auditoria segura: prova do texto enviado ao TTS sem entupir logs
+                        
+                        # Garantia final: se liberamos nome, ele não pode sumir no rewrite
+                        try:
+                            if name_to_use:
+                                low = (tts_text or "").lstrip().lower()
+                                if not low.startswith((name_to_use.lower() + ",", name_to_use.lower() + " ")):
+                                    tts_text = f"{name_to_use}, {tts_text}".strip()
+                        except Exception:
+                            pass
+
+# Auditoria segura: prova do texto enviado ao TTS sem entupir logs
                         try:
                             sha = _sha1_id(tts_text)
                             head = (tts_text or "")[:80]
