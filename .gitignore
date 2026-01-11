@@ -195,3 +195,4 @@ ycloud_webhook_bp.py
 *.tmp
 __pycache__/
 
+_trash/

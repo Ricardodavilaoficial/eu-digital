@@ -104,56 +104,58 @@ def upload_foto_servico():
     client = get_storage_client()
     bucket = client.bucket(bucket_name)
 
+
     blob = bucket.blob(object_path)
-# ---- QUOTA (best-effort) ----
-# Overwrite no mesmo path: reserva apenas o aumento (new_size - old_size)
-old_size = 0
-try:
-    if blob.exists(client):
-        blob.reload()
-        old_size = int(blob.size or 0)
-except Exception:
+
+    # ---- QUOTA (best-effort) ----
+    # Overwrite no mesmo path: reserva apenas o aumento (new_size - old_size)
     old_size = 0
+    try:
+        if blob.exists(client):
+            blob.reload()
+            old_size = int(blob.size or 0)
+    except Exception:
+        old_size = 0
 
-new_size = 0
-try:
-    file.stream.seek(0, 2)
-    new_size = int(file.stream.tell() or 0)
-    file.stream.seek(0)
-except Exception:
     new_size = 0
-
-reserved = 0
-delta_est = int(new_size) - int(old_size)
-if delta_est > 0:
     try:
-        reserve_bytes(uid, delta_est, category="servicos_foto")
-        reserved = delta_est
-    except QuotaExceeded as qe:
-        return jsonify(qe.to_dict()), 409
+        file.stream.seek(0, 2)
+        new_size = int(file.stream.tell() or 0)
+        file.stream.seek(0)
+    except Exception:
+        new_size = 0
 
-try:
-    blob.cache_control = "private, max-age=0, no-transform"
-    blob.upload_from_file(file.stream, content_type=content_type)
-    blob.patch()
-except Exception:
-    # rollback da reserva (best-effort)
+    reserved = 0
+    delta_est = int(new_size) - int(old_size)
+    if delta_est > 0:
+        try:
+            reserve_bytes(uid, delta_est, category="servicos_foto")
+            reserved = delta_est
+        except QuotaExceeded as qe:
+            return jsonify(qe.to_dict()), 409
+
     try:
-        if reserved:
-            adjust_bytes(uid, -int(reserved), category="servicos_foto")
+        blob.cache_control = "private, max-age=0, no-transform"
+        blob.upload_from_file(file.stream, content_type=content_type)
+        blob.patch()
+    except Exception:
+        # rollback da reserva (best-effort)
+        try:
+            if reserved:
+                adjust_bytes(uid, -int(reserved), category="servicos_foto")
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": "upload_failed"}), 500
+
+    # Reconcilia delta real (se diferir do reservado)
+    try:
+        blob.reload()
+        real_new = int(blob.size or 0)
+        real_delta = int(real_new) - int(old_size)
+        if reserved != real_delta:
+            adjust_bytes(uid, int(real_delta) - int(reserved), category="servicos_foto")
     except Exception:
         pass
-    return jsonify({"ok": False, "error": "upload_failed"}), 500
-
-# Reconcilia delta real (se diferir do reservado)
-try:
-    blob.reload()
-    real_new = int(blob.size or 0)
-    real_delta = int(real_new) - int(old_size)
-    if reserved != real_delta:
-        adjust_bytes(uid, int(real_delta) - int(reserved), category="servicos_foto")
-except Exception:
-    pass
 
     # ---- Gerar Signed URL de leitura (conveniência) ----
     expires = timedelta(minutes=_EXPIRES_MINUTES)
