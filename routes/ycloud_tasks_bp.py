@@ -836,6 +836,7 @@ def ycloud_inbound_worker():
         reply_text = ""
         audio_url = ""
         audio_debug = {}
+        tts_text_final_used = ""  # texto final que foi pro TTS
         wa_out = None
 
         try:
@@ -1422,12 +1423,17 @@ def ycloud_inbound_worker():
                             timeout=35,
                         )
 
+                    # ✅ Texto canônico falado (o que realmente vai pro TTS)
+                    tts_text_final_used = tts_text
+
                     rr = _call_tts(tts_text)
 
                     # Retry automático se bater 413 (texto ainda grande pro endpoint)
                     if rr.status_code == 413:
                         try:
                             retry_text = _shorten_for_speech(tts_text, _SUPPORT_TTS_RETRY_MAX_CHARS)
+                            # ✅ Se precisou retry, o falado é o retry_text
+                            tts_text_final_used = retry_text
                             audio_debug = dict(audio_debug or {})
                             audio_debug["ttsRetry"] = {
                                 "applied": True,
@@ -1498,6 +1504,17 @@ def ycloud_inbound_worker():
                 audio_debug = dict(audio_debug or {})
                 audio_debug["tts"] = {"ok": False, "reason": f"tts_exc:{e}"}
                     
+        # ✅ Guarda SEMPRE o texto final que foi pro TTS (hash + preview)
+        try:
+            audio_debug = dict(audio_debug or {})
+            audio_debug["ttsTextFinal"] = {
+                "len": len(tts_text_final_used or ""),
+                "preview": (tts_text_final_used or "")[:180],
+                "sha1": _sha1_id(tts_text_final_used or ""),
+            }
+        except Exception:
+            pass
+
         # envia resposta: se lead mandou áudio, tentamos áudio (se veio audioUrl), senão texto
         sent_ok = False
         allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
@@ -1539,6 +1556,7 @@ def ycloud_inbound_worker():
         "replyText": (reply_text or "")[:400],
         "audioUrl": (audio_url or "")[:300],
         "audioDebug": audio_debug,
+        "spokenText": (tts_text_final_used or "")[:600],
         "eventKey": event_key,
         "sentOk": bool(sent_ok),
             })
