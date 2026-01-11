@@ -20,6 +20,11 @@ from google.cloud import firestore  # type: ignore
 
 logger = logging.getLogger("mei_robo.ycloud_tasks")
 
+# Limites para manter "entra áudio -> sai áudio" sem 413 no /api/voz/tts
+_SUPPORT_TTS_MAX_CHARS = int(os.environ.get("SUPPORT_TTS_MAX_CHARS", "650") or "650")
+_SUPPORT_TTS_RETRY_MAX_CHARS = int(os.environ.get("SUPPORT_TTS_RETRY_MAX_CHARS", "420") or "420")
+_SUPPORT_WA_TEXT_MAX_CHARS = int(os.environ.get("SUPPORT_WA_TEXT_MAX_CHARS", "900") or "900")
+
 ycloud_tasks_bp = Blueprint("ycloud_tasks_bp", __name__)
 
 
@@ -289,6 +294,47 @@ def _apply_name_override(reply_text: str, override_name: str) -> str:
         flags=re.IGNORECASE,
     )
     return s2
+
+
+def _shorten_for_speech(text: str, max_chars: int) -> str:
+    """
+    Encurta texto para TTS de forma segura e 'falável'.
+    Heurística leve (barata): corta em limite e tenta terminar em pontuação.
+    """
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if max_chars <= 60:
+        max_chars = 60
+    if len(t) <= max_chars:
+        return t
+    cut = t[:max_chars].strip()
+    # tenta finalizar no último . ! ? (melhor pra fala)
+    m = re.search(r"^(.{40,})([.!?])[^.!?]*$", cut)
+    if m:
+        return (m.group(1) + m.group(2)).strip()
+    # fallback: remove resto e fecha com ponto
+    cut = cut.rstrip(",;:-")
+    return (cut + ".").strip()
+
+
+def _shorten_for_whatsapp(text: str, max_chars: int) -> str:
+    """
+    Encurta texto de fallback (quando áudio falhar), evitando paredão e corte feio no WhatsApp.
+    """
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if max_chars <= 120:
+        max_chars = 120
+    if len(t) <= max_chars:
+        return t
+    cut = t[:max_chars].strip()
+    # tenta cortar em fim de frase/linha
+    m = re.search(r"^(.{80,})([.!?])[^.!?]*$", cut)
+    if m:
+        return (m.group(1) + m.group(2)).strip()
+    return (cut.rstrip(",;:-") + "…").strip()
 
 
 def _idempotency_once(event_key: str, ttl_seconds: int = 86400) -> bool:
@@ -758,6 +804,23 @@ def ycloud_inbound_worker():
                 )
                 reply_text = "Não consegui responder agora 😕 Pode tentar de novo ou me explicar um pouco melhor?"
 
+        # Se entrou por áudio, evitamos "paredão" como fallback de texto.
+        # (O áudio é o canal principal; texto aqui é só fallback se o áudio falhar.)
+        if msg_type in ("audio", "voice", "ptt"):
+            try:
+                if reply_text and len(reply_text) > _SUPPORT_WA_TEXT_MAX_CHARS:
+                    before = reply_text
+                    reply_text = _shorten_for_whatsapp(reply_text, _SUPPORT_WA_TEXT_MAX_CHARS)
+                    audio_debug = dict(audio_debug or {})
+                    audio_debug["waTextShorten"] = {
+                        "applied": True,
+                        "maxChars": _SUPPORT_WA_TEXT_MAX_CHARS,
+                        "beforeLen": len(before),
+                        "afterLen": len(reply_text),
+                    }
+            except Exception:
+                pass
+
         # ==========================================================
         # Guardrail (customer): suporte NÃO pede CNPJ.
         # Se algum caminho legado tentar validar identidade, trocamos
@@ -892,12 +955,47 @@ def ycloud_inbound_worker():
 
                 # se não há voice_id, não forçamos TTS (cai para texto, nunca mudo)
                 if voice_id:
-                    rr = requests.post(
-                        tts_url,
-                        headers={"Accept": "application/json"},
-                        json={"text": reply_text, "voice_id": voice_id},
-                        timeout=35,
-                    )
+                    # 🔥 PATCH CRÍTICO: TTS recebe um texto curto e "falável" para evitar 413.
+                    tts_text = reply_text
+                    try:
+                        if tts_text and len(tts_text) > _SUPPORT_TTS_MAX_CHARS:
+                            before = tts_text
+                            tts_text = _shorten_for_speech(tts_text, _SUPPORT_TTS_MAX_CHARS)
+                            audio_debug = dict(audio_debug or {})
+                            audio_debug["ttsInputShorten"] = {
+                                "applied": True,
+                                "maxChars": _SUPPORT_TTS_MAX_CHARS,
+                                "beforeLen": len(before),
+                                "afterLen": len(tts_text),
+                            }
+                    except Exception:
+                        pass
+
+                    def _call_tts(payload_text: str):
+                        return requests.post(
+                            tts_url,
+                            headers={"Accept": "application/json"},
+                            json={"text": payload_text, "voice_id": voice_id},
+                            timeout=35,
+                        )
+
+                    rr = _call_tts(tts_text)
+
+                    # Retry automático se bater 413 (texto ainda grande pro endpoint)
+                    if rr.status_code == 413:
+                        try:
+                            retry_text = _shorten_for_speech(tts_text, _SUPPORT_TTS_RETRY_MAX_CHARS)
+                            audio_debug = dict(audio_debug or {})
+                            audio_debug["ttsRetry"] = {
+                                "applied": True,
+                                "http": 413,
+                                "maxChars": _SUPPORT_TTS_RETRY_MAX_CHARS,
+                                "retryLen": len(retry_text),
+                            }
+                            rr = _call_tts(retry_text)
+                        except Exception as e_retry:
+                            audio_debug = dict(audio_debug or {})
+                            audio_debug["ttsRetry"] = {"applied": False, "reason": f"exc:{type(e_retry).__name__}"}
 
                     if rr.status_code == 200:
                         # 1) Tentativa normal: JSON com audioUrl
