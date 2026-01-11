@@ -294,9 +294,17 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "ok": True,
                             "route": v2.get("route") or "support_v2",
                             "replyText": reply_text,
+
                             # 🔥 Propaga metadados para o worker decidir canal/humanização
                             "displayName": str(v2.get("displayName") or "").strip(),
                             "prefersText": bool(v2.get("prefersText")),
+
+                            # ✅ Contexto canônico (cérebro) + tipo (p/ fala conceitual no worker)
+                            # Observação: kbContext pode ser grande; o worker faz truncagem segura.
+                            "kbContext": v2.get("kbContext") or "",
+                            "kind": str(v2.get("kind") or "").strip(),
+                            "nameToSay": str(v2.get("nameToSay") or "").strip(),
+
                             # Marca que o áudio deve ser decidido fora (worker)
                             "ttsOwner": "worker",
                         }
@@ -579,3 +587,4 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
+
