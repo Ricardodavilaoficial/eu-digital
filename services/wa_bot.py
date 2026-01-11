@@ -335,15 +335,28 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
         legacy.process_change(value, _capture_send_text, uid, app_tag=ctx.get("app_tag") or "wa_bot")
         reply_text = captured["text"] or "Certo."
-        out = {"ok": True, "route": "support_legacy", "replyText": reply_text}
-        _force_audio_reply_if_needed(out, reply_text)
+        out = {
+            "ok": True,
+            "route": "support_legacy",
+            "replyText": reply_text,
+
+            # 🔒 Garante que o áudio será decidido no worker
+            "ttsOwner": "worker",
+        }
         return out
 
     except Exception as e:
         # fallback conservador (não quebra o webhook)
         reply_text = "Certo."
-        out = {"ok": False, "route": "support_legacy", "replyText": reply_text, "error": str(e)}
-        _force_audio_reply_if_needed(out, reply_text)
+        out = {
+            "ok": False,
+            "route": "support_legacy",
+            "replyText": reply_text,
+            "error": str(e),
+
+            # 🔒 Garante que o áudio será decidido no worker
+            "ttsOwner": "worker",
+        }
         return out
 
 
@@ -587,4 +600,5 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
+
 
