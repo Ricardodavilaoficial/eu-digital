@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import time
 import logging
+import json
 import re
 from typing import Any, Dict, Optional, Tuple
 
@@ -16,6 +17,16 @@ _SUPPORT_TTL_SECONDS = int(os.getenv("SUPPORT_KB_TTL_SECONDS", "600") or "600")
 # Coleções (como você criou)
 COL_ACTION_MAPS = os.getenv("SUPPORT_ACTION_MAPS_COLL", "platform_kb_action_maps")
 COL_ARTICLES = os.getenv("SUPPORT_ARTICLES_COLL", "platform_kb_support_articles")
+
+# --- Route classifier (IA curtinho) ---
+SUPPORT_ROUTE_CLASSIFIER = os.getenv("SUPPORT_ROUTE_CLASSIFIER", "1").strip() in ("1", "true", "yes", "on")
+SUPPORT_ROUTE_CLASSIFIER_MODEL = os.getenv("SUPPORT_ROUTE_CLASSIFIER_MODEL", "gpt-4o-mini").strip()
+SUPPORT_ROUTE_CLASSIFIER_MAX_TOKENS = int(os.getenv("SUPPORT_ROUTE_CLASSIFIER_MAX_TOKENS", "120"))
+SUPPORT_ROUTE_CLASSIFIER_CACHE_TTL = int(os.getenv("SUPPORT_ROUTE_CLASSIFIER_CACHE_TTL", "600"))
+
+# cache em memória: key -> (expiresAt, result_dict)
+_ROUTE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+
 
 # Cache simples em memória (por page)
 _ACTION_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -75,6 +86,99 @@ def _get_article(page: str) -> str:
 
 def _norm(s: str) -> str:
     return (s or "").strip().lower()
+
+def _route_cache_get(key: str) -> Optional[Dict[str, Any]]:
+    try:
+        item = _ROUTE_CACHE.get(key)
+        if not item:
+            return None
+        exp, val = item
+        if time.time() > exp:
+            _ROUTE_CACHE.pop(key, None)
+            return None
+        return val
+    except Exception:
+        return None
+
+def _route_cache_set(key: str, val: Dict[str, Any]) -> None:
+    try:
+        _ROUTE_CACHE[key] = (time.time() + float(SUPPORT_ROUTE_CLASSIFIER_CACHE_TTL), val)
+    except Exception:
+        pass
+
+def _ai_classify_route(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Classificador baratinho: decide page + kind quando o V2 não encaixa.
+    NÃO escreve resposta final.
+    Retorna dict: {"page": "...", "kind": "conceptual|action|screen_question", "confidence": 0.xx}
+    """
+    if (not SUPPORT_ROUTE_CLASSIFIER) or (not text):
+        return None
+
+    t = str(text).strip()
+    if len(t) < 6:
+        return None
+
+    # cache
+    key = f"v1:{_norm(t)[:240]}"
+    cached = _route_cache_get(key)
+    if cached:
+        return cached
+
+    try:
+        # lazy import para não afetar boot
+        from openai import OpenAI  # type: ignore
+
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+
+        sys = (
+            "Você é um classificador de roteamento de suporte. "
+            "Você NÃO responde ao usuário. Você só classifica.\n"
+            "Saída OBRIGATÓRIA em JSON puro com as chaves: page, kind, confidence.\n"
+            "page ∈ [contatos, agenda, voz, pagamento, outro]\n"
+            "kind ∈ [conceptual, action, screen_question]\n"
+            "confidence é número 0.0–1.0\n"
+        )
+
+        user = (
+            "Classifique esta mensagem:\n"
+            f"{t}\n\n"
+            "Regras rápidas:\n"
+            "- Se perguntar 'como funciona', 'o que é', 'limite/tamanho/capacidade', -> kind=conceptual.\n"
+            "- Se pedir 'como fazer', 'passo a passo', 'clicar', 'importar', -> kind=action.\n"
+            "- Se falar 'não funciona', 'erro', 'não salva', -> kind=screen_question.\n"
+            "Responda apenas JSON."
+        )
+
+        resp = client.chat.completions.create(
+            model=SUPPORT_ROUTE_CLASSIFIER_MODEL,
+            temperature=0,
+            max_tokens=SUPPORT_ROUTE_CLASSIFIER_MAX_TOKENS,
+            messages=[
+                {"role": "system", "content": sys},
+                {"role": "user", "content": user},
+            ],
+        )
+
+        raw = (resp.choices[0].message.content or "").strip()
+        data = json.loads(raw)
+
+        page = str(data.get("page") or "").strip().lower()
+        kind = str(data.get("kind") or "").strip().lower()
+        conf = float(data.get("confidence") or 0.0)
+
+        if page not in ("contatos", "agenda", "voz", "pagamento", "outro"):
+            page = "outro"
+        if kind not in ("conceptual", "action", "screen_question"):
+            kind = "conceptual"
+
+        out = {"page": page, "kind": kind, "confidence": conf}
+        _route_cache_set(key, out)
+        return out
+
+    except Exception:
+        return None
+
 
 
 def _speakable_compact_from_article(body: str, max_chars: int = 520) -> str:
@@ -294,14 +398,12 @@ def _looks_conceptual(text: str) -> bool:
         "peso do arquivo", "arquivo grande"
     ))
 
-def _try_answer_from_article(page: str, text: str) -> Optional[str]:
+def _try_answer_from_article(page: str, text: str, force_conceptual: bool = False) -> Optional[str]:
     body = _get_article(page)
     if not body:
         return None
-    # Resposta curta: para começar, devolve o corpo inteiro (magrinho).
-    # Depois podemos fazer recorte por trechos/embeddings sem mudar contrato.
-    if _looks_conceptual(text):
-        return _compose_conceptual_reply(text, body)
+    if force_conceptual or _looks_conceptual(text):
+        return body.strip()
     return None
 
 def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -323,6 +425,14 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
     display_name = learned_name or _get_profile_name_from_ctx(uid, ctx)
 
     page = _detect_page(q)
+
+    # Fallback de roteamento por IA (barato) quando não detectamos page.
+    route_hint = None
+    if not page:
+        route_hint = _ai_classify_route(text)
+        if route_hint and route_hint.get("confidence", 0) >= 0.55:
+            page = route_hint.get("page") if route_hint.get("page") != "outro" else None
+
     if not page:
         return None
 
@@ -332,7 +442,8 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
         return {"ok": True, "route": f"support_v2:{page}:action_map", "replyText": ans, "prefersText": bool(prefers_text), "displayName": display_name}
 
     # 2) Artigo (conceitual)
-    ans2 = _try_answer_from_article(page, q)
+    force_conceptual = bool(route_hint and route_hint.get("kind") == "conceptual" and float(route_hint.get("confidence", 0)) >= 0.55)
+    ans2 = _try_answer_from_article(page, q, force_conceptual=force_conceptual)
     if ans2:
         # kbContext é o artigo completo (cérebro). replyText é fala curta (boca).
         return {
