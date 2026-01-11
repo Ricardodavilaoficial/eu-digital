@@ -337,6 +337,50 @@ def _shorten_for_whatsapp(text: str, max_chars: int) -> str:
     return (cut.rstrip(",;:-") + "…").strip()
 
 
+def _clean_for_speech(text: str) -> str:
+    """
+    Limpa marcas visuais e bullets que soam péssimo no TTS.
+    Mantém o conteúdo, mas deixa 'falável'.
+    """
+    t = (text or "").strip()
+    if not t:
+        return ""
+    # remove emojis/badges comuns de seção
+    t = t.replace("✅", "").replace("📌", "").replace("⚠️", "").replace("🏗️", "").replace("🛠️", "")
+    # remove bullets e hífens de lista no meio
+    t = re.sub(r"\s*-\s+", " ", t)
+    # colapsa espaços
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _make_tts_text(reply_text: str, display_name: str) -> str:
+    """
+    Constrói o texto falado (TTS) com tom humano:
+    - abre com nome quando disponível e quando não há saudação
+    - limpa bullets/ícones
+    - fecha com porta aberta curta
+    """
+    base = _clean_for_speech(reply_text)
+    if not base:
+        return ""
+
+    # Se já começa com "oi/olá", não inventa saudação.
+    starts_greet = bool(re.match(r"^(oi|olá)\b", base, flags=re.IGNORECASE))
+
+    # Nome só se houver e se não ficar repetitivo
+    nm = (display_name or "").strip()
+    if nm and not starts_greet:
+        # abre humano e curto
+        base = f"{nm}, te explico rapidinho. {base}"
+
+    # Porta aberta curta (não vira vendedor)
+    if not re.search(r"[.!?]\s*$", base):
+        base = base.strip() + "."
+    base = base + " Se quiser, me diz o que você quer guardar no acervo: texto, foto ou PDF?"
+    return base.strip()
+
+
 def _idempotency_once(event_key: str, ttl_seconds: int = 86400) -> bool:
     """
     Retorna True se é primeira vez. False se já processou.
@@ -955,9 +999,30 @@ def ycloud_inbound_worker():
 
                 # se não há voice_id, não forçamos TTS (cai para texto, nunca mudo)
                 if voice_id:
-                    # 🔥 PATCH CRÍTICO: TTS recebe um texto curto e "falável" para evitar 413.
+                                        # 🔥 PATCH CRÍTICO: TTS recebe um texto curto e "falável".
+                    # (não é o mesmo texto canônico; é versão para FALA)
                     tts_text = reply_text
                     try:
+                        # nome do interlocutor ativo (se existir)
+                        tts_name = ""
+                        try:
+                            # 1) preferir speaker ativo
+                            if _IDENTITY_MODE != "off" and wa_key_effective:
+                                tts_name = _get_active_speaker(wa_key_effective) or ""
+                            # 2) fallback nameOverride legado
+                            if not tts_name and wa_key_effective:
+                                tts_name = _get_name_override(wa_key_effective) or ""
+                        except Exception:
+                            tts_name = ""
+
+                        tts_text = _make_tts_text(tts_text, tts_name)
+                        audio_debug = dict(audio_debug or {})
+                        audio_debug["ttsTextProbe"] = {
+                            "nameUsed": (tts_name or ""),
+                            "len": len(tts_text or ""),
+                            "preview": (tts_text or "")[:140],
+                        }
+
                         if tts_text and len(tts_text) > _SUPPORT_TTS_MAX_CHARS:
                             before = tts_text
                             tts_text = _shorten_for_speech(tts_text, _SUPPORT_TTS_MAX_CHARS)
