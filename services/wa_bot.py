@@ -290,8 +290,17 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 if isinstance(v2, dict):
                     reply_text = str(v2.get("replyText") or "").strip()
                     if reply_text:
-                        out = {"ok": True, "route": v2.get("route") or "support_v2", "replyText": reply_text}
-                        _force_audio_reply_if_needed(out, reply_text)
+                        out = {
+                            "ok": True,
+                            "route": v2.get("route") or "support_v2",
+                            "replyText": reply_text,
+                            # 🔥 Propaga metadados para o worker decidir canal/humanização
+                            "displayName": str(v2.get("displayName") or "").strip(),
+                            "prefersText": bool(v2.get("prefersText")),
+                            # Marca que o áudio deve ser decidido fora (worker)
+                            "ttsOwner": "worker",
+                        }
+                        # ⚠️ IMPORTANTE: NÃO gerar áudio aqui (evita duplicidade de TTS).
                         return out
         except Exception as e:
             # Nunca quebrar suporte por causa do v2; cai no legacy
@@ -570,4 +579,3 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
-
