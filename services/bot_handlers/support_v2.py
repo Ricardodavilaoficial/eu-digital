@@ -209,7 +209,10 @@ def _detect_action_for_contatos(text: str) -> Optional[str]:
         return "criar_contato"
 
     # acervo
-    if any(k in t for k in ("acervo", "anexar", "anexo", "pdf", "arquivo", "imagem", "enviar arquivo")):
+    if any(k in t for k in (
+        "acervo", "anexar", "anexo", "pdf", "arquivo", "imagem", "enviar arquivo",
+        "tamanho", "limite", "mb", "gb", "megabytes", "gigabytes", "capacidade"
+    )):
         return "abrir_acervo"
 
     # autorização whatsapp
@@ -274,8 +277,21 @@ def _try_answer_from_action_map(page: str, text: str) -> Optional[str]:
 
 def _looks_conceptual(text: str) -> bool:
     t = _norm(text)
+
+    # Conceitual "clássico"
+    if any(k in t for k in (
+        "pra que serve", "para que serve", "o que é", "como funciona",
+        "qual a diferença", "diferença"
+    )):
+        return True
+
+    # Conceitual "operacional" (suporte real): limites, tamanhos, capacidade
+    # Isso evita cair no legacy quando o usuário pergunta "quanto cabe", "qual tamanho", etc.
     return any(k in t for k in (
-        "pra que serve", "para que serve", "o que é", "como funciona", "qual a diferença", "diferença"
+        "tamanho", "tamanhos", "limite", "limites", "capacidade",
+        "quanto cabe", "quanto posso", "qual o máximo", "máximo",
+        "mb", "gb", "megabyte", "megabytes", "gigabyte", "gigabytes",
+        "peso do arquivo", "arquivo grande"
     ))
 
 def _try_answer_from_article(page: str, text: str) -> Optional[str]:
