@@ -209,18 +209,21 @@ def _speakable_compact_from_article(body: str, max_chars: int = 520) -> str:
     return head
 
 
-def _compose_conceptual_reply(q: str, body: str) -> str:
-    """
-    Resposta falada canônica (curta).
-    Estrutura: o que é / pra que serve / como usa / pergunta de fechamento.
-    """
-    base = _speakable_compact_from_article(body, max_chars=520)
+def _compose_conceptual_reply(question: str, article_body: str) -> str:
+    # 2–4 frases + 1 pergunta final (fala humana)
+    base = (article_body or "").strip()
     if not base:
         return ""
-
-    # Fechamento curto (evita monólogo e puxa conversa)
-    close = "Se tu me disser teu objetivo (ex.: organizar contatos, anexar arquivos ou importar CSV), eu te digo o caminho mais rápido."
-    return f"{base} {close}"
+    # pega só o comecinho do artigo (definição)
+    parts = [p.strip() for p in base.split("\n\n") if p.strip()]
+    head = " ".join(parts[:2]).strip()
+    head = re.sub(r"\s+", " ", head).strip()
+    if len(head) > 520:
+        head = head[:520].rsplit(" ", 1)[0].strip()
+    if head and head[-1] not in ".!?":
+        head += "."
+    close = "Se tu me disser se teu foco é anexar arquivos, importar CSV ou só saber os limites, eu te digo o caminho mais rápido."
+    return f"{head} {close}".strip()
 
 
 def _user_wants_text(text: str) -> bool:
@@ -403,7 +406,7 @@ def _try_answer_from_article(page: str, text: str, force_conceptual: bool = Fals
     if not body:
         return None
     if force_conceptual or _looks_conceptual(text):
-        return body.strip()
+        return _compose_conceptual_reply(text, body)
     return None
 
 def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
