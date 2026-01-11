@@ -906,6 +906,24 @@ def ycloud_inbound_worker():
                         ctx=ctx_for_bot,
                     )
 
+                    # ==========================================================
+                    # DEBUG (produto): prova do que veio do wa_bot
+                    # - não altera comportamento
+                    # - ajuda a confirmar se displayName/prefersText/ttsOwner estão chegando
+                    # ==========================================================
+                    try:
+                        if isinstance(wa_out, dict):
+                            audio_debug = dict(audio_debug or {})
+                            audio_debug["waOutMeta"] = {
+                                "route": str(wa_out.get("route") or "")[:80],
+                                "hasAudioUrl": bool((wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()),
+                                "prefersText": bool(wa_out.get("prefersText")),
+                                "displayName": str(wa_out.get("displayName") or "").strip()[:40],
+                                "ttsOwner": str(wa_out.get("ttsOwner") or "").strip()[:40],
+                            }
+                    except Exception:
+                        pass
+
         except Exception as e:
             # Best-effort: não derruba o worker se o wa_bot falhar/import quebrar
             logger.exception("[tasks] wa_bot_failed route_hint=%s from=%s wamid=%s", ("sales" if not uid else "customer"), from_e164, wamid)
