@@ -29,6 +29,18 @@ _SUPPORT_TTS_SUMMARY_MODE = (os.environ.get("SUPPORT_TTS_SUMMARY_MODE") or "off"
 _SUPPORT_TTS_SUMMARY_MODEL = (os.environ.get("SUPPORT_TTS_SUMMARY_MODEL") or "gpt-4o-mini").strip()
 _SUPPORT_TTS_SUMMARY_MAX_TOKENS = int(os.environ.get("SUPPORT_TTS_SUMMARY_MAX_TOKENS", "140") or "140")
 
+
+# Humanização (nome só de vez em quando)
+_SUPPORT_NAME_MIN_GAP_SECONDS = int(os.environ.get("SUPPORT_NAME_MIN_GAP_SECONDS", "600") or "600")  # 10min
+
+# Cache leve do "persona pack" do Firestore
+_SUPPORT_PERSONA_CACHE: Dict[str, Any] = {}
+_SUPPORT_PERSONA_CACHE_AT: float = 0.0
+_SUPPORT_PERSONA_CACHE_TTL = int(os.environ.get("SUPPORT_PERSONA_TTL_SECONDS", "600") or "600")
+
+# Memória em-processo (não persistente) para evitar repetir nome
+_LAST_NAME_SPOKEN_AT: Dict[str, float] = {}
+
 ycloud_tasks_bp = Blueprint("ycloud_tasks_bp", __name__)
 
 
@@ -50,6 +62,32 @@ def _db_admin():
 
 def _sha1_id(s: str) -> str:
     return hashlib.sha1((s or "").encode("utf-8")).hexdigest()
+
+
+def _get_support_persona() -> Dict[str, Any]:
+    """
+    Lê platform_kb/support (doc) e extrai persona/tom/taboos.
+    Cache TTL em memória do processo.
+    """
+    global _SUPPORT_PERSONA_CACHE_AT, _SUPPORT_PERSONA_CACHE
+    now = time.time()
+    if _SUPPORT_PERSONA_CACHE and (now - (_SUPPORT_PERSONA_CACHE_AT or 0.0)) < _SUPPORT_PERSONA_CACHE_TTL:
+        return _SUPPORT_PERSONA_CACHE
+    try:
+        db = _db_admin() or _db()
+        snap = db.collection("platform_kb").document("support").get()
+        data = snap.to_dict() or {}
+        out = {
+            "persona_description": str(data.get("persona_description") or "").strip(),
+            "tone_rules": data.get("tone_rules") or [],
+            "taboos": data.get("taboos") or [],
+            "persona_spice": data.get("persona_spice") or {},
+        }
+        _SUPPORT_PERSONA_CACHE = out
+        _SUPPORT_PERSONA_CACHE_AT = now
+        return out
+    except Exception:
+        return _SUPPORT_PERSONA_CACHE or {}
 
 
 def _digits_only(s: str) -> str:
@@ -370,16 +408,29 @@ def _openai_rewrite_for_speech(text: str, display_name: str = "") -> str:
     t = (text or "").strip()
     if not t:
         return ""
-    # prompt curto e objetivo
+
+    persona = _get_support_persona()
+    persona_desc = str(persona.get("persona_description") or "").strip()
+    tone_rules = persona.get("tone_rules") or []
+    taboos = persona.get("taboos") or []
+    spice = persona.get("persona_spice") or {}
+
+    # prompt curto e MAIS “com alma” (sem virar bordão)
     sys = (
-        "Você é um atendente humano de suporte (calmo, direto) falando por áudio no WhatsApp.\n"
+        "Você é um atendente humano de suporte falando por áudio no WhatsApp.\n"
+        f"PERSONA: {persona_desc}\n"
+        f"TOM (regras): {tone_rules}\n"
+        f"EVITE (tabu): {taboos}\n"
+        f"TEMPEROS (use raramente e só se combinar): {spice}\n"
         "Transforme o texto abaixo em uma resposta FALADA curta em português do Brasil:\n"
         "- 2 a 3 frases curtas\n"
-        "- sem listas, sem emojis\n"
-        "- se tiver nome, use no máximo 1 vez no começo\n"
+        "- sem listas, sem emojis e sem tom corporativo\n"
+        "- NÃO comece com 'Olá, você pode...' (isso soa bot)\n"
+        "- se tiver nome, use no máximo 1 vez e só se não tiver sido usado recentemente\n"
         "- termine com 1 pergunta curta para entender o objetivo\n"
         "Responda SOMENTE com o texto final."
     )
+
     user = {"name": (display_name or "")[:40], "text": t[:900]}
     try:
         r = requests.post(
@@ -1069,12 +1120,32 @@ def ycloud_inbound_worker():
                             except Exception:
                                 tts_name = ""
 
-                        # 1) texto falável base (limpo)
-                        tts_text = _make_tts_text(tts_text, tts_name)
+                        # Fallback robusto (se por algum motivo helpers falharem):
+                        # aproveita o que já sabemos do pipeline (speaker/override).
+                        try:
+                            if not tts_name:
+                                spg = (audio_debug or {}).get("speakerStateProbe_get") or {}
+                                tts_name = str(spg.get("displayName") or "").strip() or tts_name
+                            if not tts_name:
+                                nog = (audio_debug or {}).get("nameOverrideProbe_get") or {}
+                                tts_name = str(nog.get("name") or "").strip() or tts_name
+                        except Exception:
+                            pass
 
-                        # 2) se habilitado, IA reescreve para fala humana (só para áudio)
+                        # Regra de produto: nome só de vez em quando.
+                        name_to_use = ""
+                        if tts_name and wa_key_effective:
+                            last = float(_LAST_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
+                            if (time.time() - last) >= float(_SUPPORT_NAME_MIN_GAP_SECONDS):
+                                name_to_use = tts_name
+                                _LAST_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+
+                        # 1) texto falável base (limpo)
+                        tts_text = _make_tts_text(tts_text, name_to_use)
+
+                        # 2) IA reescreve para fala humana (agora com persona do Firestore)
                         if _SUPPORT_TTS_SUMMARY_MODE == "on":
-                            rewritten = _openai_rewrite_for_speech(tts_text, tts_name)
+                            rewritten = _openai_rewrite_for_speech(tts_text, name_to_use)
                             if rewritten:
                                 tts_text = rewritten
                                 audio_debug = dict(audio_debug or {})
@@ -1083,15 +1154,24 @@ def ycloud_inbound_worker():
                                 audio_debug = dict(audio_debug or {})
                                 audio_debug["ttsRewrite"] = {"ok": False}
 
-                        # Probe ANTES do corte
+                        # Auditoria segura: prova do texto enviado ao TTS sem entupir logs
+                        try:
+                            sha = _sha1_id(tts_text)
+                            head = (tts_text or "")[:80]
+                            tail = (tts_text or "")[-80:] if tts_text else ""
+                            audio_debug = dict(audio_debug or {})
+                            audio_debug["ttsPayload"] = {"sha1": sha, "len": len(tts_text or ""), "head": head, "tail": tail}
+                        except Exception:
+                            pass
+
+                        # Probe ANTES do corte (para debug)
                         audio_debug = dict(audio_debug or {})
                         audio_debug["ttsTextProbe"] = {
-                            "nameUsed": (tts_name or ""),
+                            "nameUsed": (name_to_use or ""),
                             "len": len(tts_text or ""),
                             "preview": (tts_text or "")[:140],
                         }
-
-                        # Corte para evitar 413
+# Corte para evitar 413
                         if tts_text and len(tts_text) > _SUPPORT_TTS_MAX_CHARS:
                             before = tts_text
                             tts_text = _shorten_for_speech(tts_text, _SUPPORT_TTS_MAX_CHARS)
