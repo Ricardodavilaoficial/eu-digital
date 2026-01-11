@@ -75,6 +75,11 @@ def _db_admin():
 def _sha1_id(s: str) -> str:
     return hashlib.sha1((s or "").encode("utf-8")).hexdigest()
 
+def _sha1(s: str) -> str:
+    import hashlib
+    return hashlib.sha1((s or "").encode("utf-8", errors="ignore")).hexdigest()
+
+
 
 def _get_support_persona() -> Dict[str, Any]:
     """
@@ -1090,7 +1095,12 @@ def ycloud_inbound_worker():
                 or ""
                 )
             audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
-            audio_debug = wa_out.get("audioDebug") or {}
+            wa_audio_debug = wa_out.get("audioDebug") or {}
+            if isinstance(wa_audio_debug, dict):
+                # merge: preserva o que o worker já tinha + adiciona o do wa_bot
+                audio_debug = {**(audio_debug or {}), **wa_audio_debug}
+            else:
+                audio_debug = (audio_debug or {})
             kb_context = (wa_out.get("kbContext") or wa_out.get("kb_context") or "")
             wa_kind = (wa_out.get("kind") or wa_out.get("type") or "")
 
@@ -1509,8 +1519,8 @@ def ycloud_inbound_worker():
             audio_debug = dict(audio_debug or {})
             audio_debug["ttsTextFinal"] = {
                 "len": len(tts_text_final_used or ""),
-                "preview": (tts_text_final_used or "")[:180],
-                "sha1": _sha1_id(tts_text_final_used or ""),
+                "preview": (tts_text_final_used or "")[:120],
+                "sha1": _sha1(tts_text_final_used),
             }
         except Exception:
             pass
@@ -1544,7 +1554,26 @@ def ycloud_inbound_worker():
             except Exception:
                 logger.exception("[tasks] lead: falha send_text")
 
-        # log leve (auditoria). Precisa ocorrer antes do return.
+        
+        # ==========================================================
+        # Auditoria: alinhamento explícito entre replyText e spokenText (TTS)
+        # ==========================================================
+        spoken_source = "replyText_pipeline"
+        if wa_kind == "conceptual" and kb_context:
+            spoken_source = "kbContext_concept"
+
+        audio_debug = dict(audio_debug or {})
+        audio_debug.setdefault("auditAlignment", {})
+        audio_debug["auditAlignment"].update({
+            "replyTextRole": "canonical_base",
+            "spokenTextRole": "spoken_source_of_truth",
+            "spokenSource": spoken_source,
+            "replyTextSha1": _sha1(reply_text),
+            "spokenTextSha1": _sha1(tts_text_final_used),
+            "note": "Áudio é versão otimizada para fala do replyText (ou do kbContext quando conceptual).",
+        })
+
+# log leve (auditoria). Precisa ocorrer antes do return.
         try:
             _db().collection("platform_wa_outbox_logs").add({
         "createdAt": firestore.SERVER_TIMESTAMP,
