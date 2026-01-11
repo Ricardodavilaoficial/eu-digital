@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import time
+import random
 import re
 import hashlib
 import logging
@@ -48,6 +49,10 @@ _SUPPORT_PERSONA_CACHE_TTL = int(os.environ.get("SUPPORT_PERSONA_TTL_SECONDS", "
 # Memória em-processo (não persistente) para evitar repetir nome
 _LAST_NAME_SPOKEN_AT: Dict[str, float] = {}
 
+
+# Memória em-processo para "spice" (saudação do Firestore) com cadência
+_LAST_SPICE_AT = {}          # wa_key -> epoch seconds
+_LAST_SPICE_TEXT = {}        # wa_key -> last greeting used
 ycloud_tasks_bp = Blueprint("ycloud_tasks_bp", __name__)
 
 
@@ -404,6 +409,63 @@ def _clean_for_speech(text: str) -> str:
 
 
 
+
+
+def _expand_units_for_speech(text: str) -> str:
+    if not text:
+        return text or ""
+    t = str(text)
+    # 5 MB / 5MB -> 5 megabytes
+    t = re.sub(r"\b(\d+)\s*MB\b", r"\1 megabytes", t, flags=re.IGNORECASE)
+    # 2 GB / 2GB -> 2 gigabytes
+    t = re.sub(r"\b(\d+)\s*GB\b", r"\1 gigabytes", t, flags=re.IGNORECASE)
+    # casos soltos: MB / GB
+    t = re.sub(r"\bMB\b", "megabytes", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bGB\b", "gigabytes", t, flags=re.IGNORECASE)
+    return t
+
+
+def _pick_support_greeting(persona: dict, wa_key: str, name: str, is_informal: bool) -> str:
+    try:
+        if not persona or not name:
+            return ""
+
+        spice = persona.get("persona_spice") or {}
+        greetings = spice.get("greetings") or persona.get("greetings") or []
+        rules = spice.get("rules") or persona.get("rules") or {}
+        if not greetings:
+            return ""
+
+        if rules.get("use_only_if_user_is_informal") and (not is_informal):
+            return ""
+
+        # cadência
+        min_minutes = int(rules.get("min_minutes_between_spices") or 60)
+        now = int(time.time())
+        last_at = int(_LAST_SPICE_AT.get(wa_key) or 0)
+        if last_at and (now - last_at) < (min_minutes * 60):
+            return ""
+
+        # evitar repetir o mesmo em sequência
+        last_txt = (_LAST_SPICE_TEXT.get(wa_key) or "").strip()
+        opts = [g for g in greetings if str(g).strip()]
+        if rules.get("never_repeat_same_spice_in_sequence") and last_txt:
+            opts2 = [g for g in opts if str(g).strip() != last_txt]
+            if opts2:
+                opts = opts2
+
+        if not opts:
+            return ""
+
+        g = str(random.choice(opts)).strip()
+        g = g.replace("{nome}", name).strip()
+
+        _LAST_SPICE_AT[wa_key] = now
+        _LAST_SPICE_TEXT[wa_key] = g
+        return g
+    except Exception:
+        return ""
+
 def _openai_rewrite_for_speech(text: str, display_name: str = "") -> str:
     """
     Reescreve em PT-BR para fala humana (2-3 frases) + 1 pergunta no fim.
@@ -491,22 +553,25 @@ def _openai_generate_concept_speech(question: str, kb_context: str, display_name
     ctx = ctx[: max(200, int(_SUPPORT_TTS_CONCEPT_KB_MAX_CHARS))]
 
     sys = (
-        "Você é um atendente humano de suporte falando por áudio no WhatsApp.\n"
-        "Sua missão: responder de forma CALMA e EXPLICATIVA, sem virar manual.\n"
-        f"PERSONA: {persona_desc}\n"
-        f"TOM (regras): {tone_rules}\n"
-        f"EVITE (tabu): {taboos}\n"
-        f"TEMPEROS (use raramente e só se combinar): {spice}\n"
-        "\n"
-        "REGRAS DA RESPOSTA (obrigatório):\n"
-        "- 15 a 30 segundos de fala (curto, mas completo)\n"
-        "- 2 a 4 frases curtas + 1 pergunta final bem curta\n"
-        "- sem listas, sem passo a passo longo, sem 'manualzão'\n"
-        "- use o CONTEXTO apenas para não inventar, NÃO leia o texto\n"
-        "- português do Brasil, tom humano\n"
-        "- se tiver nome, use no máximo 1 vez (e só se fizer sentido)\n"
-        "Responda SOMENTE com o texto final."
-    )
+    "Você é um atendente humano de suporte falando por áudio no WhatsApp.\n"
+    "Sua missão: responder de forma CALMA e EXPLICATIVA, sem virar manual.\n"
+    f"PERSONA: {persona_desc}\n"
+    f"TOM (regras): {tone_rules}\n"
+    f"EVITE (tabu): {taboos}\n"
+    f"TEMPEROS (use raramente e só se combinar): {spice}\n"
+    "\n"
+    "Regras obrigatórias:\n"
+    "- NÃO comece com saudação (nada de \"oi\", \"olá\", \"fala\", \"Faaala\", \"Graaande\").\n"
+    "- NÃO use o nome da pessoa.\n"
+    "- Sem emojis, sem CAPS, sem múltiplas exclamações.\n"
+    "- 2–4 frases curtas + 1 pergunta final.\n"
+    "- Se citar limites, use \"megabytes/gigabytes\" por extenso (nunca \"MB/GB\").\n"
+    "\n"
+    "DICAS:\n"
+    "- use o CONTEXTO apenas para não inventar, NÃO leia o texto\n"
+    "- português do Brasil, tom humano\n"
+    "Responda SOMENTE com o texto final."
+)
 
     user = {
         "name": (display_name or "")[:40],
@@ -1210,10 +1275,13 @@ def ycloud_inbound_worker():
 
                 # se não há voice_id, não forçamos TTS (cai para texto, nunca mudo)
                 if voice_id:
-                                        # 🔥 PATCH CRÍTICO: TTS recebe um texto curto e "falável".
+                                        
+                                                        # 🔥 PATCH CRÍTICO: TTS recebe um texto curto e "falável".
                     # (não é o mesmo texto canônico; é versão para FALA)
                     tts_text = reply_text
                     try:
+                        support_persona = _get_support_persona()
+
                         # Resolve nome UMA vez, cedo, e reutiliza no TTS
                         tts_name = ""
                         if wa_key_effective:
@@ -1249,7 +1317,8 @@ def ycloud_inbound_worker():
                         concept_generated = False
                         try:
                             if _SUPPORT_TTS_CONCEPT_MODE == "on" and str(wa_kind or "").strip().lower() == "conceptual" and (kb_context or "").strip():
-                                gen = _openai_generate_concept_speech(text_in, kb_context, name_to_use)
+                                # conceitual: não usa nome, nem saudação do modelo (isso vem do Firestore)
+                                gen = _openai_generate_concept_speech(text_in, kb_context, display_name="")
                                 if gen:
                                     tts_text = gen
                                     concept_generated = True
@@ -1261,21 +1330,29 @@ def ycloud_inbound_worker():
                         except Exception:
                             pass
 
-                        # 2) texto falável base (limpo + nome opcional)
+                        # 2) Sempre expande unidades para TTS (antes de qualquer rewrite)
+                        tts_text = _expand_units_for_speech(tts_text)
+
+                        # 3) Saudação via Firestore (spice) com cadência (se permitido)
+                        is_informal = True  # inbound áudio no WhatsApp: assume informal
+                        greet = _pick_support_greeting(support_persona, wa_key_effective, tts_name, is_informal)
+                        used_spice = bool(greet)
+
+                        if greet:
+                            tts_text = f"{greet} {tts_text}".strip()
+                            name_to_use_for_make = ""
+                        else:
+                            name_to_use_for_make = name_to_use
+
+                        # 4) texto falável base (limpo + nome opcional, mas sem duplicar se teve spice)
                         if concept_generated:
                             tts_text = _clean_for_speech(tts_text)
-                            # garantir nome no início quando liberado pelo gap
-                            if name_to_use:
-                                low = (tts_text or "").lstrip().lower()
-                                if not low.startswith((name_to_use.lower() + ",", name_to_use.lower() + " ")):
-                                    tts_text = f"{name_to_use}, {tts_text}".strip()
                         else:
-                            tts_text = _make_tts_text(tts_text, name_to_use)
+                            tts_text = _make_tts_text(tts_text, name_to_use_for_make)
 
-
-                        # 2) IA reescreve para fala humana (agora com persona do Firestore)
+                        # 5) IA reescreve para fala humana (agora com persona do Firestore)
                         if _SUPPORT_TTS_SUMMARY_MODE == "on":
-                            rewritten = _openai_rewrite_for_speech(tts_text, name_to_use)
+                            rewritten = _openai_rewrite_for_speech(tts_text, name_to_use_for_make)
                             if rewritten:
                                 tts_text = rewritten
                                 audio_debug = dict(audio_debug or {})
@@ -1284,16 +1361,21 @@ def ycloud_inbound_worker():
                                 audio_debug = dict(audio_debug or {})
                                 audio_debug["ttsRewrite"] = {"ok": False}
 
-                        
+                        # 6) Expande unidades DE NOVO (rewrite pode reintroduzir MB/GB)
+                        tts_text = _expand_units_for_speech(tts_text)
+
                         # Garantia final: se liberamos nome, ele não pode sumir no rewrite
+                        # (mas se já teve greeting do Firestore, não re-injeta nome aqui)
                         try:
-                            if name_to_use:
+                            if name_to_use_for_make and (not used_spice):
                                 low = (tts_text or "").lstrip().lower()
-                                if not low.startswith((name_to_use.lower() + ",", name_to_use.lower() + " ")):
-                                    tts_text = f"{name_to_use}, {tts_text}".strip()
+                                if not low.startswith((name_to_use_for_make.lower() + ",", name_to_use_for_make.lower() + " ")):
+                                    tts_text = f"{name_to_use_for_make}, {tts_text}".strip()
                         except Exception:
                             pass
 
+                    except Exception:
+                        pass
 # Auditoria segura: prova do texto enviado ao TTS sem entupir logs
                         try:
                             sha = _sha1_id(tts_text)
