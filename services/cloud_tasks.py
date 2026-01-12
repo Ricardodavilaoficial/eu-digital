@@ -59,7 +59,7 @@ def enqueue_ycloud_inbound(payload: Dict[str, Any], event_key: str) -> Dict[str,
             "url": "https://mei-robo-prod.onrender.com/tasks/ycloud-inbound",
             "headers": {
                 "Content-Type": "application/json",
-                "X-MR-Tasks-Secret": os.environ["CLOUD_TASKS_SECRET"],
+                "X-MR-Tasks-Secret": (os.environ.get("CLOUD_TASKS_SECRET") or "").strip(),
             },
             "body": json.dumps({"eventKey": event_key, "payload": payload, "enqueuedAt": int(time.time())}).encode("utf-8"),
         }
