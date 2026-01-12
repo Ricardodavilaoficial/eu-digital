@@ -790,9 +790,12 @@ def _idempotency_once(event_key: str, ttl_seconds: int = 86400) -> bool:
     }, merge=False)
     return True
 
-
-@ycloud_tasks_bp.route("/tasks/ycloud-inbound", methods=["POST"])
+@ycloud_tasks_bp.route("/tasks/ycloud-inbound", methods=["GET", "POST"])
 def ycloud_inbound_worker():
+    # Ping GET (diagnóstico)
+    if request.method == "GET":
+        return jsonify({"ok": True, "route": "tasks/ycloud-inbound", "methods": ["GET", "POST"]}), 200
+
     # Auth simples via secret (modo Render)
     secret = (os.environ.get("CLOUD_TASKS_SECRET") or "").strip()
     got = (request.headers.get("X-MR-Tasks-Secret") or "").strip()
@@ -805,6 +808,8 @@ def ycloud_inbound_worker():
 
     if not event_key or not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "bad_request"}), 400
+
+    # ... resto do seu handler continua INTACTO ...
     # ==========================================================
     # FILTRO DE EVENTO (anti-eco / anti-loop)
     # Worker só processa inbound real do usuário.
@@ -1419,77 +1424,77 @@ def ycloud_inbound_worker():
 
                 # se não há voice_id, não forçamos TTS (cai para texto, nunca mudo)
                 if voice_id:
-                                        
-                                        # 🔥 TTS: separa SUPORTE vs VENDAS
-                                        # - SUPORTE: mantém teu pipeline atual (persona support + concept + rewrite)
-                                        # - VENDAS (uid vazio): fala curta com micro-exemplo + tom vendedor humano (IA)
-                                        tts_text = reply_text
-                                        try:
-                                            is_sales = not bool(uid)
+
+                    # 🔥 TTS: separa SUPORTE vs VENDAS
+                    # - SUPORTE: mantém teu pipeline atual (persona support + concept + rewrite)
+                    # - VENDAS (uid vazio): fala curta com micro-exemplo + tom vendedor humano (IA)
+                    tts_text = reply_text
+                    try:
+                        is_sales = not bool(uid)
                         support_persona = {}
 
-                                            if is_sales and _SALES_TTS_MODE == "on":
-                                                sales_kb = _get_sales_kb()
-                                                # nome do interlocutor, mas sem exagero (cadência já é controlada globalmente)
-                                                tts_name = ""
-                                                try:
-                                                    if _IDENTITY_MODE != "off" and wa_key_effective:
-                                                        tts_name = _get_active_speaker(wa_key_effective) or ""
-                                                    if not tts_name and wa_key_effective:
-                                                        tts_name = _get_name_override(wa_key_effective) or ""
-                                                except Exception:
-                                                    tts_name = ""
-
-                                                gen = _openai_sales_speech(
-                                                    reply_text=reply_text,
-                                                    user_text=text_in,
-                                                    kb=sales_kb,
-                                                    name_hint=tts_name,
-                                                )
-                                                if gen:
-                                                    tts_text = gen
-                                                    audio_debug = dict(audio_debug or {})
-                                                    audio_debug["ttsSales"] = {"ok": True, "model": _SALES_TTS_MODEL}
-                                                else:
-                                                    audio_debug = dict(audio_debug or {})
-                                                    audio_debug["ttsSales"] = {"ok": False}
-
-                                                # corta antes do TTS pra não estourar
-                                                if tts_text and len(tts_text) > _SALES_TTS_MAX_CHARS:
-                                                    before = tts_text
-                                                    tts_text = _shorten_for_speech(tts_text, _SALES_TTS_MAX_CHARS)
-                                                    audio_debug = dict(audio_debug or {})
-                                                    audio_debug["ttsInputShortenSales"] = {
-                                                        "applied": True,
-                                                        "maxChars": _SALES_TTS_MAX_CHARS,
-                                                        "beforeLen": len(before),
-                                                        "afterLen": len(tts_text),
-                                                    }
-                                            else:
-                                                support_persona = _get_support_persona()
-
-                        # Resolve nome UMA vez, cedo, e reutiliza no TTS
-                        tts_name = ""
-                        if wa_key_effective:
+                        if is_sales and _SALES_TTS_MODE == "on":
+                            sales_kb = _get_sales_kb()
+                            # nome do interlocutor, mas sem exagero (cadência já é controlada globalmente)
+                            tts_name = ""
                             try:
-                                if _IDENTITY_MODE != "off":
+                                if _IDENTITY_MODE != "off" and wa_key_effective:
                                     tts_name = _get_active_speaker(wa_key_effective) or ""
-                                if not tts_name:
+                                if not tts_name and wa_key_effective:
                                     tts_name = _get_name_override(wa_key_effective) or ""
                             except Exception:
                                 tts_name = ""
 
-                        # Fallback robusto (se por algum motivo helpers falharem):
-                        # aproveita o que já sabemos do pipeline (speaker/override).
-                        try:
-                            if not tts_name:
-                                spg = (audio_debug or {}).get("speakerStateProbe_get") or {}
-                                tts_name = str(spg.get("displayName") or "").strip() or tts_name
-                            if not tts_name:
-                                nog = (audio_debug or {}).get("nameOverrideProbe_get") or {}
-                                tts_name = str(nog.get("name") or "").strip() or tts_name
-                        except Exception:
-                            pass
+                            gen = _openai_sales_speech(
+                                reply_text=reply_text,
+                                user_text=text_in,
+                                kb=sales_kb,
+                                name_hint=tts_name,
+                            )
+                            if gen:
+                                tts_text = gen
+                                audio_debug = dict(audio_debug or {})
+                                audio_debug["ttsSales"] = {"ok": True, "model": _SALES_TTS_MODEL}
+                            else:
+                                audio_debug = dict(audio_debug or {})
+                                audio_debug["ttsSales"] = {"ok": False}
+
+                            # corta antes do TTS pra não estourar
+                            if tts_text and len(tts_text) > _SALES_TTS_MAX_CHARS:
+                                before = tts_text
+                                tts_text = _shorten_for_speech(tts_text, _SALES_TTS_MAX_CHARS)
+                                audio_debug = dict(audio_debug or {})
+                                audio_debug["ttsInputShortenSales"] = {
+                                    "applied": True,
+                                    "maxChars": _SALES_TTS_MAX_CHARS,
+                                    "beforeLen": len(before),
+                                    "afterLen": len(tts_text),
+                                }
+                        else:
+                            support_persona = _get_support_persona()
+
+                            # Resolve nome UMA vez, cedo, e reutiliza no TTS
+                            tts_name = ""
+                            if wa_key_effective:
+                                try:
+                                    if _IDENTITY_MODE != "off":
+                                        tts_name = _get_active_speaker(wa_key_effective) or ""
+                                    if not tts_name:
+                                        tts_name = _get_name_override(wa_key_effective) or ""
+                                except Exception:
+                                    tts_name = ""
+
+                            # Fallback robusto (se por algum motivo helpers falharem):
+                            # aproveita o que já sabemos do pipeline (speaker/override).
+                            try:
+                                if not tts_name:
+                                    spg = (audio_debug or {}).get("speakerStateProbe_get") or {}
+                                    tts_name = str(spg.get("displayName") or "").strip() or tts_name
+                                if not tts_name:
+                                    nog = (audio_debug or {}).get("nameOverrideProbe_get") or {}
+                                    tts_name = str(nog.get("name") or "").strip() or tts_name
+                            except Exception:
+                                pass
 
                         # Regra de produto: nome só de vez em quando.
                         name_to_use = ""
