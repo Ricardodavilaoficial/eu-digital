@@ -538,11 +538,7 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
 # =========================
 
 def _kb_compact_for_prompt(kb: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Monta um pacote compacto. Firestore é fonte de verdade; IA decide o uso.
-    """
     kb = kb or {}
-    # Não mandar o mundo pra IA (tokens). Seleciona campos chave.
     return {
         "identity_positioning": str(kb.get("identity_positioning") or "").strip(),
         "tone_rules": kb.get("tone_rules") or [],
@@ -553,9 +549,9 @@ def _kb_compact_for_prompt(kb: Dict[str, Any]) -> Dict[str, Any]:
         "qualifying_questions": kb.get("qualifying_questions") or [],
         "pricing_behavior": kb.get("pricing_behavior") or [],
         "pricing_facts": kb.get("pricing_facts") or {},
-        "pricing_teasers": kb.get("pricing_teasers") or [],
-        # segments pode ser grande; mas ajuda para exemplos quando houver match
-        "segments": kb.get("segments") or {},
+        "pricing_reasoning": kb.get("pricing_reasoning") or "",
+        "operational_examples": kb.get("operational_examples") or {},
+        "onboarding_helpers": kb.get("onboarding_helpers") or {},
         "objections": kb.get("objections") or {},
     }
 
@@ -577,6 +573,15 @@ def _ai_sales_answer(
     """
     kb = _get_sales_kb()
     rep = _kb_compact_for_prompt(kb)
+    # Seleciona exemplo operacional só quando há segmento (anti-custo)
+    examples = {}
+    if segment:
+        examples = (rep.get("operational_examples") or {}).get(segment.lower(), "")
+    rep["operational_example_selected"] = examples
+    # Não mandar todos os exemplos (economia de tokens)
+    rep.pop("operational_examples", None)
+
+    onboarding_hint = state.get("onboarding_hint") or ""
 
     stage = (state.get("stage") or "").strip()
     turns = int(state.get("turns") or 0)
@@ -601,6 +606,8 @@ def _ai_sales_answer(
         f"intent_hint: {intent_hint or '—'}\n"
         f"mensagem: {user_text}\n\n"
         f"continuidade: {continuity}\n\n"
+        f"ajuda_onboarding (se existir): {json.dumps(onboarding_hint, ensure_ascii=False)}\n"
+
         f"repertório_firestore (use como base, não copie): {json.dumps(rep, ensure_ascii=False)}\n"
     )
 
@@ -624,6 +631,13 @@ def _ai_pitch(name: str, segment: str, user_text: str) -> str:
 
     kb = _get_sales_kb() or {}
     rep = _kb_compact_for_prompt(kb)
+    # Seleciona exemplo operacional só quando há segmento (anti-custo)
+    examples = {}
+    if segment:
+        examples = (rep.get("operational_examples") or {}).get(segment.lower(), "")
+    rep["operational_example_selected"] = examples
+
+    onboarding_hint = state.get("onboarding_hint") or ""
 
     # Ajuda: se houver match em segments, puxa use_cases/openers
     segments = kb.get("segments") or {}
@@ -721,7 +735,7 @@ def _should_soft_close(st: Dict[str, Any], *, has_name: bool, has_segment: bool)
     if has_segment:
         slots += 1
     # Se até aqui não coletou o mínimo, ou já é muita conversa, fecha suave
-    return slots < SALES_MIN_ADVANCE_SLOTS or turns >= (SALES_MAX_FREE_TURNS + 2)
+    return slots < SALES_MIN_ADVANCE_SLOTS or turns >= SALES_MAX_FREE_TURNS
 
 
 def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
@@ -826,6 +840,11 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     # Intent canônico da IA, com fallback barato
     intent = (nlu.get("intent") or _intent_cheap(text_in) or "OTHER").strip().upper()
+
+    # 🔓 Onboarding helpers (só quando necessário)
+    helpers = (_get_sales_kb().get("onboarding_helpers") or {})
+    if intent == "ACTIVATE" and helpers:
+        st["onboarding_hint"] = helpers
 
     # Intenções diretas: sempre IA escreve a resposta final
     if intent in ("PRICE", "PLANS", "DIFF", "WHAT_IS"):
