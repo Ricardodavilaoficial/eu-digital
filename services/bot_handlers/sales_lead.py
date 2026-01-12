@@ -257,6 +257,22 @@ def _extract_goal_hint(text: str) -> str:
     return ""
 
 
+
+def _pricing_stage_from_state(lead_state: dict, intent: str) -> str:
+    turns = lead_state.get("turns", 0)
+    saw_examples = lead_state.get("saw_operational_example", False)
+
+    if turns <= 2:
+        return "early"
+
+    if saw_examples:
+        return "contextual"
+
+    if intent in ("pricing", "contratar", "assinar"):
+        return "decision"
+
+    return "contextual"
+
 def _apply_next_step_safely(st: Dict[str, Any], next_step: str, has_name: bool, has_segment: bool, has_goal: bool) -> None:
     """
     next_step (IA) é sugestão. Nunca pode contradizer o que falta.
@@ -606,64 +622,83 @@ def _ai_sales_answer(
     """
     kb = _get_sales_kb()
     rep = _kb_compact_for_prompt(kb)
-    # Seleciona exemplo operacional só quando há segmento (anti-custo)
-    examples = {}
-    if segment:
-        examples = (rep.get("operational_examples") or {}).get(segment.lower(), "")
-    rep["operational_example_selected"] = examples
-    # Não mandar todos os exemplos (economia de tokens)
-    rep.pop("operational_examples", None)
+    # Pricing reasoning por estágio (economia + narrativa)
+    try:
+        _stage = _pricing_stage_from_state(state or {}, str(intent_hint or "").strip().lower())
+    except Exception:
+        _stage = "contextual"
+    _base_pr = str(rep.get("pricing_reasoning") or "").strip()
 
-    onboarding_hint = state.get("onboarding_hint") or ""
+    if _stage == "early":
+        rep["pricing_reasoning"] = (
+            "O valor entra depois que você entende se faz sentido pro teu negócio. "
+            "O ponto principal é reduzir erro, tempo perdido e bagunça no WhatsApp."
+        )
+    elif _stage == "contextual":
+        rep["pricing_reasoning"] = (
+            "Aqui a conta é operacional: menos interrupção, menos erro e tudo organizado. "
+            "Quando isso faz sentido, o valor acaba sendo pequeno perto do ganho."
+        )
+    else:  # decision
+        rep["pricing_reasoning"] = _base_pr
+        # Seleciona exemplo operacional só quando há segmento (anti-custo)
+        examples = {}
+        if segment:
+            examples = (rep.get("operational_examples") or {}).get(segment.lower(), "")
+        rep["operational_example_selected"] = examples
+        # Não mandar todos os exemplos (economia de tokens)
+        rep.pop("operational_examples", None)
 
-    stage = (state.get("stage") or "").strip()
-    turns = int(state.get("turns") or 0)
-    last_bot = (state.get("last_bot_reply_excerpt") or "").strip()
+        onboarding_hint = state.get("onboarding_hint") or ""
 
-    continuity = f"STAGE={stage or '—'} | TURNS={turns}"
-    if last_bot:
-        continuity += f" | NÃO repetir: {last_bot}"
+        stage = (state.get("stage") or "").strip()
+        turns = int(state.get("turns") or 0)
+        last_bot = (state.get("last_bot_reply_excerpt") or "").strip()
 
-    prompt = (
-        "Você é o MEI Robô institucional de VENDAS no WhatsApp.\n"
-        "Objetivo: conversar curto, humano, vendedor sem ser chato, e conduzir para o próximo passo.\n"
-        "Regras obrigatórias:\n"
-        "- 2 a 6 linhas.\n"
-        "- 1 pergunta por resposta.\n"
-        "- Sem bastidores técnicos.\n"
-        "- Não expulsar o lead.\n"
-        "- Se faltar info, pergunte só 1 coisa.\n"
-        "- Quando fizer sentido, use um micro-exemplo operacional (entrada → confirmação → resumo), sem inventar.\n"
-        "- Se citar valores, só use os que estiverem em pricing_facts.\n\n"
-        f"Lead:\n- nome: {name or '—'}\n- ramo (texto livre): {segment or '—'}\n- objetivo: {goal or '—'}\n"
-        f"intent_hint: {intent_hint or '—'}\n"
-        f"mensagem: {user_text}\n\n"
-        f"continuidade: {continuity}\n\n"
-        f"ajuda_onboarding (se existir): {json.dumps(onboarding_hint, ensure_ascii=False)}\n"
+        continuity = f"STAGE={stage or '—'} | TURNS={turns}"
+        if last_bot:
+            continuity += f" | NÃO repetir: {last_bot}"
 
-        f"repertório_firestore (use como base, não copie): {json.dumps(rep, ensure_ascii=False)}\n"
-    )
+        prompt = (
+            "Você é o MEI Robô institucional de VENDAS no WhatsApp.\n"
+            "Objetivo: conversar curto, humano, vendedor sem ser chato, e conduzir para o próximo passo.\n"
+            "Regras obrigatórias:\n"
+            "- 2 a 6 linhas.\n"
+            "- 1 pergunta por resposta.\n"
+            "- Sem bastidores técnicos.\n"
+            "- Não expulsar o lead.\n"
+            "- Se faltar info, pergunte só 1 coisa.\n"
+            "- Quando fizer sentido, use um micro-exemplo operacional (entrada → confirmação → resumo), sem inventar.\n"
+            "- Se citar valores, só use os que estiverem em pricing_facts.\n\n"
+            f"Lead:\n- nome: {name or '—'}\n- ramo (texto livre): {segment or '—'}\n- objetivo: {goal or '—'}\n"
+            f"intent_hint: {intent_hint or '—'}\n"
+            f"mensagem: {user_text}\n\n"
+            f"continuidade: {continuity}\n\n"
+            f"ajuda_onboarding (se existir): {json.dumps(onboarding_hint, ensure_ascii=False)}\n"
+
+            f"repertório_firestore (use como base, não copie): {json.dumps(rep, ensure_ascii=False)}\n"
+        )
 
     
-    reply_text = (_openai_chat(prompt, max_tokens=SALES_ANSWER_MAX_TOKENS, temperature=0.35) or "").strip()
+        reply_text = (_openai_chat(prompt, max_tokens=SALES_ANSWER_MAX_TOKENS, temperature=0.35) or "").strip()
 
-    # --- lightweight sales usage log ---
-    try:
-        wa_key = str(state.get("wa_key") or state.get("__wa_key") or "").strip()
-        if wa_key and firestore:
-            fs = firestore.Client()
-            _est_tokens_in = len(prompt) // 4 if prompt else 0
-            _est_tokens_out = len(reply_text) // 4 if reply_text else 0
+        # --- lightweight sales usage log ---
+        try:
+            wa_key = str(state.get("wa_key") or state.get("__wa_key") or "").strip()
+            if wa_key and firestore:
+                fs = firestore.Client()
+                _est_tokens_in = len(prompt) // 4 if prompt else 0
+                _est_tokens_out = len(reply_text) // 4 if reply_text else 0
 
-            _log_sales_usage(
-                fs=fs,
-                wa_key=wa_key,
-                stage=intent_hint or "unknown",
-                tokens_in=_est_tokens_in,
-                tokens_out=_est_tokens_out,
-            )
-    except Exception:
-        pass
+                _log_sales_usage(
+                    fs=fs,
+                    wa_key=wa_key,
+                    stage=intent_hint or "unknown",
+                    tokens_in=_est_tokens_in,
+                    tokens_out=_est_tokens_out,
+                )
+        except Exception:
+            pass
 
     return reply_text
 
