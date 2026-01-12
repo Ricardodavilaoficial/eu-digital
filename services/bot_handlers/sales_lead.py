@@ -20,6 +20,39 @@ import hashlib
 import requests
 from typing import Any, Dict, Optional, Tuple
 
+
+# Safe import (best-effort): usado só para observabilidade
+try:
+    from google.cloud import firestore  # type: ignore
+except Exception:
+    firestore = None  # type: ignore
+
+# --- Sales usage logger (lightweight, best-effort) ---
+def _log_sales_usage(
+    fs,
+    wa_key: str,
+    stage: str,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+):
+    try:
+        ref = fs.collection("platform_sales_usage").document(wa_key)
+        ref.set(
+            {
+                "turns": firestore.Increment(1),
+                "ai_calls": firestore.Increment(1),
+                "approx_tokens_in": firestore.Increment(int(tokens_in or 0)),
+                "approx_tokens_out": firestore.Increment(int(tokens_out or 0)),
+                "last_stage": stage,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+    except Exception:
+        # nunca quebra o fluxo de vendas
+        pass
+
+
 # =========================
 # Conteúdo CANÔNICO (VENDAS)
 # =========================
@@ -611,10 +644,32 @@ def _ai_sales_answer(
         f"repertório_firestore (use como base, não copie): {json.dumps(rep, ensure_ascii=False)}\n"
     )
 
-    return (_openai_chat(prompt, max_tokens=SALES_ANSWER_MAX_TOKENS, temperature=0.35) or "").strip()
+    
+    reply_text = (_openai_chat(prompt, max_tokens=SALES_ANSWER_MAX_TOKENS, temperature=0.35) or "").strip()
+
+    # --- lightweight sales usage log ---
+    try:
+        wa_key = str(state.get("wa_key") or state.get("__wa_key") or "").strip()
+        if wa_key and firestore:
+            fs = firestore.Client()
+            _est_tokens_in = len(prompt) // 4 if prompt else 0
+            _est_tokens_out = len(reply_text) // 4 if reply_text else 0
+
+            _log_sales_usage(
+                fs=fs,
+                wa_key=wa_key,
+                stage=intent_hint or "unknown",
+                tokens_in=_est_tokens_in,
+                tokens_out=_est_tokens_out,
+            )
+    except Exception:
+        pass
+
+    return reply_text
 
 
-def _ai_pitch(name: str, segment: str, user_text: str) -> str:
+
+def _ai_pitch(name: str, segment: str, user_text: str, state: Optional[Dict[str, Any]] = None) -> str:
     """
     Pitch curto e humano usando KB (Firestore).
     Com cache KV (por segmento+hint+user_text normalizado).
@@ -677,6 +732,28 @@ def _ai_pitch(name: str, segment: str, user_text: str) -> str:
         max_tokens=SALES_PITCH_MAX_TOKENS,
         temperature=0.4,
     ).strip()
+
+    # --- lightweight sales usage log ---
+    try:
+        state = state or {}
+        wa_key = str(state.get("wa_key") or state.get("__wa_key") or "").strip()
+        if wa_key and firestore:
+            fs = firestore.Client()
+            _prompt_chars = len(system or "") + len("\n".join(user_lines) if user_lines else "")
+            _est_tokens_in = _prompt_chars // 4 if _prompt_chars else 0
+            _est_tokens_out = len(out) // 4 if out else 0
+
+            _log_sales_usage(
+                fs=fs,
+                wa_key=wa_key,
+                stage="PITCH",
+                tokens_in=_est_tokens_in,
+                tokens_out=_est_tokens_out,
+            )
+    except Exception:
+        pass
+
+
 
     if not out:
         out = "Posso te mostrar um exemplo bem real no teu caso. Teu foco hoje é pedidos, agenda ou orçamento?"
@@ -884,7 +961,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     if cached:
         pitch_txt = cached
     else:
-        pitch_txt = (_ai_pitch(name=name, segment=segment, user_text=text_in) or "").strip()
+        pitch_txt = (_ai_pitch(name=name, segment=segment, user_text=text_in, state=st) or "").strip()
         if pitch_txt:
             _set_cached_pitch(segment, hint, text_in, pitch_txt)
 
@@ -920,6 +997,9 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         }
 
     st, wa_key = _load_state(from_e164)
+    # wa_key disponível para observabilidade (não afeta fluxo)
+    if isinstance(st, dict):
+        st["wa_key"] = wa_key
     reply = _reply_from_state(text_in, st)
 
     # Salva interesse já setado pelo _reply_from_state
