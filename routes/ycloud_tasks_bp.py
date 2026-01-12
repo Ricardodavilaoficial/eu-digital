@@ -1366,6 +1366,19 @@ def ycloud_inbound_worker():
                             rewritten = _openai_rewrite_for_speech(tts_text, name_to_use_for_make)
                             if rewritten:
                                 tts_text = rewritten
+                                # --- Dedup nome (evita "Edson, Fala, Edson!") ---
+                                try:
+                                    # nome real do interlocutor (não o "permitido" pra make_tts_text)
+                                    _nm = (tts_name or "").strip()
+                                    if _nm:
+                                        # se o texto começa com "Nome, ..." e também contém "..., Nome!" logo no começo,
+                                        # remove o prefixo "Nome, " (mantém o greeting com nome).
+                                        low = (tts_text or "").lower()
+                                        nm_low = _nm.lower()
+                                        if low.startswith(nm_low + ",") and (nm_low + "!") in low[:60]:
+                                            tts_text = (tts_text or "")[len(_nm) + 1 :].lstrip()  # remove "Nome,"
+                                except Exception:
+                                    pass
                                 audio_debug = dict(audio_debug or {})
                                 audio_debug["ttsRewrite"] = {"ok": True, "model": _SUPPORT_TTS_SUMMARY_MODEL}
                             else:
