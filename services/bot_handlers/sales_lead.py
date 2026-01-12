@@ -1,8 +1,14 @@
 # services/bot_handlers/sales_lead.py
-# Handler isolado: Vendas (lead) — Opção B (2025-12-26)
+# Handler isolado: Vendas (lead) — Opção B (2025-12-26) + refinamentos (2026-01)
 # - Conteúdo público (sem dados privados)
 # - Sem ações irreversíveis
 # - Webhook deve ser "burro": este handler vive no wa_bot
+#
+# Objetivo dos refinamentos:
+# - IA ponta-a-ponta (sem frases prontas como resposta final)
+# - Firestore como fonte de verdade
+# - Sem duplicar geração de áudio (o worker é o dono do canal)
+# - Menos custo: reduzir chamadas repetidas e usar cache
 
 from __future__ import annotations
 
@@ -12,13 +18,13 @@ import json
 import re
 import hashlib
 import requests
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 # =========================
 # Conteúdo CANÔNICO (VENDAS)
 # =========================
 
-SITE_URL = os.getenv("MEI_ROBO_SITE_URL", "www.meirobo.com.br")
+SITE_URL = os.getenv("MEI_ROBO_SITE_URL", "www.meirobo.com.br").strip()
 
 # Mensagem mínima de entrada (mantida local por segurança operacional)
 OPENING_ASK_NAME = (
@@ -36,12 +42,25 @@ def _fallback_min_reply(name: str = "") -> str:
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
 OPENAI_SALES_NLU_MODEL = os.getenv("OPENAI_SALES_NLU_MODEL", os.getenv("OPENAI_NLU_MODEL", "gpt-4o-mini"))
 OPENAI_SALES_MODEL = os.getenv("OPENAI_SALES_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
-SALES_NLU_TIMEOUT = 20
 
+SALES_NLU_TIMEOUT = int(os.getenv("SALES_NLU_TIMEOUT", "20") or "20")
+SALES_CHAT_TIMEOUT = int(os.getenv("SALES_CHAT_TIMEOUT", "20") or "20")
+
+# Guardrails de custo e “curioso infinito”
+SALES_MAX_FREE_TURNS = int(os.getenv("SALES_MAX_FREE_TURNS", "9") or "9")  # após isso, encurta e fecha
+SALES_MAX_CHARS_REPLY = int(os.getenv("SALES_MAX_CHARS_REPLY", "900") or "900")
+SALES_MIN_ADVANCE_SLOTS = int(os.getenv("SALES_MIN_ADVANCE_SLOTS", "2") or "2")  # nome+ramo já dá 2 slots
+SALES_PITCH_MAX_TOKENS = int(os.getenv("SALES_PITCH_MAX_TOKENS", "180") or "180")
+SALES_ANSWER_MAX_TOKENS = int(os.getenv("SALES_ANSWER_MAX_TOKENS", "220") or "220")
+
+# =========================
 # Sales KB (Firestore-first)
 # Fonte de verdade: platform_kb/sales (doc único)
+# =========================
+
 _SALES_KB_CACHE: Optional[Dict[str, Any]] = None
 _SALES_KB_CACHE_AT: float = 0.0
 _SALES_KB_TTL_SECONDS: int = int(os.getenv("SALES_KB_TTL_SECONDS", "600"))
@@ -72,11 +91,17 @@ def _get_sales_kb() -> Dict[str, Any]:
                 "Sem tecnicês e sem bastidores.",
                 "Nunca culpar o cliente; sempre oferecer opções.",
             ],
+            "behavior_rules": [],
+            "ethical_guidelines": [],
+            "identity_positioning": "",
             "value_props": [],
             "how_it_works": [],
+            "qualifying_questions": [],
+            "pricing_behavior": [],
+            "pricing_facts": {},
+            "pricing_teasers": [],
             "segments": {},
             "objections": {},
-            "pricing_teasers": [],
             "version": "local_min",
         }
 
@@ -84,15 +109,10 @@ def _get_sales_kb() -> Dict[str, Any]:
     _SALES_KB_CACHE_AT = now
     return kb
 
+
 # =========================
 # Helpers: parsing simples
 # =========================
-
-def _now_iso() -> str:
-    try:
-        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    except Exception:
-        return ""
 
 def _norm(s: str) -> str:
     s = (s or "").strip().lower()
@@ -112,12 +132,22 @@ def _excerpt(text: str, max_len: int = 240) -> str:
     t = re.sub(r"\s+", " ", t).strip()
     return t[:max_len]
 
+def _clip(s: str, n: int) -> str:
+    s = (s or "").strip()
+    if not s:
+        return ""
+    if n <= 0:
+        return ""
+    return s[:n]
 
 def _looks_like_greeting(t: str) -> bool:
     t = _norm(t)
     return t in ("oi", "olá", "ola", "e aí", "eai", "bom dia", "boa tarde", "boa noite", "oii", "oiii")
 
-def _intent(t: str) -> str:
+def _intent_cheap(t: str) -> str:
+    """
+    Hint barato (não é fonte canônica). O canônico vem da IA (sales_micro_nlu).
+    """
     t = _norm(t)
     if any(k in t for k in ("preço", "preco", "quanto custa", "valor", "mensal", "mês", "mes", "89", "119")):
         return "PRICE"
@@ -140,29 +170,33 @@ def _extract_name_freeform(text: str) -> str:
     t = (text or "").strip()
     if not t:
         return ""
-    tl = _norm(t)
 
-    m = re.search(r"(me chamo|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+([a-zA-ZÀ-ÿ'\- ]{2,40})$", t, re.IGNORECASE)
+    m = re.search(
+        r"(me chamo|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+([a-zA-ZÀ-ÿ'\- ]{2,40})$",
+        t,
+        re.IGNORECASE
+    )
     if m:
         name = (m.group(2) or "").strip()
         name = re.sub(r"\s+", " ", name)
-        # corta se tiver muita coisa
         if len(name.split(" ")) > 4:
             name = " ".join(name.split(" ")[:3])
         return name
 
-    # se for 1-3 palavras e não parecer pergunta, assume nome
     if len(t.split(" ")) <= 3 and "?" not in t and len(t) <= 32:
         return re.sub(r"\s+", " ", t).strip()
 
     return ""
 
-def _extract_segment(text: str) -> str:
+def _extract_segment_hint(text: str) -> str:
+    """
+    Hint barato (não é fonte canônica). Se não encaixar, fica vazio.
+    Segmentos são infinitos; isso aqui só resolve ruído óbvio.
+    """
     t = _norm(text)
     if not t:
         return ""
 
-    # mapeamento leve (humano): não substitui IA, só evita ruído óbvio
     if any(k in t for k in ("cabelo", "cabeleireir", "barbear", "salão", "salao", "beleza", "unha", "estética", "estetica")):
         return "beleza"
     if "dent" in t or "odonto" in t:
@@ -170,16 +204,15 @@ def _extract_segment(text: str) -> str:
     if any(k in t for k in ("lanche", "lanches", "hamburg", "pizza", "comida", "marmita", "delivery", "restaurante")):
         return "lanches"
     if any(k in t for k in ("serviço", "servico", "prestador", "conserto", "reforma", "instala", "manutenção", "manutencao")):
-        return "servico"
+        return "servicos"
+    if any(k in t for k in ("oficina", "mecânica", "mecanica", "carro", "moto")):
+        return "oficina"
     return ""
 
-
-def _extract_goal(text: str) -> str:
+def _extract_goal_hint(text: str) -> str:
     t = _norm(text)
     if not t:
         return ""
-
-    # objetivos típicos (bem curto; não vira regra-mãe)
     if any(k in t for k in ("agenda", "agendar", "horário", "horario", "marcar", "consulta")):
         return "agenda"
     if any(k in t for k in ("pedido", "pedidos", "anotar", "comanda", "delivery", "entrega")):
@@ -200,22 +233,16 @@ def _apply_next_step_safely(st: Dict[str, Any], next_step: str, has_name: bool, 
     if not ns:
         return
 
-    # Se falta nome, sempre ASK_NAME
     if not has_name:
         st["stage"] = "ASK_NAME"
         return
-
-    # Se falta segmento, sempre ASK_SEGMENT
     if not has_segment:
         st["stage"] = "ASK_SEGMENT"
         return
-
-    # Se falta goal, permitir ASK_GOAL quando IA pedir VALUE/CTA cedo demais
     if not has_goal and ns in ("VALUE", "CTA", "PRICE"):
         st["stage"] = "ASK_GOAL"
         return
 
-    # Aqui já temos nome+segmento (e possivelmente goal). Agora sim, respeita sugestão.
     if ns == "ASK_NAME":
         st["stage"] = "ASK_NAME"
     elif ns == "ASK_SEGMENT":
@@ -229,167 +256,17 @@ def _apply_next_step_safely(st: Dict[str, Any], next_step: str, has_name: bool, 
     elif ns == "EXIT":
         st["stage"] = "EXIT"
 
-# =========================
-# Entrada do webhook (compat)
-# =========================
-
-def _extract_inbound_text(change: Dict[str, Any]) -> str:
-    """Extrai texto de um payload 'change.value' (Meta/YCloud compat)."""
-    try:
-        msgs = (change or {}).get("messages") or []
-        if msgs and isinstance(msgs, list):
-            m0 = msgs[0] or {}
-            if (m0.get("type") == "text") and isinstance(m0.get("text"), dict):
-                body = (m0.get("text") or {}).get("body") or ""
-                return str(body).strip()
-        if isinstance(change.get("text"), dict):
-            return str((change.get("text") or {}).get("body") or "").strip()
-        if isinstance(change.get("text"), str):
-            return str(change.get("text") or "").strip()
-    except Exception:
-        pass
-    return ""
-
-def _extract_sender(change: Dict[str, Any]) -> str:
-    """
-    Pega o sender em payload Meta/YCloud (messages[0].from) e também em payloads normalizados
-    (change['from'], change['from_e164'], etc).
-    """
-    try:
-        msgs = (change or {}).get("messages") or []
-        if msgs and isinstance(msgs, list) and msgs:
-            m0 = msgs[0] or {}
-            v = str(m0.get("from") or "").strip()
-            if v:
-                return v
-    except Exception:
-        pass
-
-    # payload normalizado / compat
-    for k in ("from", "from_e164", "sender", "phone", "wa_from"):
-        try:
-            v = str((change or {}).get(k) or "").strip()
-            if v:
-                return v
-        except Exception:
-            pass
-
-    return ""
-
-
-
-def _is_audio_inbound(change: Dict[str, Any]) -> bool:
-    try:
-        # payload meta-style
-        msgs = (change or {}).get("messages") or []
-        if msgs and isinstance(msgs, list) and msgs:
-            m0 = msgs[0] or {}
-            mt = str(m0.get("type") or "").strip().lower()
-            if mt == "audio":
-                return True
-            if "audio" in (m0 or {}):
-                return True
-    except Exception:
-        pass
-
-    # payload normalizado
-    try:
-        mt2 = str((change or {}).get("msg_type") or (change or {}).get("msgType") or "").strip().lower()
-        if mt2 == "audio":
-            return True
-    except Exception:
-        pass
-
-    return False
-
-
-def _audio_fallback_text() -> str:
-    # Gatilho neutro pra IA: não inventa conteúdo, só mantém conversa viva
-    return "Lead enviou um áudio."
-
-
-
-def _stylize_for_sales_audio(text: str, st: Dict[str, Any]) -> str:
-    """
-    Converte a resposta em um texto mais falável (vendedor + sorriso),
-    sem mudar o sentido e sem virar palestra.
-
-    Regras:
-    - curto (≈ 8–18s)
-    - 1 ideia por frase
-    - pausas naturais
-    - sem links/site no áudio
-    """
-    t = (text or "").strip()
-    if not t:
-        return ""
-
-    name = (st.get("name") or "").strip()
-    segment = (st.get("segment") or "").strip()
-    interest = (st.get("interest_level") or "").strip().lower()
-
-    # remove CTA/links do áudio (site lido em voz = robô)
-    t = re.sub(r"https?://\S+", "", t).strip()
-    t = t.replace(SITE_URL, "").strip()
-
-    # remove excesso de quebras e espaços
-    t = re.sub(r"[ \t]+", " ", t)
-    t = re.sub(r"\n{3,}", "\n\n", t).strip()
-
-    # se ficou longo, corta mantendo sentido (até ~280 chars)
-    if len(t) > 280:
-        t = t[:277].rsplit(" ", 1)[0] + "…"
-
-    # “sorriso” e ritmo (bem leve)
-    # cria uma abertura falada se for contexto de vendas
-    opener = ""
-    if name and segment:
-        opener = f"{name}, rapidinho… no teu ramo ({segment}) é assim:"
-    elif name:
-        opener = f"{name}, rapidinho…"
-    else:
-        opener = "Rapidinho…"
-
-    # se já começa com “Hoje o plano…” não precisa opener grande
-    if t.lower().startswith("hoje o plano") or t.lower().startswith("hoje tem"):
-        opener = "Fechou 🙂"
-
-    # tom vendedor sob controle (sem gritaria)
-    closer = ""
-    if interest in ("high", "mid"):
-        # pergunta simples (puxa conversa)
-        if segment:
-            closer = f"Quer que eu te diga, no {segment}, o jeito mais simples de usar isso?"
-        else:
-            closer = "Quer que eu te diga o jeito mais simples no teu caso?"
-    else:
-        closer = "Se fizer sentido, me fala teu caso em 1 frase 🙂"
-
-    # monta em 2 blocos (pausa natural)
-    out = f"{opener}\n\n{t}"
-    # evita duplicar pergunta se já tem interrogação no final
-    if "?" not in out[-80:]:
-        out = out.strip() + f"\n\n{closer}"
-
-    # último corte pra não virar áudio longo
-    if len(out) > 420:
-        out = out[:417].rsplit(" ", 1)[0] + "…"
-
-    return out.strip()
-
 
 # =========================
 # Estado institucional (Firestore)
-# - sessão curta pra manter contexto
-# - lead “desconhecido conhecido” pra retomar outro dia + marketing
 # =========================
 
-from services.institutional_leads_store import (
+from services.institutional_leads_store import (  # type: ignore
     get_session, set_session,
     get_lead, upsert_lead,
 )
 
-def _load_state(from_sender: str) -> tuple[dict, str]:
+def _load_state(from_sender: str) -> Tuple[dict, str]:
     """
     Retorna (state_dict, wa_key_escolhida).
     - sessão é cache curto
@@ -399,7 +276,6 @@ def _load_state(from_sender: str) -> tuple[dict, str]:
     lead, wa_key2 = get_lead(from_sender)
     wa_key = wa_key or wa_key2
 
-    # Se tem sessão, ainda assim busca/mescla o lead (lead vence no que for canônico e estiver preenchido)
     if isinstance(sess, dict) and sess:
         if isinstance(lead, dict) and lead:
             for k in ("name", "segment", "goal", "interest_level"):
@@ -410,7 +286,6 @@ def _load_state(from_sender: str) -> tuple[dict, str]:
                     sess[k] = v
         return sess, wa_key
 
-    # Se tem lead, sem sessão: retoma leve (não finge conversa no meio)
     if isinstance(lead, dict) and lead:
         st = {
             "stage": "ASK_SEGMENT" if (lead.get("name") and not lead.get("segment")) else "PITCH",
@@ -421,12 +296,10 @@ def _load_state(from_sender: str) -> tuple[dict, str]:
             "nudges": 0,
             "last_user_at": time.time(),
         }
-        # se não tem nada útil, volta pro início
         if not (st.get("name") or st.get("segment")):
             st["stage"] = "ASK_NAME"
         return st, wa_key
 
-    # desconhecido mesmo
     return {}, wa_key
 
 def _save_session(wa_key: str, st: dict, ttl_seconds: int) -> None:
@@ -456,8 +329,8 @@ def _upsert_lead_from_state(wa_key: str, st: dict) -> None:
         "updatedAt": time.time(),
     }
     upsert_lead(wa_key, lead)
+
     # Índice permanente de identidade (lead): sender_uid_links/{waKey}
-    # Não grava UID aqui (a promoção para customer ocorre no /api/cadastro quando existir uid).
     try:
         from services.sender_uid_links import upsert_lead as _upsert_sender_lead  # type: ignore
         _upsert_sender_lead(wa_key, display_name=name, source="sales_lead")
@@ -490,12 +363,6 @@ def _kv_set(key: str, value: Dict[str, Any], ttl_seconds: int) -> None:
     except Exception:
         return
 
-# =========================
-# Core: gerar resposta
-# =========================
-
-
-
 def _pitch_cache_key(segment: str, hint: str, user_text: str) -> str:
     segment = (segment or "geral").strip().lower()
     hint = (hint or "default").strip().lower()
@@ -522,25 +389,19 @@ def _set_cached_pitch(segment: str, hint: str, user_text: str, pitch: str) -> No
     except Exception:
         pass
 
-def _openai_chat(prompt_or_messages, max_tokens: int = 140, temperature: float = 0.45) -> str:
-    """
-    Chamada mínima ao endpoint /chat/completions.
-    - Aceita `prompt_or_messages` como:
-        * str: mantém comportamento atual (wrap em system+user)
-        * list[dict]: usa diretamente como `messages` (para quem já monta messages)
-    Retorna texto. Se falhar, retorna "".
-    """
+
+# =========================
+# OpenAI helpers (mínimo)
+# =========================
+
+def _openai_chat(prompt_or_messages, *, model: str = "", max_tokens: int = 160, temperature: float = 0.35) -> str:
     if not OPENAI_API_KEY:
         return ""
+    use_model = (model or OPENAI_SALES_MODEL).strip() or OPENAI_SALES_MODEL
 
     url = f"{OPENAI_BASE_URL}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
 
-    # Compat: quem chama com messages (list[dict]) passa direto
-    messages = None
     if isinstance(prompt_or_messages, list):
         messages = prompt_or_messages
     else:
@@ -551,14 +412,14 @@ def _openai_chat(prompt_or_messages, max_tokens: int = 140, temperature: float =
         ]
 
     payload = {
-        "model": OPENAI_SALES_MODEL,
+        "model": use_model,
         "temperature": float(temperature),
         "max_tokens": int(max_tokens),
         "messages": messages,
     }
 
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=20)
+        r = requests.post(url, headers=headers, json=payload, timeout=SALES_CHAT_TIMEOUT)
         if r.status_code != 200:
             return ""
         data = r.json() or {}
@@ -566,181 +427,12 @@ def _openai_chat(prompt_or_messages, max_tokens: int = 140, temperature: float =
         if not choices:
             return ""
         msg = (choices[0] or {}).get("message") or {}
-        txt = (msg.get("content") or "").strip()
-        return txt
+        return (msg.get("content") or "").strip()
     except Exception:
         return ""
 
 
-def _ai_pitch(name: str, segment: str, user_text: str) -> str:
-    """
-    Gera um pitch curto e humano (WhatsApp) usando a KB real do Firestore (platform_kb/sales).
-    Mantém best-effort e não quebra o fluxo.
-    """
-    name = (name or "").strip()
-    user_text = (user_text or "").strip()
-
-    seg_key = (segment or "").strip().lower() or "geral"
-
-    hint = "pitch_v2"
-    cached = _get_cached_pitch(seg_key, hint, user_text)
-    if cached:
-        return cached
-
-    kb = _get_sales_kb() or {}
-    segments = kb.get("segments") or {}
-    seg_info = segments.get(seg_key) or {}
-    seg_title = (seg_info.get("title") or segment or seg_key).strip()
-
-    use_cases = seg_info.get("use_cases") or []
-    if not isinstance(use_cases, list):
-        use_cases = []
-
-    example_openers = seg_info.get("example_openers") or []
-    if not isinstance(example_openers, list):
-        example_openers = []
-
-    handoff_format = seg_info.get("handoff_format") or ""
-    if isinstance(handoff_format, list):
-        # às vezes vem como lista de linhas
-        handoff_format = "\n".join([str(x).strip() for x in handoff_format if str(x).strip()])
-    if not isinstance(handoff_format, str):
-        handoff_format = ""
-
-    system = (
-        "Você é o MEI Robô institucional de VENDAS (WhatsApp)."
-
-        "Objetivo: conversar curto, humano e objetivo."
-
-        "Regras:"
-
-        "- Nada de bastidores técnicos."
-
-        "- Sem textão."
-
-        "- 2 a 6 linhas."
-
-        "- Faça 1 pergunta por vez."
-
-        "- No fim, puxe a conversa com uma pergunta: pedidos, agenda ou orçamento."
-
-    )
-
-    # Monta contexto compacto (sem virar palestra)
-    lines = []
-    lines.append(f"Segmento: {seg_title}")
-    if name:
-        lines.append(f"Lead: {name}")
-    if user_text:
-        lines.append(f"Mensagem do lead: {user_text}")
-
-    if use_cases:
-        lines.append("Use cases (escolha 2–4, só os mais relevantes agora):")
-        lines.extend([f"- {str(x).strip()}" for x in use_cases[:6] if str(x).strip()])
-
-    if example_openers:
-        lines.append("Exemplos de abertura (use 1–2 como inspiração):")
-        lines.extend([f"- {str(x).strip()}" for x in example_openers[:3] if str(x).strip()])
-
-    if handoff_format:
-        lines.append("Formato de handoff (se fizer sentido usar):")
-        lines.append(str(handoff_format).strip()[:400])
-
-    lines.append("Agora escreva a resposta final em pt-BR, natural de WhatsApp.")
-
-    prompt = "\n".join([l for l in lines if l]).strip()
-
-    out = ""
-    try:
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ]
-        out = (_openai_chat(messages, max_tokens=180, temperature=0.45) or "").strip()
-    except Exception:
-        out = ""
-
-    if not out:
-        out = "Posso te passar valores ou te mostrar um exemplo bem real no teu caso. Teu foco hoje é pedidos, agenda ou orçamento?"
-
-    _set_cached_pitch(seg_key, hint, user_text, out)
-    return out
-
-
-def _ai_sales_answer(name: str, segment: str, goal: str, user_text: str, intent_hint: str = "", state: Optional[Dict[str, Any]] = None) -> str:
-    """
-    Resposta final SEMPRE via IA, usando textos fixos apenas como repertório.
-    - Curto, humano, WhatsApp.
-    - Não expulsa lead.
-    - Faz 1 pergunta objetiva para avançar.
-    """
-    name = (name or "").strip()
-    segment = (segment or "").strip()
-    goal = (goal or "").strip()
-    user_text = (user_text or "").strip()
-    intent_hint = (intent_hint or "").strip().upper()
-
-    state = state or {}
-    last_bot = (state.get("last_bot_reply_excerpt") or "").strip()
-    stage = (state.get("stage") or "").strip()
-    turns = int(state.get("turns") or 0)
-    has_name = bool((name or "").strip())
-    has_segment = bool((segment or "").strip())
-    has_goal = bool((goal or "").strip())
-
-    continuity = (
-        f"- STAGE: {stage or '—'}\n"
-        f"- TURNS: {turns}\n"
-        f"- Já coletado: nome={has_name}, segmento={has_segment}, objetivo={has_goal}\n"
-    )
-    if last_bot:
-        continuity += f"- Última resposta do bot (não repita): {last_bot}\n"
-
-
-    # Repertório compacto (não copiar literal)
-    kb = _get_sales_kb()
-
-    # Contexto de repertório (Firestore-first). A IA decide o que usar.
-    # IMPORTANTÍSSIMO: não inventar números. Se não tiver preço no KB, falar sem valores.
-    repertoire = {
-        "site_url": SITE_URL,
-        "kb": {
-            "tone_rules": kb.get("tone_rules", []),
-            "value_props": kb.get("value_props", []),
-            "how_it_works": kb.get("how_it_works", []),
-            "segments": kb.get("segments", {}),
-            "objections": kb.get("objections", {}),
-            "pricing_teasers": kb.get("pricing_teasers", []),
-            "version": kb.get("version", ""),
-            "updatedAt": kb.get("updatedAt", ""),
-        },
-    }
-
-    prompt = (
-        f"Contexto do lead:\n"
-        f"- Nome (se houver): {name or '—'}\n"
-        f"- Segmento/ramo (se houver): {segment or '—'}\n"
-        f"- Objetivo (se houver): {goal or '—'}\n"
-        f"- Intent_hint: {intent_hint or '—'}\n"
-        f"- Última mensagem do lead: {user_text}\n\n"
-        f"Continuidade:\n{continuity}\n"
-        "Tarefa: responda como atendente de vendas do MEI Robô no WhatsApp.\n"
-        "Regras:\n"
-        "1) Seja humano, curto (2 a 6 linhas), direto e gentil.\n"
-        "2) NÃO diga que o lead caiu no número errado. NÃO expulse.\n"
-        "3) Se faltar nome ou ramo, peça só 1 coisa por vez.\n"
-        "4) Faça APENAS 1 pergunta por resposta.\n"
-        "5) Não reinicie a conversa se já houver contexto.\n"
-        "6) Se intent_hint='ANTI_LOOP', avance com uma pergunta diferente e mais específica.\n\n"
-        f"Repertório (use como base, não copie):\n{json.dumps(repertoire, ensure_ascii=False)}\n"
-    )
-
-    return (_openai_chat(prompt, max_tokens=220, temperature=0.45) or "").strip()
-
-
-
-
-def _sales_nlu_http(messages):
+def _sales_nlu_http(messages) -> Optional[str]:
     if not OPENAI_API_KEY:
         return None
     url = f"{OPENAI_BASE_URL}/chat/completions"
@@ -755,67 +447,53 @@ def _sales_nlu_http(messages):
     try:
         r = requests.post(url, headers=headers, json=data, timeout=SALES_NLU_TIMEOUT)
         r.raise_for_status()
-        js = r.json()
+        js = r.json() or {}
         content = (js.get("choices") or [{}])[0].get("message", {}).get("content", "")
         return content
     except Exception:
         return None
 
+
 def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
     """
     SEMPRE IA: classifica se é SALES / OFFTOPIC / EMERGENCY e extrai nome/segmento quando existirem.
-    Não revela bastidores.
     """
     text = (text or "").strip()
     if not text:
-        # áudio vazio vira SALES (vai pedir nome)
         return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": ""}
-
-    system = (
-        "Você é um CLASSIFICADOR de mensagens do WhatsApp do MEI Robô (pt-BR). "
-        "Responda SOMENTE JSON válido (sem texto extra).\n\n"
-
-        "Objetivo: entender a intenção do usuário para um atendimento de VENDAS do MEI Robô.\n\n"
-
-        "Regras IMPORTANTES (produto):\n"
-        "1) Continuidade: se STAGE_ATUAL NÃO for 'ASK_NAME', assuma que a conversa já começou — route DEVE ser 'sales' (exceto emergency).\n"
-        "2) Boa-fé: mensagens curtas como 'sim', 'ok', 'pedidos', 'agenda', 'orçamento' normalmente são continuação, não erro.\n"
-        "3) Não culpar o usuário: evite classificar como 'offtopic' a menos que seja claramente um assunto aleatório e a conversa ainda NÃO tenha começado.\n\n"
-
-        "EMERGENCY:\n"
-        "- Se pedir telefone dos bombeiros/polícia/SAMU/ambulância, ou mencionar 190/192/193 => route='emergency'.\n"
-        "- Em emergency, intent='OTHER', name/segment vazios.\n\n"
-
-        "OFFTOPIC (somente no início):\n"
-        "- Use route='offtopic' apenas se STAGE_ATUAL='ASK_NAME' e a mensagem for claramente aleatória e NÃO relacionada a atendimento/negócio.\n"
-        "- Mesmo em offtopic: intent='OTHER', name/segment vazios.\n\n"
-
-        "Formato do JSON (sempre): {route, intent, name, segment, interest_level, next_step}.\n"
-        "route em: 'sales' | 'offtopic' | 'emergency'.\n"
-        "interest_level em: 'low' | 'mid' | 'high'.\n"
-        "next_step pode ser: '' | 'ASK_NAME' | 'ASK_SEGMENT' | 'VALUE' | 'PRICE' | 'CTA'.\n"
-
-    )
 
     stage = (stage or "").strip().upper()
 
-    # Regra contextual (humana): se eu acabei de pedir o nome,
-    # uma resposta curta normalmente É o nome (mas não vale "oi/olá/bom dia").
+    # Heurísticas pequenas só pra economizar IA em casos óbvios (não substitui IA).
     if stage == "ASK_NAME" and text and len(text.strip()) <= 30:
         t = text.strip().lower()
-
-        # Não trate perguntas como nome
         if any(k in t for k in ("quanto custa", "preço", "preco", "planos", "valor", "mensal", "assinatura")):
             return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": "ASK_NAME"}
-
         if t in ("oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "eai", "e aí", "opa"):
             return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": ""}
         return {"route": "sales", "intent": "OTHER", "name": text.strip(), "segment": "", "interest_level": "mid", "next_step": "ASK_SEGMENT"}
 
-    # Regra contextual (humana): se eu acabei de pedir o ramo,
-    # uma resposta curta normalmente É o segmento.
     if stage == "ASK_SEGMENT" and text and len(text.strip()) <= 40:
         return {"route": "sales", "intent": "OTHER", "name": "", "segment": text.strip(), "interest_level": "mid", "next_step": "VALUE"}
+
+    system = (
+        "Você é um CLASSIFICADOR de mensagens do WhatsApp do MEI Robô (pt-BR). "
+        "Responda SOMENTE JSON válido (sem texto extra).\n\n"
+        "Objetivo: entender a intenção do usuário para um atendimento de VENDAS do MEI Robô.\n\n"
+        "Regras IMPORTANTES (produto):\n"
+        "1) Continuidade: se STAGE_ATUAL NÃO for 'ASK_NAME', assuma que a conversa já começou — route DEVE ser 'sales' (exceto emergency).\n"
+        "2) Boa-fé: mensagens curtas como 'sim', 'ok', 'pedidos', 'agenda', 'orçamento' normalmente são continuação.\n"
+        "3) Não culpar o usuário: evite classificar como 'offtopic' a menos que seja claramente aleatório e a conversa ainda NÃO tenha começado.\n\n"
+        "EMERGENCY:\n"
+        "- Se pedir telefone dos bombeiros/polícia/SAMU/ambulância, ou mencionar 190/192/193 => route='emergency'.\n"
+        "- Em emergency, intent='OTHER', name/segment vazios.\n\n"
+        "OFFTOPIC (somente no início):\n"
+        "- Use route='offtopic' apenas se STAGE_ATUAL='ASK_NAME' e a mensagem for claramente aleatória.\n\n"
+        "Formato do JSON: {route, intent, name, segment, interest_level, next_step}.\n"
+        "route: 'sales' | 'offtopic' | 'emergency'.\n"
+        "interest_level: 'low' | 'mid' | 'high'.\n"
+        "next_step: '' | 'ASK_NAME' | 'ASK_SEGMENT' | 'VALUE' | 'PRICE' | 'CTA' | 'EXIT'.\n"
+    )
 
     user = f"STAGE_ATUAL: {stage}\nMENSAGEM: {text}"
 
@@ -825,14 +503,13 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
     ])
 
     if not content:
-        # fallback conservador: assume sales (pede nome) — mantém pilar, sem travar
         return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": ""}
 
     try:
         out = json.loads(content)
         route = (out.get("route") or "sales").strip().lower()
         if route not in ("sales", "offtopic", "emergency"):
-            route = "offtopic"  # default seguro: cai fora
+            route = "offtopic"
         intent = (out.get("intent") or "OTHER").strip().upper()
         if intent not in ("PRICE", "PLANS", "DIFF", "ACTIVATE", "WHAT_IS", "OTHER"):
             intent = "OTHER"
@@ -841,7 +518,6 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
         interest_level = (out.get("interest_level") or "mid").strip().lower()
         if interest_level not in ("low", "mid", "high"):
             interest_level = "mid"
-
         next_step = (out.get("next_step") or "").strip().upper()
         if next_step not in ("ASK_NAME", "ASK_SEGMENT", "VALUE", "PRICE", "CTA", "EXIT"):
             next_step = ""
@@ -856,47 +532,230 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
     except Exception:
         return {"route": "offtopic", "intent": "OTHER", "name": "", "segment": "", "interest_level": "low", "next_step": "EXIT"}
 
+
+# =========================
+# IA: respostas (sempre reescritas)
+# =========================
+
+def _kb_compact_for_prompt(kb: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Monta um pacote compacto. Firestore é fonte de verdade; IA decide o uso.
+    """
+    kb = kb or {}
+    # Não mandar o mundo pra IA (tokens). Seleciona campos chave.
+    return {
+        "identity_positioning": str(kb.get("identity_positioning") or "").strip(),
+        "tone_rules": kb.get("tone_rules") or [],
+        "behavior_rules": kb.get("behavior_rules") or [],
+        "ethical_guidelines": kb.get("ethical_guidelines") or [],
+        "value_props": kb.get("value_props") or [],
+        "how_it_works": kb.get("how_it_works") or [],
+        "qualifying_questions": kb.get("qualifying_questions") or [],
+        "pricing_behavior": kb.get("pricing_behavior") or [],
+        "pricing_facts": kb.get("pricing_facts") or {},
+        "pricing_teasers": kb.get("pricing_teasers") or [],
+        # segments pode ser grande; mas ajuda para exemplos quando houver match
+        "segments": kb.get("segments") or {},
+        "objections": kb.get("objections") or {},
+    }
+
+
+def _ai_sales_answer(
+    *,
+    name: str,
+    segment: str,
+    goal: str,
+    user_text: str,
+    intent_hint: str,
+    state: Dict[str, Any],
+) -> str:
+    """
+    Resposta final SEMPRE via IA (sem “frase pronta”).
+    - Curto e humano.
+    - 1 pergunta por vez.
+    - Usa Firestore como repertório (sem copiar literal).
+    """
+    kb = _get_sales_kb()
+    rep = _kb_compact_for_prompt(kb)
+
+    stage = (state.get("stage") or "").strip()
+    turns = int(state.get("turns") or 0)
+    last_bot = (state.get("last_bot_reply_excerpt") or "").strip()
+
+    continuity = f"STAGE={stage or '—'} | TURNS={turns}"
+    if last_bot:
+        continuity += f" | NÃO repetir: {last_bot}"
+
+    prompt = (
+        "Você é o MEI Robô institucional de VENDAS no WhatsApp.\n"
+        "Objetivo: conversar curto, humano, vendedor sem ser chato, e conduzir para o próximo passo.\n"
+        "Regras obrigatórias:\n"
+        "- 2 a 6 linhas.\n"
+        "- 1 pergunta por resposta.\n"
+        "- Sem bastidores técnicos.\n"
+        "- Não expulsar o lead.\n"
+        "- Se faltar info, pergunte só 1 coisa.\n"
+        "- Quando fizer sentido, use um micro-exemplo operacional (entrada → confirmação → resumo), sem inventar.\n"
+        "- Se citar valores, só use os que estiverem em pricing_facts.\n\n"
+        f"Lead:\n- nome: {name or '—'}\n- ramo (texto livre): {segment or '—'}\n- objetivo: {goal or '—'}\n"
+        f"intent_hint: {intent_hint or '—'}\n"
+        f"mensagem: {user_text}\n\n"
+        f"continuidade: {continuity}\n\n"
+        f"repertório_firestore (use como base, não copie): {json.dumps(rep, ensure_ascii=False)}\n"
+    )
+
+    return (_openai_chat(prompt, max_tokens=SALES_ANSWER_MAX_TOKENS, temperature=0.35) or "").strip()
+
+
+def _ai_pitch(name: str, segment: str, user_text: str) -> str:
+    """
+    Pitch curto e humano usando KB (Firestore).
+    Com cache KV (por segmento+hint+user_text normalizado).
+    """
+    name = (name or "").strip()
+    user_text = (user_text or "").strip()
+
+    seg_key = (segment or "").strip().lower() or "geral"
+    hint = "pitch_v3"
+
+    cached = _get_cached_pitch(seg_key, hint, user_text)
+    if cached:
+        return cached
+
+    kb = _get_sales_kb() or {}
+    rep = _kb_compact_for_prompt(kb)
+
+    # Ajuda: se houver match em segments, puxa use_cases/openers
+    segments = kb.get("segments") or {}
+    seg_info = segments.get(seg_key) if isinstance(segments, dict) else None
+    if not isinstance(seg_info, dict):
+        seg_info = {}
+
+    use_cases = seg_info.get("use_cases") or []
+    if not isinstance(use_cases, list):
+        use_cases = []
+
+    system = (
+        "Você é o MEI Robô institucional de VENDAS no WhatsApp.\n"
+        "Escreva uma resposta humana, curta e objetiva.\n"
+        "Regras:\n"
+        "- 2 a 5 linhas.\n"
+        "- 1 pergunta no final.\n"
+        "- Sem bastidores técnicos.\n"
+        "- Sem textão.\n"
+        "- Evite frases prontas.\n"
+    )
+
+    user_lines = [
+        f"Lead: {name or '—'}",
+        f"Ramo (texto livre): {segment or '—'}",
+        f"Mensagem: {user_text or '—'}",
+    ]
+    if use_cases:
+        user_lines.append("Use cases relevantes (escolha 1–2, só pra inspirar):")
+        user_lines.extend([f"- {str(x).strip()}" for x in use_cases[:4] if str(x).strip()])
+
+    user_lines.append(f"Repertório Firestore (base, não copie): {json.dumps(rep, ensure_ascii=False)}")
+    user_lines.append("Agora escreva a resposta final.")
+
+    out = _openai_chat(
+        [{"role": "system", "content": system}, {"role": "user", "content": "\n".join(user_lines)}],
+        max_tokens=SALES_PITCH_MAX_TOKENS,
+        temperature=0.4,
+    ).strip()
+
+    if not out:
+        out = "Posso te mostrar um exemplo bem real no teu caso. Teu foco hoje é pedidos, agenda ou orçamento?"
+
+    _set_cached_pitch(seg_key, hint, user_text, out)
+    return out
+
+
+# =========================
+# Anti-loop helper
+# =========================
+
+def _apply_anti_loop(st: Dict[str, Any], txt: str, *, name: str, segment: str, goal: str, user_text: str) -> str:
+    """
+    Se repetir o mesmo hash, pede pra IA avançar com pergunta diferente.
+    """
+    txt = (txt or "").strip()
+    if not txt:
+        return txt
+
+    prev_h = (st.get("last_bot_reply_hash") or "").strip()
+    cur_h = _hash_reply(txt)
+    if prev_h and cur_h and prev_h == cur_h:
+        alt = (_ai_sales_answer(
+            name=name,
+            segment=segment,
+            goal=goal,
+            user_text=user_text,
+            intent_hint="ANTI_LOOP",
+            state=st,
+        ) or "").strip()
+        if alt and _hash_reply(alt) != cur_h:
+            txt = alt
+
+    st["last_bot_reply_hash"] = _hash_reply(txt)
+    st["last_bot_reply_excerpt"] = _excerpt(txt)
+    return txt
+
+
+# =========================
+# Core: gerar resposta (texto)
+# =========================
+
+def _should_soft_close(st: Dict[str, Any], *, has_name: bool, has_segment: bool) -> bool:
+    """
+    Política anti-curioso infinito:
+    - se excedeu turnos e não coletou o mínimo (nome+ramo),
+      ou lead não avança, fecha curto.
+    """
+    turns = int(st.get("turns") or 0)
+    if turns < SALES_MAX_FREE_TURNS:
+        return False
+    slots = 0
+    if has_name:
+        slots += 1
+    if has_segment:
+        slots += 1
+    # Se até aqui não coletou o mínimo, ou já é muita conversa, fecha suave
+    return slots < SALES_MIN_ADVANCE_SLOTS or turns >= (SALES_MAX_FREE_TURNS + 2)
+
+
 def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
+    """
+    Única função que decide a resposta final (texto).
+    """
     name = (st.get("name") or "").strip()
     segment = (st.get("segment") or "").strip()
+    goal = (st.get("goal") or "").strip()
     stage = (st.get("stage") or "").strip() or "ASK_NAME"
+
     # Se já temos nome por “desconhecido conhecido”, não pede nome de novo
     if stage == "ASK_NAME" and name:
         st["stage"] = "ASK_SEGMENT" if not segment else "PITCH"
         stage = st["stage"]
-    goal = (st.get("goal") or "").strip()
-    turns = int(st.get("turns") or 0)
-    turns += 1
+
+    turns = int(st.get("turns") or 0) + 1
     st["turns"] = turns
-
-    # Reset suave se ficou muito tempo parado (evita conversa “presa”)
-    try:
-        last_user_at = float(st.get("last_user_at") or 0.0)
-    except Exception:
-        last_user_at = 0.0
-
-    now_ts = time.time()
-    st["last_user_at"] = now_ts
-
-    # se ficou parado mais de 24h, zera só o stage (mantém nome se já tiver)
-    if last_user_at and (now_ts - last_user_at) > 86400:
-        st["stage"] = "ASK_NAME" if not (st.get("name") or "").strip() else "ASK_SEGMENT"
-        # não zera o resto agressivamente; só destrava o fluxo
+    st["last_user_at"] = time.time()
 
     nudges = int(st.get("nudges") or 0)
 
-    intent = _intent(text_in)
+    # NLU (IA) — fonte canônica de intent/route/next_step/interest
     nlu = sales_micro_nlu(text_in, stage=stage)
     interest = (nlu.get("interest_level") or "mid").strip().lower()
+    st["interest_level"] = interest  # evita segunda chamada no generate_reply
     next_step = (nlu.get("next_step") or "").strip().upper()
-    # route (sales/offtopic/emergency) é decidido por IA
-    route = nlu.get("route") or "sales"
-    # Produto: depois que a conversa começou, NÃO existe "caiu no número errado".
-    # Só permitimos emergency; o resto é continuidade de vendas.
+    route = (nlu.get("route") or "sales").strip().lower()
+
+    # Regra de produto: depois que conversa começou, não existe "offtopic".
     if (route == "offtopic") and (turns > 1 or name or segment or stage != "ASK_NAME"):
         route = "sales"
 
-    # se IA extraiu nome/segmento, aproveita
+    # Nome/segmento detectados pela IA (se vier)
     if not name and (nlu.get("name") or ""):
         st["name"] = (nlu.get("name") or "").strip()
         name = st["name"]
@@ -904,37 +763,23 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         st["segment"] = (nlu.get("segment") or "").strip()
         segment = st["segment"]
 
-    
-    # PATCH (nome/segmento não escapam): fallback determinístico de extração
+    # Fallback barato de extração (não manda na conversa; só evita perder slot óbvio)
     if not name:
         nm = _extract_name_freeform(text_in)
-        if nm:
+        if nm and not _looks_like_greeting(nm):
             st["name"] = nm
             name = nm
     if not segment:
-        sg = _extract_segment(text_in)
+        sg = _extract_segment_hint(text_in)
         if sg:
             st["segment"] = sg
             segment = sg
 
-# intent canônico vindo da IA (não por palavra)
-    intent = (nlu.get("intent") or intent or "OTHER").strip().upper()
-
-
-    # Se o lead respondeu o objetivo principal, guarda (ex.: "agenda", "pedidos", "orçamento")
     if not goal:
-        g = _extract_goal(text_in)
+        g = _extract_goal_hint(text_in)
         if g:
             st["goal"] = g
             goal = g
-
-    # Persistência canônica: tudo que foi capturado precisa ficar no estado
-    if name and (st.get("name") or "").strip() != name:
-        st["name"] = name
-    if segment and (st.get("segment") or "").strip() != segment:
-        st["segment"] = segment
-    if goal and (st.get("goal") or "").strip() != goal:
-        st["goal"] = goal
 
     has_name = bool(name)
     has_segment = bool(segment)
@@ -947,292 +792,124 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         return "Se for emergência, liga 193 agora. 🙏"
 
     if route == "offtopic":
-        return "Oi! Eu sou o MEI Robô 🙂 Posso te explicar rapidinho como funciona e valores. Qual teu nome?"
-
+        # só pode acontecer no início absoluto
+        return "Oi! Eu sou o MEI Robô 🙂 Posso te explicar rapidinho como funciona. Qual teu nome?"
 
     if stage == "EXIT":
-        return "Beleza 🙂 Se quiser retomar sobre o MEI Robô, é só mandar aqui."
-    # 0) Intenções diretas (preço/planos/diferença/o que é) — IA escreve o texto final.
-    # Regras:
-    # - Nada de "return" com textos prontos
-    # - Se a IA falhar, fallback humano mínimo (sem marketing longo)
+        return "Beleza 🙂 Pra ver tudo com calma e ativar, o melhor é seguir pelo site. Por lá fica tudo certinho."
 
-    # intents diretos primeiro
-    if intent == "PRICE":
-        # Responde já, e depois segue coletando info (sem resetar)
-        if not name and not segment:
-            st["stage"] = "ASK_NAME"
-        elif not segment:
-            st["stage"] = "ASK_SEGMENT"
-        else:
-            st["stage"] = "PITCH"
+    # Anti-custo / soft close
+    if _should_soft_close(st, has_name=has_name, has_segment=has_segment):
+        # IA também pode fechar (sem frase pronta), mas aqui mantemos bem curto e seguro.
+        if has_name:
+            return f"{name}, pra ver tudo com calma e ativar, o melhor é pelo site. Se quiser, me diz teu ramo em 1 frase que eu te mostro o caminho mais enxuto 🙂"
+        return "Pra ver tudo com calma e ativar, o melhor é pelo site 🙂 Se quiser, me diz teu tipo de negócio em 1 frase que eu te indico o caminho mais enxuto."
 
-        txt = (_ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="pricing", state=st) or "").strip()
-        if not txt:
-            txt = _fallback_min_reply(name)
-
-        # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
-        prev_h = (st.get("last_bot_reply_hash") or "").strip()
-        cur_h = _hash_reply(txt)
-        if prev_h and cur_h and prev_h == cur_h:
-            alt = (_ai_sales_answer(
-                name=name,
-                segment=segment,
-                goal=goal,
-                user_text=text_in,
-                intent_hint="ANTI_LOOP",
-                state=st,
-            ) or "").strip()
-            if alt and _hash_reply(alt) != cur_h:
-                txt = alt
-
-        st["last_bot_reply_hash"] = _hash_reply(txt)
-        st["last_bot_reply_excerpt"] = _excerpt(txt)
-
-        return txt
-
-    if intent == "PLANS":
-        # Explica e puxa o ramo (se faltar)
-        st["stage"] = "ASK_NAME" if not name else ("ASK_SEGMENT" if not segment else st.get("stage", "PITCH"))
-        txt = (_ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="PLANS", state=st) or "").strip()
-        if not txt:
-            txt = _fallback_min_reply(name)
-
-        # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
-        prev_h = (st.get("last_bot_reply_hash") or "").strip()
-        cur_h = _hash_reply(txt)
-        if prev_h and cur_h and prev_h == cur_h:
-            alt = (_ai_sales_answer(
-                name=name,
-                segment=segment,
-                goal=goal,
-                user_text=text_in,
-                intent_hint="ANTI_LOOP",
-                state=st,
-            ) or "").strip()
-            if alt and _hash_reply(alt) != cur_h:
-                txt = alt
-
-        st["last_bot_reply_hash"] = _hash_reply(txt)
-        st["last_bot_reply_excerpt"] = _excerpt(txt)
-
-        return txt
-
-    if intent in ("DIFF", "PLUS_DIFF"):
-        st["stage"] = "ASK_NAME" if not name else ("ASK_SEGMENT" if not segment else st.get("stage", "PITCH"))
-        txt = (_ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="DIFF", state=st) or "").strip()
-        if not txt:
-            txt = _fallback_min_reply(name)
-
-        # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
-        prev_h = (st.get("last_bot_reply_hash") or "").strip()
-        cur_h = _hash_reply(txt)
-        if prev_h and cur_h and prev_h == cur_h:
-            alt = (_ai_sales_answer(
-                name=name,
-                segment=segment,
-                goal=goal,
-                user_text=text_in,
-                intent_hint="ANTI_LOOP",
-                state=st,
-            ) or "").strip()
-            if alt and _hash_reply(alt) != cur_h:
-                txt = alt
-
-        st["last_bot_reply_hash"] = _hash_reply(txt)
-        st["last_bot_reply_excerpt"] = _excerpt(txt)
-
-        return txt
-
-    if intent == "WHAT_IS":
-        st["stage"] = "ASK_NAME" if not name else st.get("stage", "VALUE")
-        txt = (_ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="what_is", state=st) or "").strip()
-        if not txt:
-            txt = _fallback_min_reply(name)
-
-        # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
-        prev_h = (st.get("last_bot_reply_hash") or "").strip()
-        cur_h = _hash_reply(txt)
-        if prev_h and cur_h and prev_h == cur_h:
-            alt = (_ai_sales_answer(
-                name=name,
-                segment=segment,
-                goal=goal,
-                user_text=text_in,
-                intent_hint="ANTI_LOOP",
-                state=st,
-            ) or "").strip()
-            if alt and _hash_reply(alt) != cur_h:
-                txt = alt
-
-        st["last_bot_reply_hash"] = _hash_reply(txt)
-        st["last_bot_reply_excerpt"] = _excerpt(txt)
-
-        return txt
-
-    # 1) Captura nome se não temos (IA decide; não usar heurística aqui)
-    if not name:
-        # Saudação pura = SALES -> pede nome, mas NÃO persiste ainda (persistência é fora daqui)
+    # 1) Nome
+    if not has_name:
         st["stage"] = "ASK_NAME"
         st["nudges"] = nudges + 1
         if st["nudges"] >= 3:
             st["stage"] = "EXIT"
-            return "Tranquilo 🙂 Se tu quiser falar do MEI Robô depois, é só mandar uma mensagem por aqui."
+            return "Tranquilo 🙂 Pra ver tudo com calma e ativar, o melhor é pelo site. Se quiser retomar depois, é só mandar um oi."
         return OPENING_ASK_NAME
 
-    # 2) Captura segmento se não temos
-    if not segment:
-        seg = _extract_segment(text_in)
-        if seg:
-            st["segment"] = seg
-            segment = seg
-            st["stage"] = "PITCH"
-        else:
-            st["stage"] = "ASK_SEGMENT"
-            st["nudges"] = nudges + 1
-            if st["nudges"] >= 4:
-                st["stage"] = "EXIT"
-                return f"Fechado, {name} 🙂 Se tu quiser retomar depois, me diz só teu ramo e eu te ajudo."
-            return f"Show, {name} 😄\n\nTeu negócio é do quê?"
+    # 2) Segmento (texto livre)
+    if not has_segment:
+        st["stage"] = "ASK_SEGMENT"
+        st["nudges"] = nudges + 1
+        if st["nudges"] >= 4:
+            st["stage"] = "EXIT"
+            return f"Fechado, {name} 🙂 Pra eu te indicar direitinho, só me diz teu tipo de negócio em 1 frase (ex.: lanches, salão, serviços)."
+        # pergunta curta (sem “formulário”)
+        return f"Show, {name} 😄\n\nTeu negócio é do quê?"
 
-# 3) Temos nome + segmento: entregar valor + preço como diferencial + CTA site
+    # Intent canônico da IA, com fallback barato
+    intent = (nlu.get("intent") or _intent_cheap(text_in) or "OTHER").strip().upper()
 
-    # Se o lead está frio, não despeja pitch. Responde curto e deixa a porta aberta.
-    if interest == "low" and intent not in ("PRICE", "PLANS", "DIFF", "ACTIVATE"):
-        # pergunta 1 vez e guarda stage pra não ficar chato
-        if stage != "ASK_GOAL" and not goal:
-            st["stage"] = "ASK_GOAL"
-            st["nudges"] = nudges + 1
-            return f"Entendi, {name} 🙂 Me diz teu objetivo principal no WhatsApp: agenda, pedidos ou orçamento?"
-        # se já perguntou e ainda não veio goal, não insiste
-        if not goal:
-            return f"Tranquilo, {name} 🙂 Se quiser, me fala só o teu caso em 1 frase que eu te digo se encaixa."
-    
-    if intent == "ACTIVATE":
-        # Só manda CTA direto quando o lead estiver quente
-        if interest == "high":
-            return f"Se fizer sentido, dá uma olhada em {SITE_URL} e me chama aqui que eu te guio."
-        return f"Fechado, {name} 😄 Me diz teu objetivo principal no WhatsApp (agenda, pedidos, orçamento...) que eu te aponto o caminho certo."
-
-    # 🔒 PRIORIDADE ABSOLUTA: quando IA sabe a intenção, não volta para pitch genérico
+    # Intenções diretas: sempre IA escreve a resposta final
     if intent in ("PRICE", "PLANS", "DIFF", "WHAT_IS"):
-        txt = (_ai_sales_answer(name=name, segment=segment, goal=goal, user_text=text_in, intent_hint=intent, state=st) or "").strip()
+        hint = intent
+        txt = (_ai_sales_answer(
+            name=name, segment=segment, goal=goal, user_text=text_in, intent_hint=hint, state=st
+        ) or "").strip()
         if not txt:
             txt = _fallback_min_reply(name)
+        txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        return _clip(txt, SALES_MAX_CHARS_REPLY)
 
-        # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
-        prev_h = (st.get("last_bot_reply_hash") or "").strip()
-        cur_h = _hash_reply(txt)
-        if prev_h and cur_h and prev_h == cur_h:
-            alt = (_ai_sales_answer(
-                name=name,
-                segment=segment,
-                goal=goal,
-                user_text=text_in,
-                intent_hint="ANTI_LOOP",
-                state=st,
-            ) or "").strip()
-            if alt and _hash_reply(alt) != cur_h:
-                txt = alt
+    if intent == "ACTIVATE":
+        # Sempre via IA também (evita frase pronta)
+        txt = (_ai_sales_answer(
+            name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="CTA", state=st
+        ) or "").strip()
+        if not txt:
+            txt = f"Fechado, {name} 🙂 Pra ativar com calma, o melhor é seguir pelo site. Quer que eu te diga o caminho mais enxuto pra {goal or 'começar'}?"
+        txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        return _clip(txt, SALES_MAX_CHARS_REPLY)
 
-        st["last_bot_reply_hash"] = _hash_reply(txt)
-        st["last_bot_reply_excerpt"] = _excerpt(txt)
+    # Lead frio: pergunta curta, sem despejar pitch
+    if interest == "low" and not has_goal:
+        st["stage"] = "ASK_GOAL"
+        txt = (_ai_sales_answer(
+            name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="ASK_GOAL", state=st
+        ) or "").strip()
+        if not txt:
+            txt = f"Entendi, {name} 🙂 Teu foco hoje é mais agenda, pedidos ou orçamento?"
+        txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        return _clip(txt, SALES_MAX_CHARS_REPLY)
 
-        return txt
-
-    # IA só no pitch (com cache) — preço/CTA ficam fixos
+    # Pitch (cacheado) + sempre uma pergunta de avanço
     hint = intent or "OTHER"
     cached = _get_cached_pitch(segment, hint, text_in)
     if cached:
         pitch_txt = cached
     else:
-        pitch_txt = _ai_pitch(
-            name=name,
-            segment=segment,
-            user_text=text_in
-        )
-        pitch_txt = (pitch_txt or "").strip()
+        pitch_txt = (_ai_pitch(name=name, segment=segment, user_text=text_in) or "").strip()
         if pitch_txt:
             _set_cached_pitch(segment, hint, text_in, pitch_txt)
 
-    cta = f"Se fizer sentido, dá uma olhada em {SITE_URL} e me chama aqui que eu te guio."
+    if not pitch_txt:
+        pitch_txt = _fallback_min_reply(name)
 
-    # HIGH: pode aprofundar 1 linha + CTA opcional
-    txt_final = ""
-    if interest == "high" or intent == "ACTIVATE":
-        extra = "Se tu quiser, me diz teu ramo e eu te mostro um exemplo bem real em 2 mensagens."
-        parts = [p for p in [pitch_txt, extra, cta] if (p or '').strip()]
-        txt_final = "\n\n".join(parts).strip() or _fallback_min_reply(name)
-    elif interest == "mid":
-        parts = [p for p in [pitch_txt] if (p or '').strip()]
-        txt_final = "\n\n".join(parts).strip() or _fallback_min_reply(name)
-    else:
-        # LOW: curto + 1 pergunta objetiva (sem link)
-        pitch_txt2 = (pitch_txt or "").strip()
-        if not pitch_txt2:
-            txt_final = _fallback_min_reply(name)
-        elif "?" in pitch_txt2[-120:]:
-            txt_final = pitch_txt2
-        else:
-            txt_final = f"{pitch_txt2}\n\n{name}, teu foco hoje é pedidos, agenda ou orçamento?"
-
-    # Anti-loop: se repetir, pede pra IA avançar (sem frase pronta)
-    prev_h = (st.get("last_bot_reply_hash") or "").strip()
-    cur_h = _hash_reply(txt_final)
-    if prev_h and cur_h and prev_h == cur_h:
-        alt = (_ai_sales_answer(
-            name=name,
-            segment=segment,
-            goal=goal,
-            user_text=text_in,
-            intent_hint="ANTI_LOOP",
-            state=st,
-        ) or "").strip()
-        if alt and _hash_reply(alt) != cur_h:
-            txt_final = alt
-
-    st["last_bot_reply_hash"] = _hash_reply(txt_final)
-    st["last_bot_reply_excerpt"] = _excerpt(txt_final)
-
-    return txt_final
+    # Anti-loop
+    pitch_txt = _apply_anti_loop(st, pitch_txt, name=name, segment=segment, goal=goal, user_text=text_in)
+    return _clip(pitch_txt, SALES_MAX_CHARS_REPLY)
 
 
-def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
+# =========================
+# API pública do handler
+# =========================
+
+def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
-    Retorna somente o texto de resposta (usado pelo wa_bot.reply_to_text).
-    ctx deve conter 'from_e164' (ou 'from') para manter o estado no cache.
+    Retorna um dict canônico.
+    Compatível com wa_bot:
+      - wa_bot pode ler replyText e ignorar o resto.
+    A ideia é: o worker é o dono do áudio; aqui só sai "cérebro".
     """
     ctx = ctx or {}
-    text_in = (text or "").strip()
-
-    # aceitar áudio como gatilho de resposta (mantém coerência)
-    if not text_in:
-        text_in = "Lead enviou um áudio."
-
+    text_in = (text or "").strip() or "Lead enviou um áudio."
     from_e164 = str(ctx.get("from_e164") or ctx.get("from") or "").strip()
+
+    # Sem remetente => resposta padrão (sem estado)
     if not from_e164:
-        # sem remetente no ctx, responde padrão (sem estado)
-        return OPENING_ASK_NAME
+        return {
+            "replyText": OPENING_ASK_NAME,
+            "ttsOwner": "worker",
+            "kind": "sales",
+        }
 
     st, wa_key = _load_state(from_e164)
     reply = _reply_from_state(text_in, st)
 
-    # marca interesse no state (pra lead store)
-    try:
-        # _reply_from_state já calcula interest, mas não guarda; guardamos leve
-        nlu = sales_micro_nlu(text_in, stage=(st.get("stage") or "ASK_NAME"))
-        st["interest_level"] = (nlu.get("interest_level") or "").strip().lower()
-    except Exception:
-        pass
-
+    # Salva interesse já setado pelo _reply_from_state
+    # (sem re-chamar a IA)
     has_name = bool((st.get("name") or "").strip())
     has_segment = bool((st.get("segment") or "").strip())
 
-    # Sessão: sempre salva stage/slots por um tempo curto (mantém contexto)
-    # Antes de virar lead real: TTL curto; depois: TTL maior
     if has_name or has_segment:
-        _save_session(wa_key, st, ttl_seconds=int(os.getenv("INSTITUTIONAL_SESSION_TTL_KNOWN", "86400") or "86400"))  # 24h
-        # Lead store (marketing / “desconhecido conhecido”)
+        _save_session(wa_key, st, ttl_seconds=int(os.getenv("INSTITUTIONAL_SESSION_TTL_KNOWN", "86400") or "86400"))
         _upsert_lead_from_state(wa_key, st)
     else:
         st_min = {
@@ -1241,67 +918,66 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> str:
             "nudges": int(st.get("nudges") or 0),
             "last_user_at": time.time(),
         }
-        _save_session(wa_key, st_min, ttl_seconds=int(os.getenv("INSTITUTIONAL_SESSION_TTL_UNKNOWN", "600") or "600"))  # 10 min
+        _save_session(wa_key, st_min, ttl_seconds=int(os.getenv("INSTITUTIONAL_SESSION_TTL_UNKNOWN", "600") or "600"))
 
+    # Metadados úteis (sem obrigar ninguém a usar):
+    # - leadName ajuda humanização no pipeline geral
+    # - kind permite (no worker) escolher uma fala mais “com exemplo”
+    lead_name = (st.get("name") or "").strip()
+    lead_segment = (st.get("segment") or "").strip()
+    lead_goal = (st.get("goal") or "").strip()
 
-    return (reply or "").strip() or OPENING_ASK_NAME
+    # Micro-contexto (compacto) para o worker, caso queira gerar fala “com exemplo”
+    kb = _get_sales_kb()
+    kb_compact = {
+        "tone_rules": kb.get("tone_rules") or [],
+        "behavior_rules": kb.get("behavior_rules") or [],
+        "ethical_guidelines": kb.get("ethical_guidelines") or [],
+        "value_props": kb.get("value_props") or [],
+        "qualifying_questions": kb.get("qualifying_questions") or [],
+        "pricing_facts": kb.get("pricing_facts") or {},
+    }
+
+    return {
+        "replyText": (reply or "").strip() or OPENING_ASK_NAME,
+        "leadName": lead_name,
+        "segment": lead_segment,
+        "goal": lead_goal,
+        "interest_level": (st.get("interest_level") or "").strip(),
+        "kind": "sales_example" if (lead_segment and (st.get("stage") in ("PITCH", "CTA", "PRICE"))) else "sales",
+        "kbContext": json.dumps(kb_compact, ensure_ascii=False),
+        "ttsOwner": "worker",
+    }
+
 
 def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Handler de vendas (lead).
-    Retorna:
-      - replyText: texto normal
-      - ttsText (opcional): texto otimizado para fala (quando inbound é áudio)
-      - audioUrl (opcional): URL de áudio institucional (quando inbound é áudio)
+    Mantido por compat, mas NÃO é mais o dono do áudio.
+    O worker deve decidir canal/TTS para não duplicar custo/bugs.
     """
-    from_e164 = _extract_sender(change_value) or ""
+    from_e164 = ""
+    try:
+        msgs = (change_value or {}).get("messages") or []
+        if msgs and isinstance(msgs, list) and msgs:
+            from_e164 = str((msgs[0] or {}).get("from") or "").strip()
+    except Exception:
+        from_e164 = ""
+
     if not from_e164:
-        return {"replyText": OPENING_ASK_NAME}
+        return {"replyText": OPENING_ASK_NAME, "ttsOwner": "worker", "kind": "sales"}
 
-    is_audio = _is_audio_inbound(change_value)
-    text_in = _extract_inbound_text(change_value) or ""
+    # Extrai texto (quando existir)
+    text_in = ""
+    try:
+        msgs = (change_value or {}).get("messages") or []
+        if msgs and isinstance(msgs, list) and msgs:
+            m0 = msgs[0] or {}
+            if (m0.get("type") == "text") and isinstance(m0.get("text"), dict):
+                text_in = str((m0.get("text") or {}).get("body") or "").strip()
+    except Exception:
+        text_in = ""
 
-    # Se veio áudio e não há texto, cria um gatilho neutro pra não resetar a conversa
-    if is_audio and not text_in:
-        text_in = _audio_fallback_text()
+    if not text_in:
+        text_in = "Lead enviou um áudio."
 
-    ctx = {"from_e164": from_e164, "msg_type": "audio" if is_audio else "text"}
-    reply = generate_reply(text_in, ctx=ctx)
-
-    out: Dict[str, Any] = {"replyText": reply}
-
-    if is_audio:
-        # Texto "falável" (sorriso + ritmo) para TTS
-        tts_text = ""
-        try:
-            st, _ = _load_state(from_e164)
-            if not st.get("interest_level"):
-                try:
-                    nlu = sales_micro_nlu(text_in, stage=(st.get("stage") or "ASK_NAME"))
-                    st["interest_level"] = (nlu.get("interest_level") or "").strip().lower()
-                except Exception:
-                    pass
-            tts_text = _stylize_for_sales_audio(reply, st)
-        except Exception:
-            tts_text = ""
-
-        if tts_text:
-            out["ttsText"] = tts_text
-
-        # Gera audioUrl (best-effort). Se falhar, não quebra.
-        try:
-            from services.institutional_tts_media import generate_institutional_audio_url
-            base_url = os.environ.get("BACKEND_BASE_URL", "").rstrip("/")
-            audio_url = generate_institutional_audio_url(
-                text=(tts_text or reply),
-                base_url=base_url,
-            )
-            if audio_url:
-                out["audioUrl"] = audio_url
-        except Exception:
-            pass
-
-    return out
-
-
-
+    return generate_reply(text_in, ctx={"from_e164": from_e164})

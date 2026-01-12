@@ -26,6 +26,13 @@ _SUPPORT_TTS_MAX_CHARS = int(os.environ.get("SUPPORT_TTS_MAX_CHARS", "650") or "
 _SUPPORT_TTS_RETRY_MAX_CHARS = int(os.environ.get("SUPPORT_TTS_RETRY_MAX_CHARS", "420") or "420")
 _SUPPORT_WA_TEXT_MAX_CHARS = int(os.environ.get("SUPPORT_WA_TEXT_MAX_CHARS", "900") or "900")
 
+_SALES_TTS_MODE = (os.environ.get("SALES_TTS_MODE") or "on").strip().lower()  # on|off
+_SALES_TTS_MODEL = (os.environ.get("SALES_TTS_MODEL") or "gpt-4o-mini").strip()
+_SALES_TTS_MAX_TOKENS = int(os.environ.get("SALES_TTS_MAX_TOKENS", "220") or "220")
+_SALES_TTS_MAX_CHARS = int(os.environ.get("SALES_TTS_MAX_CHARS", "520") or "520")
+_SALES_SITE_URL = (os.environ.get("MEI_ROBO_SITE_URL") or "meirobo.com.br").strip()
+
+
 _SUPPORT_TTS_SUMMARY_MODE = (os.environ.get("SUPPORT_TTS_SUMMARY_MODE") or "off").strip().lower()  # on|off
 _SUPPORT_TTS_SUMMARY_MODEL = (os.environ.get("SUPPORT_TTS_SUMMARY_MODEL") or "gpt-4o-mini").strip()
 _SUPPORT_TTS_SUMMARY_MAX_TOKENS = int(os.environ.get("SUPPORT_TTS_SUMMARY_MAX_TOKENS", "140") or "140")
@@ -105,6 +112,132 @@ def _get_support_persona() -> Dict[str, Any]:
         return out
     except Exception:
         return _SUPPORT_PERSONA_CACHE or {}
+
+_SALES_KB_CACHE: Dict[str, Any] = {}
+_SALES_KB_CACHE_AT: float = 0.0
+_SALES_KB_TTL = int(os.environ.get("SALES_KB_TTL_SECONDS", "600") or "600")
+
+def _get_sales_kb() -> Dict[str, Any]:
+    """
+    Lê platform_kb/sales (doc) e extrai tom/regras/segmentos/objeções/preços.
+    Cache TTL em memória do processo.
+    """
+    global _SALES_KB_CACHE_AT, _SALES_KB_CACHE
+    now = time.time()
+    if _SALES_KB_CACHE and (now - (_SALES_KB_CACHE_AT or 0.0)) < _SALES_KB_TTL:
+        return _SALES_KB_CACHE
+    try:
+        db = _db_admin() or _db()
+        snap = db.collection("platform_kb").document("sales").get()
+        data = snap.to_dict() or {}
+        # Mantém shape simples (Firestore é a verdade; IA decide como usar)
+        out = {
+            "tone_rules": data.get("tone_rules") or [],
+            "behavior_rules": data.get("behavior_rules") or [],
+            "ethical_guidelines": data.get("ethical_guidelines") or [],
+            "identity_positioning": str(data.get("identity_positioning") or "").strip(),
+            "value_props": data.get("value_props") or [],
+            "how_it_works": data.get("how_it_works") or [],
+            "qualifying_questions": data.get("qualifying_questions") or [],
+            "pricing_behavior": data.get("pricing_behavior") or [],
+            "pricing_facts": data.get("pricing_facts") or {},
+            "pricing_teasers": data.get("pricing_teasers") or [],
+            "plans": data.get("plans") or {},
+            "segments": data.get("segments") or {},
+            "objections": data.get("objections") or {},
+        }
+        _SALES_KB_CACHE = out
+        _SALES_KB_CACHE_AT = now
+        return out
+    except Exception:
+        return _SALES_KB_CACHE or {}
+
+def _strip_links_for_audio(text: str) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    t = re.sub(r"https?://\S+", "", t).strip()
+    # evita ler domínio em voz
+    if _SALES_SITE_URL:
+        t = t.replace(_SALES_SITE_URL, "").strip()
+    t = t.replace("www.", "").strip()
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    return t
+
+def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], name_hint: str = "") -> str:
+    """
+    Gera fala curta de VENDAS (15–30s) com 1 micro-exemplo operacional.
+    - Sem frases prontas: a IA reescreve sempre.
+    - Sem links.
+    - 2–4 frases + 1 pergunta final.
+    """
+    api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        return ""
+    base = _strip_links_for_audio(reply_text)
+    if not base:
+        return ""
+
+    kb = kb or {}
+    # contexto pequeno, pra não estourar custo
+    ctx = {
+        "identity_positioning": kb.get("identity_positioning") or "",
+        "tone_rules": kb.get("tone_rules") or [],
+        "behavior_rules": kb.get("behavior_rules") or [],
+        "ethical_guidelines": kb.get("ethical_guidelines") or [],
+        "value_props": kb.get("value_props") or [],
+        "qualifying_questions": kb.get("qualifying_questions") or [],
+        "pricing_behavior": kb.get("pricing_behavior") or [],
+        "pricing_facts": kb.get("pricing_facts") or {},
+    }
+
+    sys = (
+        "Você é o MEI Robô institucional de VENDAS falando por áudio no WhatsApp.\n"
+        "Objetivo: soar humano, alegre e direto, e fazer a pessoa se enxergar usando a plataforma.\n"
+        "Regras obrigatórias:\n"
+        "- Nada de discurso de vendedor, nada de texto pronto.\n"
+        "- Sem bastidores técnicos.\n"
+        "- Sem links, sem ler domínio/site.\n"
+        "- 2–4 frases curtas + 1 pergunta final.\n"
+        "- Inclua UM micro-exemplo operacional (entrada → confirmação → resumo pro MEI), genérico o bastante pra qualquer negócio.\n"
+        "- Se citar preço, só use se estiver em pricing_facts; caso contrário, fale sem números.\n"
+        "Responda SOMENTE com o texto final."
+    )
+
+    user = {
+        "nome_se_existir": (name_hint or "")[:40],
+        "mensagem_do_lead": (user_text or "")[:220],
+        "replyText_canonico": base[:520],
+        "kb": ctx,
+    }
+
+    try:
+        r = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": _SALES_TTS_MODEL,
+                "temperature": 0.25,
+                "max_tokens": int(_SALES_TTS_MAX_TOKENS),
+                "messages": [
+                    {"role": "system", "content": sys},
+                    {"role": "user", "content": str(user)},
+                ],
+            },
+            timeout=18,
+        )
+        if r.status_code != 200:
+            return ""
+        j = r.json() or {}
+        content = (((j.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
+        out = _strip_links_for_audio((content or "").strip())
+        if len(out) < 10:
+            return ""
+        # hard cap
+        return out[:900]
+    except Exception:
+        return ""
+
 
 
 def _digits_only(s: str) -> str:
@@ -1287,11 +1420,53 @@ def ycloud_inbound_worker():
                 # se não há voice_id, não forçamos TTS (cai para texto, nunca mudo)
                 if voice_id:
                                         
-                                                        # 🔥 PATCH CRÍTICO: TTS recebe um texto curto e "falável".
-                    # (não é o mesmo texto canônico; é versão para FALA)
-                    tts_text = reply_text
-                    try:
-                        support_persona = _get_support_persona()
+                                        # 🔥 TTS: separa SUPORTE vs VENDAS
+                                        # - SUPORTE: mantém teu pipeline atual (persona support + concept + rewrite)
+                                        # - VENDAS (uid vazio): fala curta com micro-exemplo + tom vendedor humano (IA)
+                                        tts_text = reply_text
+                                        try:
+                                            is_sales = not bool(uid)
+                        support_persona = {}
+
+                                            if is_sales and _SALES_TTS_MODE == "on":
+                                                sales_kb = _get_sales_kb()
+                                                # nome do interlocutor, mas sem exagero (cadência já é controlada globalmente)
+                                                tts_name = ""
+                                                try:
+                                                    if _IDENTITY_MODE != "off" and wa_key_effective:
+                                                        tts_name = _get_active_speaker(wa_key_effective) or ""
+                                                    if not tts_name and wa_key_effective:
+                                                        tts_name = _get_name_override(wa_key_effective) or ""
+                                                except Exception:
+                                                    tts_name = ""
+
+                                                gen = _openai_sales_speech(
+                                                    reply_text=reply_text,
+                                                    user_text=text_in,
+                                                    kb=sales_kb,
+                                                    name_hint=tts_name,
+                                                )
+                                                if gen:
+                                                    tts_text = gen
+                                                    audio_debug = dict(audio_debug or {})
+                                                    audio_debug["ttsSales"] = {"ok": True, "model": _SALES_TTS_MODEL}
+                                                else:
+                                                    audio_debug = dict(audio_debug or {})
+                                                    audio_debug["ttsSales"] = {"ok": False}
+
+                                                # corta antes do TTS pra não estourar
+                                                if tts_text and len(tts_text) > _SALES_TTS_MAX_CHARS:
+                                                    before = tts_text
+                                                    tts_text = _shorten_for_speech(tts_text, _SALES_TTS_MAX_CHARS)
+                                                    audio_debug = dict(audio_debug or {})
+                                                    audio_debug["ttsInputShortenSales"] = {
+                                                        "applied": True,
+                                                        "maxChars": _SALES_TTS_MAX_CHARS,
+                                                        "beforeLen": len(before),
+                                                        "afterLen": len(tts_text),
+                                                    }
+                                            else:
+                                                support_persona = _get_support_persona()
 
                         # Resolve nome UMA vez, cedo, e reutiliza no TTS
                         tts_name = ""

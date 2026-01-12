@@ -267,18 +267,29 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 _log_sales_lead_fallback(ctx, reason="empty_reply")
                 reply = _sales_lead_neutral_fallback(lead_name)
 
-            out = {"ok": True, "route": "sales_lead", "replyText": reply}
+            # ✅ Propaga o pacote completo do Sales (kbContext/kind/ttsOwner/etc)
+            # e deixa o worker ser o DONO do áudio (evita duplicidade de TTS).
+            out: Dict[str, Any] = {"ok": True, "route": "sales_lead", "replyText": reply}
+            if isinstance(reply_obj, dict):
+                # copia metadados úteis (sem sobrescrever replyText final já validado)
+                for k in ("kbContext", "kind", "ttsOwner", "leadName", "segment", "goal", "interest_level", "prefersText", "nameToSay"):
+                    if k in reply_obj:
+                        out[k] = reply_obj.get(k)
+                # normaliza ttsOwner padrão
+                if not str(out.get("ttsOwner") or "").strip():
+                    out["ttsOwner"] = "worker"
+            else:
+                out["ttsOwner"] = "worker"
 
-                        
-            _force_audio_reply_if_needed(out, reply)
+            # ⚠️ IMPORTANTE: NÃO gerar áudio aqui para LEAD.
+            # O worker (routes/ycloud_tasks_bp.py) decide áudio/texto e faz TTS.
             return out
 
         except Exception as e:
             # fallback ultra conservador (nunca fica mudo) — neutro, sem marketing
             _log_sales_lead_fallback(ctx, reason="exception", err=e)
             reply = _sales_lead_neutral_fallback()
-            out = {"ok": True, "route": "sales_lead", "replyText": reply}
-            _force_audio_reply_if_needed(out, reply)
+            out = {"ok": True, "route": "sales_lead", "replyText": reply, "ttsOwner": "worker"}
             return out
     # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
     try:
@@ -600,5 +611,3 @@ __all__ = [
     # >>> novo adapter exposto:
     "process_change",
 ]
-
-
