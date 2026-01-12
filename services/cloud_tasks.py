@@ -54,16 +54,15 @@ def enqueue_ycloud_inbound(payload: Dict[str, Any], event_key: str) -> Dict[str,
     }, ensure_ascii=False).encode("utf-8")
 
     task = {
-        "name": task_name,
         "http_request": {
             "http_method": tasks_v2.HttpMethod.POST,
-            "url": target_url,
+            "url": "https://mei-robo-prod.onrender.com/tasks/ycloud-inbound",
             "headers": {
-                "Content-Type": "application/json; charset=utf-8",
-                "X-MR-Tasks-Secret": secret,
+                "Content-Type": "application/json",
+                "X-MR-Tasks-Secret": os.environ["CLOUD_TASKS_SECRET"],
             },
-            "body": body,
-        },
+            "body": json.dumps({"eventKey": event_key, "payload": payload, "enqueuedAt": int(time.time())}).encode("utf-8"),
+        }
     }
 
     try:
@@ -75,3 +74,4 @@ def enqueue_ycloud_inbound(payload: Dict[str, Any], event_key: str) -> Dict[str,
         if "ALREADY_EXISTS" in msg or "AlreadyExists" in msg:
             return {"ok": True, "taskName": task_name, "deduped": True}
         raise
+
