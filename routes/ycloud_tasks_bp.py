@@ -227,21 +227,24 @@ def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], na
         mode = "demo"
 
     # Regras por modo
+    # Defaults (evita UnboundLocalError)
+    mode_rules = ""
+    structure = ""
+
     if mode == "close":
         mode_rules = (
             "- MODO: FECHAMENTO.\n"
             "- Não faça pergunta.\n"
             "- Seja vendedor humano na dose certa: confiante, alegre e direto.\n"
-            "- Faça um convite real para ativar/assinar, sem urgência falsa.\n"
+            "- Convide para ativar/assinar sem urgência falsa.\n"
             "- Termine com despedida curta usando o nome (se existir).\n"
         )
         structure = "2–5 frases curtas, sem pergunta."
     else:
         mode_rules = (
             "- MODO: DEMONSTRAÇÃO.\n"
-            f"{mode_rules}"
-        f"- Estrutura: {structure}\n"
-            "- Pergunta final deve ser objetiva (qualificar), não abrir conversa infinita.\n"
+            "- 2–4 frases curtas + 1 pergunta final.\n"
+            "- Pergunta final objetiva (qualificar), sem abrir conversa infinita.\n"
         )
         structure = "2–4 frases + 1 pergunta final."
 
@@ -252,8 +255,9 @@ def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], na
         "- Nada de discurso de vendedor, nada de texto pronto.\n"
         "- Sem bastidores técnicos.\n"
         "- Sem links, sem ler domínio/site.\n"
-        "- 2–4 frases curtas + 1 pergunta final.\n"
-        "- Inclua UM micro-exemplo operacional (entrada → confirmação → resumo pro MEI), genérico o bastante pra qualquer negócio.\n"
+        f"{mode_rules}"
+        f"- Estrutura: {structure}\n"
+        "- Inclua UM micro-exemplo operacional (entrada → confirmação → resumo pro MEI).\n"
         "- Se citar preço, só use se estiver em pricing_facts; caso contrário, fale sem números.\n"
         "Responda SOMENTE com o texto final."
     )
@@ -1445,7 +1449,11 @@ def ycloud_inbound_worker():
             audio_debug["mode"] = "text_only_requested"
             audio_url = ""  # garante que não envia áudio
 
-        # ==========================================================
+        
+        # Defaults (evita UnboundLocalError em logs)
+        name_to_use = ""
+        nome_a_usar = ""
+# ==========================================================
         # TTS automático (universal): se entrou por áudio, deve sair por áudio.
         # Se o wa_bot não devolveu audioUrl, geramos via /api/voz/tts.
         #
@@ -1662,7 +1670,7 @@ def ycloud_inbound_worker():
                         # Probe ANTES do corte (para debug)
                         audio_debug = dict(audio_debug or {})
                         audio_debug["ttsTextProbe"] = {
-                            "nameUsed": (name_to_use or ""),
+                            "nameUsed": (locals().get("name_to_use") or ""),
                             "len": len(tts_text or ""),
                             "preview": (tts_text or "")[:140],
                         }
