@@ -275,6 +275,14 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 for k in ("kbContext", "kind", "ttsOwner", "leadName", "segment", "goal", "interest_level", "prefersText", "nameToSay"):
                     if k in reply_obj:
                         out[k] = reply_obj.get(k)
+                # garante nameToSay a partir de leadName (humanização no fechamento)
+                try:
+                    if not str(out.get("nameToSay") or "").strip():
+                        ln = str(out.get("leadName") or "").strip()
+                        if ln:
+                            out["nameToSay"] = ln
+                except Exception:
+                    pass
                 # normaliza ttsOwner padrão
                 if not str(out.get("ttsOwner") or "").strip():
                     out["ttsOwner"] = "worker"

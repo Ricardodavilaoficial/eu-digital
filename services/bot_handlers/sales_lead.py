@@ -922,10 +922,13 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         return "Oi! Eu sou o MEI Robô 🙂 Posso te explicar rapidinho como funciona. Qual teu nome?"
 
     if stage == "EXIT":
+        st["__sales_close"] = True
         return "Beleza 🙂 Pra ver tudo com calma e ativar, o melhor é seguir pelo site. Por lá fica tudo certinho."
 
     # Anti-custo / soft close
     if _should_soft_close(st, has_name=has_name, has_segment=has_segment):
+        # sinaliza para o worker que aqui é hora de FECHAR (fala mais vendedora e sem pergunta)
+        st["__sales_close"] = True
         # IA também pode fechar (sem frase pronta), mas aqui mantemos bem curto e seguro.
         if has_name:
             return f"{name}, pra ver tudo com calma e ativar, o melhor é pelo site. Se quiser, me diz teu ramo em 1 frase que eu te mostro o caminho mais enxuto 🙂"
@@ -1072,15 +1075,25 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "pricing_facts": kb.get("pricing_facts") or {},
     }
 
+    # Decide kind final: demo vs fechamento
+    stage_now = str(st.get("stage") or "").strip()
+    is_close = bool(st.get("__sales_close")) or stage_now in ("CTA", "EXIT")
+    if is_close:
+        kind = "sales_close"
+    else:
+        kind = "sales_example" if (lead_segment and (stage_now in ("PITCH", "CTA", "PRICE"))) else "sales"
+
     return {
         "replyText": (reply or "").strip() or OPENING_ASK_NAME,
         "leadName": lead_name,
         "segment": lead_segment,
         "goal": lead_goal,
         "interest_level": (st.get("interest_level") or "").strip(),
-        "kind": "sales_example" if (lead_segment and (st.get("stage") in ("PITCH", "CTA", "PRICE"))) else "sales",
+        "kind": kind,
         "kbContext": json.dumps(kb_compact, ensure_ascii=False),
         "ttsOwner": "worker",
+        # ajuda o worker a falar o nome no fechamento
+        "nameToSay": lead_name,
     }
 
 

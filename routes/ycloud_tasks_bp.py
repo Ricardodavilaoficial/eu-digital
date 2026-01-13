@@ -57,6 +57,10 @@ _SUPPORT_PERSONA_CACHE_TTL = int(os.environ.get("SUPPORT_PERSONA_TTL_SECONDS", "
 _LAST_NAME_SPOKEN_AT: Dict[str, float] = {}
 
 
+# Memória em-processo para VENDAS (cadência separada: fechamento pode repetir nome sem esperar 10min)
+_LAST_SALES_NAME_SPOKEN_AT: Dict[str, float] = {}
+
+
 # Memória em-processo para "spice" (saudação do Firestore) com cadência
 _LAST_SPICE_AT = {}          # wa_key -> epoch seconds
 _LAST_SPICE_TEXT = {}        # wa_key -> last greeting used
@@ -164,12 +168,13 @@ def _strip_links_for_audio(text: str) -> str:
     t = re.sub(r"\s{2,}", " ", t).strip()
     return t
 
-def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], name_hint: str = "") -> str:
+def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], name_hint: str = "", mode: str = "demo") -> str:
     """
     Gera fala curta de VENDAS (15–30s) com 1 micro-exemplo operacional.
     - Sem frases prontas: a IA reescreve sempre.
     - Sem links.
-    - 2–4 frases + 1 pergunta final.
+    - demo: 2–4 frases + 1 pergunta final (qualificação leve)
+    - close: 2–5 frases, SEM pergunta, com CTA + despedida (vendedor na dose certa)
     """
     api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
     if not api_key:
@@ -191,6 +196,28 @@ def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], na
         "pricing_facts": kb.get("pricing_facts") or {},
     }
 
+    mode = (mode or "demo").strip().lower()
+    if mode not in ("demo", "close"):
+        mode = "demo"
+
+    # Regras por modo
+    if mode == "close":
+        mode_rules = (
+            "- MODO: FECHAMENTO.\n"
+            "- Não faça pergunta.\n"
+            "- Seja vendedor humano na dose certa: confiante, alegre e direto.\n"
+            "- Faça um convite real para ativar/assinar, sem urgência falsa.\n"
+            "- Termine com despedida curta usando o nome (se existir).\n"
+        )
+        structure = "2–5 frases curtas, sem pergunta."
+    else:
+        mode_rules = (
+            "- MODO: DEMONSTRAÇÃO.\n"
+            "- 2–4 frases curtas + 1 pergunta final.\n"
+            "- Pergunta final deve ser objetiva (qualificar), não abrir conversa infinita.\n"
+        )
+        structure = "2–4 frases + 1 pergunta final."
+
     sys = (
         "Você é o MEI Robô institucional de VENDAS falando por áudio no WhatsApp.\n"
         "Objetivo: soar humano, alegre e direto, e fazer a pessoa se enxergar usando a plataforma.\n"
@@ -209,7 +236,8 @@ def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], na
         "mensagem_do_lead": (user_text or "")[:220],
         "replyText_canonico": base[:520],
         "kb": ctx,
-    }
+            "modo": mode,
+}
 
     try:
         r = requests.post(
@@ -1445,19 +1473,28 @@ def ycloud_inbound_worker():
                             except Exception:
                                 tts_name = ""
 
+                            # Escolhe modo por "kind" (vindo do wa_bot/sales_lead)
+                            wa_kind_l = str(wa_kind or "").strip().lower()
+                            sales_mode = "close" if wa_kind_l in ("sales_close", "close", "cta", "exit") else "demo"
+
+                            # Nome em VENDAS: no fechamento, pode repetir mesmo que o "min gap" de suporte bloqueie.
+                            if tts_name and wa_key_effective and sales_mode == "close":
+                                _LAST_SALES_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+
                             gen = _openai_sales_speech(
                                 reply_text=reply_text,
                                 user_text=text_in,
                                 kb=sales_kb,
                                 name_hint=tts_name,
+                                mode=sales_mode,
                             )
                             if gen:
                                 tts_text = gen
                                 audio_debug = dict(audio_debug or {})
-                                audio_debug["ttsSales"] = {"ok": True, "model": _SALES_TTS_MODEL}
+                                audio_debug["ttsSales"] = {"ok": True, "model": _SALES_TTS_MODEL, "mode": sales_mode, "waKind": wa_kind_l}
                             else:
                                 audio_debug = dict(audio_debug or {})
-                                audio_debug["ttsSales"] = {"ok": False}
+                                audio_debug["ttsSales"] = {"ok": False, "mode": sales_mode, "waKind": wa_kind_l}
 
                             # corta antes do TTS pra não estourar
                             if tts_text and len(tts_text) > _SALES_TTS_MAX_CHARS:
@@ -1499,10 +1536,15 @@ def ycloud_inbound_worker():
                         # Regra de produto: nome só de vez em quando.
                         name_to_use = ""
                         if tts_name and wa_key_effective:
-                            last = float(_LAST_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
-                            if (time.time() - last) >= float(_SUPPORT_NAME_MIN_GAP_SECONDS):
+                            # VENDAS: no fechamento, pode repetir nome (cadência separada)
+                            if (not bool(uid)) and (locals().get("sales_mode", "demo") == "close"):
                                 name_to_use = tts_name
-                                _LAST_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+                                _LAST_SALES_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+                            else:
+                                last = float(_LAST_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
+                                if (time.time() - last) >= float(_SUPPORT_NAME_MIN_GAP_SECONDS):
+                                    name_to_use = tts_name
+                                    _LAST_NAME_SPOKEN_AT[wa_key_effective] = time.time()
 
                         # 1) Se for conceitual e houver kbContext: gera fala humana a partir do CONTEXTO (não lê artigo)
                         concept_generated = False
