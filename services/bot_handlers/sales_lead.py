@@ -872,6 +872,11 @@ def _ai_sales_answer(
         if isinstance(obj, dict):
             reply_text = str(obj.get("replyText") or "").strip()
             name_use = str(obj.get("nameUse") or "none").strip().lower()
+            try:
+                if isinstance(state, dict):
+                    state["last_name_use"] = name_use
+            except Exception:
+                pass
     except Exception:
         # fallback: mantém texto bruto
         pass
@@ -895,6 +900,20 @@ def _ai_sales_answer(
         pass
 
     reply_text = _limit_questions(reply_text, max_questions=1)
+
+    # Anti-eco de vocativo: se começar com "<nome>!" ou "<nome>," e a resposta anterior também, corta.
+    try:
+        nm = (name or "").strip()
+        if nm and isinstance(state, dict):
+            prev = str(state.get("last_bot_reply_excerpt") or "").strip()
+            curr_starts = reply_text.lower().startswith((nm.lower() + "!", nm.lower() + ","))
+            prev_starts = prev.lower().startswith((nm.lower() + "!", nm.lower() + ","))
+            if curr_starts and prev_starts:
+                reply_text = reply_text[len(nm):].lstrip("!, \t\n\r")
+                if reply_text:
+                    reply_text = reply_text[:1].upper() + reply_text[1:]
+    except Exception:
+        pass
 
     # Guard-rail: corta saudação/vocativo repetido quando a IA só "cumprimenta"
     try:
@@ -1301,6 +1320,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
     return {
         "replyText": reply_final,
+        "nameUse": (st.get("last_name_use") or ""),
 
         # 🔒 Fonte de verdade para áudio (worker deve preferir estes campos)
         "ttsText": spoken_final,
