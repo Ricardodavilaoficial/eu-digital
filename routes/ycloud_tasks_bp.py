@@ -1283,42 +1283,39 @@ def ycloud_inbound_worker():
             kb_context = ""
             wa_kind = ""
 
+        # --- Extração canônica do retorno do wa_bot (texto/áudio/debug) ---
+        prefers_text = False
+        display_name = ""
         tts_text_from_bot = ""
+        allow_sales_demo = False
         if isinstance(wa_out, dict):
+            reply_text = (
+                wa_out.get("replyText")
+                or wa_out.get("text")
+                or wa_out.get("reply")
+                or wa_out.get("message")
+                or ""
+            )
+            audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
+            wa_audio_debug = wa_out.get("audioDebug") or {}
+            if isinstance(wa_audio_debug, dict):
+                # merge: preserva o que o worker já tinha + adiciona o do wa_bot
+                audio_debug = {**(audio_debug or {}), **wa_audio_debug}
+            kb_context = (wa_out.get("kbContext") or wa_out.get("kb_context") or "")
+            wa_kind = (wa_out.get("kind") or wa_out.get("type") or "")
+            prefers_text = bool(wa_out.get("prefersText"))
+            display_name = (wa_out.get("displayName") or "").strip()
             tts_text_from_bot = str(
                 wa_out.get("ttsText")
                 or wa_out.get("spokenText")
                 or wa_out.get("tts_text")
                 or ""
             ).strip()
-
-            if isinstance(wa_out, dict):
-                reply_text = (
-                    wa_out.get("replyText")
-                    or wa_out.get("text")
-                    or wa_out.get("reply")
-                    or wa_out.get("message")
-                    or ""
-                    )
-                audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
-                wa_audio_debug = wa_out.get("audioDebug") or {}
-                if isinstance(wa_audio_debug, dict):
-                    # merge: preserva o que o worker já tinha + adiciona o do wa_bot
-                    audio_debug = {**(audio_debug or {}), **wa_audio_debug}
-                else:
-                    audio_debug = (audio_debug or {})
-                kb_context = (wa_out.get("kbContext") or wa_out.get("kb_context") or "")
-                wa_kind = (wa_out.get("kind") or wa_out.get("type") or "")
-
-            elif wa_out:
-                reply_text = str(wa_out)
-
-            # PATCH B: respeitar prefersText / displayName vindo do wa_bot
-            prefers_text = False
-            display_name = ""
-            if isinstance(wa_out, dict):
-                prefers_text = bool(wa_out.get("prefersText"))
-                display_name = (wa_out.get("displayName") or "").strip()
+            allow_sales_demo = bool(wa_out.get("allowSalesDemo"))
+        elif wa_out:
+            reply_text = str(wa_out)
+        else:
+            reply_text = reply_text or ""
             # Se entrou por áudio, nunca preferir texto (mantém "entra áudio → sai áudio")
             if msg_type in ("audio", "voice", "ptt"):
                 prefers_text = False
@@ -1506,47 +1503,24 @@ def ycloud_inbound_worker():
                             support_persona = {}
 
                             if is_sales and _SALES_TTS_MODE == "on":
-                                # ✅ Preferência absoluta: se o wa_bot já mandou texto falado, usa ele.
+                                # 🔒 Regra de ouro (VENDAS/uid vazio): o worker NÃO inventa texto.
+                                # Ele apenas fala o que veio do wa_bot (ttsText/spokenText) ou, na falta, o reply_text.
                                 if tts_text_from_bot:
                                     tts_text = tts_text_from_bot
                                     audio_debug = dict(audio_debug or {})
-                                    audio_debug["ttsSales"] = {"ok": True, "mode": "from_bot", "waKind": str(wa_kind or "").strip().lower()}
+                                    audio_debug["ttsSales"] = {
+                                        "ok": True,
+                                        "mode": "from_bot",
+                                        "waKind": str(wa_kind or "").strip().lower(),
+                                    }
                                 else:
-
-                                    sales_kb = _get_sales_kb()
-                                    # nome do interlocutor, mas sem exagero (cadência já é controlada globalmente)
-                                    tts_name = ""
-                                    try:
-                                        if _IDENTITY_MODE != "off" and wa_key_effective:
-                                            tts_name = _get_active_speaker(wa_key_effective) or ""
-                                        if not tts_name and wa_key_effective:
-                                            tts_name = _get_name_override(wa_key_effective) or ""
-                                    except Exception:
-                                        tts_name = ""
-
-                                    # Escolhe modo por "kind" (vindo do wa_bot/sales_lead)
-                                    wa_kind_l = str(wa_kind or "").strip().lower()
-                                    sales_mode = "close" if wa_kind_l in ("sales_close", "close", "cta", "exit") else "demo"
-
-                                    # Nome em VENDAS: no fechamento, pode repetir mesmo que o "min gap" de suporte bloqueie.
-                                    if tts_name and wa_key_effective and sales_mode == "close":
-                                        _LAST_SALES_NAME_SPOKEN_AT[wa_key_effective] = time.time()
-
-                                    gen = _openai_sales_speech(
-                                        reply_text=reply_text,
-                                        user_text=text_in,
-                                        kb=sales_kb,
-                                        name_hint=tts_name,
-                                        mode=sales_mode,
-                                    )
-                                    if gen:
-                                        tts_text = gen
-                                        audio_debug = dict(audio_debug or {})
-                                        audio_debug["ttsSales"] = {"ok": True, "model": _SALES_TTS_MODEL, "mode": sales_mode, "waKind": wa_kind_l}
-                                    else:
-                                        audio_debug = dict(audio_debug or {})
-                                        audio_debug["ttsSales"] = {"ok": False, "mode": sales_mode, "waKind": wa_kind_l}
-
+                                    tts_text = reply_text
+                                    audio_debug = dict(audio_debug or {})
+                                    audio_debug["ttsSales"] = {
+                                        "ok": True,
+                                        "mode": "reply_text",
+                                        "waKind": str(wa_kind or "").strip().lower(),
+                                    }
                                     # corta antes do TTS pra não estourar
                                     if tts_text and len(tts_text) > _SALES_TTS_MAX_CHARS:
                                         before = tts_text
@@ -1587,10 +1561,9 @@ def ycloud_inbound_worker():
                             # Regra de produto: nome só de vez em quando.
                             name_to_use = ""
                             if tts_name and wa_key_effective:
-                                # VENDAS: no fechamento, pode repetir nome (cadência separada)
-                                if (not bool(uid)) and (locals().get("sales_mode", "demo") == "close"):
-                                    name_to_use = tts_name
-                                    _LAST_SALES_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+                                # VENDAS: não injeta nome no worker (conteúdo é do wa_bot)
+                                if not bool(uid):
+                                    name_to_use = ""
                                 else:
                                     last = float(_LAST_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
                                     if (time.time() - last) >= float(_SUPPORT_NAME_MIN_GAP_SECONDS):
@@ -1600,7 +1573,7 @@ def ycloud_inbound_worker():
                             # 1) Se for conceitual e houver kbContext: gera fala humana a partir do CONTEXTO (não lê artigo)
                             concept_generated = False
                             try:
-                                if _SUPPORT_TTS_CONCEPT_MODE == "on" and str(wa_kind or "").strip().lower() == "conceptual" and (kb_context or "").strip():
+                                if _SUPPORT_TTS_CONCEPT_MODE == "on" and (not is_sales) and str(wa_kind or "").strip().lower() == "conceptual" and (kb_context or "").strip():
                                     # conceitual: não usa nome, nem saudação do modelo (isso vem do Firestore)
                                     gen = _openai_generate_concept_speech(text_in, kb_context, display_name="")
                                     if gen:
@@ -1619,7 +1592,7 @@ def ycloud_inbound_worker():
 
                             # 3) Saudação via Firestore (spice) com cadência (se permitido)
                             is_informal = True  # inbound áudio no WhatsApp: assume informal
-                            greet = _pick_support_greeting(support_persona, wa_key_effective, tts_name, is_informal)
+                            greet = _pick_support_greeting(support_persona, wa_key_effective, tts_name, is_informal) if (not is_sales) else ""
                             used_spice = bool(greet)
 
                             if greet:
@@ -1635,7 +1608,7 @@ def ycloud_inbound_worker():
                                 tts_text = _make_tts_text(tts_text, name_to_use_for_make)
 
                             # 5) IA reescreve para fala humana (agora com persona do Firestore)
-                            if _SUPPORT_TTS_SUMMARY_MODE == "on":
+                            if _SUPPORT_TTS_SUMMARY_MODE == "on" and (not is_sales):
                                 rewritten = _openai_rewrite_for_speech(tts_text, name_to_use_for_make)
                                 if rewritten:
                                     tts_text = rewritten
