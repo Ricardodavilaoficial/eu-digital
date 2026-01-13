@@ -202,3 +202,54 @@ def get_lead(raw_sender: str) -> Tuple[Optional[Dict[str, Any]], str]:
             return data, k
 
     return None, keys[0]
+# -----------------------------
+# COMPAT: UPSERT LEAD / SESSION
+# (para alinhar com imports do sales_lead.py)
+# -----------------------------
+
+def upsert_lead(wa_key: str, patch: Dict[str, Any], ttl_seconds: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Upsert no lead de funil (TTL), usado para estado de conversa institucional.
+    doc_id = wa_key (somente dígitos)
+    """
+    db = _db()
+    now = now_ts()
+
+    ttl = int(ttl_seconds) if ttl_seconds is not None else LEAD_TTL_SECONDS
+    exp = now + max(300, ttl)  # mínimo 5min pra não expirar no meio
+
+    payload = dict(patch or {})
+    payload.setdefault("waKey", wa_key)
+    payload["updatedAt"] = now
+    payload.setdefault("createdAt", now)
+    payload["expiresAt"] = exp
+
+    # Se vier nome por alias, normaliza
+    if "displayName" in payload:
+        payload["displayName"] = _clean_name(str(payload.get("displayName") or ""))
+    if "name" in payload and not payload.get("displayName"):
+        payload["displayName"] = _clean_name(str(payload.get("name") or ""))
+        payload.pop("name", None)
+
+    db.collection(COLL_LEADS).document(wa_key).set(payload, merge=True)
+
+    out = dict(payload)
+    out.setdefault("resolvedWaKey", wa_key)
+    out.setdefault("leadDocId", wa_key)
+    return out
+
+
+def upsert_session(wa_key: str, patch: Dict[str, Any], ttl_seconds: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Upsert de session (TTL curto) — compat com código legado.
+    """
+    # Reaproveita o set_session existente (mantém comportamento)
+    current = dict(patch or {})
+    set_session(wa_key, current, ttl_seconds=ttl_seconds)
+
+    out = dict(current)
+    out.setdefault("waKey", wa_key)
+    out.setdefault("resolvedWaKey", wa_key)
+    out.setdefault("sessionDocId", wa_key)
+    return out
+
