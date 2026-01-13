@@ -1855,7 +1855,7 @@ def ycloud_inbound_worker():
                 logger.warning("[tasks] outbox_log_failed from=%s to=%s wamid=%s eventKey=%s", from_e164, to_e164, wamid, event_key, exc_info=True)
 
             return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
-
+        return jsonify({"ok": True, "note": "fellthrough_noop"}), 200
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         return jsonify({"ok": True}), 200
