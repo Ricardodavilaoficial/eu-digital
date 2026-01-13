@@ -793,7 +793,8 @@ def _ai_sales_answer(
     """
     kb = _get_sales_kb()
     rep = _kb_compact_for_prompt(kb)
-    # Pricing reasoning por estágio (economia + narrativa)
+
+    # Pricing reasoning por estágio (economia + narrativa) — mantém lógica
     try:
         _stage = _pricing_stage_from_state(state or {}, str(intent_hint or "").strip().lower())
     except Exception:
@@ -812,70 +813,96 @@ def _ai_sales_answer(
         )
     else:  # decision
         rep["pricing_reasoning"] = _base_pr
-        # Exemplo operacional selecionado (super compacto quando existir segment_pills)
+
+    # Exemplo operacional selecionado (super compacto quando existir segment_pills)
+    op_example = ""
+    try:
+        sp = (kb.get("segment_pills") or {}).get((segment or "").strip().lower(), {}) if segment else {}
+        op_example = str(sp.get("micro_scene") or "").strip()
+        if not op_example:
+            # fallback: tenta usar operational_examples antigo (se existir)
+            op_example = str((kb.get("operational_examples") or {}).get((segment or "").strip().lower(), "") or "").strip()
+    except Exception:
         op_example = ""
-        try:
-            sp = (kb.get("segment_pills") or {}).get((segment or "").strip().lower(), {}) if segment else {}
-            op_example = str(sp.get("micro_scene") or "").strip()
-            if not op_example:
-                # fallback: tenta usar operational_examples antigo (se existir)
-                op_example = str((kb.get("operational_examples") or {}).get((segment or "").strip().lower(), "") or "").strip()
-        except Exception:
-            op_example = ""
-        rep["operational_example_selected"] = op_example[:320] if op_example else ""
+    rep["operational_example_selected"] = op_example[:320] if op_example else ""
 
-        onboarding_hint = state.get("onboarding_hint") or ""
+    onboarding_hint = state.get("onboarding_hint") or ""
 
-        stage = (state.get("stage") or "").strip()
-        turns = int(state.get("turns") or 0)
-        last_bot = (state.get("last_bot_reply_excerpt") or "").strip()
+    stage = (state.get("stage") or "").strip()
+    turns = int(state.get("turns") or 0)
+    last_bot = (state.get("last_bot_reply_excerpt") or "").strip()
 
-        continuity = f"STAGE={stage or '—'} | TURNS={turns}"
-        if last_bot:
-            continuity += f" | NÃO repetir: {last_bot}"
+    continuity = f"STAGE={stage or '—'} | TURNS={turns}"
+    if last_bot:
+        continuity += f" | NÃO repetir: {last_bot}"
 
-        prompt = (
-            "Você é o MEI Robô institucional de VENDAS no WhatsApp.\n"
-            "Objetivo: conversar curto, humano, vendedor sem ser chato, e conduzir para o próximo passo.\n"
-            "Regras obrigatórias:\n"
-            "- 2 a 6 linhas.\n"
-            "- 1 pergunta por resposta.\n"
-            "- Sem bastidores técnicos.\n"
-            "- Não expulsar o lead.\n"
-            "- Se faltar info, pergunte só 1 coisa.\n"
-            "- Quando fizer sentido, use um micro-exemplo operacional (entrada → confirmação → resumo), sem inventar.\n"
-            "- Se citar valores, só use os que estiverem em pricing_facts.\n\n"
-            f"Lead:\n- nome: {name or '—'}\n- ramo (texto livre): {segment or '—'}\n- objetivo: {goal or '—'}\n"
-            f"intent_hint: {intent_hint or '—'}\n"
-            f"mensagem: {user_text}\n\n"
-            f"continuidade: {continuity}\n\n"
-            f"ajuda_onboarding (se existir): {json.dumps(onboarding_hint, ensure_ascii=False)}\n"
+    # IMPORTANTE: prompt e IA rodam SEMPRE (não só no decision)
+    prompt = (
+        "Você é o MEI Robô institucional de VENDAS no WhatsApp.\n"
+        "Objetivo: conversar curto, humano, vendedor sem ser chato, e conduzir para o próximo passo.\n"
+        "Regras obrigatórias:\n"
+        "- 2 a 6 linhas.\n"
+        "- 1 pergunta por resposta.\n"
+        "- Sem bastidores técnicos.\n"
+        "- Não expulsar o lead.\n"
+        "- Se faltar info, pergunte só 1 coisa.\n"
+        "- Quando fizer sentido, use um micro-exemplo operacional (entrada → confirmação → resumo), sem inventar.\n"
+        "- Se citar valores, só use os que estiverem em pricing_facts.\n\n"
+        "IMPORTANTE: responda APENAS em JSON válido, sem texto fora do JSON.\n"
+        "Formato: {\"replyText\":\"...\",\"nameUse\":\"none|greet|empathy|closing\"}\n"
+        "Guia de nameUse:\n"
+        "- greet: só se for claramente a primeira resposta.\n"
+        "- empathy: se o lead mostrar dúvida forte, confusão, cansaço, urgência, insegurança.\n"
+        "- closing: se você estiver fechando com CTA elegante.\n"
+        "- none: no resto.\n\n"
+        f"Lead:\n- nome: {name or '—'}\n- ramo (texto livre): {segment or '—'}\n- objetivo: {goal or '—'}\n"
+        f"intent_hint: {intent_hint or '—'}\n"
+        f"mensagem: {user_text}\n\n"
+        f"continuidade: {continuity}\n\n"
+        f"ajuda_onboarding (se existir): {json.dumps(onboarding_hint, ensure_ascii=False)}\n"
+        f"repertório_firestore (use como base, não copie): {json.dumps(rep, ensure_ascii=False, separators=(',', ':'))}\n"
+    )
 
-            f"repertório_firestore (use como base, não copie): {json.dumps(rep, ensure_ascii=False, separators=(',', ':'))}\n"
-        )
+    raw = (_openai_chat(prompt, max_tokens=SALES_ANSWER_MAX_TOKENS, temperature=0.35) or "").strip()
 
-    
-        reply_text = (_openai_chat(prompt, max_tokens=SALES_ANSWER_MAX_TOKENS, temperature=0.35) or "").strip()
+    reply_text = raw
+    name_use = "none"
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            reply_text = str(obj.get("replyText") or "").strip()
+            name_use = str(obj.get("nameUse") or "none").strip().lower()
+    except Exception:
+        # fallback: mantém texto bruto
+        pass
 
-        # --- lightweight sales usage log ---
-        try:
-            wa_key = str(state.get("wa_key") or state.get("__wa_key") or "").strip()
-            if wa_key and firestore:
-                fs = firestore.Client()
-                _est_tokens_in = len(prompt) // 4 if prompt else 0
-                _est_tokens_out = len(reply_text) // 4 if reply_text else 0
+    # --- lightweight sales usage log ---
+    try:
+        wa_key = str(state.get("wa_key") or state.get("__wa_key") or "").strip()
+        if wa_key and firestore:
+            fs = firestore.Client()
+            _est_tokens_in = len(prompt) // 4 if prompt else 0
+            _est_tokens_out = len(reply_text) // 4 if reply_text else 0
 
-                _log_sales_usage(
-                    fs=fs,
-                    wa_key=wa_key,
-                    stage=intent_hint or "unknown",
-                    tokens_in=_est_tokens_in,
-                    tokens_out=_est_tokens_out,
-                )
-        except Exception:
-            pass
+            _log_sales_usage(
+                fs=fs,
+                wa_key=wa_key,
+                stage=intent_hint or "unknown",
+                tokens_in=_est_tokens_in,
+                tokens_out=_est_tokens_out,
+            )
+    except Exception:
+        pass
 
     reply_text = _limit_questions(reply_text, max_questions=1)
+
+    # Guard-rail: corta saudação/vocativo repetido quando a IA só "cumprimenta"
+    try:
+        if name and name_use in ("greet", "none"):
+            reply_text = _strip_repeated_greeting(reply_text, name=name, turns=turns)
+    except Exception:
+        pass
+
     return reply_text
 
 
