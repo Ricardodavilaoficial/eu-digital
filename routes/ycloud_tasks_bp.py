@@ -1283,586 +1283,605 @@ def ycloud_inbound_worker():
             kb_context = ""
             wa_kind = ""
 
+        tts_text_from_bot = ""
         if isinstance(wa_out, dict):
-            reply_text = (
-                wa_out.get("replyText")
-                or wa_out.get("text")
-                or wa_out.get("reply")
-                or wa_out.get("message")
+            tts_text_from_bot = str(
+                wa_out.get("ttsText")
+                or wa_out.get("spokenText")
+                or wa_out.get("tts_text")
                 or ""
-                )
-            audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
-            wa_audio_debug = wa_out.get("audioDebug") or {}
-            if isinstance(wa_audio_debug, dict):
-                # merge: preserva o que o worker já tinha + adiciona o do wa_bot
-                audio_debug = {**(audio_debug or {}), **wa_audio_debug}
-            else:
-                audio_debug = (audio_debug or {})
-            kb_context = (wa_out.get("kbContext") or wa_out.get("kb_context") or "")
-            wa_kind = (wa_out.get("kind") or wa_out.get("type") or "")
+            ).strip()
 
-        elif wa_out:
-            reply_text = str(wa_out)
+            if isinstance(wa_out, dict):
+                reply_text = (
+                    wa_out.get("replyText")
+                    or wa_out.get("text")
+                    or wa_out.get("reply")
+                    or wa_out.get("message")
+                    or ""
+                    )
+                audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
+                wa_audio_debug = wa_out.get("audioDebug") or {}
+                if isinstance(wa_audio_debug, dict):
+                    # merge: preserva o que o worker já tinha + adiciona o do wa_bot
+                    audio_debug = {**(audio_debug or {}), **wa_audio_debug}
+                else:
+                    audio_debug = (audio_debug or {})
+                kb_context = (wa_out.get("kbContext") or wa_out.get("kb_context") or "")
+                wa_kind = (wa_out.get("kind") or wa_out.get("type") or "")
 
-        # PATCH B: respeitar prefersText / displayName vindo do wa_bot
-        prefers_text = False
-        display_name = ""
-        if isinstance(wa_out, dict):
-            prefers_text = bool(wa_out.get("prefersText"))
-            display_name = (wa_out.get("displayName") or "").strip()
-        # Se entrou por áudio, nunca preferir texto (mantém "entra áudio → sai áudio")
-        if msg_type in ("audio", "voice", "ptt"):
+            elif wa_out:
+                reply_text = str(wa_out)
+
+            # PATCH B: respeitar prefersText / displayName vindo do wa_bot
             prefers_text = False
+            display_name = ""
+            if isinstance(wa_out, dict):
+                prefers_text = bool(wa_out.get("prefersText"))
+                display_name = (wa_out.get("displayName") or "").strip()
+            # Se entrou por áudio, nunca preferir texto (mantém "entra áudio → sai áudio")
+            if msg_type in ("audio", "voice", "ptt"):
+                prefers_text = False
 
 
-        # Não sobrescrever resposta do wa_bot com "texto pronto".
-        # Fallback mínimo só quando for lead/VENDAS (uid ausente).
-        reply_text = (reply_text or "").strip()[:1200]
-        if not reply_text:
-            if not uid:
-                logger.warning(
-                    '[tasks] route=tasks_empty_reply reason=empty_reply from=%s to=%s wamid=%s eventKey=%s',
-                    from_e164, to_e164, wamid, event_key
+            # Não sobrescrever resposta do wa_bot com "texto pronto".
+            # Fallback mínimo só quando for lead/VENDAS (uid ausente).
+            reply_text = (reply_text or "").strip()[:1200]
+            if not reply_text:
+                if not uid:
+                    logger.warning(
+                        '[tasks] route=tasks_empty_reply reason=empty_reply from=%s to=%s wamid=%s eventKey=%s',
+                        from_e164, to_e164, wamid, event_key
+                    )
+                    reply_text = "Não consegui entender direitinho 🙂 Você quer: conhecer a plataforma, ver preços/planos, ou falar de um uso no seu negócio?"
+                else:
+                    logger.warning(
+                        "[tasks] customer_empty_reply from=%s wamid=%s",
+                        from_e164, wamid
+                    )
+                    reply_text = "Não consegui responder agora 😕 Pode tentar de novo ou me explicar um pouco melhor?"
+
+            # Se entrou por áudio, evitamos "paredão" como fallback de texto.
+            # (O áudio é o canal principal; texto aqui é só fallback se o áudio falhar.)
+            if msg_type in ("audio", "voice", "ptt"):
+                try:
+                    if reply_text and len(reply_text) > _SUPPORT_WA_TEXT_MAX_CHARS:
+                        before = reply_text
+                        reply_text = _shorten_for_whatsapp(reply_text, _SUPPORT_WA_TEXT_MAX_CHARS)
+                        audio_debug = dict(audio_debug or {})
+                        audio_debug["waTextShorten"] = {
+                            "applied": True,
+                            "maxChars": _SUPPORT_WA_TEXT_MAX_CHARS,
+                            "beforeLen": len(before),
+                            "afterLen": len(reply_text),
+                        }
+                except Exception:
+                    pass
+
+            # ==========================================================
+            # Guardrail (customer): suporte NÃO pede CNPJ.
+            # Se algum caminho legado tentar validar identidade, trocamos
+            # por um pedido humano de "como te chamo" (sem números).
+            # ==========================================================
+            def _looks_like_cnpj_request(s: str) -> bool:
+                t = (s or "").strip().lower()
+                if "cnpj" not in t:
+                    return False
+                # padrões comuns do texto problemático
+                bad = (
+                    "me informar seu cnpj",
+                    "me informar o cnpj",
+                    "poderia me informar seu cnpj",
+                    "poderia me informar o cnpj",
+                    "preciso confirmar",
+                    "confirmar se você é",
                 )
-                reply_text = "Não consegui entender direitinho 🙂 Você quer: conhecer a plataforma, ver preços/planos, ou falar de um uso no seu negócio?"
-            else:
-                logger.warning(
-                    "[tasks] customer_empty_reply from=%s wamid=%s",
-                    from_e164, wamid
-                )
-                reply_text = "Não consegui responder agora 😕 Pode tentar de novo ou me explicar um pouco melhor?"
+                return any(k in t for k in bad)
 
-        # Se entrou por áudio, evitamos "paredão" como fallback de texto.
-        # (O áudio é o canal principal; texto aqui é só fallback se o áudio falhar.)
-        if msg_type in ("audio", "voice", "ptt"):
+            if uid and _looks_like_cnpj_request(reply_text):
+                # mantém humanização (nome do MEI é ok), mas sem pedir CNPJ
+                reply_text = (
+                    "Entendi 🙂 Eu não preciso do teu CNPJ pra te ajudar aqui. "
+                    "Só pra eu te chamar certinho: você é o Edson mesmo ou é outra pessoa falando por este WhatsApp?"
+                )
+                audio_debug = dict(audio_debug or {})
+                audio_debug["identity_guard"] = {"applied": True, "reason": "removed_cnpj_request_for_customer"}
+
+
+            # Aplica override de nome (se existir) para manter consistência na conversa
             try:
-                if reply_text and len(reply_text) > _SUPPORT_WA_TEXT_MAX_CHARS:
-                    before = reply_text
-                    reply_text = _shorten_for_whatsapp(reply_text, _SUPPORT_WA_TEXT_MAX_CHARS)
+                override = ""
+                try:
+                    # 1) Preferir interlocutor ativo (premium)
+                    if _IDENTITY_MODE != "off" and wa_key_effective:
+                        override = _get_active_speaker(wa_key_effective) or ""
+
+                    # 2) Fallback: override legado (compat)
+                    if wa_key_effective:
+                        override = override or _get_name_override(wa_key_effective)
+
+                    # Probe só para debug (não decide comportamento)
+                    if wa_key_effective:
+                        db_read = _db_admin() or _db()
+                        snap = db_read.collection("platform_name_overrides").document(wa_key_effective).get()
+                        data = snap.to_dict() or {}
+                        name_probe = str(data.get("name") or "").strip()
+                        exp = float(data.get("expiresAt") or 0.0)
+                        audio_debug = dict(audio_debug or {})
+                        audio_debug["nameOverrideProbe_get"] = {
+                            "waKey": wa_key_effective,
+                            "docExists": bool(snap.exists),
+                            "name": name_probe,
+                            "expiresAt": exp,
+                            "now": time.time(),
+                        }
+
+                        # speaker state probe
+                        try:
+                            sp = _speaker_db().collection(_SPEAKER_COLL).document(wa_key_effective).get()
+                            spd = sp.to_dict() or {}
+                            audio_debug["speakerStateProbe_get"] = {
+                                "docExists": bool(sp.exists),
+                                "displayName": str(spd.get("displayName") or "").strip(),
+                                "expiresAt": float(spd.get("expiresAt") or 0.0),
+                                "source": str(spd.get("source") or "").strip(),
+                                "confidence": float(spd.get("confidence") or 0.0),
+                                "now": time.time(),
+                            }
+                        except Exception:
+                            pass
+                        if exp and time.time() > exp:
+                            override = ""
+                except Exception as e:
                     audio_debug = dict(audio_debug or {})
-                    audio_debug["waTextShorten"] = {
-                        "applied": True,
-                        "maxChars": _SUPPORT_WA_TEXT_MAX_CHARS,
-                        "beforeLen": len(before),
-                        "afterLen": len(reply_text),
-                    }
+                    audio_debug["nameOverrideProbe_get_err"] = str(e)[:120]
+                    override = ""
+
+                if override:
+                    reply_text_before_override = reply_text
+                    reply_text = _apply_name_override(reply_text, override)
+                    audio_debug = dict(audio_debug or {})
+                    audio_debug["nameOverride"] = {"applied": True, "name": override}
+
+                    # 🔥 CRÍTICO: se já tinha áudio pronto (ex.: vindo do wa_bot),
+                    # mas o texto mudou por override, invalida áudio pra regenerar com o nome certo.
+                    if audio_url and reply_text != reply_text_before_override:
+                        audio_debug["ttsRegen"] = {"forced": True, "reason": "name_override_changed_text"}
+                        audio_url = ""
             except Exception:
                 pass
 
-        # ==========================================================
-        # Guardrail (customer): suporte NÃO pede CNPJ.
-        # Se algum caminho legado tentar validar identidade, trocamos
-        # por um pedido humano de "como te chamo" (sem números).
-        # ==========================================================
-        def _looks_like_cnpj_request(s: str) -> bool:
-            t = (s or "").strip().lower()
-            if "cnpj" not in t:
-                return False
-            # padrões comuns do texto problemático
-            bad = (
-                "me informar seu cnpj",
-                "me informar o cnpj",
-                "poderia me informar seu cnpj",
-                "poderia me informar o cnpj",
-                "preciso confirmar",
-                "confirmar se você é",
-            )
-            return any(k in t for k in bad)
-
-        if uid and _looks_like_cnpj_request(reply_text):
-            # mantém humanização (nome do MEI é ok), mas sem pedir CNPJ
-            reply_text = (
-                "Entendi 🙂 Eu não preciso do teu CNPJ pra te ajudar aqui. "
-                "Só pra eu te chamar certinho: você é o Edson mesmo ou é outra pessoa falando por este WhatsApp?"
-            )
-            audio_debug = dict(audio_debug or {})
-            audio_debug["identity_guard"] = {"applied": True, "reason": "removed_cnpj_request_for_customer"}
-
-
-        # Aplica override de nome (se existir) para manter consistência na conversa
-        try:
-            override = ""
-            try:
-                # 1) Preferir interlocutor ativo (premium)
-                if _IDENTITY_MODE != "off" and wa_key_effective:
-                    override = _get_active_speaker(wa_key_effective) or ""
-
-                # 2) Fallback: override legado (compat)
-                if wa_key_effective:
-                    override = override or _get_name_override(wa_key_effective)
-
-                # Probe só para debug (não decide comportamento)
-                if wa_key_effective:
-                    db_read = _db_admin() or _db()
-                    snap = db_read.collection("platform_name_overrides").document(wa_key_effective).get()
-                    data = snap.to_dict() or {}
-                    name_probe = str(data.get("name") or "").strip()
-                    exp = float(data.get("expiresAt") or 0.0)
-                    audio_debug = dict(audio_debug or {})
-                    audio_debug["nameOverrideProbe_get"] = {
-                        "waKey": wa_key_effective,
-                        "docExists": bool(snap.exists),
-                        "name": name_probe,
-                        "expiresAt": exp,
-                        "now": time.time(),
-                    }
-
-                    # speaker state probe
-                    try:
-                        sp = _speaker_db().collection(_SPEAKER_COLL).document(wa_key_effective).get()
-                        spd = sp.to_dict() or {}
-                        audio_debug["speakerStateProbe_get"] = {
-                            "docExists": bool(sp.exists),
-                            "displayName": str(spd.get("displayName") or "").strip(),
-                            "expiresAt": float(spd.get("expiresAt") or 0.0),
-                            "source": str(spd.get("source") or "").strip(),
-                            "confidence": float(spd.get("confidence") or 0.0),
-                            "now": time.time(),
-                        }
-                    except Exception:
-                        pass
-                    if exp and time.time() > exp:
-                        override = ""
-            except Exception as e:
+            # ==========================================================
+            # Se o usuário pediu "somente texto", respeita.
+            if prefers_text and msg_type in ("audio", "voice", "ptt"):
                 audio_debug = dict(audio_debug or {})
-                audio_debug["nameOverrideProbe_get_err"] = str(e)[:120]
-                override = ""
-
-            if override:
-                reply_text_before_override = reply_text
-                reply_text = _apply_name_override(reply_text, override)
-                audio_debug = dict(audio_debug or {})
-                audio_debug["nameOverride"] = {"applied": True, "name": override}
-
-                # 🔥 CRÍTICO: se já tinha áudio pronto (ex.: vindo do wa_bot),
-                # mas o texto mudou por override, invalida áudio pra regenerar com o nome certo.
-                if audio_url and reply_text != reply_text_before_override:
-                    audio_debug["ttsRegen"] = {"forced": True, "reason": "name_override_changed_text"}
-                    audio_url = ""
-        except Exception:
-            pass
-
-        # ==========================================================
-        # Se o usuário pediu "somente texto", respeita.
-        if prefers_text and msg_type in ("audio", "voice", "ptt"):
-            audio_debug = dict(audio_debug or {})
-            audio_debug["mode"] = "text_only_requested"
-            audio_url = ""  # garante que não envia áudio
+                audio_debug["mode"] = "text_only_requested"
+                audio_url = ""  # garante que não envia áudio
 
         
-        # Defaults (evita UnboundLocalError em logs)
-        name_to_use = ""
-        nome_a_usar = ""
-# ==========================================================
-        # TTS automático (universal): se entrou por áudio, deve sair por áudio.
-        # Se o wa_bot não devolveu audioUrl, geramos via /api/voz/tts.
-        #
-        # - customer (uid): usa vozClonada.voiceId se existir
-        # - sales (uid vazio): usa INSTITUTIONAL_VOICE_ID (ENV) se existir
-        # ==========================================================
-        if msg_type in ("audio", "voice", "ptt") and (not audio_url) and reply_text and (not prefers_text):
-            try:
-                base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
-                if not base:
-                    base = (request.host_url or "").strip().rstrip("/")
-                tts_url = f"{base}/api/voz/tts"
+            # Defaults (evita UnboundLocalError em logs)
+            name_to_use = ""
+            nome_a_usar = ""
+    # ==========================================================
+            # TTS automático (universal): se entrou por áudio, deve sair por áudio.
+            # Se o wa_bot não devolveu audioUrl, geramos via /api/voz/tts.
+            #
+            # - customer (uid): usa vozClonada.voiceId se existir
+            # - sales (uid vazio): usa INSTITUTIONAL_VOICE_ID (ENV) se existir
+            # ==========================================================
+            if msg_type in ("audio", "voice", "ptt") and (not audio_url) and reply_text and (not prefers_text):
+                try:
+                    base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+                    if not base:
+                        base = (request.host_url or "").strip().rstrip("/")
+                    tts_url = f"{base}/api/voz/tts"
 
-                voice_id = ""
-                if uid:
-                    # voz do próprio MEI (se existir)
-                    try:
-                        prof = _db().collection("profissionais").document(uid).get()
-                        prof_data = prof.to_dict() or {}
-                        vc = prof_data.get("vozClonada") or {}
-                        voice_id = (vc.get("voiceId") or "").strip()
-                    except Exception:
-                        voice_id = ""
+                    voice_id = ""
+                    if uid:
+                        # voz do próprio MEI (se existir)
+                        try:
+                            prof = _db().collection("profissionais").document(uid).get()
+                            prof_data = prof.to_dict() or {}
+                            vc = prof_data.get("vozClonada") or {}
+                            voice_id = (vc.get("voiceId") or "").strip()
+                        except Exception:
+                            voice_id = ""
 
-                # Fallback universal: se entrou por áudio e não há voiceId do MEI, usa voz institucional
-                if not voice_id:
-                    voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
-                    if uid and voice_id:
-                        audio_debug = dict(audio_debug or {})
-                        audio_debug["ttsVoiceFallback"] = "institutional_for_customer_no_voiceId"
+                    # Fallback universal: se entrou por áudio e não há voiceId do MEI, usa voz institucional
+                    if not voice_id:
+                        voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
+                        if uid and voice_id:
+                            audio_debug = dict(audio_debug or {})
+                            audio_debug["ttsVoiceFallback"] = "institutional_for_customer_no_voiceId"
 
-                # se não há voice_id, não forçamos TTS (cai para texto, nunca mudo)
-                if voice_id:
+                    # se não há voice_id, não forçamos TTS (cai para texto, nunca mudo)
+                    if voice_id:
 
-                    # 🔥 TTS: separa SUPORTE vs VENDAS
-                    # - SUPORTE: mantém teu pipeline atual (persona support + concept + rewrite)
-                    # - VENDAS (uid vazio): fala curta com micro-exemplo + tom vendedor humano (IA)
-                    tts_text = reply_text
-                    try:
-                        is_sales = not bool(uid)
-                        support_persona = {}
+                        # 🔥 TTS: separa SUPORTE vs VENDAS
+                        # - SUPORTE: mantém teu pipeline atual (persona support + concept + rewrite)
+                        # - VENDAS (uid vazio): fala curta com micro-exemplo + tom vendedor humano (IA)
+                        tts_text = reply_text
+                        try:
+                            is_sales = not bool(uid)
+                            support_persona = {}
 
-                        if is_sales and _SALES_TTS_MODE == "on":
-                            sales_kb = _get_sales_kb()
-                            # nome do interlocutor, mas sem exagero (cadência já é controlada globalmente)
-                            tts_name = ""
-                            try:
-                                if _IDENTITY_MODE != "off" and wa_key_effective:
-                                    tts_name = _get_active_speaker(wa_key_effective) or ""
-                                if not tts_name and wa_key_effective:
-                                    tts_name = _get_name_override(wa_key_effective) or ""
-                            except Exception:
-                                tts_name = ""
+                            if is_sales and _SALES_TTS_MODE == "on":
+                                # ✅ Preferência absoluta: se o wa_bot já mandou texto falado, usa ele.
+                                if tts_text_from_bot:
+                                    tts_text = tts_text_from_bot
+                                    audio_debug = dict(audio_debug or {})
+                                    audio_debug["ttsSales"] = {"ok": True, "mode": "from_bot", "waKind": str(wa_kind or "").strip().lower()}
+                                else:
 
-                            # Escolhe modo por "kind" (vindo do wa_bot/sales_lead)
-                            wa_kind_l = str(wa_kind or "").strip().lower()
-                            sales_mode = "close" if wa_kind_l in ("sales_close", "close", "cta", "exit") else "demo"
-
-                            # Nome em VENDAS: no fechamento, pode repetir mesmo que o "min gap" de suporte bloqueie.
-                            if tts_name and wa_key_effective and sales_mode == "close":
-                                _LAST_SALES_NAME_SPOKEN_AT[wa_key_effective] = time.time()
-
-                            gen = _openai_sales_speech(
-                                reply_text=reply_text,
-                                user_text=text_in,
-                                kb=sales_kb,
-                                name_hint=tts_name,
-                                mode=sales_mode,
-                            )
-                            if gen:
-                                tts_text = gen
-                                audio_debug = dict(audio_debug or {})
-                                audio_debug["ttsSales"] = {"ok": True, "model": _SALES_TTS_MODEL, "mode": sales_mode, "waKind": wa_kind_l}
-                            else:
-                                audio_debug = dict(audio_debug or {})
-                                audio_debug["ttsSales"] = {"ok": False, "mode": sales_mode, "waKind": wa_kind_l}
-
-                            # corta antes do TTS pra não estourar
-                            if tts_text and len(tts_text) > _SALES_TTS_MAX_CHARS:
-                                before = tts_text
-                                tts_text = _shorten_for_speech(tts_text, _SALES_TTS_MAX_CHARS)
-                                audio_debug = dict(audio_debug or {})
-                                audio_debug["ttsInputShortenSales"] = {
-                                    "applied": True,
-                                    "maxChars": _SALES_TTS_MAX_CHARS,
-                                    "beforeLen": len(before),
-                                    "afterLen": len(tts_text),
-                                }
-                        else:
-                            support_persona = _get_support_persona()
-
-                            # Resolve nome UMA vez, cedo, e reutiliza no TTS
-                            tts_name = ""
-                            if wa_key_effective:
-                                try:
-                                    if _IDENTITY_MODE != "off":
-                                        tts_name = _get_active_speaker(wa_key_effective) or ""
-                                    if not tts_name:
-                                        tts_name = _get_name_override(wa_key_effective) or ""
-                                except Exception:
+                                    sales_kb = _get_sales_kb()
+                                    # nome do interlocutor, mas sem exagero (cadência já é controlada globalmente)
                                     tts_name = ""
+                                    try:
+                                        if _IDENTITY_MODE != "off" and wa_key_effective:
+                                            tts_name = _get_active_speaker(wa_key_effective) or ""
+                                        if not tts_name and wa_key_effective:
+                                            tts_name = _get_name_override(wa_key_effective) or ""
+                                    except Exception:
+                                        tts_name = ""
 
-                            # Fallback robusto (se por algum motivo helpers falharem):
-                            # aproveita o que já sabemos do pipeline (speaker/override).
+                                    # Escolhe modo por "kind" (vindo do wa_bot/sales_lead)
+                                    wa_kind_l = str(wa_kind or "").strip().lower()
+                                    sales_mode = "close" if wa_kind_l in ("sales_close", "close", "cta", "exit") else "demo"
+
+                                    # Nome em VENDAS: no fechamento, pode repetir mesmo que o "min gap" de suporte bloqueie.
+                                    if tts_name and wa_key_effective and sales_mode == "close":
+                                        _LAST_SALES_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+
+                                    gen = _openai_sales_speech(
+                                        reply_text=reply_text,
+                                        user_text=text_in,
+                                        kb=sales_kb,
+                                        name_hint=tts_name,
+                                        mode=sales_mode,
+                                    )
+                                    if gen:
+                                        tts_text = gen
+                                        audio_debug = dict(audio_debug or {})
+                                        audio_debug["ttsSales"] = {"ok": True, "model": _SALES_TTS_MODEL, "mode": sales_mode, "waKind": wa_kind_l}
+                                    else:
+                                        audio_debug = dict(audio_debug or {})
+                                        audio_debug["ttsSales"] = {"ok": False, "mode": sales_mode, "waKind": wa_kind_l}
+
+                                    # corta antes do TTS pra não estourar
+                                    if tts_text and len(tts_text) > _SALES_TTS_MAX_CHARS:
+                                        before = tts_text
+                                        tts_text = _shorten_for_speech(tts_text, _SALES_TTS_MAX_CHARS)
+                                        audio_debug = dict(audio_debug or {})
+                                        audio_debug["ttsInputShortenSales"] = {
+                                            "applied": True,
+                                            "maxChars": _SALES_TTS_MAX_CHARS,
+                                            "beforeLen": len(before),
+                                            "afterLen": len(tts_text),
+                                        }
+                            else:
+                                support_persona = _get_support_persona()
+
+                                # Resolve nome UMA vez, cedo, e reutiliza no TTS
+                                tts_name = ""
+                                if wa_key_effective:
+                                    try:
+                                        if _IDENTITY_MODE != "off":
+                                            tts_name = _get_active_speaker(wa_key_effective) or ""
+                                        if not tts_name:
+                                            tts_name = _get_name_override(wa_key_effective) or ""
+                                    except Exception:
+                                        tts_name = ""
+
+                                # Fallback robusto (se por algum motivo helpers falharem):
+                                # aproveita o que já sabemos do pipeline (speaker/override).
+                                try:
+                                    if not tts_name:
+                                        spg = (audio_debug or {}).get("speakerStateProbe_get") or {}
+                                        tts_name = str(spg.get("displayName") or "").strip() or tts_name
+                                    if not tts_name:
+                                        nog = (audio_debug or {}).get("nameOverrideProbe_get") or {}
+                                        tts_name = str(nog.get("name") or "").strip() or tts_name
+                                except Exception:
+                                    pass
+
+                            # Regra de produto: nome só de vez em quando.
+                            name_to_use = ""
+                            if tts_name and wa_key_effective:
+                                # VENDAS: no fechamento, pode repetir nome (cadência separada)
+                                if (not bool(uid)) and (locals().get("sales_mode", "demo") == "close"):
+                                    name_to_use = tts_name
+                                    _LAST_SALES_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+                                else:
+                                    last = float(_LAST_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
+                                    if (time.time() - last) >= float(_SUPPORT_NAME_MIN_GAP_SECONDS):
+                                        name_to_use = tts_name
+                                        _LAST_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+
+                            # 1) Se for conceitual e houver kbContext: gera fala humana a partir do CONTEXTO (não lê artigo)
+                            concept_generated = False
                             try:
-                                if not tts_name:
-                                    spg = (audio_debug or {}).get("speakerStateProbe_get") or {}
-                                    tts_name = str(spg.get("displayName") or "").strip() or tts_name
-                                if not tts_name:
-                                    nog = (audio_debug or {}).get("nameOverrideProbe_get") or {}
-                                    tts_name = str(nog.get("name") or "").strip() or tts_name
+                                if _SUPPORT_TTS_CONCEPT_MODE == "on" and str(wa_kind or "").strip().lower() == "conceptual" and (kb_context or "").strip():
+                                    # conceitual: não usa nome, nem saudação do modelo (isso vem do Firestore)
+                                    gen = _openai_generate_concept_speech(text_in, kb_context, display_name="")
+                                    if gen:
+                                        tts_text = gen
+                                        concept_generated = True
+                                        audio_debug = dict(audio_debug or {})
+                                        audio_debug["ttsConcept"] = {"ok": True, "model": _SUPPORT_TTS_CONCEPT_MODEL}
+                                    else:
+                                        audio_debug = dict(audio_debug or {})
+                                        audio_debug["ttsConcept"] = {"ok": False}
                             except Exception:
                                 pass
 
-                        # Regra de produto: nome só de vez em quando.
-                        name_to_use = ""
-                        if tts_name and wa_key_effective:
-                            # VENDAS: no fechamento, pode repetir nome (cadência separada)
-                            if (not bool(uid)) and (locals().get("sales_mode", "demo") == "close"):
-                                name_to_use = tts_name
-                                _LAST_SALES_NAME_SPOKEN_AT[wa_key_effective] = time.time()
-                            else:
-                                last = float(_LAST_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
-                                if (time.time() - last) >= float(_SUPPORT_NAME_MIN_GAP_SECONDS):
-                                    name_to_use = tts_name
-                                    _LAST_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+                            # 2) Sempre expande unidades para TTS (antes de qualquer rewrite)
+                            tts_text = _expand_units_for_speech(tts_text)
 
-                        # 1) Se for conceitual e houver kbContext: gera fala humana a partir do CONTEXTO (não lê artigo)
-                        concept_generated = False
-                        try:
-                            if _SUPPORT_TTS_CONCEPT_MODE == "on" and str(wa_kind or "").strip().lower() == "conceptual" and (kb_context or "").strip():
-                                # conceitual: não usa nome, nem saudação do modelo (isso vem do Firestore)
-                                gen = _openai_generate_concept_speech(text_in, kb_context, display_name="")
-                                if gen:
-                                    tts_text = gen
-                                    concept_generated = True
+                            # 3) Saudação via Firestore (spice) com cadência (se permitido)
+                            is_informal = True  # inbound áudio no WhatsApp: assume informal
+                            greet = _pick_support_greeting(support_persona, wa_key_effective, tts_name, is_informal)
+                            used_spice = bool(greet)
+
+                            if greet:
+                                tts_text = f"{greet} {tts_text}".strip()
+                                name_to_use_for_make = ""
+                            else:
+                                name_to_use_for_make = name_to_use
+
+                            # 4) texto falável base (limpo + nome opcional, mas sem duplicar se teve spice)
+                            if concept_generated:
+                                tts_text = _clean_for_speech(tts_text)
+                            else:
+                                tts_text = _make_tts_text(tts_text, name_to_use_for_make)
+
+                            # 5) IA reescreve para fala humana (agora com persona do Firestore)
+                            if _SUPPORT_TTS_SUMMARY_MODE == "on":
+                                rewritten = _openai_rewrite_for_speech(tts_text, name_to_use_for_make)
+                                if rewritten:
+                                    tts_text = rewritten
+                                    # --- Dedup nome (evita "Edson, Fala, Edson!") ---
+                                    try:
+                                        # nome real do interlocutor (não o "permitido" pra make_tts_text)
+                                        _nm = (tts_name or "").strip()
+                                        if _nm:
+                                            # se o texto começa com "Nome, ..." e também contém "..., Nome!" logo no começo,
+                                            # remove o prefixo "Nome, " (mantém o greeting com nome).
+                                            low = (tts_text or "").lower()
+                                            nm_low = _nm.lower()
+                                            if low.startswith(nm_low + ",") and (nm_low + "!") in low[:60]:
+                                                tts_text = (tts_text or "")[len(_nm) + 1 :].lstrip()  # remove "Nome,"
+                                    except Exception:
+                                        pass
                                     audio_debug = dict(audio_debug or {})
-                                    audio_debug["ttsConcept"] = {"ok": True, "model": _SUPPORT_TTS_CONCEPT_MODEL}
+                                    audio_debug["ttsRewrite"] = {"ok": True, "model": _SUPPORT_TTS_SUMMARY_MODEL}
                                 else:
                                     audio_debug = dict(audio_debug or {})
-                                    audio_debug["ttsConcept"] = {"ok": False}
-                        except Exception:
-                            pass
+                                    audio_debug["ttsRewrite"] = {"ok": False}
 
-                        # 2) Sempre expande unidades para TTS (antes de qualquer rewrite)
-                        tts_text = _expand_units_for_speech(tts_text)
+                            # 6) Expande unidades DE NOVO (rewrite pode reintroduzir MB/GB)
+                            tts_text = _expand_units_for_speech(tts_text)
 
-                        # 3) Saudação via Firestore (spice) com cadência (se permitido)
-                        is_informal = True  # inbound áudio no WhatsApp: assume informal
-                        greet = _pick_support_greeting(support_persona, wa_key_effective, tts_name, is_informal)
-                        used_spice = bool(greet)
-
-                        if greet:
-                            tts_text = f"{greet} {tts_text}".strip()
-                            name_to_use_for_make = ""
-                        else:
-                            name_to_use_for_make = name_to_use
-
-                        # 4) texto falável base (limpo + nome opcional, mas sem duplicar se teve spice)
-                        if concept_generated:
-                            tts_text = _clean_for_speech(tts_text)
-                        else:
-                            tts_text = _make_tts_text(tts_text, name_to_use_for_make)
-
-                        # 5) IA reescreve para fala humana (agora com persona do Firestore)
-                        if _SUPPORT_TTS_SUMMARY_MODE == "on":
-                            rewritten = _openai_rewrite_for_speech(tts_text, name_to_use_for_make)
-                            if rewritten:
-                                tts_text = rewritten
-                                # --- Dedup nome (evita "Edson, Fala, Edson!") ---
-                                try:
-                                    # nome real do interlocutor (não o "permitido" pra make_tts_text)
-                                    _nm = (tts_name or "").strip()
-                                    if _nm:
-                                        # se o texto começa com "Nome, ..." e também contém "..., Nome!" logo no começo,
-                                        # remove o prefixo "Nome, " (mantém o greeting com nome).
-                                        low = (tts_text or "").lower()
-                                        nm_low = _nm.lower()
-                                        if low.startswith(nm_low + ",") and (nm_low + "!") in low[:60]:
-                                            tts_text = (tts_text or "")[len(_nm) + 1 :].lstrip()  # remove "Nome,"
-                                except Exception:
-                                    pass
-                                audio_debug = dict(audio_debug or {})
-                                audio_debug["ttsRewrite"] = {"ok": True, "model": _SUPPORT_TTS_SUMMARY_MODEL}
-                            else:
-                                audio_debug = dict(audio_debug or {})
-                                audio_debug["ttsRewrite"] = {"ok": False}
-
-                        # 6) Expande unidades DE NOVO (rewrite pode reintroduzir MB/GB)
-                        tts_text = _expand_units_for_speech(tts_text)
-
-                        # Garantia final: se liberamos nome, ele não pode sumir no rewrite
-                        # (mas se já teve greeting do Firestore, não re-injeta nome aqui)
-                        try:
-                            if name_to_use_for_make and (not used_spice):
-                                low = (tts_text or "").lstrip().lower()
-                                if not low.startswith((name_to_use_for_make.lower() + ",", name_to_use_for_make.lower() + " ")):
-                                    tts_text = f"{name_to_use_for_make}, {tts_text}".strip()
-                        except Exception:
-                            pass
-
-                    except Exception:
-                        pass
-# Auditoria segura: prova do texto enviado ao TTS sem entupir logs
-                        try:
-                            sha = _sha1_id(tts_text)
-                            head = (tts_text or "")[:80]
-                            tail = (tts_text or "")[-80:] if tts_text else ""
-                            audio_debug = dict(audio_debug or {})
-                            audio_debug["ttsPayload"] = {"sha1": sha, "len": len(tts_text or ""), "head": head, "tail": tail}
-                        except Exception:
-                            pass
-
-                        # Probe ANTES do corte (para debug)
-                        audio_debug = dict(audio_debug or {})
-                        audio_debug["ttsTextProbe"] = {
-                            "nameUsed": (locals().get("name_to_use") or ""),
-                            "len": len(tts_text or ""),
-                            "preview": (tts_text or "")[:140],
-                        }
-# Corte para evitar 413
-                        if tts_text and len(tts_text) > _SUPPORT_TTS_MAX_CHARS:
-                            before = tts_text
-                            tts_text = _shorten_for_speech(tts_text, _SUPPORT_TTS_MAX_CHARS)
-                            audio_debug = dict(audio_debug or {})
-                            audio_debug["ttsInputShorten"] = {
-                                "applied": True,
-                                "maxChars": _SUPPORT_TTS_MAX_CHARS,
-                                "beforeLen": len(before),
-                                "afterLen": len(tts_text),
-                            }
-
-                        # Probe FINAL (texto REAL falado)
-                        audio_debug = dict(audio_debug or {})
-                        audio_debug["ttsTextFinal"] = {
-                            "len": len(tts_text or ""),
-                            "preview": (tts_text or "")[:140],
-                        }
-                    except Exception:
-                        pass
-
-                    def _call_tts(payload_text: str):
-                        return requests.post(
-                            tts_url,
-                            headers={"Accept": "application/json"},
-                            json={"text": payload_text, "voice_id": voice_id},
-                            timeout=35,
-                        )
-
-                    # ✅ Texto canônico falado (o que realmente vai pro TTS)
-                    tts_text_final_used = tts_text
-
-                    rr = _call_tts(tts_text)
-
-                    # Retry automático se bater 413 (texto ainda grande pro endpoint)
-                    if rr.status_code == 413:
-                        try:
-                            retry_text = _shorten_for_speech(tts_text, _SUPPORT_TTS_RETRY_MAX_CHARS)
-                            # ✅ Se precisou retry, o falado é o retry_text
-                            tts_text_final_used = retry_text
-                            audio_debug = dict(audio_debug or {})
-                            audio_debug["ttsRetry"] = {
-                                "applied": True,
-                                "http": 413,
-                                "maxChars": _SUPPORT_TTS_RETRY_MAX_CHARS,
-                                "retryLen": len(retry_text),
-                            }
-                            rr = _call_tts(retry_text)
-                        except Exception as e_retry:
-                            audio_debug = dict(audio_debug or {})
-                            audio_debug["ttsRetry"] = {"applied": False, "reason": f"exc:{type(e_retry).__name__}"}
-
-                    if rr.status_code == 200:
-                        # 1) Tentativa normal: JSON com audioUrl
-                        try:
-                            j = rr.json()
-                            if isinstance(j, dict) and j.get("ok") is True and (j.get("audioUrl") or ""):
-                                audio_url = (j.get("audioUrl") or "").strip()
-                                audio_debug = dict(audio_debug or {})
-                                audio_debug["tts"] = {"ok": True, "mode": "json_audioUrl"}
-                            else:
-                                raise ValueError("json_missing_audioUrl")
-                        except Exception:
-                            # 2) Fallback premium: MP3 bytes (ex.: começa com ID3)
+                            # Garantia final: se liberamos nome, ele não pode sumir no rewrite
+                            # (mas se já teve greeting do Firestore, não re-injeta nome aqui)
                             try:
-                                b = rr.content or b""
-                                head = b[:3]
-                                ct = (rr.headers.get("content-type") or "").lower()
+                                if name_to_use_for_make and (not used_spice):
+                                    low = (tts_text or "").lstrip().lower()
+                                    if not low.startswith((name_to_use_for_make.lower() + ",", name_to_use_for_make.lower() + " ")):
+                                        tts_text = f"{name_to_use_for_make}, {tts_text}".strip()
+                            except Exception:
+                                pass
 
-                                is_mp3 = (head == b"ID3") or ("audio" in ct) or b.startswith(b"\xff\xfb")
-                                if not is_mp3 or len(b) < 256:
-                                    raise ValueError("not_mp3_bytes")
-
-                                bucket_name = (os.environ.get("STORAGE_BUCKET") or "").strip()
-                                if not bucket_name:
-                                    raise ValueError("missing_STORAGE_BUCKET")
-
-                                # upload em um caminho estável (não conflita)
-                                now = datetime.datetime.utcnow()
-                                obj = f"sandbox/institutional_tts/{now:%Y/%m/%d}/{uuid.uuid4().hex}.mp3"
-
-                                client = gcs_storage.Client()
-                                bucket = client.bucket(bucket_name)
-                                blob = bucket.blob(obj)
-                                blob.upload_from_string(b, content_type="audio/mpeg")
-
-                                exp_s = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900") or "900")
-                                audio_url = blob.generate_signed_url(
-                                    expiration=datetime.timedelta(seconds=exp_s),
-                                    method="GET",
-                                )
-
+                        except Exception:
+                            pass
+    # Auditoria segura: prova do texto enviado ao TTS sem entupir logs
+                            try:
+                                sha = _sha1_id(tts_text)
+                                head = (tts_text or "")[:80]
+                                tail = (tts_text or "")[-80:] if tts_text else ""
                                 audio_debug = dict(audio_debug or {})
-                                audio_debug["tts"] = {"ok": True, "mode": "bytes_upload_signed", "bytes": len(b), "ct": ct[:40]}
-                            except Exception as e2:
-                                # erro real: não conseguimos obter uma URL pra mandar ao WhatsApp
+                                audio_debug["ttsPayload"] = {"sha1": sha, "len": len(tts_text or ""), "head": head, "tail": tail}
+                            except Exception:
+                                pass
+
+                            # Probe ANTES do corte (para debug)
+                            audio_debug = dict(audio_debug or {})
+                            audio_debug["ttsTextProbe"] = {
+                                "nameUsed": (locals().get("name_to_use") or ""),
+                                "len": len(tts_text or ""),
+                                "preview": (tts_text or "")[:140],
+                            }
+    # Corte para evitar 413
+                            if tts_text and len(tts_text) > _SUPPORT_TTS_MAX_CHARS:
+                                before = tts_text
+                                tts_text = _shorten_for_speech(tts_text, _SUPPORT_TTS_MAX_CHARS)
                                 audio_debug = dict(audio_debug or {})
-                                audio_debug["tts"] = {"ok": False, "reason": f"tts_bytes_fail:{type(e2).__name__}:{str(e2)[:80]}"}
+                                audio_debug["ttsInputShorten"] = {
+                                    "applied": True,
+                                    "maxChars": _SUPPORT_TTS_MAX_CHARS,
+                                    "beforeLen": len(before),
+                                    "afterLen": len(tts_text),
+                                }
+
+                            # Probe FINAL (texto REAL falado)
+                            audio_debug = dict(audio_debug or {})
+                            audio_debug["ttsTextFinal"] = {
+                                "len": len(tts_text or ""),
+                                "preview": (tts_text or "")[:140],
+                            }
+                        except Exception:
+                            pass
+
+                        def _call_tts(payload_text: str):
+                            return requests.post(
+                                tts_url,
+                                headers={"Accept": "application/json"},
+                                json={"text": payload_text, "voice_id": voice_id},
+                                timeout=35,
+                            )
+
+                        # ✅ Texto canônico falado (o que realmente vai pro TTS)
+                    
+                        # 🔒 Blindagem final: nunca começar com "Fala!"
+                        tts_text = re.sub(r"^(fala+[\s,!\.\-–—]*)", "", (tts_text or "").strip(), flags=re.IGNORECASE).strip() or "Oi 🙂"
+                        tts_text_final_used = tts_text
+
+                        rr = _call_tts(tts_text)
+
+                        # Retry automático se bater 413 (texto ainda grande pro endpoint)
+                        if rr.status_code == 413:
+                            try:
+                                retry_text = _shorten_for_speech(tts_text, _SUPPORT_TTS_RETRY_MAX_CHARS)
+                                # ✅ Se precisou retry, o falado é o retry_text
+                                tts_text_final_used = retry_text
+                                audio_debug = dict(audio_debug or {})
+                                audio_debug["ttsRetry"] = {
+                                    "applied": True,
+                                    "http": 413,
+                                    "maxChars": _SUPPORT_TTS_RETRY_MAX_CHARS,
+                                    "retryLen": len(retry_text),
+                                }
+                                rr = _call_tts(retry_text)
+                            except Exception as e_retry:
+                                audio_debug = dict(audio_debug or {})
+                                audio_debug["ttsRetry"] = {"applied": False, "reason": f"exc:{type(e_retry).__name__}"}
+
+                        if rr.status_code == 200:
+                            # 1) Tentativa normal: JSON com audioUrl
+                            try:
+                                j = rr.json()
+                                if isinstance(j, dict) and j.get("ok") is True and (j.get("audioUrl") or ""):
+                                    audio_url = (j.get("audioUrl") or "").strip()
+                                    audio_debug = dict(audio_debug or {})
+                                    audio_debug["tts"] = {"ok": True, "mode": "json_audioUrl"}
+                                else:
+                                    raise ValueError("json_missing_audioUrl")
+                            except Exception:
+                                # 2) Fallback premium: MP3 bytes (ex.: começa com ID3)
+                                try:
+                                    b = rr.content or b""
+                                    head = b[:3]
+                                    ct = (rr.headers.get("content-type") or "").lower()
+
+                                    is_mp3 = (head == b"ID3") or ("audio" in ct) or b.startswith(b"\xff\xfb")
+                                    if not is_mp3 or len(b) < 256:
+                                        raise ValueError("not_mp3_bytes")
+
+                                    bucket_name = (os.environ.get("STORAGE_BUCKET") or "").strip()
+                                    if not bucket_name:
+                                        raise ValueError("missing_STORAGE_BUCKET")
+
+                                    # upload em um caminho estável (não conflita)
+                                    now = datetime.datetime.utcnow()
+                                    obj = f"sandbox/institutional_tts/{now:%Y/%m/%d}/{uuid.uuid4().hex}.mp3"
+
+                                    client = gcs_storage.Client()
+                                    bucket = client.bucket(bucket_name)
+                                    blob = bucket.blob(obj)
+                                    blob.upload_from_string(b, content_type="audio/mpeg")
+
+                                    exp_s = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900") or "900")
+                                    audio_url = blob.generate_signed_url(
+                                        expiration=datetime.timedelta(seconds=exp_s),
+                                        method="GET",
+                                    )
+
+                                    audio_debug = dict(audio_debug or {})
+                                    audio_debug["tts"] = {"ok": True, "mode": "bytes_upload_signed", "bytes": len(b), "ct": ct[:40]}
+                                except Exception as e2:
+                                    # erro real: não conseguimos obter uma URL pra mandar ao WhatsApp
+                                    audio_debug = dict(audio_debug or {})
+                                    audio_debug["tts"] = {"ok": False, "reason": f"tts_bytes_fail:{type(e2).__name__}:{str(e2)[:80]}"}
+                        else:
+                            audio_debug = dict(audio_debug or {})
+                            audio_debug["tts"] = {"ok": False, "reason": f"tts_http_{rr.status_code}"}
                     else:
                         audio_debug = dict(audio_debug or {})
-                        audio_debug["tts"] = {"ok": False, "reason": f"tts_http_{rr.status_code}"}
-                else:
+                        audio_debug["tts"] = {"ok": False, "reason": "missing_voice_id"}
+                    
+                except Exception as e:
+                    logger.exception("[tasks] tts_failed uid=%s wamid=%s", uid, wamid)
                     audio_debug = dict(audio_debug or {})
-                    audio_debug["tts"] = {"ok": False, "reason": "missing_voice_id"}
+                    audio_debug["tts"] = {"ok": False, "reason": f"tts_exc:{e}"}
                     
-            except Exception as e:
-                logger.exception("[tasks] tts_failed uid=%s wamid=%s", uid, wamid)
+            # ✅ Guarda SEMPRE o texto final que foi pro TTS (hash + preview)
+            try:
                 audio_debug = dict(audio_debug or {})
-                audio_debug["tts"] = {"ok": False, "reason": f"tts_exc:{e}"}
-                    
-        # ✅ Guarda SEMPRE o texto final que foi pro TTS (hash + preview)
-        try:
+                audio_debug["ttsTextFinal"] = {
+                    "len": len(tts_text_final_used or ""),
+                    "preview": (tts_text_final_used or "")[:120],
+                    "sha1": _sha1(tts_text_final_used),
+                }
+            except Exception:
+                pass
+
+            # envia resposta: se lead mandou áudio, tentamos áudio (se veio audioUrl), senão texto
+            sent_ok = False
+            allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
+
+            try:
+                from providers.ycloud import send_text, send_audio  # type: ignore
+            except Exception:
+                send_text = None  # type: ignore
+                send_audio = None  # type: ignore
+
+            # PATCH B: se prefersText, manda direto texto e não tenta áudio
+            if prefers_text and send_text:
+                try:
+                    sent_ok, _ = send_text(from_e164, reply_text)
+                except Exception:
+                    logger.exception("[tasks] lead: falha send_text (prefersText)")
+        
+            if (not prefers_text) and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
+                try:
+                    sent_ok, _ = send_audio(from_e164, audio_url)
+                except Exception:
+                    logger.exception("[tasks] lead: falha send_audio")
+
+            if (not sent_ok) and send_text:
+                try:
+                    sent_ok, _ = send_text(from_e164, reply_text)
+                except Exception:
+                    logger.exception("[tasks] lead: falha send_text")
+
+        
+            # ==========================================================
+            # Auditoria: alinhamento explícito entre replyText e spokenText (TTS)
+            # ==========================================================
+            spoken_source = "replyText_pipeline"
+            if wa_kind == "conceptual" and kb_context:
+                spoken_source = "kbContext_concept"
+
             audio_debug = dict(audio_debug or {})
-            audio_debug["ttsTextFinal"] = {
-                "len": len(tts_text_final_used or ""),
-                "preview": (tts_text_final_used or "")[:120],
-                "sha1": _sha1(tts_text_final_used),
-            }
-        except Exception:
-            pass
-
-        # envia resposta: se lead mandou áudio, tentamos áudio (se veio audioUrl), senão texto
-        sent_ok = False
-        allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
-
-        try:
-            from providers.ycloud import send_text, send_audio  # type: ignore
-        except Exception:
-            send_text = None  # type: ignore
-            send_audio = None  # type: ignore
-
-        # PATCH B: se prefersText, manda direto texto e não tenta áudio
-        if prefers_text and send_text:
-            try:
-                sent_ok, _ = send_text(from_e164, reply_text)
-            except Exception:
-                logger.exception("[tasks] lead: falha send_text (prefersText)")
-        
-        if (not prefers_text) and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
-            try:
-                sent_ok, _ = send_audio(from_e164, audio_url)
-            except Exception:
-                logger.exception("[tasks] lead: falha send_audio")
-
-        if (not sent_ok) and send_text:
-            try:
-                sent_ok, _ = send_text(from_e164, reply_text)
-            except Exception:
-                logger.exception("[tasks] lead: falha send_text")
-
-        
-        # ==========================================================
-        # Auditoria: alinhamento explícito entre replyText e spokenText (TTS)
-        # ==========================================================
-        spoken_source = "replyText_pipeline"
-        if wa_kind == "conceptual" and kb_context:
-            spoken_source = "kbContext_concept"
-
-        audio_debug = dict(audio_debug or {})
-        audio_debug.setdefault("auditAlignment", {})
-        audio_debug["auditAlignment"].update({
-            "replyTextRole": "canonical_base",
-            "spokenTextRole": "spoken_source_of_truth",
-            "spokenSource": spoken_source,
-            "replyTextSha1": _sha1(reply_text),
-            "spokenTextSha1": _sha1(tts_text_final_used),
-            "note": "Áudio é versão otimizada para fala do replyText (ou do kbContext quando conceptual).",
-        })
-
-# log leve (auditoria). Precisa ocorrer antes do return.
-        try:
-            _db().collection("platform_wa_outbox_logs").add({
-        "createdAt": firestore.SERVER_TIMESTAMP,
-        "from": from_e164,
-        "to": to_e164,
-        "wamid": wamid,
-        "msgType": msg_type,
-        "route": "sales" if not uid else "customer",
-        "replyText": (reply_text or "")[:400],
-        "audioUrl": (audio_url or "")[:300],
-        "audioDebug": audio_debug,
-        "spokenText": (tts_text_final_used or "")[:600],
-        "eventKey": event_key,
-        "sentOk": bool(sent_ok),
+            audio_debug.setdefault("auditAlignment", {})
+            audio_debug["auditAlignment"].update({
+                "replyTextRole": "canonical_base",
+                "spokenTextRole": "spoken_source_of_truth",
+                "spokenSource": spoken_source,
+                "replyTextSha1": _sha1(reply_text),
+                "spokenTextSha1": _sha1(tts_text_final_used),
+                "note": "Áudio é versão otimizada para fala do replyText (ou do kbContext quando conceptual).",
             })
-        except Exception:
-            logger.warning("[tasks] outbox_log_failed from=%s to=%s wamid=%s eventKey=%s", from_e164, to_e164, wamid, event_key, exc_info=True)
 
-        return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
+    # log leve (auditoria). Precisa ocorrer antes do return.
+            try:
+                _db().collection("platform_wa_outbox_logs").add({
+            "createdAt": firestore.SERVER_TIMESTAMP,
+            "from": from_e164,
+            "to": to_e164,
+            "wamid": wamid,
+            "msgType": msg_type,
+            "route": "sales" if not uid else "customer",
+            "replyText": (reply_text or "")[:400],
+            "audioUrl": (audio_url or "")[:300],
+            "audioDebug": audio_debug,
+            "spokenText": (tts_text_final_used or "")[:600],
+            "eventKey": event_key,
+            "sentOk": bool(sent_ok),
+                })
+            except Exception:
+                logger.warning("[tasks] outbox_log_failed from=%s to=%s wamid=%s eventKey=%s", from_e164, to_e164, wamid, event_key, exc_info=True)
+
+            return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
 
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
