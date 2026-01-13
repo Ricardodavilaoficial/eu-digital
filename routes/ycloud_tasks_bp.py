@@ -1,6 +1,8 @@
 # routes/ycloud_tasks_bp.py
 from __future__ import annotations
 
+
+import json
 import os
 import time
 import random
@@ -184,16 +186,40 @@ def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], na
         return ""
 
     kb = kb or {}
-    # contexto pequeno, pra não estourar custo
+    # --- KB compacto (anti-tokens): usa sales_pills quando existir; fallback seguro ---
+    pills = kb.get("sales_pills") or {}
+
+    def _clip(s: str, n: int) -> str:
+        s = (s or "").strip()
+        if not s:
+            return ""
+        s = re.sub(r"\s+", " ", s).strip()
+        return s[:n]
+
+    def _first_n(arr: Any, n: int) -> list:
+        if not isinstance(arr, list):
+            return []
+        return arr[:n]
+
     ctx = {
-        "identity_positioning": kb.get("identity_positioning") or "",
-        "tone_rules": kb.get("tone_rules") or [],
-        "behavior_rules": kb.get("behavior_rules") or [],
-        "ethical_guidelines": kb.get("ethical_guidelines") or [],
-        "value_props": kb.get("value_props") or [],
-        "qualifying_questions": kb.get("qualifying_questions") or [],
-        "pricing_behavior": kb.get("pricing_behavior") or [],
+        # 1–2 linhas no máximo (ou vazio)
+        "identity_blurb": _clip(str(pills.get("identity_blurb") or kb.get("identity_positioning") or ""), 260),
+        # top3 benefícios curtos
+        "value_props_top3": _first_n(pills.get("value_props_top3") or kb.get("value_props") or [], 3),
+        # 3 passos curtos
+        "how_it_works_3steps": _first_n(pills.get("how_it_works_3steps") or kb.get("how_it_works") or [], 3),
+        # tom e limites (curto)
+        "tone_rules": _first_n(kb.get("tone_rules") or [], 5),
+        "behavior_rules": _first_n(kb.get("behavior_rules") or [], 6),
+        "closing_guidance": _first_n(kb.get("closing_guidance") or [], 4),
+        "ethical_guidelines": _first_n(kb.get("ethical_guidelines") or [], 4),
+        # perguntas curtas (no máximo 2)
+        "qualifying_questions": _first_n(kb.get("qualifying_questions") or [], 2),
+        # preço (fatos pequenos OK)
+        "pricing_behavior": _first_n(kb.get("pricing_behavior") or [], 4),
         "pricing_facts": kb.get("pricing_facts") or {},
+        "pricing_blurb": _clip(str(pills.get("pricing_blurb") or ""), 220),
+        "cta_one_liners": _first_n(pills.get("cta_one_liners") or [], 3),
     }
 
     mode = (mode or "demo").strip().lower()
@@ -213,7 +239,8 @@ def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], na
     else:
         mode_rules = (
             "- MODO: DEMONSTRAÇÃO.\n"
-            "- 2–4 frases curtas + 1 pergunta final.\n"
+            f"{mode_rules}"
+        f"- Estrutura: {structure}\n"
             "- Pergunta final deve ser objetiva (qualificar), não abrir conversa infinita.\n"
         )
         structure = "2–4 frases + 1 pergunta final."
@@ -236,8 +263,8 @@ def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], na
         "mensagem_do_lead": (user_text or "")[:220],
         "replyText_canonico": base[:520],
         "kb": ctx,
-            "modo": mode,
-}
+        "modo": mode,
+    }
 
     try:
         r = requests.post(
@@ -249,7 +276,7 @@ def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], na
                 "max_tokens": int(_SALES_TTS_MAX_TOKENS),
                 "messages": [
                     {"role": "system", "content": sys},
-                    {"role": "user", "content": str(user)},
+                    {"role": "user", "content": json.dumps(user, ensure_ascii=False, separators=(",", ":"))},
                 ],
             },
             timeout=18,

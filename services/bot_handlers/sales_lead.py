@@ -588,20 +588,38 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
 
 def _kb_compact_for_prompt(kb: Dict[str, Any]) -> Dict[str, Any]:
     kb = kb or {}
+    pills = kb.get("sales_pills") or {}
+    def _clip(s: str, n: int) -> str:
+        s = (s or "").strip()
+        if not s:
+            return ""
+        s = re.sub(r"\s+", " ", s).strip()
+        return s[:n]
+    def _first_n(arr: Any, n: int) -> list:
+        if not isinstance(arr, list):
+            return []
+        return arr[:n]
+
     return {
-        "identity_positioning": str(kb.get("identity_positioning") or "").strip(),
-        "tone_rules": kb.get("tone_rules") or [],
-        "behavior_rules": kb.get("behavior_rules") or [],
-        "ethical_guidelines": kb.get("ethical_guidelines") or [],
-        "value_props": kb.get("value_props") or [],
-        "how_it_works": kb.get("how_it_works") or [],
-        "qualifying_questions": kb.get("qualifying_questions") or [],
-        "pricing_behavior": kb.get("pricing_behavior") or [],
+        # super curto (1–2 linhas)
+        "identity_blurb": _clip(str(pills.get("identity_blurb") or kb.get("identity_positioning") or ""), 260),
+        # regras curtas
+        "tone_rules": _first_n(kb.get("tone_rules") or [], 5),
+        "behavior_rules": _first_n(kb.get("behavior_rules") or [], 6),
+        "ethical_guidelines": _first_n(kb.get("ethical_guidelines") or [], 4),
+        "closing_guidance": _first_n(kb.get("closing_guidance") or [], 4),
+        # top3 benefícios e 3 passos
+        "value_props_top3": _first_n(pills.get("value_props_top3") or kb.get("value_props") or [], 3),
+        "how_it_works_3steps": _first_n(pills.get("how_it_works_3steps") or kb.get("how_it_works") or [], 3),
+        # qualificação mínima
+        "qualifying_questions": _first_n(kb.get("qualifying_questions") or [], 2),
+        # preço (fatos ok)
+        "pricing_behavior": _first_n(kb.get("pricing_behavior") or [], 4),
         "pricing_facts": kb.get("pricing_facts") or {},
-        "pricing_reasoning": kb.get("pricing_reasoning") or "",
-        "operational_examples": kb.get("operational_examples") or {},
-        "onboarding_helpers": kb.get("onboarding_helpers") or {},
-        "objections": kb.get("objections") or {},
+        # blurb compacto (se existir)
+        "pricing_blurb": _clip(str(pills.get("pricing_blurb") or kb.get("pricing_reasoning") or ""), 260),
+        # CTA curto
+        "cta_one_liners": _first_n(pills.get("cta_one_liners") or [], 3),
     }
 
 
@@ -641,13 +659,17 @@ def _ai_sales_answer(
         )
     else:  # decision
         rep["pricing_reasoning"] = _base_pr
-        # Seleciona exemplo operacional só quando há segmento (anti-custo)
-        examples = {}
-        if segment:
-            examples = (rep.get("operational_examples") or {}).get(segment.lower(), "")
-        rep["operational_example_selected"] = examples
-        # Não mandar todos os exemplos (economia de tokens)
-        rep.pop("operational_examples", None)
+        # Exemplo operacional selecionado (super compacto quando existir segment_pills)
+        op_example = ""
+        try:
+            sp = (kb.get("segment_pills") or {}).get((segment or "").strip().lower(), {}) if segment else {}
+            op_example = str(sp.get("micro_scene") or "").strip()
+            if not op_example:
+                # fallback: tenta usar operational_examples antigo (se existir)
+                op_example = str((kb.get("operational_examples") or {}).get((segment or "").strip().lower(), "") or "").strip()
+        except Exception:
+            op_example = ""
+        rep["operational_example_selected"] = op_example[:320] if op_example else ""
 
         onboarding_hint = state.get("onboarding_hint") or ""
 
@@ -676,7 +698,7 @@ def _ai_sales_answer(
             f"continuidade: {continuity}\n\n"
             f"ajuda_onboarding (se existir): {json.dumps(onboarding_hint, ensure_ascii=False)}\n"
 
-            f"repertório_firestore (use como base, não copie): {json.dumps(rep, ensure_ascii=False)}\n"
+            f"repertório_firestore (use como base, não copie): {json.dumps(rep, ensure_ascii=False, separators=(',', ':'))}\n"
         )
 
     
