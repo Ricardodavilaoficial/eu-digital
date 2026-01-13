@@ -1314,46 +1314,43 @@ def ycloud_inbound_worker():
             allow_sales_demo = bool(wa_out.get("allowSalesDemo"))
         elif wa_out:
             reply_text = str(wa_out)
-        else:
-            reply_text = reply_text or ""
-            # Se entrou por áudio, nunca preferir texto (mantém "entra áudio → sai áudio")
-            if msg_type in ("audio", "voice", "ptt"):
-                prefers_text = False
+        reply_text = reply_text or ""
+        # Se entrou por áudio, nunca preferir texto (mantém "entra áudio → sai áudio")
+        if msg_type in ("audio", "voice", "ptt"):
+            prefers_text = False
 
-
-            # Não sobrescrever resposta do wa_bot com "texto pronto".
-            # Fallback mínimo só quando for lead/VENDAS (uid ausente).
-            reply_text = (reply_text or "").strip()[:1200]
-            if not reply_text:
-                if not uid:
-                    logger.warning(
-                        '[tasks] route=tasks_empty_reply reason=empty_reply from=%s to=%s wamid=%s eventKey=%s',
-                        from_e164, to_e164, wamid, event_key
-                    )
-                    reply_text = "Não consegui entender direitinho 🙂 Você quer: conhecer a plataforma, ver preços/planos, ou falar de um uso no seu negócio?"
-                else:
-                    logger.warning(
-                        "[tasks] customer_empty_reply from=%s wamid=%s",
-                        from_e164, wamid
-                    )
-                    reply_text = "Não consegui responder agora 😕 Pode tentar de novo ou me explicar um pouco melhor?"
-
-            # Se entrou por áudio, evitamos "paredão" como fallback de texto.
-            # (O áudio é o canal principal; texto aqui é só fallback se o áudio falhar.)
-            if msg_type in ("audio", "voice", "ptt"):
-                try:
-                    if reply_text and len(reply_text) > _SUPPORT_WA_TEXT_MAX_CHARS:
-                        before = reply_text
-                        reply_text = _shorten_for_whatsapp(reply_text, _SUPPORT_WA_TEXT_MAX_CHARS)
-                        audio_debug = dict(audio_debug or {})
-                        audio_debug["waTextShorten"] = {
-                            "applied": True,
-                            "maxChars": _SUPPORT_WA_TEXT_MAX_CHARS,
-                            "beforeLen": len(before),
-                            "afterLen": len(reply_text),
-                        }
-                except Exception:
-                    pass
+        # Não sobrescrever resposta do wa_bot com "texto pronto".
+        # Fallback mínimo só quando for lead/VENDAS (uid ausente).
+        reply_text = (reply_text or "").strip()[:1200]
+        if not reply_text:
+            if not uid:
+                logger.warning(
+                    '[tasks] route=tasks_empty_reply reason=empty_reply from=%s to=%s wamid=%s eventKey=%s',
+                    from_e164, to_e164, wamid, event_key
+                )
+                reply_text = "Não consegui entender direitinho 🙂 Você quer: conhecer a plataforma, ver preços/planos, ou falar de um uso no seu negócio?"
+            else:
+                logger.warning(
+                    "[tasks] customer_empty_reply from=%s wamid=%s",
+                    from_e164, wamid
+                )
+                reply_text = "Não consegui responder agora 😕 Pode tentar de novo ou me explicar um pouco melhor?"
+                    
+        # Se entrou por áudio, evitamos "paredão" como fallback de texto.
+        # (O áudio é o canal principal; texto aqui é só fallback se o áudio falhar.)
+        if msg_type in ("audio", "voice", "ptt"):
+            try:
+                if reply_text and len(reply_text) > _SUPPORT_WA_TEXT_MAX_CHARS:
+                    before = reply_text
+                    reply_text = _shorten_for_whatsapp(reply_text, _SUPPORT_WA_TEXT_MAX_CHARS)
+                    audio_debug = dict(audio_debug or {})
+                    audio_debug["waTextShorten"] = {
+                        "applied": True,
+                        "maxChars": _SUPPORT_WA_TEXT_MAX_CHARS,
+                        "beforeLen": len(before),
+                        "afterLen": len(reply_text),                     }
+            except Exception:
+                pass
 
             # ==========================================================
             # Guardrail (customer): suporte NÃO pede CNPJ.
