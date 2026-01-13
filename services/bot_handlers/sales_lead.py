@@ -173,6 +173,29 @@ def _clip(s: str, n: int) -> str:
         return ""
     return s[:n]
 
+
+def _sanitize_spoken(text: str) -> str:
+    """
+    Garante uma fala neutra e humana.
+    Remove gírias de abertura que derrubam a humanização no áudio.
+    """
+    t = (text or "").strip()
+    if not t:
+        return ""
+
+    # Normaliza espaços
+    t = re.sub(r"\s+", " ", t).strip()
+
+    # Mata aberturas ruins (caso apareçam por qualquer motivo)
+    # Ex.: "Fala!" / "Fala, ..." / "Falaa!"
+    t = re.sub(r"^(fala+[\s,!\.\-–—]*)", "", t, flags=re.IGNORECASE).strip()
+
+    # Se ficou vazio (raro), retorna algo seguro
+    if not t:
+        return "Oi 🙂"
+
+    return t
+
 def _looks_like_greeting(t: str) -> bool:
     t = _norm(t)
     return t in ("oi", "olá", "ola", "e aí", "eai", "bom dia", "boa tarde", "boa noite", "oii", "oiii")
@@ -1174,18 +1197,27 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     else:
         kind = "sales_example" if (lead_segment and (stage_now in ("PITCH", "CTA", "PRICE"))) else "sales"
 
-    return {
-        "replyText": (reply or "").strip() or OPENING_ASK_NAME,
-        "leadName": lead_name,
-        "segment": lead_segment,
-        "goal": lead_goal,
-        "interest_level": (st.get("interest_level") or "").strip(),
-        "kind": kind,
-        "kbContext": json.dumps(kb_compact, ensure_ascii=False),
-        "ttsOwner": "worker",
-        # ajuda o worker a falar o nome no fechamento
-        "nameToSay": lead_name,
-    }
+        reply_final = (reply or "").strip() or OPENING_ASK_NAME
+        spoken_final = _sanitize_spoken(reply_final)
+
+        return {
+            "replyText": reply_final,
+
+            # 🔒 Fonte de verdade para áudio (worker deve preferir estes campos)
+            "ttsText": spoken_final,
+            "spokenText": spoken_final,
+            "spokenSource": "replyText",
+
+            "leadName": lead_name,
+            "segment": lead_segment,
+            "goal": lead_goal,
+            "interest_level": (st.get("interest_level") or "").strip(),
+            "kind": kind,
+            "kbContext": json.dumps(kb_compact, ensure_ascii=False),
+            "ttsOwner": "worker",
+            "nameToSay": lead_name,
+        }
+
 
 
 def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
