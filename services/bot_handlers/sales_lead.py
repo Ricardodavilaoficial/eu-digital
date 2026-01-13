@@ -221,6 +221,9 @@ def _strip_repeated_greeting(text: str, name: str, turns: int) -> str:
             flags=re.IGNORECASE,
         ).strip()
 
+        # Remove vocativo repetido: "Nome!" / "Nome," no início
+        t = re.sub(r"^" + re.escape(nm) + r"[\s,!\.\-–—]*", "", t, flags=re.IGNORECASE).strip()
+
     # Remove "Oi!" / "Olá!"
     t = re.sub(r"^(oi|ol[áa])[\s,!\.\-–—]*", "", t, flags=re.IGNORECASE).strip()
 
@@ -228,6 +231,30 @@ def _strip_repeated_greeting(text: str, name: str, turns: int) -> str:
     t = re.sub(r"^eu sou o mei rob[oô][^\.!\?]*[\.!\?]\s*", "", t, flags=re.IGNORECASE).strip()
 
     return t
+
+
+def _limit_questions(text: str, max_questions: int = 1) -> str:
+    """Garante no máximo N perguntas por resposta (barato e seguro)."""
+    t = (text or "").strip()
+    if not t:
+        return t
+    try:
+        max_q = int(max_questions)
+    except Exception:
+        return t
+    if max_q <= 0:
+        return re.sub(r"\?+", ".", t).strip()
+
+    q_pos = [m.start() for m in re.finditer(r"\?", t)]
+    if len(q_pos) <= max_q:
+        return t
+
+    keep_at = q_pos[max_q - 1]
+    head = t[: keep_at + 1]
+    tail = t[keep_at + 1 :].replace("?", ".")
+    out = (head + tail).replace("..", ".")
+    out = re.sub(r"\s+", " ", out).strip()
+    return out
 
 
 def _looks_like_greeting(t: str) -> bool:
@@ -291,6 +318,8 @@ def _extract_segment_hint(text: str) -> str:
         return "beleza"
     if "dent" in t or "odonto" in t:
         return "dentista"
+    if any(k in t for k in ("advoc", "advog", "jurid", "juríd", "escritorio", "escritório", "contab", "contador", "contabilidade", "psicol", "psicó", "terapia", "clinica", "clínica", "consult", "medic", "médic")):
+        return "consultorio"
     if any(k in t for k in ("lanche", "lanches", "hamburg", "pizza", "comida", "marmita", "delivery", "restaurante")):
         return "lanches"
     if any(k in t for k in ("serviço", "servico", "prestador", "conserto", "reforma", "instala", "manutenção", "manutencao")):
@@ -846,6 +875,7 @@ def _ai_sales_answer(
         except Exception:
             pass
 
+    reply_text = _limit_questions(reply_text, max_questions=1)
     return reply_text
 
 
@@ -1119,6 +1149,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             txt = _fallback_min_reply(name)
         txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
         txt = _strip_repeated_greeting(txt, name=name, turns=turns)
+        txt = _limit_questions(txt, max_questions=1)
         return _clip(txt, SALES_MAX_CHARS_REPLY)
 
     if intent == "ACTIVATE":
@@ -1130,6 +1161,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             txt = f"Fechado, {name} 🙂 Pra ativar com calma, o melhor é seguir pelo site. Quer que eu te diga o caminho mais enxuto pra {goal or 'começar'}?"
         txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
         txt = _strip_repeated_greeting(txt, name=name, turns=turns)
+        txt = _limit_questions(txt, max_questions=1)
         return _clip(txt, SALES_MAX_CHARS_REPLY)
 
     # Lead frio: pergunta curta, sem despejar pitch
@@ -1142,6 +1174,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             txt = f"Entendi, {name} 🙂 Teu foco hoje é mais agenda, pedidos ou orçamento?"
         txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
         txt = _strip_repeated_greeting(txt, name=name, turns=turns)
+        txt = _limit_questions(txt, max_questions=1)
         return _clip(txt, SALES_MAX_CHARS_REPLY)
 
     # Pitch (cacheado) + sempre uma pergunta de avanço
@@ -1160,6 +1193,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     # Anti-loop
     pitch_txt = _apply_anti_loop(st, pitch_txt, name=name, segment=segment, goal=goal, user_text=text_in)
     pitch_txt = _strip_repeated_greeting(pitch_txt, name=name, turns=turns)
+    pitch_txt = _limit_questions(pitch_txt, max_questions=1)
     return _clip(pitch_txt, SALES_MAX_CHARS_REPLY)
 
 
