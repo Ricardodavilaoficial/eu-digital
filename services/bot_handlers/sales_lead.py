@@ -314,6 +314,10 @@ from services.institutional_leads_store import (  # type: ignore
     get_session, set_session,
     get_lead, upsert_lead,
 )
+from services.institutional_leads_store import (  # type: ignore
+    get_lead_profile, upsert_lead_profile,
+)
+
 
 def _load_state(from_sender: str) -> Tuple[dict, str]:
     """
@@ -321,17 +325,38 @@ def _load_state(from_sender: str) -> Tuple[dict, str]:
     - sessão é cache curto
     - se existir lead em institutional_leads, ele é canônico
     """
+    # 0) Perfil canônico durável (sem TTL) — base de identidade
+    prof, wa_keyp = get_lead_profile(from_sender)
+    # 1) Sessão curta (cache)
     sess, wa_key = get_session(from_sender)
+    # 2) Lead “funil” (TTL opcional)
     lead, wa_key2 = get_lead(from_sender)
-    wa_key = wa_key or wa_key2
+    wa_key = wa_key or wa_keyp or wa_key2
 
     if isinstance(sess, dict) and sess:
+        # Enriquecimento por prioridade:
+        # perfil durável -> lead funil -> sessão
+        # (sessão é o "container" aqui)
+        if isinstance(prof, dict) and prof:
+            dn = (prof.get("displayName") or "").strip()
+            if dn and not (sess.get("name") or "").strip():
+                sess["name"] = dn
+            segp = (prof.get("segment") or "").strip()
+            if segp and not (sess.get("segment") or "").strip():
+                sess["segment"] = segp
+            gp = (prof.get("goal") or "").strip()
+            if gp and not (sess.get("goal") or "").strip():
+                sess["goal"] = gp
+            uidp = (prof.get("uid") or "").strip()
+            if uidp and not (sess.get("uid") or "").strip():
+                sess["uid"] = uidp
+
         if isinstance(lead, dict) and lead:
             for k in ("name", "segment", "goal", "interest_level"):
                 v = lead.get(k)
                 if isinstance(v, str):
                     v = v.strip()
-                if v:
+                if v and not (sess.get(k) or "").strip():
                     sess[k] = v
         return sess, wa_key
 
@@ -345,8 +370,36 @@ def _load_state(from_sender: str) -> Tuple[dict, str]:
             "nudges": 0,
             "last_user_at": time.time(),
         }
+        # Perfil durável pode preencher buracos (prioridade maior que lead TTL)
+        if isinstance(prof, dict) and prof:
+            dn = (prof.get("displayName") or "").strip()
+            if dn and not st.get("name"):
+                st["name"] = dn
+            segp = (prof.get("segment") or "").strip()
+            if segp and not st.get("segment"):
+                st["segment"] = segp
+            gp = (prof.get("goal") or "").strip()
+            if gp and not st.get("goal"):
+                st["goal"] = gp
         if not (st.get("name") or st.get("segment")):
             st["stage"] = "ASK_NAME"
+        return st, wa_key
+
+    # Nenhum lead/sessão: ainda pode haver perfil durável
+    if isinstance(prof, dict) and prof:
+        st = {
+            "stage": "ASK_NAME",
+            "name": (prof.get("displayName") or "").strip(),
+            "segment": (prof.get("segment") or "").strip(),
+            "goal": (prof.get("goal") or "").strip(),
+            "turns": 0,
+            "nudges": 0,
+            "last_user_at": time.time(),
+        }
+        if st.get("name") and not st.get("segment"):
+            st["stage"] = "ASK_SEGMENT"
+        if st.get("name") and st.get("segment"):
+            st["stage"] = "PITCH"
         return st, wa_key
 
     return {}, wa_key
@@ -378,6 +431,20 @@ def _upsert_lead_from_state(wa_key: str, st: dict) -> None:
         "updatedAt": time.time(),
     }
     upsert_lead(wa_key, lead)
+
+
+    # Perfil canônico durável (SEM TTL) — identidade do lead
+    try:
+        patch: Dict[str, Any] = {
+            "displayName": name,
+            "segment": segment,
+            "goal": goal,
+            "nameSource": (st.get("name_source") or "").strip() or "sales_lead",
+        }
+        upsert_lead_profile(wa_key, patch)
+    except Exception:
+        pass
+
 
     # Índice permanente de identidade (lead): sender_uid_links/{waKey}
     try:
@@ -906,6 +973,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     # Nome/segmento detectados pela IA (se vier)
     if not name and (nlu.get("name") or ""):
         st["name"] = (nlu.get("name") or "").strip()
+        st["name_source"] = (st.get("name_source") or "ai")
         name = st["name"]
     if not segment and (nlu.get("segment") or ""):
         st["segment"] = (nlu.get("segment") or "").strip()
@@ -916,6 +984,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         nm = _extract_name_freeform(text_in)
         if nm and not _looks_like_greeting(nm):
             st["name"] = nm
+            st["name_source"] = (st.get("name_source") or "regex")
             name = nm
     if not segment:
         sg = _extract_segment_hint(text_in)
