@@ -196,6 +196,40 @@ def _sanitize_spoken(text: str) -> str:
 
     return t
 
+
+def _strip_repeated_greeting(text: str, name: str, turns: int) -> str:
+    """
+    Evita repetição de saudação/identidade em turnos seguidos.
+    Regra: a partir do 2º turno, não começar com "Oi/Olá" nem "Eu sou o MEI Robô".
+    """
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if int(turns or 0) <= 1:
+        return t
+
+    # Normaliza espaços
+    t = re.sub(r"\s+", " ", t).strip()
+
+    nm = (name or "").strip()
+    if nm:
+        # Remove "Oi, Nome!" / "Olá, Nome!"
+        t = re.sub(
+            r"^(oi|ol[áa])[\s,!\.\-–—]*" + re.escape(nm) + r"[\s,!\.\-–—]*",
+            "",
+            t,
+            flags=re.IGNORECASE,
+        ).strip()
+
+    # Remove "Oi!" / "Olá!"
+    t = re.sub(r"^(oi|ol[áa])[\s,!\.\-–—]*", "", t, flags=re.IGNORECASE).strip()
+
+    # Remove auto-identificação repetida
+    t = re.sub(r"^eu sou o mei rob[oô][^\.!\?]*[\.!\?]\s*", "", t, flags=re.IGNORECASE).strip()
+
+    return t
+
+
 def _looks_like_greeting(t: str) -> bool:
     t = _norm(t)
     return t in ("oi", "olá", "ola", "e aí", "eai", "bom dia", "boa tarde", "boa noite", "oii", "oiii")
@@ -1084,6 +1118,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         if not txt:
             txt = _fallback_min_reply(name)
         txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        txt = _strip_repeated_greeting(txt, name=name, turns=turns)
         return _clip(txt, SALES_MAX_CHARS_REPLY)
 
     if intent == "ACTIVATE":
@@ -1094,6 +1129,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         if not txt:
             txt = f"Fechado, {name} 🙂 Pra ativar com calma, o melhor é seguir pelo site. Quer que eu te diga o caminho mais enxuto pra {goal or 'começar'}?"
         txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        txt = _strip_repeated_greeting(txt, name=name, turns=turns)
         return _clip(txt, SALES_MAX_CHARS_REPLY)
 
     # Lead frio: pergunta curta, sem despejar pitch
@@ -1105,6 +1141,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         if not txt:
             txt = f"Entendi, {name} 🙂 Teu foco hoje é mais agenda, pedidos ou orçamento?"
         txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        txt = _strip_repeated_greeting(txt, name=name, turns=turns)
         return _clip(txt, SALES_MAX_CHARS_REPLY)
 
     # Pitch (cacheado) + sempre uma pergunta de avanço
@@ -1122,6 +1159,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     # Anti-loop
     pitch_txt = _apply_anti_loop(st, pitch_txt, name=name, segment=segment, goal=goal, user_text=text_in)
+    pitch_txt = _strip_repeated_greeting(pitch_txt, name=name, turns=turns)
     return _clip(pitch_txt, SALES_MAX_CHARS_REPLY)
 
 
@@ -1197,26 +1235,27 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     else:
         kind = "sales_example" if (lead_segment and (stage_now in ("PITCH", "CTA", "PRICE"))) else "sales"
 
-        reply_final = (reply or "").strip() or OPENING_ASK_NAME
-        spoken_final = _sanitize_spoken(reply_final)
+    reply_final = (reply or "").strip() or OPENING_ASK_NAME
+    spoken_final = _sanitize_spoken(reply_final)
 
-        return {
-            "replyText": reply_final,
+    return {
+        "replyText": reply_final,
 
-            # 🔒 Fonte de verdade para áudio (worker deve preferir estes campos)
-            "ttsText": spoken_final,
-            "spokenText": spoken_final,
-            "spokenSource": "replyText",
+        # 🔒 Fonte de verdade para áudio (worker deve preferir estes campos)
+        "ttsText": spoken_final,
+        "spokenText": spoken_final,
+        "spokenSource": "replyText",
 
-            "leadName": lead_name,
-            "segment": lead_segment,
-            "goal": lead_goal,
-            "interest_level": (st.get("interest_level") or "").strip(),
-            "kind": kind,
-            "kbContext": json.dumps(kb_compact, ensure_ascii=False),
-            "ttsOwner": "worker",
-            "nameToSay": lead_name,
-        }
+        "leadName": lead_name,
+        "segment": lead_segment,
+        "goal": lead_goal,
+        "interest_level": (st.get("interest_level") or "").strip(),
+        "kind": kind,
+        "kbContext": json.dumps(kb_compact, ensure_ascii=False),
+        "ttsOwner": "worker",
+        "nameToSay": lead_name,
+    }
+
 
 
 
