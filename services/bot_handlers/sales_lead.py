@@ -1200,7 +1200,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     if route == "offtopic":
         # só pode acontecer no início absoluto
-        return "Oi! Eu sou o MEI Robô 🙂 Posso te explicar rapidinho como funciona. Qual teu nome?"
+        return "Oi! 👋 Valeu por chamar 🙂 Antes de eu te explicar certinho, como posso te chamar?"
 
     if stage == "EXIT":
         st["__sales_close"] = True
