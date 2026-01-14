@@ -61,9 +61,9 @@ SITE_URL = os.getenv("MEI_ROBO_SITE_URL", "www.meirobo.com.br").strip()
 
 # Mensagem mínima de entrada (mantida local por segurança operacional)
 OPENING_ASK_NAME = (
-    "Oi! 👋 Eu sou o MEI Robô 🙂\n\n"
-    "Antes de te explicar direitinho,\n"
-    "me diz teu nome?"
+    "Oi! 👋 Valeu por chamar 🙂\n\n"
+    "Antes de eu te explicar certinho,\n"
+    "como posso te chamar?"
 )
 
 # Fallback humano mínimo (nunca vazio; sem marketing longo)
