@@ -272,7 +272,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             out: Dict[str, Any] = {"ok": True, "route": "sales_lead", "replyText": reply}
             if isinstance(reply_obj, dict):
                 # copia metadados úteis (sem sobrescrever replyText final já validado)
-                for k in ("kbContext", "kind", "ttsOwner", "leadName", "segment", "goal", "interest_level", "prefersText", "nameToSay"):
+                for k in ("kbContext","kind","ttsOwner","leadName","segment","goal","interest_level","prefersText","nameToSay","ttsText","spokenText","nameUse"):
                     if k in reply_obj:
                         out[k] = reply_obj.get(k)
                 # garante nameToSay a partir de leadName (humanização no fechamento)
