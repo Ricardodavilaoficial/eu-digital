@@ -596,7 +596,7 @@ def _set_cached_pitch(segment: str, hint: str, user_text: str, pitch: str) -> No
 # OpenAI helpers (mínimo)
 # =========================
 
-def _openai_chat(prompt_or_messages, *, model: str = "", max_tokens: int = 160, temperature: float = 0.35) -> str:
+def _openai_chat(prompt_or_messages, *, model: str = "", max_tokens: int = 160, temperature: float = 0.35, response_format: Optional[Dict[str, Any]] = None) -> str:
     if not OPENAI_API_KEY:
         return ""
     use_model = (model or OPENAI_SALES_MODEL).strip() or OPENAI_SALES_MODEL
@@ -619,6 +619,9 @@ def _openai_chat(prompt_or_messages, *, model: str = "", max_tokens: int = 160, 
         "max_tokens": int(max_tokens),
         "messages": messages,
     }
+    if isinstance(response_format, dict) and response_format:
+        payload["response_format"] = response_format
+
 
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=SALES_CHAT_TIMEOUT)
@@ -753,6 +756,26 @@ def _kb_compact_for_prompt(kb: Dict[str, Any]) -> Dict[str, Any]:
             return []
         return arr[:n]
 
+    def _pick_map(d: Any, max_items: int = 4) -> Dict[str, str]:
+        if not isinstance(d, dict):
+            return {}
+        out: Dict[str, str] = {}
+        for k in list(d.keys())[:max(0, int(max_items or 0))]:
+            try:
+                v = str(d.get(k) or "").strip()
+                if v:
+                    out[str(k)[:40]] = v[:220]
+            except Exception:
+                pass
+        return out
+
+    def _clip_long(s: str, n: int) -> str:
+        s = (s or "").strip()
+        if not s:
+            return ""
+        s = re.sub(r"\s+", " ", s).strip()
+        return s[:n]
+
     return {
         # super curto (1–2 linhas)
         "identity_blurb": _clip(str(pills.get("identity_blurb") or kb.get("identity_positioning") or ""), 260),
@@ -773,6 +796,13 @@ def _kb_compact_for_prompt(kb: Dict[str, Any]) -> Dict[str, Any]:
         "pricing_blurb": _clip(str(pills.get("pricing_blurb") or kb.get("pricing_reasoning") or ""), 260),
         # CTA curto
         "cta_one_liners": _first_n(pills.get("cta_one_liners") or [], 3),
+        "conversation_limits": _clip_long(str(kb.get("conversation_limits") or ""), 420),
+        "sales_audio_modes": {
+            "demo": _first_n(((kb.get("sales_audio_modes") or {}).get("demo") or []), 6),
+            "close": _first_n(((kb.get("sales_audio_modes") or {}).get("close") or []), 7),
+        },
+        "objections_compact": _pick_map(kb.get("objections") or {}, 4),
+
     }
 
 
@@ -836,34 +866,59 @@ def _ai_sales_answer(
     if last_bot:
         continuity += f" | NÃO repetir: {last_bot}"
 
-    # IMPORTANTE: prompt e IA rodam SEMPRE (não só no decision)
     prompt = (
-        "Você é o MEI Robô institucional de VENDAS no WhatsApp.\n"
-        "Objetivo: conversar curto, humano, vendedor sem ser chato, e conduzir para o próximo passo.\n"
-        "Regras obrigatórias:\n"
-        "- 2 a 6 linhas.\n"
-        "- 1 pergunta por resposta.\n"
-        "- Sem bastidores técnicos.\n"
-        "- Não expulsar o lead.\n"
-        "- Se faltar info, pergunte só 1 coisa.\n"
-        "- Quando fizer sentido, use um micro-exemplo operacional (entrada → confirmação → resumo), sem inventar.\n"
-        "- Se citar valores, só use os que estiverem em pricing_facts.\n\n"
-        "IMPORTANTE: responda APENAS em JSON válido, sem texto fora do JSON.\n"
-        "Formato: {\"replyText\":\"...\",\"nameUse\":\"none|greet|empathy|closing\"}\n"
-        "Guia de nameUse:\n"
-        "- greet: só se for claramente a primeira resposta.\n"
-        "- empathy: se o lead mostrar dúvida forte, confusão, cansaço, urgência, insegurança.\n"
-        "- closing: se você estiver fechando com CTA elegante.\n"
+        "Você é o MEI Robô – Vendas, atendendo leads no WhatsApp (pt-BR).\n"
+        "Use o conteúdo do Firestore (platform_kb/sales) como REPERTÓRIO de identidade, nunca como script.\n"
+        "Nada deve soar decorado, técnico ou robótico.\n\n"
+        "SOBERANIA (importante): você decide autonomamente, a cada resposta:\n"
+        "- se usa ou não o nome do lead\n"
+        "- se demonstra empatia\n"
+        "- se aprofunda um pouco mais\n"
+        "- se fecha ou apenas orienta\n"
+        "Use behavior_rules, tone_rules, closing_guidance, sales_audio_modes e conversation_limits para DECIDIR.\n"
+        "Não siga regras mecânicas do tipo “use nome no turno X”.\n\n"
+        "TAMANHO:\n"
+        "- Curto por padrão (2–5 linhas).\n"
+        "- Pode ser um pouco mais longo quando houver interesse real, confusão, comparação ou quando um exemplo prático ajudar a decidir.\n"
+        "- Nunca faça palestra. Nunca repita longamente o que já foi explicado.\n\n"
+        "ESTILO:\n"
+        "- Conversa, não apresentação.\n"
+        "- Confiante e vendedor do bem, sem pressão, sem urgência falsa, sem promessas.\n"
+        "- Humor leve quando fizer sentido.\n"
+        "- No máximo 1 pergunta por resposta.\n\n"
+        "CONTEÚDO:\n"
+        "- Priorize sales_pills, value_props_top3, e micro-scenes por segmento.\n"
+        "- Use micro-exemplo operacional (entrada → organização → resumo pro dono) quando ajudar.\n"
+        "- Nunca invente números.\n"
+        "- Só cite preço quando fizer sentido e apenas usando pricing_facts.\n\n"
+        "PREÇO:\n"
+        "- Não jogar no começo.\n"
+        "- Quando entrar, contextualize como custo operacional (tempo, erro, retrabalho).\n\n"
+        "FECHAMENTO:\n"
+        "- Quando fizer sentido fechar: benefício prático + próximo passo + despedida.\n"
+        "- Direcione ao site de forma elegante, sem cortar o lead.\n\n"
+        "FORMATO OBRIGATÓRIO:\n"
+        "Responda APENAS em JSON válido, sem texto fora do JSON.\n"
+        "Schema: {\"replyText\":\"...\",\"nameUse\":\"none|greet|empathy|closing\"}\n"
+        "Guia nameUse:\n"
+        "- greet: apenas no primeiro contato.\n"
+        "- empathy: se houver confusão/insegurança/pressa/preço/comparação.\n"
+        "- closing: se estiver fechando com CTA elegante.\n"
         "- none: no resto.\n\n"
-        f"Lead:\n- nome: {name or '—'}\n- ramo (texto livre): {segment or '—'}\n- objetivo: {goal or '—'}\n"
+        f"Lead:\n- nome: {name or '—'}\n- ramo: {segment or '—'}\n- objetivo: {goal or '—'}\n"
         f"intent_hint: {intent_hint or '—'}\n"
         f"mensagem: {user_text}\n\n"
         f"continuidade: {continuity}\n\n"
-        f"ajuda_onboarding (se existir): {json.dumps(onboarding_hint, ensure_ascii=False)}\n"
-        f"repertório_firestore (use como base, não copie): {json.dumps(rep, ensure_ascii=False, separators=(',', ':'))}\n"
+        f"onboarding_hint (se existir): {json.dumps(onboarding_hint, ensure_ascii=False)}\n"
+        f"repertório_firestore (base, não copie): {json.dumps(rep, ensure_ascii=False, separators=(',', ':'))}\n"
     )
 
-    raw = (_openai_chat(prompt, max_tokens=SALES_ANSWER_MAX_TOKENS, temperature=0.35) or "").strip()
+    raw = (_openai_chat(
+            prompt,
+            max_tokens=SALES_ANSWER_MAX_TOKENS,
+            temperature=0.35,
+            response_format={"type": "json_object"},
+        ) or "").strip()
 
     reply_text = raw
     name_use = "none"
