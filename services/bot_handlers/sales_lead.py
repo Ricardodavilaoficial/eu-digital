@@ -1207,12 +1207,16 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     # Anti-custo / soft close
     if _should_soft_close(st, has_name=has_name, has_segment=has_segment):
-        # sinaliza para o worker que aqui é hora de FECHAR (fala mais vendedora e sem pergunta)
-        st["__sales_close"] = True
-        # IA também pode fechar (sem frase pronta), mas aqui mantemos bem curto e seguro.
-        if has_name:
-            return f"{name}, pra ver tudo com calma e ativar, o melhor é pelo site. Se quiser, me diz teu ramo em 1 frase que eu te mostro o caminho mais enxuto 🙂"
-        return "Pra ver tudo com calma e ativar, o melhor é pelo site 🙂 Se quiser, me diz teu tipo de negócio em 1 frase que eu te indico o caminho mais enxuto."
+        intent_now = (nlu.get("intent") or "").strip().upper()
+        if intent_now in ("PRICE", "PLANS", "DIFF", "ACTIVATE", "WHAT_IS"):
+            st["__sales_close"] = False
+        else:
+            # sinaliza para o worker que aqui é hora de FECHAR (fala mais vendedora e sem pergunta)
+            st["__sales_close"] = True
+            # IA também pode fechar (sem frase pronta), mas aqui mantemos bem curto e seguro.
+            if has_name:
+                return f"{name}, pra ver tudo com calma e ativar, o melhor é pelo site. Se quiser, me diz teu ramo em 1 frase que eu te mostro o caminho mais enxuto 🙂"
+            return "Pra ver tudo com calma e ativar, o melhor é pelo site 🙂 Se quiser, me diz teu tipo de negócio em 1 frase que eu te indico o caminho mais enxuto."
 
     # 1) Nome
     if not has_name:
