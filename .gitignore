@@ -196,3 +196,6 @@ ycloud_webhook_bp.py
 __pycache__/
 
 _trash/
+ervicesbot_handlerssales_lead.py
+*_trash/*
+*.backup.*
