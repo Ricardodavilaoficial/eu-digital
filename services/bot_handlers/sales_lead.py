@@ -393,6 +393,69 @@ def _apply_next_step_safely(st: Dict[str, Any], next_step: str, has_name: bool, 
         st["stage"] = "EXIT"
 
 
+
+# =========================
+# Human Gate (anti-ruído no 1º contato)
+# - Ativa só no início, só 1x por lead
+# - Responde curto e puxa pro trilho
+# =========================
+
+_HUMAN_NOISE_PATTERNS = [
+    r"\b(e bot|é bot|eh bot|tu é bot|vc é bot|você é bot|rob[oô])\b",
+    r"\b(teste|testando|to testando|tô testando|só testando)\b",
+    r"\b(kkk+|haha+|rsrs+)\b",
+    r"\b(futebol|time|gol|gr[êe]mio|inter|flamengo|corinthians|palmeiras)\b",
+    r"\b(clima|tempo|chuva|calor|frio)\b",
+    r"[\U0001F600-\U0001F64F]",  # emojis básicos (range)
+]
+
+# Palavras que indicam intenção prática (não deve acionar Human Gate)
+_HUMAN_NOISE_EXCLUDE = [
+    "preço", "preco", "valor", "plano", "planos", "quanto custa",
+    "agenda", "agendar", "horário", "horario", "pedido", "pedidos",
+    "orçamento", "orcamento", "ativar", "assinar", "contratar",
+    "como funciona", "funciona", "meirobo", "mei robô", "mei robo",
+]
+
+def _detect_human_noise(text: str) -> bool:
+    """
+    Detecta ruído humano típico de 1º contato (piada, 'é bot?', clima, futebol, teste).
+    Barato: regex + lista. Só para início de conversa.
+    """
+    t = (text or "").strip()
+    if not t:
+        return False
+
+    tl = t.lower()
+
+    # Se tem intenção prática, não é ruído
+    for w in _HUMAN_NOISE_EXCLUDE:
+        if w in tl:
+            return False
+
+    # Mensagens muito curtas são mais propensas a ruído
+    if len(tl) <= 6 and tl in ("oi", "olá", "ola", "eai", "e aí", "opa", "bom dia", "boa tarde", "boa noite"):
+        return False
+
+    # Match de padrões
+    for pat in _HUMAN_NOISE_PATTERNS:
+        try:
+            if re.search(pat, tl, re.IGNORECASE):
+                return True
+        except Exception:
+            continue
+
+    # Heurística: pergunta “solta” sem contexto (ex.: "qual teu time?")
+    if "?" in tl and len(tl) <= 40:
+        if any(x in tl for x in ("time", "futebol", "bot", "robô", "robo", "tempo", "clima")):
+            return True
+
+    return False
+
+
+def _human_gate_reply() -> str:
+    # 1 pergunta só, acolhe e puxa pro trilho
+    return "😂 Respondo sim. Valeu por chamar 🙂 Como posso te chamar?"
 # =========================
 # Estado institucional (Firestore)
 # =========================
@@ -1205,6 +1268,16 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     if stage == "EXIT":
         st["__sales_close"] = True
         return "Beleza 🙂 Pra ver tudo com calma e ativar, o melhor é seguir pelo site. Por lá fica tudo certinho."
+
+
+    # Human Gate: ruído humano no início (piada, "é bot?", clima, futebol, teste)
+    # Só roda 1x por lead e só antes de coletar nome/ramo.
+    if not st.get("__human_gate_done"):
+        if (turns <= 2) and (stage in ("ASK_NAME", "ASK_SEGMENT")) and (not has_name) and (not has_segment):
+            if _detect_human_noise(text_in):
+                st["__human_gate_done"] = True
+                st["stage"] = "ASK_NAME"
+                return _human_gate_reply()
 
     # Anti-custo / soft close
     if _should_soft_close(st, has_name=has_name, has_segment=has_segment):
