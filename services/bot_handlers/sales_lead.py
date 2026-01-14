@@ -877,6 +877,7 @@ def _ai_sales_answer(
         "- se fecha ou apenas orienta\n"
         "Use behavior_rules, tone_rules, closing_guidance, sales_audio_modes e conversation_limits para DECIDIR.\n"
         "Não siga regras mecânicas do tipo “use nome no turno X”.\n\n"
+        "- Nunca diga 'meu nome é ...'. Você fala com o lead; não se apresenta como a pessoa.\n"
         "TAMANHO:\n"
         "- Curto por padrão (2–5 linhas).\n"
         "- Pode ser um pouco mais longo quando houver interesse real, confusão, comparação ou quando um exemplo prático ajudar a decidir.\n"
