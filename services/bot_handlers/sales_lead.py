@@ -285,11 +285,12 @@ def _extract_name_freeform(text: str) -> str:
     - Se vier só uma palavra (ex.: "Ricardo"), aceita como nome.
     """
     t = (text or "").strip()
+    t = re.sub(r"[\.!\?]+$", "", t).strip()
     if not t:
         return ""
 
     m = re.search(
-        r"(me chamo|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+([a-zA-ZÀ-ÿ'\- ]{2,40})$",
+        r"(me chamo|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*([a-zA-ZÀ-ÿ'\- ]{2,40})$",
         t,
         re.IGNORECASE
     )
