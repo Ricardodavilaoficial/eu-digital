@@ -740,7 +740,15 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
             return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": "ASK_NAME"}
         if t in ("oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "eai", "e aí", "opa"):
             return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": ""}
-        return {"route": "sales", "intent": "OTHER", "name": text.strip(), "segment": "", "interest_level": "mid", "next_step": "ASK_SEGMENT"}
+        nm = _extract_name_freeform(text) or text.strip()
+        nm = re.sub(r"[\.!\?,;:]+$", "", nm).strip()
+        nm = re.sub(r"^(me chamo|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*", "", nm, flags=re.IGNORECASE).strip()
+        nm = re.sub(r"\s+", " ", nm).strip()
+        if len(nm.split(" ")) > 3:
+            nm = " ".join(nm.split(" ")[:3])
+        if _looks_like_greeting(nm):
+            nm = ""
+        return {"route": "sales", "intent": "OTHER", "name": nm, "segment": "", "interest_level": "mid", "next_step": "ASK_SEGMENT"}
 
     if stage == "ASK_SEGMENT" and text and len(text.strip()) <= 40:
         return {"route": "sales", "intent": "OTHER", "name": "", "segment": text.strip(), "interest_level": "mid", "next_step": "VALUE"}
@@ -1225,7 +1233,16 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     # Nome/segmento detectados pela IA (se vier)
     if not name and (nlu.get("name") or ""):
-        st["name"] = (nlu.get("name") or "").strip()
+        nm_ai = (nlu.get("name") or "").strip()
+        nm_ai = _extract_name_freeform(nm_ai) or nm_ai
+        nm_ai = re.sub(r"[\.!\?,;:]+$", "", nm_ai).strip()
+        nm_ai = re.sub(r"^(me chamo|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*", "", nm_ai, flags=re.IGNORECASE).strip()
+        nm_ai = re.sub(r"\s+", " ", nm_ai).strip()
+        if len(nm_ai.split(" ")) > 3:
+            nm_ai = " ".join(nm_ai.split(" ")[:3])
+        if _looks_like_greeting(nm_ai):
+            nm_ai = ""
+        st["name"] = nm_ai
         st["name_source"] = (st.get("name_source") or "ai")
         name = st["name"]
     if not segment and (nlu.get("segment") or ""):
@@ -1309,7 +1326,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             st["stage"] = "EXIT"
             return f"Fechado, {name} 🙂 Pra eu te indicar direitinho, só me diz teu tipo de negócio em 1 frase (ex.: lanches, salão, serviços)."
         # pergunta curta (sem “formulário”)
-        return f"Show, {name} 😄\n\nTeu negócio é do quê?"
+        return f"Perfeito, {name} 🙂. Qual o segmento do teu negócio?"
 
     # Intent canônico da IA, com fallback barato
     intent = (nlu.get("intent") or _intent_cheap(text_in) or "OTHER").strip().upper()
