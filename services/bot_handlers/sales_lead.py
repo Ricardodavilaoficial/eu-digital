@@ -1488,6 +1488,29 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     reply_final = (reply or "").strip() or OPENING_ASK_NAME
     spoken_final = _sanitize_spoken(reply_final)
 
+    def _strip_trailing_question(txt: str) -> str:
+        t = (txt or "").strip()
+        if not t:
+            return t
+        # Se a última frase for pergunta, remove.
+        # Regra simples: corta do último '?' até o fim.
+        if "?" in t:
+            last_q = t.rfind("?")
+            # remove a frase que contém a última pergunta
+            # volta até um separador forte
+            cut = max(t.rfind(".", 0, last_q), t.rfind("!", 0, last_q), t.rfind("\n", 0, last_q))
+            if cut >= 0:
+                t = t[:cut + 1].strip()
+            else:
+                # se não achou separador, remove tudo depois do '?'
+                t = t[:last_q].strip()
+        return t.strip()
+
+    # Regra de fechamento: ACTIVATE não termina em pergunta
+    if intent == "ACTIVATE":
+        reply_final = _strip_trailing_question(reply_final)
+        spoken_final = _strip_trailing_question(spoken_final)
+
     return {
         "replyText": reply_final,
         "nameUse": (st.get("last_name_use") or ""),
