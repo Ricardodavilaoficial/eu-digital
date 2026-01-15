@@ -384,10 +384,14 @@ def _apply_next_step_safely(st: Dict[str, Any], next_step: str, has_name: bool, 
     if not ns:
         return
 
-    if not has_name:
+    # PATCH: não coletar nome/segmento se acabamos de responder OPERATIONAL
+    if ns in ("ASK_NAME", "ASK_SEGMENT") and st.get("force_operational_reply"):
+        return
+
+    if not has_name and not st.get("force_operational_reply"):
         st["stage"] = "ASK_NAME"
         return
-    if not has_segment:
+    if not has_segment and not st.get("force_operational_reply"):
         st["stage"] = "ASK_SEGMENT"
         return
     if not has_goal and ns in ("VALUE", "CTA", "PRICE"):
@@ -1362,6 +1366,45 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                 return f"{name}, pra ver tudo com calma e ativar, o melhor é pelo site. Se quiser, me diz teu ramo em 1 frase que eu te mostro o caminho mais enxuto 🙂"
             return "Pra ver tudo com calma e ativar, o melhor é pelo site 🙂 Se quiser, me diz teu tipo de negócio em 1 frase que eu te indico o caminho mais enxuto."
 
+    # OPERATIONAL tem prioridade absoluta: responde antes de coletar dados (nome/segmento)
+    intent = (nlu.get("intent") or _intent_cheap(text_in) or "OTHER").strip().upper()
+    st["last_intent"] = intent
+
+    if intent == "OPERATIONAL":
+        st["force_operational_reply"] = True
+
+        # Flag leve para evitar repetir explicação operacional
+        if st.get("saw_operational_flow"):
+            st["operational_repeat"] = True
+        else:
+            st["saw_operational_flow"] = True
+
+        # Hint correto para fluxo fechado
+        if st.get("operational_repeat"):
+            hint = "OPERATIONAL_FOLLOWUP"
+        else:
+            hint = "OPERATIONAL_FLOW"
+
+        txt = (_ai_sales_answer(
+            name=name, segment=segment, goal=goal, user_text=text_in, intent_hint=hint, state=st
+        ) or "").strip()
+        if not txt:
+            txt = _fallback_min_reply(name)
+
+        # OPERATIONAL não termina com “quer saber mais?”
+        txt = re.sub(
+            r"\b(quer saber mais\?|posso explicar melhor\?)\b",
+            "",
+            txt,
+            flags=re.IGNORECASE
+        ).strip()
+
+        txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        if name:
+            txt = _strip_repeated_greeting(txt, name=name, turns=turns)
+        txt = _limit_questions(txt, max_questions=1)
+        return _clip(txt, SALES_MAX_CHARS_REPLY)
+
     # 1) Nome
     if not has_name:
         st["stage"] = "ASK_NAME"
@@ -1415,7 +1458,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             txt = _fallback_min_reply(name)
 
         # Evita perguntas genéricas após fluxo operacional
-        if intent == "OPERATIONAL" and st.get("operational_repeat"):
+        if intent == "OPERATIONAL":
             txt = re.sub(r"\b(quer saber mais\?|posso explicar melhor\?)\b", "", txt, flags=re.IGNORECASE).strip()
         txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
         txt = _strip_repeated_greeting(txt, name=name, turns=turns)
@@ -1540,6 +1583,9 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         kind = "sales_example" if (lead_segment and (stage_now in ("PITCH", "CTA", "PRICE"))) else "sales"
 
     reply_final = (reply or "").strip() or OPENING_ASK_NAME
+    # Segurança: nunca falar "eu me chamo ..." se nome estiver vazio
+    if not lead_name:
+        reply_final = re.sub(r"\b(eu me chamo|me chamo)\b[^,]*,\s*", "", reply_final, flags=re.IGNORECASE).strip()
     spoken_final = _sanitize_spoken(reply_final)
 
     def _has_url(s: str) -> bool:
