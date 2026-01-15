@@ -172,6 +172,68 @@ def _clip(s: str, n: int) -> str:
     return s[:n]
 
 
+def _pt_int(n: int) -> str:
+    """Inteiro pt-BR bem simples (0–999). Suficiente para preços/GB/dias."""
+    n = int(n)
+    units = ["zero","um","dois","três","quatro","cinco","seis","sete","oito","nove"]
+    teens = ["dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove"]
+    tens = ["","", "vinte","trinta","quarenta","cinquenta","sessenta","setenta","oitenta","noventa"]
+    hundreds = ["","cento","duzentos","trezentos","quatrocentos","quinhentos","seiscentos","setecentos","oitocentos","novecentos"]
+
+    if n < 0:
+        return "menos " + _pt_int(-n)
+    if n < 10:
+        return units[n]
+    if n < 20:
+        return teens[n - 10]
+    if n < 100:
+        d, r = divmod(n, 10)
+        return tens[d] if r == 0 else f"{tens[d]} e {units[r]}"
+    if n == 100:
+        return "cem"
+    if n < 1000:
+        c, r = divmod(n, 100)
+        if r == 0:
+            return hundreds[c]
+        return f"{hundreds[c]} e {_pt_int(r)}"
+    return str(n)
+
+
+def _spoken_normalize_numbers(text: str) -> str:
+    """Normaliza padroes comuns para fala (pre-TTS)."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+
+    # moeda: R$ 89,00 / R$89 / R$ 1.299,00
+    def _repl_money(m):
+        raw = (m.group(1) or "").replace(".", "").replace(",", ".")
+        try:
+            val = float(raw)
+        except Exception:
+            return m.group(0)
+        inteiro = int(round(val))
+        return f"{_pt_int(inteiro)} reais"
+
+    t = re.sub(r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?)", _repl_money, t)
+
+    # GB / Gigabytes
+    def _repl_gb(m):
+        try:
+            n = int(m.group(1))
+        except Exception:
+            return m.group(0)
+        return f"{_pt_int(n)} gigabytes"
+
+    t = re.sub(r"(\d{1,3})\s*GB", _repl_gb, t, flags=re.IGNORECASE)
+    t = re.sub(r"(\d{1,3})\s*gigabytes", _repl_gb, t, flags=re.IGNORECASE)
+
+    # "/mes" -> "por mes"
+    t = t.replace("/mes", " por mes")
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
 def _sanitize_spoken(text: str) -> str:
     """
     Garante uma fala neutra e humana.
@@ -279,7 +341,7 @@ def _strip_generic_question_ending(txt: str) -> str:
     # padrões comuns (variações com/sem "?" no STT)
     t = re.sub(
         r"(\s*[\.!…]\s*)?(quer saber mais[^?]*\??|posso te ajudar[^?]*\??|quer ajuda[^?]*\??|"
-        r"quer que eu te explique[^?]*\??|você gostaria de saber[^?]*\??|quer saber como funciona[^?]*\??)\s*$",
+        r"quer que eu te explique[^?]*\??|você gostaria de saber[^?]*\??|quer saber como funciona[^?]*\??|o que acha[^?]*\??|vamos nessa[^?]*\??)\s*$",
         "",
         t,
         flags=re.IGNORECASE,
@@ -1478,8 +1540,32 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         txt = _limit_questions(txt, max_questions=1)
         return _clip(txt, SALES_MAX_CHARS_REPLY)
 
-    # NOVA REGRA: nome/segmento são “memória fraca”.
-    # Se não existem, a IA decide se pergunta, se segue, se dá exemplo e só depois coleta.
+
+    # Intenções diretas NÃO dependem de nome/segmento. Responde agora.
+    # Isso elimina “parece formulário” e evita cair em DISCOVERY quando o lead já foi direto.
+    if intent in ("PRICE", "PLANS", "DIFF", "WHAT_IS", "SLA", "PROCESS"):
+        txt = (_ai_sales_answer(
+            name=name, segment=segment, goal=goal, user_text=text_in, intent_hint=intent, state=st
+        ) or "").strip()
+        if not txt:
+            txt = _fallback_min_reply(name)
+        txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        txt = _strip_repeated_greeting(txt, name=name, turns=turns)
+        txt = _limit_questions(txt, max_questions=1)
+        return _clip(txt, SALES_MAX_CHARS_REPLY)
+
+    if intent == "ACTIVATE":
+        txt = (_ai_sales_answer(
+            name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="CTA", state=st
+        ) or "").strip()
+        if not txt:
+            txt = f"Fechado 🙂 Pra ativar, é pelo site: {SITE_URL}. A ativação completa leva até 7 dias úteis."
+        txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        txt = _strip_repeated_greeting(txt, name=name, turns=turns)
+        txt = _limit_questions(txt, max_questions=1)
+        return _clip(txt, SALES_MAX_CHARS_REPLY)
+
+    # Regra (memória fraca): se a intenção é vaga (OTHER) e faltam dados, aí sim DISCOVERY.
     if (not has_name) or (not has_segment):
         st["nudges"] = nudges + 1
         txt = (_ai_sales_answer(
@@ -1659,6 +1745,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     if not lead_name:
         reply_final = re.sub(r"\b(eu me chamo|me chamo)\b[^,]*,\s*", "", reply_final, flags=re.IGNORECASE).strip()
     spoken_final = _sanitize_spoken(reply_final)
+    # Camada de fala (padrão): números e unidades por extenso
+    spoken_final = _spoken_normalize_numbers(spoken_final)
 
     def _has_url(s: str) -> bool:
         t = (s or "").lower()
@@ -1710,6 +1798,9 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     # Sempre: remove finais genéricos de "SAC" para evitar loop
     reply_final = _strip_generic_question_ending(reply_final)
     spoken_final = _strip_generic_question_ending(spoken_final)
+
+    # aplica também aqui (garante consistência)
+    spoken_final = _spoken_normalize_numbers(spoken_final)
 
     return {
         "replyText": reply_final,
