@@ -767,6 +767,10 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
         "OFFTOPIC (somente no início):\n"
         "- Use route='offtopic' apenas se STAGE_ATUAL='ASK_NAME' e a mensagem for claramente aleatória.\n\n"
         "Formato do JSON: {route, intent, name, segment, interest_level, next_step}.\n"
+        "INTENTS permitidos: PRICE | PLANS | DIFF | ACTIVATE | WHAT_IS | OPERATIONAL | SLA | PROCESS | OTHER.\n"
+        "- OPERATIONAL: pergunta prática de como funciona no dia a dia (ex.: agendar, organizar pedidos).\n"
+        "- SLA: pergunta sobre demora/prazo para começar (ex.: \"demora?\", \"em quantos dias?\").\n"
+        "- PROCESS: pergunta sobre etapas do processo (ativação/configuração), sem focar em preço.\n\n"
         "route: 'sales' | 'offtopic' | 'emergency'.\n"
         "interest_level: 'low' | 'mid' | 'high'.\n"
         "next_step: '' | 'ASK_NAME' | 'ASK_SEGMENT' | 'VALUE' | 'PRICE' | 'CTA' | 'EXIT'.\n"
@@ -788,7 +792,7 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
         if route not in ("sales", "offtopic", "emergency"):
             route = "offtopic"
         intent = (out.get("intent") or "OTHER").strip().upper()
-        if intent not in ("PRICE", "PLANS", "DIFF", "ACTIVATE", "WHAT_IS", "OTHER"):
+        if intent not in ("PRICE", "PLANS", "DIFF", "ACTIVATE", "WHAT_IS", "OPERATIONAL", "SLA", "PROCESS", "OTHER"):
             intent = "OTHER"
         name = (out.get("name") or "").strip()
         segment = (out.get("segment") or "").strip()
@@ -895,6 +899,15 @@ def _ai_sales_answer(
     """
     kb = _get_sales_kb()
     rep = _kb_compact_for_prompt(kb)
+    process_facts = (kb.get("process_facts") or {}) if isinstance(kb, dict) else {}
+    # Fallback seguro: verdade do produto (evita promessas irreais)
+    if not process_facts:
+        process_facts = {
+            "no_free_trial": True,
+            "billing_model": "assinatura mensal (paga)",
+            "sla_setup": "até 7 dias úteis para número virtual + configuração concluída",
+            "can_prepare_now": "você já cria a conta e deixa tudo pronto na plataforma (serviços, rotina, agenda)."
+        }
 
     # Pricing reasoning por estágio (economia + narrativa) — mantém lógica
     try:
@@ -967,6 +980,11 @@ def _ai_sales_answer(
         "PREÇO:\n"
         "- Não jogar no começo.\n"
         "- Quando entrar, contextualize como custo operacional (tempo, erro, retrabalho).\n\n"
+        "REALIDADE DO PRODUTO (obrigatório):\n"
+        "- Não existe teste grátis. Não prometa “testar hoje”.\n"
+        "- Assinatura é paga.\n"
+        "- SLA: até 7 dias úteis para número virtual + configuração concluída.\n"
+        "- Se perguntarem de demora/processo: seja direto, alinhe expectativa e dê próximo passo.\n\n"
         "FECHAMENTO:\n"
         "- Quando fizer sentido fechar: benefício prático + próximo passo + despedida.\n"
         "- Direcione ao site de forma elegante, sem cortar o lead.\n\n"
@@ -983,6 +1001,7 @@ def _ai_sales_answer(
         f"mensagem: {user_text}\n\n"
         f"continuidade: {continuity}\n\n"
         f"onboarding_hint (se existir): {json.dumps(onboarding_hint, ensure_ascii=False)}\n"
+        f"fatos_do_produto (não negociar; não inventar): {json.dumps(process_facts, ensure_ascii=False, separators=(',',':'))}\n"
         f"repertório_firestore (base, não copie): {json.dumps(rep, ensure_ascii=False, separators=(',', ':'))}\n"
     )
 
@@ -1337,7 +1356,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         st["onboarding_hint"] = helpers
 
     # Intenções diretas: sempre IA escreve a resposta final
-    if intent in ("PRICE", "PLANS", "DIFF", "WHAT_IS"):
+    if intent in ("PRICE", "PLANS", "DIFF", "WHAT_IS", "OPERATIONAL", "SLA", "PROCESS"):
         hint = intent
         txt = (_ai_sales_answer(
             name=name, segment=segment, goal=goal, user_text=text_in, intent_hint=hint, state=st
