@@ -1021,6 +1021,12 @@ def _ai_sales_answer(
         "- none: no resto.\n\n"
         f"Lead:\n- nome: {name or '—'}\n- ramo: {segment or '—'}\n- objetivo: {goal or '—'}\n"
         f"intent_hint: {intent_hint or '—'}\n"
+        "REGRA OPERACIONAL IMPORTANTE:\n"
+        "- Se intent_hint for OPERATIONAL_FLOW, responda SEMPRE como um micro-fluxo fechado:\n"
+        "  entrada do cliente → confirmação → aviso ao MEI → registro na agenda → lembrete opcional.\n"
+        "- Não explique conceitos soltos.\n"
+        "- Não repita o que já foi dito antes.\n"
+        "- Finalize com no máximo 1 pergunta de direcionamento (ex.: agenda ou pedidos?).\n\n"
         f"mensagem: {user_text}\n\n"
         f"continuidade: {continuity}\n\n"
         f"onboarding_hint (se existir): {json.dumps(onboarding_hint, ensure_ascii=False)}\n"
@@ -1379,19 +1385,38 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     intent = (nlu.get("intent") or _intent_cheap(text_in) or "OTHER").strip().upper()
     st["last_intent"] = intent
 
+    # Flag leve: evita repetir explicação operacional
+    if intent == "OPERATIONAL":
+        if st.get("saw_operational_flow"):
+            st["operational_repeat"] = True
+        else:
+            st["saw_operational_flow"] = True
+
+
     # 🔓 Onboarding helpers (só quando necessário)
     helpers = (_get_sales_kb().get("onboarding_helpers") or {})
     if intent == "ACTIVATE" and helpers:
         st["onboarding_hint"] = helpers
 
     # Intenções diretas: sempre IA escreve a resposta final
-    if intent in ("PRICE", "PLANS", "DIFF", "WHAT_IS", "OPERATIONAL", "SLA", "PROCESS"):
-        hint = intent
+    if intent in ("PRICE", "PLANS", "DIFF", "WHAT_IS", "SLA", "PROCESS", "OPERATIONAL"):
+        # OPERATIONAL sempre deve responder como fluxo completo (início → fim)
+        if intent == "OPERATIONAL":
+            if st.get("operational_repeat"):
+                hint = "OPERATIONAL_FOLLOWUP"
+            else:
+                hint = "OPERATIONAL_FLOW"
+        else:
+            hint = intent
         txt = (_ai_sales_answer(
             name=name, segment=segment, goal=goal, user_text=text_in, intent_hint=hint, state=st
         ) or "").strip()
         if not txt:
             txt = _fallback_min_reply(name)
+
+        # Evita perguntas genéricas após fluxo operacional
+        if intent == "OPERATIONAL" and st.get("operational_repeat"):
+            txt = re.sub(r"\b(quer saber mais\?|posso explicar melhor\?)\b", "", txt, flags=re.IGNORECASE).strip()
         txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
         txt = _strip_repeated_greeting(txt, name=name, turns=turns)
         txt = _limit_questions(txt, max_questions=1)
