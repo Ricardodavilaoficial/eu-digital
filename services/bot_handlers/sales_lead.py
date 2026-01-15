@@ -71,7 +71,7 @@ def _fallback_min_reply(name: str = "") -> str:
     name = (name or "").strip()
     if name:
         return f"{name}, perfeito. Você quer falar de pedidos, agenda, orçamento ou só conhecer?"
-    return "Show 🙂 Me diz teu nome e o que você quer resolver: pedidos, agenda, orçamento ou conhecer?"
+    return "Beleza. Me diz teu nome e o que você quer resolver: pedidos, agenda, orçamento ou só entender como funciona?"
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -1349,6 +1349,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     # Intent canônico da IA, com fallback barato
     intent = (nlu.get("intent") or _intent_cheap(text_in) or "OTHER").strip().upper()
+    st["last_intent"] = intent
 
     # 🔓 Onboarding helpers (só quando necessário)
     helpers = (_get_sales_kb().get("onboarding_helpers") or {})
@@ -1507,7 +1508,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         return t.strip()
 
     # Regra de fechamento: ACTIVATE não termina em pergunta
-    if intent == "ACTIVATE":
+    if (st.get("last_intent") or "").strip().upper() == "ACTIVATE":
         reply_final = _strip_trailing_question(reply_final)
         spoken_final = _strip_trailing_question(spoken_final)
 
