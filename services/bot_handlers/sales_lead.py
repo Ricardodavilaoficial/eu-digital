@@ -61,9 +61,7 @@ SITE_URL = os.getenv("MEI_ROBO_SITE_URL", "www.meirobo.com.br").strip()
 
 # Mensagem mínima de entrada (mantida local por segurança operacional)
 OPENING_ASK_NAME = (
-    "Oi! 👋 Valeu por chamar 🙂\n\n"
-    "Antes de eu te explicar certinho,\n"
-    "como posso te chamar?"
+    "Beleza. Antes de eu te explicar certinho, como posso te chamar?"
 )
 
 # Fallback humano mínimo (nunca vazio; sem marketing longo)
@@ -281,31 +279,48 @@ def _intent_cheap(t: str) -> str:
 def _extract_name_freeform(text: str) -> str:
     """
     Extrai nome simples sem forçar.
-    - "me chamo X", "sou X", "aqui é X", "eu sou X"
-    - Se vier só uma palavra (ex.: "Ricardo"), aceita como nome.
+    - Aceita 1–3 palavras como nome.
+    - Suporta: "me chamo X", "me chamam de X", "pode me chamar de X", "meu nome é X", "aqui é X", "sou X"
     """
     t = (text or "").strip()
-    t = re.sub(r"[\.!\?]+$", "", t).strip()
     if not t:
         return ""
 
-    m = re.search(
-        r"(me chamo|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*([a-zA-ZÀ-ÿ'\- ]{2,40})$",
-        t,
-        re.IGNORECASE
-    )
-    if m:
-        name = (m.group(2) or "").strip()
-        name = re.sub(r"\s+", " ", name)
-        if len(name.split(" ")) > 4:
-            name = " ".join(name.split(" ")[:3])
+    # remove pontuação final e emojis comuns (evita "Rosália." quebrar regex)
+    t = re.sub(r"[\.\,\!\?\;:\)\]\}]+$", "", t).strip()
+    t = re.sub(r"[\U00010000-\U0010ffff]", "", t).strip()  # remove emoji (faixa unicode)
+
+    # normaliza espaços
+    t = re.sub(r"\s+", " ", t).strip()
+
+    # casos super comuns no Brasil (sem dicionário infinito, só moldes)
+    patterns = [
+        r"^(me chamo|me chamam de|pode me chamar de|podem me chamar de|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*([a-zA-ZÀ-ÿ'\- ]{2,40})$",
+    ]
+
+    for pat in patterns:
+        m = re.match(pat, t, flags=re.IGNORECASE)
+        if m:
+            name = (m.group(2) or "").strip()
+            name = re.sub(r"\s+", " ", name)
+
+            # limita comprimento (evita pegar frase inteira)
+            parts = [p for p in name.split(" ") if p]
+            if len(parts) > 4:
+                parts = parts[:3]
+            name = " ".join(parts).strip()
+
+            # limpa pontuação residual
+            name = re.sub(r"[^\wÀ-ÿ\s'\-]", "", name).strip()
+            return name
+
+    # fallback: se for curtinho (1-3 palavras), assume que é nome
+    parts = t.split()
+    if 1 <= len(parts) <= 3 and len(t) <= 30:
+        name = re.sub(r"[^\wÀ-ÿ\s'\-]", "", t).strip()
         return name
 
-    if len(t.split(" ")) <= 3 and "?" not in t and len(t) <= 32:
-        return re.sub(r"\s+", " ", t).strip()
-
     return ""
-
 def _extract_segment_hint(text: str) -> str:
     """
     Hint barato (não é fonte canônica). Se não encaixar, fica vazio.
@@ -1489,6 +1504,16 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     reply_final = (reply or "").strip() or OPENING_ASK_NAME
     spoken_final = _sanitize_spoken(reply_final)
 
+    def _has_url(s: str) -> bool:
+        t = (s or "").lower()
+        return ("http://" in t) or ("https://" in t) or ("www." in t) or ("meirobo.com.br" in t) or ("[site" in t)
+
+    prefers_text = False
+    if _has_url(reply_final):
+        prefers_text = True
+        # áudio curto e humano; link vai por escrito
+        spoken_final = "Te mandei o link por escrito aqui na conversa."
+
     def _strip_trailing_question(txt: str) -> str:
         t = (txt or "").strip()
         if not t:
@@ -1515,6 +1540,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     return {
         "replyText": reply_final,
         "nameUse": (st.get("last_name_use") or ""),
+        "prefersText": prefers_text,
 
         # 🔒 Fonte de verdade para áudio (worker deve preferir estes campos)
         "ttsText": spoken_final,
@@ -1530,10 +1556,6 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "ttsOwner": "worker",
         "nameToSay": lead_name,
     }
-
-
-
-
 def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
     """
     Mantido por compat, mas NÃO é mais o dono do áudio.
