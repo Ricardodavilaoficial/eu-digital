@@ -256,36 +256,30 @@ def _limit_questions(text: str, max_questions: int = 1) -> str:
 
 
 
-def _strip_trailing_question(txt: str) -> str:
-    """Remove pergunta final (ou a última frase interrogativa).
-    Útil para CTA/fechamento e para reduzir loop de perguntas.
-    """
-    t = (txt or "").strip()
-    if not t:
-        return t
-    if "?" not in t:
-        return t
 
+
+
+def _strip_trailing_question(txt: str) -> str:
+    """Remove pergunta final (ou última frase interrogativa)."""
+    t = (txt or "").strip()
+    if not t or "?" not in t:
+        return t
     last_q = t.rfind("?")
     cut = max(t.rfind(".", 0, last_q), t.rfind("!", 0, last_q), t.rfind("\n", 0, last_q))
     if cut >= 0:
-        t = t[: cut + 1].strip()
-    else:
-        t = t[:last_q].strip()
-    return t.strip()
+        return t[: cut + 1].strip()
+    return t[:last_q].strip()
 
 
 def _strip_generic_question_ending(txt: str) -> str:
-    """Corta perguntas genéricas de “SAC” no final (1 linha de limpeza).
-    Não cria texto novo; só remove o final repetitivo.
-    """
+    """Corta finais genéricos de SAC que viram loop (sem criar texto novo)."""
     t = (txt or "").strip()
     if not t:
         return t
-    # padrões comuns que viram loop
+    # padrões comuns (variações com/sem "?" no STT)
     t = re.sub(
-        r"(\s*[\.\!…]\s*)?(quer saber mais[^?]*\?|posso te ajudar[^?]*\?|quer que eu te explique[^?]*\?|"
-        r"você gostaria de saber[^?]*\?|quer saber como funciona[^?]*\?)\s*$",
+        r"(\s*[\.!…]\s*)?(quer saber mais[^?]*\??|posso te ajudar[^?]*\??|quer ajuda[^?]*\??|"
+        r"quer que eu te explique[^?]*\??|você gostaria de saber[^?]*\??|quer saber como funciona[^?]*\??)\s*$",
         "",
         t,
         flags=re.IGNORECASE,
@@ -293,30 +287,21 @@ def _strip_generic_question_ending(txt: str) -> str:
     return t
 
 
-def _enforce_price_when_asked(txt: str, kb: dict) -> str:
-    """Se o usuário perguntou preço e a resposta não trouxe números,
-    injeta os preços oficiais (Starter/Starter+) de forma curta (sem inventar).
-    """
-    t = (txt or "").strip()
-    if not t:
-        return t
+def _enforce_price_direct(kb: Dict[str, Any], segment: str = "") -> str:
+    """Resposta padrão de preço (direta, sem 'depende', sem pergunta)."""
     pf = (kb or {}).get("pricing_facts") or {}
     if not isinstance(pf, dict):
-        return t
-
+        pf = {}
     sp = str(pf.get("starter_price") or "").strip()
     spp = str(pf.get("starter_plus_price") or "").strip()
+    ss = str(pf.get("starter_storage") or "").strip()
+    sps = str(pf.get("starter_plus_storage") or "").strip()
     if not sp or not spp:
-        return t
-
-    # já tem número? então não mexe
-    if re.search(r"\d", t):
-        return t
-
-    tail = f"Hoje é **apenas {sp}/mês** (Starter) ou **{spp}/mês** (Starter+). A diferença é só a memória."
-    if t.endswith((".", "!", "…")):
-        return f"{t} {tail}".strip()
-    return f"{t}. {tail}".strip()
+        return "Hoje é uma assinatura mensal (paga). Se você me disser teu tipo de negócio, eu te passo os valores certinhos."
+    seg = (segment or "").strip()
+    seg_line = f"Pra {seg}," if seg else ""
+    mem_line = "A diferença é só a memória." + (f" (Starter {ss} | Starter+ {sps})" if ss or sps else "")
+    return f"{seg_line} hoje é **apenas {sp}/mês** (Starter) ou **{spp}/mês** (Starter+). {mem_line}".strip()
 
 
 def _looks_like_greeting(t: str) -> bool:
@@ -1030,7 +1015,7 @@ def _ai_sales_answer(
         "Use o conteúdo do Firestore (platform_kb/sales) como REPERTÓRIO de identidade, nunca como script.\n"
         "Nada deve soar decorado, técnico ou robótico.\n\n"
         "IMPORTANTE:\n"
-        "- Não agradeça nem faça 'obrigado por chamar' automaticamente. Só agradeça se o lead agradecer primeiro.\n\n"
+        "- Não agradeça automaticamente (tipo 'obrigado por chamar'). Só agradeça se o lead agradecer primeiro.\n\n"
         "SOBERANIA (importante): você decide autonomamente, a cada resposta:\n"
         "- se usa ou não o nome do lead\n"
         "- se demonstra empatia\n"
@@ -1056,9 +1041,9 @@ def _ai_sales_answer(
         "- Nunca invente números.\n"
         "- Só cite preço quando fizer sentido e apenas usando pricing_facts.\n\n"
         "PREÇO:\n"
-        "- Se o lead perguntar preço direto (intent_hint=PRICE/PLANS/DIFF), responda com os números do pricing_facts.\n"
-        "- Pode usar 'apenas' (sem exagero) porque é diferencial.\n"
-        "- Não invente valores.\n\n"
+        "- Se perguntarem preço direto: responda o valor (Starter/Starter+) e diga que a diferença é só a memória.\n"
+        "- Não comece com 'depende'.\n"
+        "- Sem pergunta no final (depois do preço, dê um próximo passo curto).\n\n"
         "REALIDADE DO PRODUTO (obrigatório):\n"
         "- Não existe teste grátis. Não prometa “testar hoje”.\n"
         "- Assinatura é paga.\n"
@@ -1114,16 +1099,21 @@ def _ai_sales_answer(
         # fallback: mantém texto bruto
         pass
 
-    # Remove final “SAC” (perguntas genéricas) para evitar loop de perguntas
+
+    # 1) Evita “metralhadora” de perguntas genéricas no final
     reply_text = _strip_generic_question_ending(reply_text)
 
-    # CTA: nunca termina em pergunta (mesmo se a IA insistir)
-    if str(intent_hint or '').strip().upper() == 'CTA':
+    # 2) PRICE/PLANS/DIFF: preço é diferencial — se vier com "depende" ou sem número, força resposta direta
+    ih = str(intent_hint or "").strip().upper()
+    if ih in ("PRICE", "PLANS", "DIFF"):
+        if ("depende" in _norm(reply_text)) or (not re.search(r"\d", reply_text)):
+            reply_text = _enforce_price_direct(kb, segment=segment)
         reply_text = _strip_trailing_question(reply_text)
 
-    # PRICE: se pediram preço e a IA não colocou números, injeta valores oficiais
-    if str(intent_hint or '').strip().upper() in ('PRICE', 'PLANS', 'DIFF'):
-        reply_text = _enforce_price_when_asked(reply_text, _get_sales_kb())
+    # 3) CTA: nunca termina em pergunta (mesmo se a IA insistir)
+    if ih == "CTA":
+        reply_text = _strip_trailing_question(reply_text)
+
 
     # --- lightweight sales usage log ---
     try:
@@ -1678,7 +1668,19 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
     def _wants_link(s: str) -> bool:
         t = _norm(s)
-        return ("link" in t) or ("site" in t) or ("onde entro" in t) or ("onde eu entro" in t) or ("manda o link" in t)
+        return (
+            ("link" in t)
+            or ("site" in t)
+            or ("endereço" in t)
+            or ("endereco" in t)
+            or ("onde entro" in t)
+            or ("onde eu entro" in t)
+            or ("onde eu me dirijo" in t)
+            or ("me dirijo" in t)
+            or ("manda o link" in t)
+            or ("qual o link" in t)
+            or ("qual é o link" in t)
+        )
 
     # Se o lead pedir link, manda o URL por escrito (texto) e áudio curto
     if _wants_link(text_in):
@@ -1694,14 +1696,18 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         # áudio curto e humano; link vai por escrito
         spoken_final = "Te mandei o link por escrito aqui na conversa."
 
-
-
-    # Regra de fechamento: ACTIVATE não termina em pergunta
-    if (st.get("last_intent") or "").strip().upper() == "ACTIVATE":
+    # Regra de fechamento: ACTIVATE (ou sinais claros de decisão) não termina em pergunta
+    hard_close = ((st.get("last_intent") or "").strip().upper() == "ACTIVATE")
+    if not hard_close:
+        try:
+            hard_close = (_intent_cheap(text_in) == "ACTIVATE")
+        except Exception:
+            hard_close = False
+    if hard_close or _wants_link(text_in):
         reply_final = _strip_trailing_question(reply_final)
         spoken_final = _strip_trailing_question(spoken_final)
 
-    # Também corta pergunta final genérica em qualquer caso (evita ritmo exagerado)
+    # Sempre: remove finais genéricos de "SAC" para evitar loop
     reply_final = _strip_generic_question_ending(reply_final)
     spoken_final = _strip_generic_question_ending(spoken_final)
 
