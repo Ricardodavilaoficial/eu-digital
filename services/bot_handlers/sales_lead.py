@@ -993,6 +993,7 @@ def _ai_sales_answer(
         "- Confiante e vendedor do bem, sem pressão, sem urgência falsa, sem promessas.\n"
         "- Humor leve quando fizer sentido.\n"
         "- No máximo 1 pergunta por resposta.\n\n"
+        "- EXCEÇÃO: se intent_hint for 'CTA' (decisão), NÃO faça pergunta. Feche com próximo passo e despedida.\n\n"
         "CONTEÚDO:\n"
         "- Priorize sales_pills, value_props_top3, e micro-scenes por segmento.\n"
         "- Use micro-exemplo operacional (entrada → organização → resumo pro dono) quando ajudar.\n"
@@ -1007,6 +1008,7 @@ def _ai_sales_answer(
         "- SLA: até 7 dias úteis para número virtual + configuração concluída.\n"
         "- Se perguntarem de demora/processo: seja direto, alinhe expectativa e dê próximo passo.\n\n"
         "FECHAMENTO:\n"
+        "- Se intent_hint='CTA': feche sem pergunta (apenas benefício + próximo passo + tchau).\n\n"
         "- Quando fizer sentido fechar: benefício prático + próximo passo + despedida.\n"
         "- Direcione ao site de forma elegante, sem cortar o lead.\n\n"
         "FORMATO OBRIGATÓRIO:\n"
@@ -1276,13 +1278,13 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         nm_ai = (nlu.get("name") or "").strip()
         nm_ai = _extract_name_freeform(nm_ai) or nm_ai
         nm_ai = re.sub(r"[\.!\?,;:]+$", "", nm_ai).strip()
-        nm = re.sub(
+        nm_ai = re.sub(
             r"^(me chamo|me chamam de|o pessoal me chama de|pessoal me chama de|pode me chamar de|podem me chamar de|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*",
             "",
-            nm,
+            nm_ai,
             flags=re.IGNORECASE,
         ).strip()
-        nm = re.sub(r"[^\wÀ-ÿ\s'\-]", "", nm).strip()
+        nm_ai = re.sub(r"[^\wÀ-ÿ\s'\-]", "", nm_ai).strip()
         nm_ai = re.sub(r"\s+", " ", nm_ai).strip()
         if len(nm_ai.split(" ")) > 3:
             nm_ai = " ".join(nm_ai.split(" ")[:3])
@@ -1520,6 +1522,17 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         return ("http://" in t) or ("https://" in t) or ("www." in t) or ("meirobo.com.br" in t) or ("[site" in t)
 
     prefers_text = False
+
+    def _wants_link(s: str) -> bool:
+        t = _norm(s)
+        return ("link" in t) or ("site" in t) or ("onde entro" in t) or ("onde eu entro" in t) or ("manda o link" in t)
+
+    # Se o lead pedir link, manda o URL por escrito (texto) e áudio curto
+    if _wants_link(text_in):
+        reply_final = f"Aqui está: {SITE_URL}"
+        prefers_text = True
+        spoken_final = "Te mandei o link por escrito aqui na conversa."
+
     if _has_url(reply_final):
         prefers_text = True
         # áudio curto e humano; link vai por escrito
