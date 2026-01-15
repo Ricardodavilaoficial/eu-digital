@@ -378,39 +378,24 @@ def _pricing_stage_from_state(lead_state: dict, intent: str) -> str:
 def _apply_next_step_safely(st: Dict[str, Any], next_step: str, has_name: bool, has_segment: bool, has_goal: bool) -> None:
     """
     next_step (IA) é sugestão. Nunca pode contradizer o que falta.
-    Só ajusta stage quando for seguro.
+    NOVA REGRA: next_step é sugestão (memória fraca), NÃO é trilho.
+    O código não conduz a conversa; apenas registra e protege.
     """
     ns = (next_step or "").strip().upper()
     if not ns:
         return
 
-    # PATCH: não coletar nome/segmento se acabamos de responder OPERATIONAL
-    if ns in ("ASK_NAME", "ASK_SEGMENT") and st.get("force_operational_reply"):
-        return
+    # Guarda como sugestão (memória fraca) para a próxima resposta/prompt.
+    st["suggested_next_step"] = ns
 
-    if not has_name and not st.get("force_operational_reply"):
-        st["stage"] = "ASK_NAME"
-        return
-    if not has_segment and not st.get("force_operational_reply"):
-        st["stage"] = "ASK_SEGMENT"
-        return
-    if not has_goal and ns in ("VALUE", "CTA", "PRICE"):
-        st["stage"] = "ASK_GOAL"
-        return
-
-    if ns == "ASK_NAME":
-        st["stage"] = "ASK_NAME"
-    elif ns == "ASK_SEGMENT":
-        st["stage"] = "ASK_SEGMENT"
-    elif ns == "VALUE":
-        st["stage"] = "PITCH"
-    elif ns == "PRICE":
-        st["stage"] = "PRICE"
-    elif ns == "CTA":
-        st["stage"] = "CTA"
-    elif ns == "EXIT":
+    # EXIT é a única coisa que o código pode “promover” diretamente,
+    # porque é proteção de custo e de loop infinito.
+    if ns == "EXIT":
         st["stage"] = "EXIT"
 
+    # Em OPERATIONAL, não “puxa” o trilho de coleta.
+    # Só registra a sugestão e segue.
+    return
 
 
 # =========================
@@ -985,6 +970,7 @@ def _ai_sales_answer(
         "- se demonstra empatia\n"
         "- se aprofunda um pouco mais\n"
         "- se fecha ou apenas orienta\n"
+        "- se a mensagem é teste/ironia/resistência consciente: acompanhe como humano e siga, sem puxar pra formulário\n"
         "Use behavior_rules, tone_rules, closing_guidance, sales_audio_modes e conversation_limits para DECIDIR.\n"
         "Não siga regras mecânicas do tipo “use nome no turno X”.\n\n"
         "- Nunca diga 'meu nome é ...'. Você fala com o lead; não se apresenta como a pessoa.\n"
@@ -1261,11 +1247,6 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     goal = (st.get("goal") or "").strip()
     stage = (st.get("stage") or "").strip() or "ASK_NAME"
 
-    # Se já temos nome por “desconhecido conhecido”, não pede nome de novo
-    if stage == "ASK_NAME" and name:
-        st["stage"] = "ASK_SEGMENT" if not segment else "PITCH"
-        stage = st["stage"]
-
     turns = int(st.get("turns") or 0) + 1
     st["turns"] = turns
     st["last_user_at"] = time.time()
@@ -1337,8 +1318,20 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         return "Se for emergência, liga 193 agora. 🙏"
 
     if route == "offtopic":
-        # só pode acontecer no início absoluto
-        return OPENING_ASK_NAME
+        # só pode acontecer no início absoluto — mas ainda assim, IA decide como responder.
+        txt = (_ai_sales_answer(
+            name=name,
+            segment=segment,
+            goal=goal,
+            user_text=text_in,
+            intent_hint="OFFTOPIC",
+            state=st,
+        ) or "").strip()
+        if not txt:
+            return OPENING_ASK_NAME
+        txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        txt = _limit_questions(txt, max_questions=1)
+        return _clip(txt, SALES_MAX_CHARS_REPLY)
 
     if stage == "EXIT":
         st["__sales_close"] = True
@@ -1350,8 +1343,20 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         if (turns <= 2) and (stage in ("ASK_NAME", "ASK_SEGMENT")) and (not has_name) and (not has_segment):
             if _detect_human_noise(text_in):
                 st["__human_gate_done"] = True
-                st["stage"] = "ASK_NAME"
-                return _human_gate_reply()
+                # IA soberana: ela decide se pergunta nome, se brinca, se avança.
+                txt = (_ai_sales_answer(
+                    name=name,
+                    segment=segment,
+                    goal=goal,
+                    user_text=text_in,
+                    intent_hint="HUMAN_NOISE",
+                    state=st,
+                ) or "").strip()
+                if not txt:
+                    return _human_gate_reply()
+                txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+                txt = _limit_questions(txt, max_questions=1)
+                return _clip(txt, SALES_MAX_CHARS_REPLY)
 
     # Anti-custo / soft close
     if _should_soft_close(st, has_name=has_name, has_segment=has_segment):
@@ -1405,24 +1410,23 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         txt = _limit_questions(txt, max_questions=1)
         return _clip(txt, SALES_MAX_CHARS_REPLY)
 
-    # 1) Nome
-    if not has_name:
-        st["stage"] = "ASK_NAME"
+    # NOVA REGRA: nome/segmento são “memória fraca”.
+    # Se não existem, a IA decide se pergunta, se segue, se dá exemplo e só depois coleta.
+    if (not has_name) or (not has_segment):
         st["nudges"] = nudges + 1
-        if st["nudges"] >= 3:
-            st["stage"] = "EXIT"
-            return "Tranquilo 🙂 Pra ver tudo com calma e ativar, o melhor é pelo site. Se quiser retomar depois, é só mandar um oi."
-        return OPENING_ASK_NAME
-
-    # 2) Segmento (texto livre)
-    if not has_segment:
-        st["stage"] = "ASK_SEGMENT"
-        st["nudges"] = nudges + 1
-        if st["nudges"] >= 4:
-            st["stage"] = "EXIT"
-            return f"Fechado, {name} 🙂 Pra eu te indicar direitinho, só me diz teu tipo de negócio em 1 frase (ex.: lanches, salão, serviços)."
-        # pergunta curta (sem “formulário”)
-        return f"Perfeito, {name} 🙂. Qual o segmento do teu negócio?"
+        txt = (_ai_sales_answer(
+            name=name,
+            segment=segment,
+            goal=goal,
+            user_text=text_in,
+            intent_hint="DISCOVERY",
+            state=st,
+        ) or "").strip()
+        if not txt:
+            txt = _fallback_min_reply(name)
+        txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        txt = _limit_questions(txt, max_questions=1)
+        return _clip(txt, SALES_MAX_CHARS_REPLY)
 
     # Intent canônico da IA, com fallback barato
     intent = (nlu.get("intent") or _intent_cheap(text_in) or "OTHER").strip().upper()
