@@ -757,7 +757,13 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
             return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": ""}
         nm = _extract_name_freeform(text) or text.strip()
         nm = re.sub(r"[\.!\?,;:]+$", "", nm).strip()
-        nm = re.sub(r"^(me chamo|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*", "", nm, flags=re.IGNORECASE).strip()
+        nm = re.sub(
+            r"^(me chamo|me chamam de|o pessoal me chama de|pessoal me chama de|pode me chamar de|podem me chamar de|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*",
+            "",
+            nm,
+            flags=re.IGNORECASE,
+        ).strip()
+        nm = re.sub(r"[^\wÀ-ÿ\s'\-]", "", nm).strip()
         nm = re.sub(r"\s+", " ", nm).strip()
         if len(nm.split(" ")) > 3:
             nm = " ".join(nm.split(" ")[:3])
@@ -1270,7 +1276,13 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         nm_ai = (nlu.get("name") or "").strip()
         nm_ai = _extract_name_freeform(nm_ai) or nm_ai
         nm_ai = re.sub(r"[\.!\?,;:]+$", "", nm_ai).strip()
-        nm_ai = re.sub(r"^(me chamo|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*", "", nm_ai, flags=re.IGNORECASE).strip()
+        nm = re.sub(
+            r"^(me chamo|me chamam de|o pessoal me chama de|pessoal me chama de|pode me chamar de|podem me chamar de|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*",
+            "",
+            nm,
+            flags=re.IGNORECASE,
+        ).strip()
+        nm = re.sub(r"[^\wÀ-ÿ\s'\-]", "", nm).strip()
         nm_ai = re.sub(r"\s+", " ", nm_ai).strip()
         if len(nm_ai.split(" ")) > 3:
             nm_ai = " ".join(nm_ai.split(" ")[:3])
@@ -1314,12 +1326,11 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     if route == "offtopic":
         # só pode acontecer no início absoluto
-        return "Oi! 👋 Valeu por chamar 🙂 Antes de eu te explicar certinho, como posso te chamar?"
+        return OPENING_ASK_NAME
 
     if stage == "EXIT":
         st["__sales_close"] = True
-        return "Beleza 🙂 Pra ver tudo com calma e ativar, o melhor é seguir pelo site. Por lá fica tudo certinho."
-
+        return "Beleza. Pra ver tudo com calma e seguir com a ativação, é pelo site: www.meirobo.com.br"
 
     # Human Gate: ruído humano no início (piada, "é bot?", clima, futebol, teste)
     # Só roda 1x por lead e só antes de coletar nome/ramo.
