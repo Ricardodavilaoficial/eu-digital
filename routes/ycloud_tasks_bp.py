@@ -1315,9 +1315,10 @@ def ycloud_inbound_worker():
         elif wa_out:
             reply_text = str(wa_out)
         reply_text = reply_text or ""
-        # Se entrou por áudio, nunca preferir texto (mantém "entra áudio → sai áudio")
-        if msg_type in ("audio", "voice", "ptt"):
-            prefers_text = False
+        # Se entrou por áudio: por padrão não preferir texto.
+        # EXCEÇÃO: se o wa_bot pediu prefersText (ex.: para mandar link por escrito), respeitar.
+        if msg_type in ("audio", "voice", "ptt") and (not prefers_text):
+            prefers_text = False  # mantém o default; (na prática, não muda nada)
 
         # Não sobrescrever resposta do wa_bot com "texto pronto".
         # Fallback mínimo só quando for lead/VENDAS (uid ausente).
@@ -1794,26 +1795,35 @@ def ycloud_inbound_worker():
                 send_text = None  # type: ignore
                 send_audio = None  # type: ignore
 
-            # PATCH B: se prefersText, manda direto texto e não tenta áudio
+            # PATCH B: se prefersText, manda o texto (ex.: link) e, se houver áudio curto, manda também.
             if prefers_text and send_text:
                 try:
                     sent_ok, _ = send_text(from_e164, reply_text)
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text (prefersText)")
-        
+
+            # Se entrou por áudio e temos audio_url, manda o áudio curto mesmo com prefersText
+            if prefers_text and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
+                try:
+                    _ok2, _ = send_audio(from_e164, audio_url)
+                    sent_ok = sent_ok or _ok2
+                except Exception:
+                    logger.exception("[tasks] lead: falha send_audio (prefersText)")
+
+            # Caso normal: entrou por áudio e NÃO pediu prefersText → manda só áudio
             if (not prefers_text) and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
                 try:
                     sent_ok, _ = send_audio(from_e164, audio_url)
                 except Exception:
                     logger.exception("[tasks] lead: falha send_audio")
 
+            # Fallback: se nada foi, tenta texto
             if (not sent_ok) and send_text:
                 try:
                     sent_ok, _ = send_text(from_e164, reply_text)
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text")
-
-        
+      
             # ==========================================================
             # Auditoria: alinhamento explícito entre replyText e spokenText (TTS)
             # ==========================================================
