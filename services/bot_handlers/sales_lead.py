@@ -2158,6 +2158,57 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     reply_final = _strip_generic_question_ending(reply_final)
     spoken_final = _strip_generic_question_ending(spoken_final)
 
+    # =========================
+    # BLINDAGEM FINAL (produto)
+    # =========================
+
+    # PREÇO: se o lead pediu preço, a saída FINAL sempre vem do Firestore (nunca inventar).
+    try:
+        t_intent = str(st.get("last_intent") or "").strip().upper()
+    except Exception:
+        t_intent = ""
+
+    cheap = ""
+    try:
+        cheap = _intent_cheap(text_in)
+    except Exception:
+        cheap = ""
+
+    is_price = (t_intent in ("PRICE", "PLANS", "DIFF")) or (cheap in ("PRICE", "PLANS", "DIFF"))
+    if is_price:
+        reply_final = _enforce_price_direct(kb, segment=lead_segment)
+        reply_final = _strip_trailing_question(reply_final)
+        prefers_text = False
+        spoken_final = _sanitize_spoken(reply_final)
+        spoken_final = _spoken_normalize_numbers(spoken_final)
+
+    # AGENDAMENTO: se o lead perguntou sobre agenda/agendamento e a resposta saiu genérica,
+    # força o "como funciona na prática" do Firestore (sem prometer automático).
+    try:
+        tnorm = _norm(text_in)
+    except Exception:
+        tnorm = (text_in or "").lower()
+
+    is_agenda_question = ("agend" in tnorm) or ("agenda" in tnorm) or ("marcar" in tnorm) or ("consulta" in tnorm) or ("horário" in tnorm) or ("horario" in tnorm)
+    if is_agenda_question and (not is_price):
+        try:
+            oc = kb.get("operational_capabilities") or {}
+            sched = str(oc.get("scheduling_practice") or "").strip()
+        except Exception:
+            sched = ""
+
+        # Se a resposta não mencionou agenda direito ou veio puxando micro-cena irrelevante, substitui
+        if sched:
+            out_norm = _norm(reply_final)
+            looks_like_scene = reply_final.strip().lower().startswith(("paciente chega", "cliente manda", "cliente pergunta"))
+            lacks_agenda = ("agenda" not in out_norm) and ("agend" not in out_norm)
+
+            if looks_like_scene or lacks_agenda:
+                reply_final = sched
+                reply_final = _strip_trailing_question(reply_final)
+                spoken_final = _sanitize_spoken(reply_final)
+                spoken_final = _spoken_normalize_numbers(spoken_final)
+
     # aplica também aqui (garante consistência)
     spoken_final = _spoken_normalize_numbers(spoken_final)
 
