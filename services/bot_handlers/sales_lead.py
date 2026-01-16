@@ -2176,9 +2176,25 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
     is_price = (t_intent in ("PRICE", "PLANS", "DIFF")) or (cheap in ("PRICE", "PLANS", "DIFF"))
     if is_price:
-        reply_final = _enforce_price_direct(kb, segment=lead_segment)
+        reply_final = _enforce_price_direct(kb, segment="")
         reply_final = _strip_trailing_question(reply_final)
         prefers_text = False
+        spoken_final = _sanitize_spoken(reply_final)
+        spoken_final = _spoken_normalize_numbers(spoken_final)
+
+    # CTA/ASSINAR: se a IA mencionar preço (R$) fora do modo PRICE,
+    # força os valores do Firestore para não inventar 99/149.
+    try:
+        last_int = str(st.get("last_intent") or "").strip().upper()
+    except Exception:
+        last_int = ""
+
+    looks_like_pricing_text = ("r$" in (reply_final or "").lower()) and (("starter" in (reply_final or "").lower()) or ("plano" in (reply_final or "").lower()))
+    is_activate_flow = (last_int in ("ACTIVATE",)) or ("assina" in tnorm) or ("assin" in tnorm) or ("procedimento" in tnorm)
+
+    if (not is_price) and is_activate_flow and looks_like_pricing_text:
+        reply_final = _enforce_price_direct(kb, segment="")
+        reply_final = _strip_trailing_question(reply_final)
         spoken_final = _sanitize_spoken(reply_final)
         spoken_final = _spoken_normalize_numbers(spoken_final)
 
