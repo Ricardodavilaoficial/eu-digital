@@ -943,6 +943,249 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
 
 
 # =========================
+# IA NO COMANDO: PLANO (JSON)
+# - A IA decide intenção + modo de pergunta/fechamento + quais KBs precisa
+# - O código só executa, busca KB solicitada e loga
+# =========================
+
+def _kb_need_allowlist(kb: Dict[str, Any]) -> list:
+    allow = (kb or {}).get("kb_need_allowed")
+    if isinstance(allow, list):
+        out = []
+        for x in allow:
+            s = str(x or "").strip()
+            if s:
+                out.append(s)
+        return out
+    return []
+
+
+def _kb_catalog(kb: Dict[str, Any]) -> Dict[str, str]:
+    cat = (kb or {}).get("kb_catalog")
+    if not isinstance(cat, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for k, v in cat.items():
+        ks = str(k or "").strip()
+        vs = str(v or "").strip()
+        if ks and vs:
+            out[ks] = vs
+    return out
+
+
+def _kb_pick(kb: Dict[str, Any], kb_need: list, *, segment: str = "") -> Dict[str, Any]:
+    """Extrai somente os blocos pedidos (para prompt enxuto e log)."""
+    out: Dict[str, Any] = {}
+    if not isinstance(kb_need, list):
+        return out
+
+    seg = (segment or "").strip().lower()
+
+    for key in kb_need:
+        k = str(key or "").strip()
+        if not k:
+            continue
+        if k not in kb:
+            continue
+        # segmentado: manda só o que importa
+        if k in ("segment_pills", "segments") and seg and isinstance(kb.get(k), dict):
+            blk = kb.get(k) or {}
+            if isinstance(blk, dict) and seg in blk:
+                out[k] = {seg: blk.get(seg)}
+            else:
+                out[k] = blk
+            continue
+        out[k] = kb.get(k)
+    return out
+
+
+def _resolve_scene_text(kb: Dict[str, Any], scene_key: str, *, segment: str = "") -> str:
+    """Resolve uma 'scene_key' para um texto curto (sem inventar)."""
+    kb = kb or {}
+    sk = (scene_key or "").strip()
+    seg = (segment or "").strip().lower()
+    if not sk:
+        return ""
+
+    # atalhos canônicos
+    if sk == "segment_pills" and seg:
+        try:
+            ms = (((kb.get("segment_pills") or {}).get(seg) or {}).get("micro_scene") or "")
+            return str(ms).strip()
+        except Exception:
+            return ""
+
+    if sk == "segments" and seg:
+        try:
+            ms = (((kb.get("segments") or {}).get(seg) or {}).get("micro_scene") or "")
+            return str(ms).strip()
+        except Exception:
+            return ""
+
+    # value_in_action_blocks.<key>
+    if sk.startswith("value_in_action_blocks."):
+        parts = sk.split(".", 1)
+        if len(parts) == 2:
+            key = parts[1].strip()
+            blk = (kb.get("value_in_action_blocks") or {})
+            if isinstance(blk, dict):
+                obj = blk.get(key)
+                if isinstance(obj, dict):
+                    scene = obj.get("scene")
+                    if isinstance(scene, list):
+                        # junta em uma linha curta
+                        t = " → ".join([str(x).strip() for x in scene if str(x).strip()])
+                        return t.strip()[:420]
+    # memory_positioning.core
+    if sk.startswith("memory_positioning"):
+        try:
+            mp = kb.get("memory_positioning") or {}
+            if isinstance(mp, dict):
+                core = mp.get("core")
+                if isinstance(core, list) and core:
+                    # usa 1 linha
+                    return str(core[0]).strip()[:260]
+        except Exception:
+            return ""
+
+    return ""
+
+
+def sales_ai_plan(
+    *,
+    user_text: str,
+    stage: str,
+    name: str,
+    segment: str,
+    goal: str,
+    nlu_intent: str,
+    turns: int,
+    last_bot_excerpt: str,
+) -> Dict[str, Any]:
+    """Retorna um plano estruturado (JSON) para a resposta.
+
+    Schema esperado:
+      {
+        intent: PRICE|ACTIVATE|OPERATIONAL|PROCESS|SLA|OTHER|SMALLTALK|OBJECTION,
+        tone: confiante|consultivo|leve|bem_humano,
+        ask_mode: none|one_short|ab_choice,
+        close_mode: none|soft|hard,
+        scene_key: string (opcional),
+        kb_need: [..] (somente itens de kb_need_allowed),
+        reply: texto curto,
+        evidence: 1 linha (apenas log)
+      }
+
+    Se falhar, retorna {}.
+    """
+    kb = _get_sales_kb()
+    allow = _kb_need_allowlist(kb)
+    cat = _kb_catalog(kb)
+
+    user_text = (user_text or "").strip()
+    if not user_text:
+        return {}
+
+    # prompt enxuto, sem despejar KB inteira
+    system = (
+        "Você é o PLANEJADOR do MEI Robô (Vendas) no WhatsApp (pt-BR).\n"
+        "Você devolve SOMENTE JSON válido (sem texto extra).\n\n"
+        "Objetivo: decidir a melhor próxima ação de forma humana e vendedora do bem, sem script.\n\n"
+        "Regras de saída:\n"
+        "- intent: PRICE|ACTIVATE|OPERATIONAL|PROCESS|SLA|OTHER|SMALLTALK|OBJECTION\n"
+        "- tone: confiante|consultivo|leve|bem_humano\n"
+        "- ask_mode: none|one_short|ab_choice\n"
+        "- close_mode: none|soft|hard\n"
+        "- scene_key: opcional (ex.: 'segment_pills', 'segments', 'value_in_action_blocks.services_quote_scene', 'memory_positioning')\n"
+        "- kb_need: lista objetiva do que buscar (somente permitido em kb_need_allowed)\n"
+        "- reply: texto curto (2–5 linhas) pronto pra enviar\n"
+        "- evidence: 1 linha explicando a escolha (somente para log)\n\n"
+        "Regras de comportamento (produto):\n"
+        "- Se o lead perguntar PREÇO: responda direto com valores Starter/Starter+ e diga que a diferença é só a memória.\n"
+        "- Se for DECISÃO/ASSINAR/LINK: close_mode='hard' e ask_mode='none' (zero pergunta no final).\n"
+        "- Small talk (clima, piada, 'é bot?'): responda humano 1 frase e faça ponte suave pro valor (sem puxar formulário).\n"
+        "- Não invente números; use somente pricing_facts/process_facts quando precisar de fatos.\n"
+    )
+
+    user = (
+        f"STAGE={stage}\n"
+        f"TURNS={int(turns or 0)}\n"
+        f"NOME={name or '—'}\n"
+        f"RAMO={segment or '—'}\n"
+        f"OBJETIVO={goal or '—'}\n"
+        f"NLU_INTENT={nlu_intent or '—'}\n"
+        f"ULTIMA_RESPOSTA_NAO_REPETIR={last_bot_excerpt or '—'}\n\n"
+        f"kb_need_allowed={allow}\n"
+        f"kb_catalog={cat}\n\n"
+        f"MENSAGEM={user_text}\n"
+    )
+
+    raw = (_openai_chat(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        model=OPENAI_SALES_NLU_MODEL,
+        max_tokens=220,
+        temperature=0.1,
+        response_format={"type": "json_object"},
+    ) or "").strip()
+
+    if not raw:
+        return {}
+
+    try:
+        obj = json.loads(raw)
+        if not isinstance(obj, dict):
+            return {}
+
+        intent = str(obj.get("intent") or "OTHER").strip().upper()
+        if intent not in ("PRICE", "ACTIVATE", "OPERATIONAL", "PROCESS", "SLA", "OTHER", "SMALLTALK", "OBJECTION"):
+            intent = "OTHER"
+
+        tone = str(obj.get("tone") or "bem_humano").strip().lower()
+        if tone not in ("confiante", "consultivo", "leve", "bem_humano"):
+            tone = "bem_humano"
+
+        ask_mode = str(obj.get("ask_mode") or "one_short").strip().lower()
+        if ask_mode not in ("none", "one_short", "ab_choice"):
+            ask_mode = "one_short"
+
+        close_mode = str(obj.get("close_mode") or "none").strip().lower()
+        if close_mode not in ("none", "soft", "hard"):
+            close_mode = "none"
+
+        scene_key = str(obj.get("scene_key") or "").strip()
+
+        kb_need = obj.get("kb_need")
+        if not isinstance(kb_need, list):
+            kb_need = []
+        kb_need_norm = []
+        for k in kb_need:
+            ks = str(k or "").strip()
+            if ks and (not allow or ks in allow):
+                kb_need_norm.append(ks)
+
+        reply = str(obj.get("reply") or "").strip()
+        evidence = str(obj.get("evidence") or "").strip()
+
+        return {
+            "intent": intent,
+            "tone": tone,
+            "ask_mode": ask_mode,
+            "close_mode": close_mode,
+            "scene_key": scene_key,
+            "kb_need": kb_need_norm,
+            "reply": reply,
+            "evidence": evidence,
+            "raw": obj,
+        }
+    except Exception:
+        return {}
+
+
+
+# =========================
 # IA: respostas (sempre reescritas)
 # =========================
 
@@ -1508,6 +1751,98 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                 return f"{name}, pra ver tudo com calma e ativar, o melhor é pelo site. Se quiser, me diz teu ramo em 1 frase que eu te mostro o caminho mais enxuto 🙂"
             return "Pra ver tudo com calma e ativar, o melhor é pelo site 🙂 Se quiser, me diz teu tipo de negócio em 1 frase que eu te indico o caminho mais enxuto."
 
+
+
+    # =========================
+    # IA NO COMANDO (PLANO)
+    # - Se o plano vier, ele manda.
+    # - Se falhar, cai no fluxo legado abaixo.
+    # =========================
+
+    try:
+        plan = sales_ai_plan(
+            user_text=text_in,
+            stage=stage,
+            name=name,
+            segment=segment,
+            goal=goal,
+            nlu_intent=str(nlu.get("intent") or "").strip().upper(),
+            turns=turns,
+            last_bot_excerpt=str(st.get("last_bot_reply_excerpt") or "").strip(),
+        )
+    except Exception:
+        plan = {}
+
+    if isinstance(plan, dict) and plan.get("intent"):
+        # Segurança: garante fatos quando a intenção exigir
+        kb_need = list(plan.get("kb_need") or [])
+        intent_p = str(plan.get("intent") or "OTHER").strip().upper()
+        if intent_p == "PRICE" and "pricing_facts" not in kb_need:
+            kb_need.append("pricing_facts")
+        if intent_p in ("SLA", "PROCESS") and "process_facts" not in kb_need:
+            kb_need.append("process_facts")
+
+        # Cena padrão (se fizer sentido) — sem obrigar
+        scene_key = str(plan.get("scene_key") or "").strip()
+        if not scene_key and (intent_p in ("OPERATIONAL", "OTHER", "OBJECTION") or segment):
+            scene_key = "segment_pills" if segment else ""
+
+        kb = _get_sales_kb()
+        kb_used = [str(x).strip() for x in kb_need if str(x or "").strip()]
+        kb_snip = _kb_pick(kb, kb_used, segment=segment)
+        scene_text = _resolve_scene_text(kb, scene_key, segment=segment)
+
+        reply_txt = str(plan.get("reply") or "").strip()
+        if not reply_txt:
+            # fallback: usa a IA de resposta tradicional
+            reply_txt = (_ai_sales_answer(
+                name=name,
+                segment=segment,
+                goal=goal,
+                user_text=text_in,
+                intent_hint=("CTA" if intent_p == "ACTIVATE" else intent_p),
+                state=st,
+            ) or "").strip() or _fallback_min_reply(name)
+
+        # Se vier cena e a resposta não tiver micro-fluxo, injeta 1 linha (sem inventar)
+        if scene_text and ("→" not in reply_txt):
+            reply_txt = (scene_text + "\n" + reply_txt).strip()
+
+        ask_mode = str(plan.get("ask_mode") or "one_short").strip().lower()
+        close_mode = str(plan.get("close_mode") or "none").strip().lower()
+
+        # Hard close / sem pergunta
+        if close_mode == "hard" or ask_mode == "none" or intent_p == "ACTIVATE":
+            reply_txt = _strip_trailing_question(reply_txt)
+
+        # Sempre: mata finais genéricos de SAC
+        reply_txt = _strip_generic_question_ending(reply_txt)
+
+        # Anti-loop + a11y social
+        reply_txt = _apply_anti_loop(st, reply_txt, name=name, segment=segment, goal=goal, user_text=text_in)
+        if name:
+            reply_txt = _strip_repeated_greeting(reply_txt, name=name, turns=turns)
+
+        # Perguntas: respeita o plano
+        if ask_mode == "none" or close_mode == "hard":
+            reply_txt = _limit_questions(reply_txt, max_questions=0)
+        else:
+            reply_txt = _limit_questions(reply_txt, max_questions=1)
+
+        # Observabilidade: guarda no state (worker pode logar o payload de retorno)
+        try:
+            st["ai_plan"] = plan.get("raw") or plan
+            st["kb_used"] = kb_used
+            st["kb_snippet"] = kb_snip
+            st["scene_key"] = scene_key
+            st["ask_mode"] = ask_mode
+            st["close_mode"] = close_mode
+            st["plan_intent"] = intent_p
+            st["plan_evidence"] = str(plan.get("evidence") or "").strip()
+        except Exception:
+            pass
+
+        return _clip(reply_txt, SALES_MAX_CHARS_REPLY)
     # OPERATIONAL tem prioridade absoluta: responde antes de coletar dados (nome/segmento)
     intent = (nlu.get("intent") or _intent_cheap(text_in) or "OTHER").strip().upper()
     st["last_intent"] = intent
@@ -1817,6 +2152,16 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         # 🔒 Fonte de verdade para áudio (worker deve preferir estes campos)
         "ttsText": spoken_final,
         "spokenText": spoken_final,
+
+        # Observabilidade (IA no comando): prova do plano e do que foi usado
+        "aiPlan": (st.get("ai_plan") or {}),
+        "kbUsed": (st.get("kb_used") or []),
+        "sceneKey": (st.get("scene_key") or ""),
+        "askMode": (st.get("ask_mode") or ""),
+        "closeMode": (st.get("close_mode") or ""),
+        "planIntent": (st.get("plan_intent") or ""),
+        "planEvidence": (st.get("plan_evidence") or ""),
+        "kbSnippet": json.dumps((st.get("kb_snippet") or {}), ensure_ascii=False),
         "spokenSource": "replyText",
 
         "leadName": lead_name,
