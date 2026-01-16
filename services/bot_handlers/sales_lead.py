@@ -225,11 +225,11 @@ def _spoken_normalize_numbers(text: str) -> str:
             return m.group(0)
         return f"{_pt_int(n)} gigabytes"
 
-    t = re.sub(r"(\d{1,3})\s*GB", _repl_gb, t, flags=re.IGNORECASE)
-    t = re.sub(r"(\d{1,3})\s*gigabytes", _repl_gb, t, flags=re.IGNORECASE)
+    t = re.sub(r"\b(\d{1,3})\s*GB\b", _repl_gb, t, flags=re.IGNORECASE)
+    t = re.sub(r"\b(\d{1,3})\s*gigabytes\b", _repl_gb, t, flags=re.IGNORECASE)
 
-    # "/mes" -> "por mes"
-    t = t.replace("/mes", " por mes")
+    # "/mês" e "/mes" -> "por mês"
+    t = t.replace("/mês", " por mês").replace("/mes", " por mês")
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
@@ -346,6 +346,13 @@ def _strip_generic_question_ending(txt: str) -> str:
         t,
         flags=re.IGNORECASE,
     ).strip()
+
+    # Se sobrou final truncado (ex.: "O que"), limpa para não mandar áudio quebrado
+    if re.search(r"\b(o que|que|e)\s*$", t, flags=re.IGNORECASE):
+        t = re.sub(r"\b(o que|que|e)\s*$", "", t, flags=re.IGNORECASE).strip()
+        t = t.rstrip(",;:-").strip()
+        if t and not t.endswith((".", "!", "…")):
+            t = t + "."
     return t
 
 
