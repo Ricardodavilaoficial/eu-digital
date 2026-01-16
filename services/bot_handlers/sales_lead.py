@@ -257,6 +257,18 @@ def _sanitize_spoken(text: str) -> str:
     return t
 
 
+
+def _flatten_scene_arrows(text: str) -> str:
+    """Converte '→' em frases normais (evita soar template no áudio)."""
+    t = (text or '').strip()
+    if not t:
+        return t
+    t = t.replace('→', '.')
+    t = re.sub(r'\s*\.\s*', '. ', t).strip()
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+
 def _strip_repeated_greeting(text: str, name: str, turns: int) -> str:
     """
     Evita repetição de saudação/identidade em turnos seguidos.
@@ -1356,7 +1368,7 @@ def _ai_sales_answer(
         "- Se perguntarem preço direto: responda o valor (Starter/Starter+) e diga que a diferença é só a memória.\n"
         "- Não comece com 'depende'.\n"
         "- Sem pergunta no final (depois do preço, dê um próximo passo curto).\n\n"
-        "REALIDADE DO PRODUTO (obrigatório):\n"
+        "REALIDADE DO PRODUTO (obrigatório):\n- Não diga que o robô 'agenda automaticamente'. Diga que ele organiza, confirma e registra; o profissional acompanha e decide.\n- Em fechamento (intent_hint='CTA'), assine a última linha como: — Ricardo, do MEI Robô\n\n"
         "- Não existe teste grátis. Não prometa “testar hoje”.\n"
         "- Assinatura é paga.\n"
         "- SLA: até 7 dias úteis para número virtual + configuração concluída.\n"
@@ -1415,16 +1427,17 @@ def _ai_sales_answer(
     # 1) Evita “metralhadora” de perguntas genéricas no final
     reply_text = _strip_generic_question_ending(reply_text)
 
-    # 2) PRICE/PLANS/DIFF: preço é diferencial — se vier com "depende" ou sem número, força resposta direta
-    ih = str(intent_hint or "").strip().upper()
-    if ih in ("PRICE", "PLANS", "DIFF"):
-        if ("depende" in _norm(reply_text)) or (not re.search(r"\d", reply_text)):
-            reply_text = _enforce_price_direct(kb, segment=segment)
+    # 2) PRICE/PLANS/DIFF: preço SEMPRE vem do Firestore (nunca inventar)
+    ih = str(intent_hint or '').strip().upper()
+    if ih in ('PRICE', 'PLANS', 'DIFF'):
+        reply_text = _enforce_price_direct(kb, segment=segment)
         reply_text = _strip_trailing_question(reply_text)
 
-    # 3) CTA: nunca termina em pergunta (mesmo se a IA insistir)
+    # 3) CTA: nunca termina em pergunta e assina como Ricardo, do MEI Robô
     if ih == "CTA":
         reply_text = _strip_trailing_question(reply_text)
+        if "ricardo" not in _norm(reply_text):
+            reply_text = (reply_text.rstrip() + "\n\n— Ricardo, do MEI Robô").strip()
 
 
     # --- lightweight sales usage log ---
@@ -1467,6 +1480,9 @@ def _ai_sales_answer(
             reply_text = _strip_repeated_greeting(reply_text, name=name, turns=turns)
     except Exception:
         pass
+
+    reply_text = _flatten_scene_arrows(reply_text)
+
 
     return reply_text
 
@@ -2083,6 +2099,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         kind = "sales_example" if (lead_segment and (stage_now in ("PITCH", "CTA", "PRICE"))) else "sales"
 
     reply_final = (reply or "").strip() or OPENING_ASK_NAME
+    reply_final = _flatten_scene_arrows(reply_final)
     # Segurança: nunca falar "eu me chamo ..." se nome estiver vazio
     if not lead_name:
         reply_final = re.sub(r"\b(eu me chamo|me chamo)\b[^,]*,\s*", "", reply_final, flags=re.IGNORECASE).strip()
