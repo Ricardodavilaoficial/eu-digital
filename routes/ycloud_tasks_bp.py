@@ -1449,9 +1449,73 @@ def ycloud_inbound_worker():
             # ==========================================================
             # Se o usuário pediu "somente texto", respeita.
             if prefers_text and msg_type in ("audio", "voice", "ptt"):
+                # PATCH: Se a entrada foi ÁUDIO e a resposta contém LINK/CTA,
+                # não pode virar "text_only_requested".
+                # Regra: manda 1 áudio curto (sem url) e depois manda o texto com o link.
+                def _has_url_local(s: str) -> bool:
+                    t = (s or "").lower()
+                    return ("http://" in t) or ("https://" in t) or ("www." in t) or ("meirobo.com.br" in t)
+
+                def _build_ack_audio(nm: str = "") -> str:
+                    n = (nm or "").strip()
+                    if n:
+                        return (
+                            f"Perfeito, {n}. Te mando o link por escrito agora e já fica tudo claro pra assinar. "
+                            "Obrigado por chamar! — Ricardo, do MEI Robô."
+                        )
+                    return "Perfeito. Te mando o link por escrito agora e já fica tudo claro pra assinar. Obrigado por chamar! — Ricardo, do MEI Robô."
+
                 audio_debug = dict(audio_debug or {})
-                audio_debug["mode"] = "text_only_requested"
-                audio_url = ""  # garante que não envia áudio
+                _rt = (reply_text or "").strip()
+
+                # prefersText por link (não é "usuário pediu texto")
+                if (msg_type in ("audio", "voice", "ptt")) and _rt and _has_url_local(_rt):
+                    audio_debug["mode"] = "audio_plus_text_link"
+
+                    # gera áudio curto institucional (sem url) para manter "entra áudio -> sai áudio"
+                    if not audio_url:
+                        try:
+                            base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+                            if not base:
+                                base = (request.host_url or "").strip().rstrip("/")
+                            tts_url = f"{base}/api/voz/tts"
+                            voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
+                            if voice_id:
+                                nm = (display_name or "").strip()
+                                # tenta aproveitar override/premium speaker se existir
+                                try:
+                                    if not nm and wa_key_effective and _IDENTITY_MODE != "off":
+                                        nm = _get_active_speaker(wa_key_effective) or ""
+                                except Exception:
+                                    nm = nm
+                                ack = _build_ack_audio(nm)
+                                rr = requests.post(
+                                    tts_url,
+                                    headers={"Accept": "application/json"},
+                                    json={"text": ack, "voice_id": voice_id},
+                                    timeout=35,
+                                )
+                                if rr.status_code == 200:
+                                    try:
+                                        j = rr.json() or {}
+                                        if isinstance(j, dict) and j.get("ok") is True and (j.get("audioUrl") or ""):
+                                            audio_url = (j.get("audioUrl") or "").strip()
+                                            audio_debug["ttsAck"] = {"ok": True}
+                                        else:
+                                            audio_debug["ttsAck"] = {"ok": False, "reason": "missing_audioUrl"}
+                                    except Exception:
+                                        audio_debug["ttsAck"] = {"ok": False, "reason": "bad_json"}
+                                else:
+                                    audio_debug["ttsAck"] = {"ok": False, "reason": f"http_{rr.status_code}"}
+                            else:
+                                audio_debug["ttsAck"] = {"ok": False, "reason": "missing_INSTITUTIONAL_VOICE_ID"}
+                        except Exception as e:
+                            audio_debug["ttsAck"] = {"ok": False, "reason": f"exc:{type(e).__name__}"}
+
+                else:
+                    # Caso geral: realmente só texto (ex.: usuário pediu explicitamente texto)
+                    audio_debug["mode"] = "text_only_requested"
+                    audio_url = ""  # garante que não envia áudio
 
         
             # Defaults (evita UnboundLocalError em logs)
@@ -1796,14 +1860,43 @@ def ycloud_inbound_worker():
                 send_audio = None  # type: ignore
 
             # PATCH B: se prefersText, manda o texto (ex.: link) e, se houver áudio curto, manda também.
-            if prefers_text and send_text:
+            audio_plus_text_link = bool(
+                prefers_text
+                and msg_type in ("audio", "voice", "ptt")
+                and (audio_debug or {}).get("mode") == "audio_plus_text_link"
+            )
+
+            # PATCH: quando é link e veio por áudio, manda 1 áudio curto e depois o texto com link.
+            if audio_plus_text_link and allow_audio and audio_url and send_audio:
+                try:
+                    _ok2, _ = send_audio(from_e164, audio_url)
+                    sent_ok = sent_ok or _ok2
+                except Exception:
+                    logger.exception("[tasks] lead: falha send_audio (audio_plus_text_link)")
+
+                # texto com link (reply completo)
+                if send_text:
+                    try:
+                        _rt = (reply_text or "").strip()
+                        if _rt:
+                            if ("http://" not in _rt.lower()) and ("https://" not in _rt.lower()):
+                                _rt = _rt.replace("www.meirobo.com.br", "https://www.meirobo.com.br").replace(
+                                    "meirobo.com.br", "https://www.meirobo.com.br"
+                                )
+                            _ok3, _ = send_text(from_e164, _rt)
+                            sent_ok = sent_ok or _ok3
+                    except Exception:
+                        logger.exception("[tasks] lead: falha send_text (audio_plus_text_link)")
+
+            # PATCH B: se prefersText (caso geral), manda texto primeiro.
+            if (not audio_plus_text_link) and prefers_text and send_text:
                 try:
                     sent_ok, _ = send_text(from_e164, reply_text)
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text (prefersText)")
 
             # Se entrou por áudio e temos audio_url, manda o áudio curto mesmo com prefersText
-            if prefers_text and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
+            if (not audio_plus_text_link) and prefers_text and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
                 try:
                     _ok2, _ = send_audio(from_e164, audio_url)
 
