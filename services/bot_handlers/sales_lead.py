@@ -2236,12 +2236,32 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     looks_like_pricing_text = ("r$" in (reply_final or "").lower()) and (("starter" in (reply_final or "").lower()) or ("plano" in (reply_final or "").lower()))
     is_activate_flow = (last_int in ("ACTIVATE",)) or ("assina" in tnorm) or ("assin" in tnorm) or ("procedimento" in tnorm)
 
-    if (not is_price) and is_activate_flow and looks_like_pricing_text:
+    wants_procedure = (
+        ("procedimento" in tnorm)
+        or ("como faço" in tnorm)
+        or ("como eu faço" in tnorm)
+        or ("a partir de agora" in tnorm)
+        or ("pra assinar" in tnorm)
+        or ("para assinar" in tnorm)
+        or ("vou assinar" in tnorm)
+        or ("quero assinar" in tnorm)
+        or ("vou querer assinar" in tnorm)
+    )
+
+    if (not is_price) and is_activate_flow and looks_like_pricing_text and (not wants_procedure):
         reply_final = _enforce_price_direct(kb, segment="")
         reply_final = _strip_trailing_question(reply_final)
         spoken_final = _sanitize_spoken(reply_final)
         spoken_final = _strip_md_for_tts(spoken_final)
         spoken_final = _spoken_normalize_numbers(spoken_final)
+
+    if wants_procedure:
+        reply_final = (
+            f"{SITE_URL} — ali você assina e já deixa serviços/agenda prontos. "
+            "A ativação completa leva até 7 dias úteis."
+        )
+        prefers_text = True
+        spoken_final = "Te mandei o link por escrito aqui na conversa."
 
     # AGENDAMENTO: se o lead perguntou sobre agenda/agendamento e a resposta saiu genérica,
     # força o "como funciona na prática" do Firestore (sem prometer automático).
