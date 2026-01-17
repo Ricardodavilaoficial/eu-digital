@@ -1499,8 +1499,8 @@ def ycloud_inbound_worker():
                                 audio_url = ""
                                 ct = (tts_resp.headers.get("content-type") or "").lower()
 
-                                # Caso A: endpoint retorna JSON com audioUrl
-                                if tts_resp.ok and "application/json" in ct:
+                                # 1) Se vier JSON com audioUrl
+                                if "application/json" in ct:
                                     try:
                                         payload = tts_resp.json() or {}
                                     except Exception:
@@ -1508,21 +1508,19 @@ def ycloud_inbound_worker():
                                     if isinstance(payload, dict):
                                         audio_url = (payload.get("audioUrl") or payload.get("audio_url") or "").strip()
 
-                                # Caso B: endpoint retorna BYTES (mp3) — faz upload + signed URL
+                                # 2) Se NÃO veio audioUrl, tenta bytes MP3 e sobe pro storage (signed url)
                                 if tts_resp.ok and not audio_url:
                                     try:
-                                        audio_bytes = tts_resp.content or b""
+                                        b = tts_resp.content or b""
                                     except Exception:
-                                        audio_bytes = b""
-
-                                    if audio_bytes:
-                                        # Reusa o mesmo caminho de upload do teu pipeline (upload_signed)
-                                        # Ajusta o nome da função conforme teu worker:
-                                        # Ex.: upload_bytes_signed(prefix, bytes, content_type) -> signed_url
+                                        b = b""
+                                    if b:
                                         try:
+                                            # Use a mesma função/helper que teu pipeline já usa pra bytes_upload_signed.
+                                            # Se o nome for diferente no teu arquivo, troca só esta chamada.
                                             audio_url = upload_bytes_signed(
                                                 prefix="sandbox/institutional_tts_ack",
-                                                data=audio_bytes,
+                                                data=b,
                                                 content_type="audio/mpeg",
                                             )
                                         except Exception:

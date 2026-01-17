@@ -472,6 +472,9 @@ def _sanitize_spoken(text: str) -> str:
     if not t:
         return "Oi 🙂"
 
+    # Evita "rabicho" de TTS no final: sempre fecha com pontuação.
+    if t and t[-1] not in ".!?":
+        t = t + "."
     return t
 
 
