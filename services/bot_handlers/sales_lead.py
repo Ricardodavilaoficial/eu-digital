@@ -1967,60 +1967,10 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         txt = _limit_questions(txt, max_questions=1)
         return _clip(txt, SALES_MAX_CHARS_REPLY)
 
-    # Intent canônico da IA, com fallback barato
-    intent = (nlu.get("intent") or _intent_cheap(text_in) or "OTHER").strip().upper()
-    st["last_intent"] = intent
+    # Restante (intenção vaga/OTHER) — aqui a conversa já tem o mínimo (nome/ramo).
+    # Mantém IA no comando, mas sem reintroduzir trilhos/ifs infinitos.
 
-    # Flag leve: evita repetir explicação operacional
-    if intent == "OPERATIONAL":
-        if st.get("saw_operational_flow"):
-            st["operational_repeat"] = True
-        else:
-            st["saw_operational_flow"] = True
-
-
-    # 🔓 Onboarding helpers (só quando necessário)
-    helpers = (_get_sales_kb().get("onboarding_helpers") or {})
-    if intent == "ACTIVATE" and helpers:
-        st["onboarding_hint"] = helpers
-
-    # Intenções diretas: sempre IA escreve a resposta final
-    if intent in ("PRICE", "PLANS", "DIFF", "WHAT_IS", "SLA", "PROCESS", "OPERATIONAL"):
-        # OPERATIONAL sempre deve responder como fluxo completo (início → fim)
-        if intent == "OPERATIONAL":
-            if st.get("operational_repeat"):
-                hint = "OPERATIONAL_FOLLOWUP"
-            else:
-                hint = "OPERATIONAL_FLOW"
-        else:
-            hint = intent
-        txt = (_ai_sales_answer(
-            name=name, segment=segment, goal=goal, user_text=text_in, intent_hint=hint, state=st
-        ) or "").strip()
-        if not txt:
-            txt = _fallback_min_reply(name)
-
-        # Evita perguntas genéricas após fluxo operacional
-        if intent == "OPERATIONAL":
-            txt = re.sub(r"\b(quer saber mais\?|posso explicar melhor\?)\b", "", txt, flags=re.IGNORECASE).strip()
-        txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
-        txt = _strip_repeated_greeting(txt, name=name, turns=turns)
-        txt = _limit_questions(txt, max_questions=1)
-        return _clip(txt, SALES_MAX_CHARS_REPLY)
-
-    if intent == "ACTIVATE":
-        # Sempre via IA também (evita frase pronta)
-        txt = (_ai_sales_answer(
-            name=name, segment=segment, goal=goal, user_text=text_in, intent_hint="CTA", state=st
-        ) or "").strip()
-        if not txt:
-            txt = f"Fechado, {name} 🙂 Pra ativar com calma, o melhor é seguir pelo site. Quer que eu te diga o caminho mais enxuto pra {goal or 'começar'}?"
-        txt = _apply_anti_loop(st, txt, name=name, segment=segment, goal=goal, user_text=text_in)
-        txt = _strip_repeated_greeting(txt, name=name, turns=turns)
-        txt = _limit_questions(txt, max_questions=1)
-        return _clip(txt, SALES_MAX_CHARS_REPLY)
-
-    # Lead frio: pergunta curta, sem despejar pitch
+    # Lead frio: pergunta curta (sem despejar pitch)
     if interest == "low" and not has_goal:
         st["stage"] = "ASK_GOAL"
         txt = (_ai_sales_answer(
@@ -2033,7 +1983,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         txt = _limit_questions(txt, max_questions=1)
         return _clip(txt, SALES_MAX_CHARS_REPLY)
 
-    # Pitch (cacheado) + sempre uma pergunta de avanço
+    # Pitch (cacheado) + 1 pergunta de avanço
     hint = intent or "OTHER"
     cached = _get_cached_pitch(segment, hint, text_in)
     if cached:
@@ -2046,7 +1996,6 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     if not pitch_txt:
         pitch_txt = _fallback_min_reply(name)
 
-    # Anti-loop
     pitch_txt = _apply_anti_loop(st, pitch_txt, name=name, segment=segment, goal=goal, user_text=text_in)
     pitch_txt = _strip_repeated_greeting(pitch_txt, name=name, turns=turns)
     pitch_txt = _limit_questions(pitch_txt, max_questions=1)
