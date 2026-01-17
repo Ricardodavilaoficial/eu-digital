@@ -219,6 +219,97 @@ _SALES_KB_CACHE: Optional[Dict[str, Any]] = None
 _SALES_KB_CACHE_AT: float = 0.0
 _SALES_KB_TTL_SECONDS: int = int(os.getenv("SALES_KB_TTL_SECONDS", "600"))
 
+def _fmt_brl_from_cents(cents: Any) -> str:
+    try:
+        c = int(cents)
+        if c <= 0:
+            return ""
+        # 8900 -> "R$ 89,00"
+        reais = c // 100
+        cent = c % 100
+        return f"R$ {reais},%02d" % cent
+    except Exception:
+        return ""
+
+
+def _merge_platform_pricing_into_kb(kb: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Mantém 'preço em um único lugar' (platform_pricing/current).
+    Se a KB trouxer pricing_facts.pricing_ref apontando para o doc canônico,
+    puxa o doc e mapeia para as chaves que o runtime usa (starter_price/starter_plus_price).
+    Best-effort: nunca quebra o fluxo.
+    """
+    try:
+        pf = (kb or {}).get("pricing_facts") or {}
+        if not isinstance(pf, dict):
+            return kb
+
+        ref_path = str(pf.get("pricing_ref") or "").strip()
+        if not ref_path:
+            return kb
+
+        # já tem os campos que o enforcement usa -> ok
+        if str(pf.get("starter_price") or "").strip() and str(pf.get("starter_plus_price") or "").strip():
+            kb["pricing_source"] = ref_path
+            return kb
+
+        # busca doc canônico
+        try:
+            from google.cloud import firestore  # type: ignore
+            client = firestore.Client()
+        except Exception:
+            return kb
+
+        parts = [p for p in ref_path.split("/") if p]
+        if len(parts) < 2:
+            return kb
+
+        doc = client.collection(parts[0]).document(parts[1]).get()
+        if not doc or not doc.exists:
+            return kb
+
+        pdata = doc.to_dict() or {}
+        if not isinstance(pdata, dict):
+            return kb
+
+        # 1) Preferir display_prices (já vem “bonito”)
+        dp = pdata.get("display_prices") or {}
+        if isinstance(dp, dict):
+            sp = str(dp.get("starter") or "").strip()
+            spp = str(dp.get("starter_plus") or "").strip()
+            if sp:
+                pf["starter_price"] = sp
+            if spp:
+                pf["starter_plus_price"] = spp
+
+        # 2) Fallback: price_cents (formata BRL)
+        plans = pdata.get("plans") or {}
+        if isinstance(plans, dict):
+            st = plans.get("starter") or {}
+            stp = plans.get("starter_plus") or {}
+            if isinstance(st, dict):
+                if not str(pf.get("starter_price") or "").strip():
+                    pf["starter_price"] = _fmt_brl_from_cents(st.get("price_cents"))
+                # storage em GB -> texto simples
+                if not str(pf.get("starter_storage") or "").strip():
+                    gb = st.get("storage_gb")
+                    if gb is not None:
+                        pf["starter_storage"] = f"{gb} Gigabytes de memória."
+            if isinstance(stp, dict):
+                if not str(pf.get("starter_plus_price") or "").strip():
+                    pf["starter_plus_price"] = _fmt_brl_from_cents(stp.get("price_cents"))
+                if not str(pf.get("starter_plus_storage") or "").strip():
+                    gb = stp.get("storage_gb")
+                    if gb is not None:
+                        pf["starter_plus_storage"] = f"{gb} Gigabytes de memória."
+
+        kb["pricing_facts"] = pf
+        kb["pricing_source"] = ref_path
+        return kb
+    except Exception:
+        return kb
+
+
 def _get_sales_kb() -> Dict[str, Any]:
     """Carrega KB de vendas do Firestore com cache/TTL. Best-effort."""
     global _SALES_KB_CACHE, _SALES_KB_CACHE_AT
@@ -258,6 +349,10 @@ def _get_sales_kb() -> Dict[str, Any]:
             "objections": {},
             "version": "local_min",
         }
+
+    
+    # Preço vem do doc canônico (platform_pricing/current) via pricing_ref
+    kb = _merge_platform_pricing_into_kb(kb)
 
     _SALES_KB_CACHE = kb
     _SALES_KB_CACHE_AT = now
