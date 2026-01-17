@@ -511,7 +511,13 @@ def _enforce_price_direct(kb: Dict[str, Any], segment: str = "") -> str:
     ss = str(pf.get("starter_storage") or "").strip()
     sps = str(pf.get("starter_plus_storage") or "").strip()
     if not sp or not spp:
-        return "Hoje é uma assinatura mensal (paga). Se você me disser teu tipo de negócio, eu te passo os valores certinhos."
+        # Preço é “fonte única”: só fala valores quando existirem no pricing doc (pricing_ref).
+        # Sem inventar número e sem burocracia: manda o caminho curto por escrito.
+        return (
+            "É assinatura mensal (paga). "
+            "Os valores certinhos ficam no site: meirobo.com.br. "
+            "Se quiser, eu te mando o link aqui e já te digo o próximo passo pra assinar."
+        )
 
     def _clean_price(p: str) -> str:
         t = (p or "").strip()
