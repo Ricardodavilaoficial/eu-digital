@@ -258,6 +258,16 @@ def _sanitize_spoken(text: str) -> str:
 
 
 
+def _strip_md_for_tts(text: str) -> str:
+    """Remove marcas simples de Markdown que atrapalham a fala (TTS)."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    t = t.replace("**", "").replace("__", "").replace("`", "")
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
 def _flatten_scene_arrows(text: str) -> str:
     """Converte '→' em frases normais (evita soar template no áudio)."""
     t = (text or '').strip()
@@ -379,6 +389,23 @@ def _enforce_price_direct(kb: Dict[str, Any], segment: str = "") -> str:
     sps = str(pf.get("starter_plus_storage") or "").strip()
     if not sp or not spp:
         return "Hoje é uma assinatura mensal (paga). Se você me disser teu tipo de negócio, eu te passo os valores certinhos."
+
+    def _clean_price(p: str) -> str:
+        t = (p or "").strip()
+        tl = t.lower()
+        # remove marcadores de mensalidade já embutidos no Firestore
+        tl = tl.replace("por mês", "").replace("por mes", "")
+        tl = tl.replace("/mês", "").replace("/mes", "")
+        # aplica a mesma remoção no original mantendo caixa
+        t = re.sub(r"(?i)\bpor\s+m[eê]s\b\.?", "", t).strip()
+        t = re.sub(r"(?i)/m[eê]s\b\.?", "", t).strip()
+        t = re.sub(r"\s+", " ", t).strip()
+        # tira pontuação final solta
+        t = t.rstrip(" .,-;:")
+        return t
+
+    sp = _clean_price(sp)
+    spp = _clean_price(spp)
     seg = (segment or "").strip()
     seg_line = f"Pra {seg}," if seg else ""
     mem_line = "A diferença é só a memória." + (f" (Starter {ss} | Starter+ {sps})" if ss or sps else "")
@@ -2105,6 +2132,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         reply_final = re.sub(r"\b(eu me chamo|me chamo)\b[^,]*,\s*", "", reply_final, flags=re.IGNORECASE).strip()
     spoken_final = _sanitize_spoken(reply_final)
     # Camada de fala (padrão): números e unidades por extenso
+    spoken_final = _strip_md_for_tts(spoken_final)
     spoken_final = _spoken_normalize_numbers(spoken_final)
 
     def _has_url(s: str) -> bool:
@@ -2150,6 +2178,15 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             hard_close = (_intent_cheap(text_in) == "ACTIVATE")
         except Exception:
             hard_close = False
+    if not hard_close:
+        try:
+            tdec = _norm(text_in)
+        except Exception:
+            tdec = (text_in or "").lower()
+        if ("vou assinar" in tdec) or ("quero assinar" in tdec) or ("vou querer assinar" in tdec):
+            hard_close = True
+        if ("procedimento" in tdec) and (("assina" in tdec) or ("assin" in tdec) or ("ativ" in tdec)):
+            hard_close = True
     if hard_close or _wants_link(text_in):
         reply_final = _strip_trailing_question(reply_final)
         spoken_final = _strip_trailing_question(spoken_final)
@@ -2180,6 +2217,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         reply_final = _strip_trailing_question(reply_final)
         prefers_text = False
         spoken_final = _sanitize_spoken(reply_final)
+        spoken_final = _strip_md_for_tts(spoken_final)
         spoken_final = _spoken_normalize_numbers(spoken_final)
 
     # CTA/ASSINAR: se a IA mencionar preço (R$) fora do modo PRICE,
@@ -2202,6 +2240,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         reply_final = _enforce_price_direct(kb, segment="")
         reply_final = _strip_trailing_question(reply_final)
         spoken_final = _sanitize_spoken(reply_final)
+        spoken_final = _strip_md_for_tts(spoken_final)
         spoken_final = _spoken_normalize_numbers(spoken_final)
 
     # AGENDAMENTO: se o lead perguntou sobre agenda/agendamento e a resposta saiu genérica,
@@ -2225,6 +2264,9 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
                 reply_final = sched
                 reply_final = _strip_trailing_question(reply_final)
                 spoken_final = _sanitize_spoken(reply_final)
+
+                spoken_final = _strip_md_for_tts(spoken_final)
+
                 spoken_final = _spoken_normalize_numbers(spoken_final)
 
     # aplica também aqui (garante consistência)
