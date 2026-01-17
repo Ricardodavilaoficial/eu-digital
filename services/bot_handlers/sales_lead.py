@@ -1249,58 +1249,110 @@ def sales_ai_plan(
     if not user_text:
         return {}
 
-# prompt enxuto, sem despejar KB inteira
-system = (
-    "Você é o PLANEJADOR do MEI Robô (Vendas) no WhatsApp (pt-BR).\n"
-    "Você devolve SOMENTE JSON válido (sem texto extra).\n\n"
-    "Objetivo: decidir a melhor próxima ação de forma humana e vendedora do bem, sem script.\n\n"
-    "Regras de saída:\n"
-    "- intent: PRICE|ACTIVATE|OPERATIONAL|PROCESS|SLA|OTHER|SMALLTALK|OBJECTION\n"
-    "- tone: confiante|consultivo|leve|bem_humano\n"
-    "- ask_mode: none|one_short|ab_choice\n"
-    "- close_mode: none|soft|hard\n"
-    "- next_step: ''|ASK_NAME|ASK_SEGMENT|VALUE|PRICE|SEND_LINK|CTA|EXIT\n"
-    "- scene_key: opcional (ex.: 'segment_pills', 'segments', 'value_in_action_blocks.services_quote_scene', 'memory_positioning')\n"
-    "- kb_need: lista objetiva do que buscar (somente permitido em kb_need_allowed)\n"
-    "- reply: texto curto (2–5 linhas) pronto pra enviar\n"
-    "- evidence: 1 linha explicando a escolha (somente para log)\n\n"
-    "Regras de comportamento (produto):\n"
-    "- Se o lead perguntar PREÇO: responda direto com valores Starter/Starter+ e diga que a diferença é só a memória.\n"
-    "- Se for DECISÃO/ASSINAR/LINK: close_mode='hard' e ask_mode='none' (zero pergunta no final).\n"
-    "- Se pedirem LINK/SITE/ONDE ASSINA: next_step='SEND_LINK' e inclua o site na reply.\n"
-    "- Small talk (clima, piada, 'é bot?'): responda humano 1 frase e faça ponte suave pro valor (sem puxar formulário).\n"
-    "- Não invente números; use somente pricing_facts/process_facts quando precisar de fatos.\n"
-)
 
-# PATCH7: quando SALES_COMPOSER_MODE=v1, o Planner NÃO gera o texto final (sem campo reply).
-if _composer_mode() == "v1":
+    # prompt enxuto, sem despejar KB inteira
+    system = (
+        "Você é o PLANEJADOR do MEI Robô (Vendas) no WhatsApp (pt-BR).\n"
+        "Você devolve SOMENTE JSON válido (sem texto extra).\n\n"
+        "Objetivo: decidir a melhor próxima ação de forma humana e vendedora do bem, sem script.\n\n"
+        "Regras de saída:\n"
+        "- intent: PRICE|ACTIVATE|OPERATIONAL|PROCESS|SLA|OTHER|SMALLTALK|OBJECTION\n"
+        "- tone: confiante|consultivo|leve|bem_humano\n"
+        "- ask_mode: none|one_short|ab_choice\n"
+        "- close_mode: none|soft|hard\n"
+        "- next_step: ''|ASK_NAME|ASK_SEGMENT|VALUE|PRICE|SEND_LINK|CTA|EXIT\n"
+        "- scene_key: opcional (ex.: 'segment_pills', 'segments', 'value_in_action_blocks.services_quote_scene', 'memory_positioning')\n"
+        "- kb_need: lista objetiva do que buscar (somente permitido em kb_need_allowed)\n"
+        "- reply: texto curto (2–5 linhas) pronto pra enviar\n"
+        "- evidence: 1 linha explicando a escolha (somente para log)\n\n"
+        "Regras de comportamento (produto):\n"
+        "- Se o lead perguntar PREÇO: responda direto com valores Starter/Starter+ e diga que a diferença é só a memória.\n"
+        "- Se for DECISÃO/ASSINAR/LINK: close_mode='hard' e ask_mode='none' (zero pergunta no final).\n"
+        "- Se pedirem LINK/SITE/ONDE ASSINA: next_step='SEND_LINK' e inclua o site na reply.\n"
+        "- Small talk (clima, piada, 'é bot?'): responda humano 1 frase e faça ponte suave pro valor (sem puxar formulário).\n"
+        "- Não invente números; use somente pricing_facts/process_facts quando precisar de fatos.\n"
+    )
+
+    # PATCH7: quando SALES_COMPOSER_MODE=v1, o Planner NÃO gera o texto final (sem campo reply).
+    if _composer_mode() == "v1":
+        try:
+            system = system.replace(
+                "- reply: texto curto (2–5 linhas) pronto pra enviar\n",
+                "- NÃO inclua campo reply (o Composer gera o texto final)\n"
+            )
+            system = system.replace(
+                "- Se pedirem LINK/SITE/ONDE ASSINA: next_step='SEND_LINK' e inclua o site na reply.\n",
+                "- Se pedirem LINK/SITE/ONDE ASSINA: next_step='SEND_LINK'. (O texto final incluirá o site.)\n"
+            )
+        except Exception:
+            pass
+
+
+    user = (
+        f"STAGE={stage}\n"
+        f"TURNS={int(turns or 0)}\n"
+        f"NOME={name or '—'}\n"
+        f"RAMO={segment or '—'}\n"
+        f"OBJETIVO={goal or '—'}\n"
+        f"NLU_INTENT={nlu_intent or '—'}\n"
+        f"ULTIMA_RESPOSTA_NAO_REPETIR={last_bot_excerpt or '—'}\n\n"
+        f"kb_need_allowed={allow}\n"
+        f"kb_catalog={cat}\n\n"
+        f"MENSAGEM={user_text}\n"
+    )
+
+    # chama o Planner (IA) e devolve dict validado (best-effort)
     try:
-        system = system.replace(
-            "- reply: texto curto (2–5 linhas) pronto pra enviar\n",
-            "- NÃO inclua campo reply (o Composer gera o texto final)\n"
-        )
-        system = system.replace(
-            "- Se pedirem LINK/SITE/ONDE ASSINA: next_step='SEND_LINK' e inclua o site na reply.\n",
-            "- Se pedirem LINK/SITE/ONDE ASSINA: next_step='SEND_LINK'. (O texto final incluirá o site.)\n"
-        )
+        raw = (_openai_chat(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            model=OPENAI_SALES_NLU_MODEL,
+            max_tokens=220,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        ) or "").strip()
+        if not raw:
+            return {}
+        plan = json.loads(raw)
+        if not isinstance(plan, dict):
+            return {}
+
+        # normaliza campos principais
+        plan_intent = str(plan.get("intent") or "").strip().upper()
+        if plan_intent and plan_intent not in ("PRICE","ACTIVATE","OPERATIONAL","PROCESS","SLA","OTHER","SMALLTALK","OBJECTION"):
+            plan_intent = "OTHER"
+        if plan_intent:
+            plan["intent"] = plan_intent
+
+        ns = str(plan.get("next_step") or "").strip().upper()
+        if ns and ns not in ("ASK_NAME","ASK_SEGMENT","VALUE","PRICE","SEND_LINK","CTA","EXIT"):
+            ns = ""
+        plan["next_step"] = ns
+
+        ask_mode = str(plan.get("ask_mode") or "").strip().lower()
+        if ask_mode and ask_mode not in ("none","one_short","ab_choice"):
+            ask_mode = "one_short"
+        if ask_mode:
+            plan["ask_mode"] = ask_mode
+
+        close_mode = str(plan.get("close_mode") or "").strip().lower()
+        if close_mode and close_mode not in ("none","soft","hard"):
+            close_mode = "none"
+        if close_mode:
+            plan["close_mode"] = close_mode
+
+        # kb_need deve ser lista
+        kb_need = plan.get("kb_need")
+        if kb_need is None:
+            plan["kb_need"] = []
+        elif not isinstance(kb_need, list):
+            plan["kb_need"] = []
+
+        return plan
     except Exception:
-        pass
-
-
-user = (
-    f"STAGE={stage}\n"
-    f"TURNS={int(turns or 0)}\n"
-    f"NOME={name or '—'}\n"
-    f"RAMO={segment or '—'}\n"
-    f"OBJETIVO={goal or '—'}\n"
-    f"NLU_INTENT={nlu_intent or '—'}\n"
-    f"ULTIMA_RESPOSTA_NAO_REPETIR={last_bot_excerpt or '—'}\n\n"
-    f"kb_need_allowed={allow}\n"
-    f"kb_catalog={cat}\n\n"
-    f"MENSAGEM={user_text}\n"
-)
-
-
+        return {}
 
 # =========================
 # IA: respostas (sempre reescritas)
