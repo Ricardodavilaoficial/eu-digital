@@ -1806,6 +1806,28 @@ def ycloud_inbound_worker():
             if prefers_text and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
                 try:
                     _ok2, _ = send_audio(from_e164, audio_url)
+
+                    # PATCH: se a resposta contém link, mandar o link por TEXTO logo após o áudio.
+                    # Regra de produto: "entra áudio -> sai áudio" + "link sempre por texto".
+                    try:
+                        _rt = (reply_text or "").strip()
+                    except Exception:
+                        _rt = ""
+
+                    def _has_url_local(s: str) -> bool:
+                        t = (s or "").lower()
+                        return ("http://" in t) or ("https://" in t) or ("www." in t) or ("meirobo.com.br" in t)
+
+                    if _rt and _has_url_local(_rt) and send_text:
+                        try:
+                            # se o texto não tiver um URL "clicável", garante o https
+                            if ("http://" not in _rt.lower()) and ("https://" not in _rt.lower()):
+                                _rt = _rt.replace("www.meirobo.com.br", "https://www.meirobo.com.br").replace(
+                                    "meirobo.com.br", "https://www.meirobo.com.br"
+                                )
+                            send_text(from_e164, _rt)
+                        except Exception:
+                            pass
                     sent_ok = sent_ok or _ok2
                 except Exception:
                     logger.exception("[tasks] lead: falha send_audio (prefersText)")
@@ -1814,6 +1836,28 @@ def ycloud_inbound_worker():
             if (not prefers_text) and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
                 try:
                     sent_ok, _ = send_audio(from_e164, audio_url)
+
+                    # PATCH: se a resposta contém link, mandar o link por TEXTO logo após o áudio.
+                    # Regra de produto: "entra áudio -> sai áudio" + "link sempre por texto".
+                    try:
+                        _rt = (reply_text or "").strip()
+                    except Exception:
+                        _rt = ""
+
+                    def _has_url_local(s: str) -> bool:
+                        t = (s or "").lower()
+                        return ("http://" in t) or ("https://" in t) or ("www." in t) or ("meirobo.com.br" in t)
+
+                    if _rt and _has_url_local(_rt) and send_text:
+                        try:
+                            # se o texto não tiver um URL "clicável", garante o https
+                            if ("http://" not in _rt.lower()) and ("https://" not in _rt.lower()):
+                                _rt = _rt.replace("www.meirobo.com.br", "https://www.meirobo.com.br").replace(
+                                    "meirobo.com.br", "https://www.meirobo.com.br"
+                                )
+                            send_text(from_e164, _rt)
+                        except Exception:
+                            pass
                 except Exception:
                     logger.exception("[tasks] lead: falha send_audio")
 
