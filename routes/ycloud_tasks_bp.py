@@ -1489,24 +1489,52 @@ def ycloud_inbound_worker():
                                 except Exception:
                                     nm = nm
                                 ack = _build_ack_audio(nm)
-                                rr = requests.post(
+                                tts_resp = requests.post(
                                     tts_url,
                                     headers={"Accept": "application/json"},
-                                    json={"text": ack, "voice_id": voice_id},
+                                    json={"text": ack, "voice_id": voice_id, "format": "mp3"},
                                     timeout=35,
                                 )
-                                if rr.status_code == 200:
+
+                                audio_url = ""
+                                ct = (tts_resp.headers.get("content-type") or "").lower()
+
+                                # Caso A: endpoint retorna JSON com audioUrl
+                                if tts_resp.ok and "application/json" in ct:
                                     try:
-                                        j = rr.json() or {}
-                                        if isinstance(j, dict) and j.get("ok") is True and (j.get("audioUrl") or ""):
-                                            audio_url = (j.get("audioUrl") or "").strip()
-                                            audio_debug["ttsAck"] = {"ok": True}
-                                        else:
-                                            audio_debug["ttsAck"] = {"ok": False, "reason": "missing_audioUrl"}
+                                        payload = tts_resp.json() or {}
                                     except Exception:
-                                        audio_debug["ttsAck"] = {"ok": False, "reason": "bad_json"}
+                                        payload = {}
+                                    if isinstance(payload, dict):
+                                        audio_url = (payload.get("audioUrl") or payload.get("audio_url") or "").strip()
+
+                                # Caso B: endpoint retorna BYTES (mp3) — faz upload + signed URL
+                                if tts_resp.ok and not audio_url:
+                                    try:
+                                        audio_bytes = tts_resp.content or b""
+                                    except Exception:
+                                        audio_bytes = b""
+
+                                    if audio_bytes:
+                                        # Reusa o mesmo caminho de upload do teu pipeline (upload_signed)
+                                        # Ajusta o nome da função conforme teu worker:
+                                        # Ex.: upload_bytes_signed(prefix, bytes, content_type) -> signed_url
+                                        try:
+                                            audio_url = upload_bytes_signed(
+                                                prefix="sandbox/institutional_tts_ack",
+                                                data=audio_bytes,
+                                                content_type="audio/mpeg",
+                                            )
+                                        except Exception:
+                                            audio_url = ""
+
+                                if audio_url:
+                                    audio_debug["ttsAck"] = {"ok": True}
                                 else:
-                                    audio_debug["ttsAck"] = {"ok": False, "reason": f"http_{rr.status_code}"}
+                                    if not tts_resp.ok:
+                                        audio_debug["ttsAck"] = {"ok": False, "reason": f"http_{tts_resp.status_code}"}
+                                    else:
+                                        audio_debug["ttsAck"] = {"ok": False, "reason": "missing_audioUrl"}
                             else:
                                 audio_debug["ttsAck"] = {"ok": False, "reason": "missing_INSTITUTIONAL_VOICE_ID"}
                         except Exception as e:
