@@ -59,6 +59,11 @@ def _log_sales_usage(
 
 SITE_URL = os.getenv("MEI_ROBO_SITE_URL", "www.meirobo.com.br").strip()
 
+# Purificação (incremental e reversível):
+# - SALES_STRATEGIC_OVERRIDES=1 mantém overrides antigos (link/procedimento/agenda) por compat.
+#   Depois, desligar (=0) para IA+KB assumirem 100% do trilho.
+# - SALES_STRICT_NO_PRICE_OUTSIDE_INTENT=1 aplica política dura: fora de PRICE/PLANS/DIFF, não pode sair "R$".
+
 # Mensagem mínima de entrada (mantida local por segurança operacional)
 OPENING_ASK_NAME = (
     "Beleza. Antes de eu te explicar certinho, como posso te chamar?"
@@ -70,6 +75,124 @@ def _fallback_min_reply(name: str = "") -> str:
     if name:
         return f"{name}, perfeito. Você quer falar de pedidos, agenda, orçamento ou só conhecer?"
     return "Beleza. Me diz teu nome e o que você quer resolver: pedidos, agenda, orçamento ou só entender como funciona?"
+
+
+
+def _composer_mode() -> str:
+    """Modo do composer (separa decisão de fala).
+
+    - legacy: mantém compat (Planner pode devolver reply).
+    - v1: Planner decide (intent/next_step/tone/kb_need) e o Composer gera o texto final.
+
+    Use env: SALES_COMPOSER_MODE=legacy|v1
+    """
+    try:
+        m = str(os.getenv("SALES_COMPOSER_MODE", "legacy") or "legacy").strip().lower()
+    except Exception:
+        m = "legacy"
+    if m in ("1", "true", "on", "yes"):
+        return "v1"
+    if m in ("v1", "composer", "new"):
+        return "v1"
+    return "legacy"
+
+
+def _compose_from_plan(
+    *,
+    plan: Dict[str, Any],
+    name: str,
+    segment: str,
+    goal: str,
+    user_text: str,
+    state: Dict[str, Any],
+    scene_text: str = "",
+) -> str:
+    """Gera o texto final a partir do plano (IA decide; composer fala).
+
+    Importante: aqui não há estratégia escondida. Só executa o plano:
+    - escolhe intent_hint coerente
+    - injeta cena (quando fizer sentido)
+    - garante link quando next_step=SEND_LINK
+    """
+    try:
+        intent_p = str(plan.get("intent") or "OTHER").strip().upper()
+    except Exception:
+        intent_p = "OTHER"
+    try:
+        ns = str(plan.get("next_step") or "").strip().upper()
+    except Exception:
+        ns = ""
+
+    # Mapeia o plano para um hint canônico (sem inventar estratégia).
+    if ns in ("CTA", "SEND_LINK") or intent_p == "ACTIVATE":
+        intent_hint = "CTA"
+    else:
+        intent_hint = intent_p
+
+    txt = (_ai_sales_answer(
+        name=name,
+        segment=segment,
+        goal=goal,
+        user_text=user_text,
+        intent_hint=intent_hint,
+        state=state,
+    ) or "").strip()
+
+    if not txt:
+        txt = _fallback_min_reply(name)
+
+    # Injeta micro-cena (sem inventar), apenas se a resposta não veio em formato de fluxo
+    if scene_text:
+        try:
+            if "→" not in txt and intent_p in ("OPERATIONAL", "OTHER", "OBJECTION"):
+                txt = (scene_text + "\n" + txt).strip()
+        except Exception:
+            pass
+
+    # Garantia de link quando o plano pede link
+    if ns == "SEND_LINK":
+        try:
+            if not _has_url(txt):
+                txt = (txt.rstrip() + f"\n\n{SITE_URL}").strip()
+        except Exception:
+            txt = (txt.rstrip() + f"\n\n{SITE_URL}").strip()
+        # SEND_LINK é fechamento: sem pergunta
+        txt = _strip_trailing_question(txt)
+
+    return txt
+
+
+def _has_url(s: str) -> bool:
+    t = (s or "").lower()
+    return ("http://" in t) or ("https://" in t) or ("www." in t) or ("meirobo.com.br" in t) or ("[site" in t)
+
+
+def _strategic_overrides_enabled() -> bool:
+    """Compat: overrides estratégicos antigos (link/procedimento/agenda).
+    Desligar para evitar competição com IA+Firestore.
+    """
+    v = str(os.getenv("SALES_STRATEGIC_OVERRIDES", "1") or "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def _strict_no_price_outside_intent() -> bool:
+    v = str(os.getenv("SALES_STRICT_NO_PRICE_OUTSIDE_INTENT", "0") or "0").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
+def _strip_price_mentions(text: str) -> str:
+    """Remove menções explícitas de preço (R$...) de forma conservadora.
+    Usado apenas quando SALES_STRICT_NO_PRICE_OUTSIDE_INTENT=1.
+    """
+    t = (text or "").strip()
+    if not t or "r$" not in t.lower():
+        return t
+
+    # Remove padrões comuns "R$ 99", "R$99,90", "R$ 1.234,56".
+    t2 = re.sub(r"\bR\$\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?\b", "valor do plano", t, flags=re.IGNORECASE)
+    # Se sobrar "valor do plano" repetido, normaliza.
+    t2 = re.sub(r"(valor do plano\s*){2,}", "valor do plano ", t2, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", t2).strip()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -1109,6 +1232,7 @@ def sales_ai_plan(
         tone: confiante|consultivo|leve|bem_humano,
         ask_mode: none|one_short|ab_choice,
         close_mode: none|soft|hard,
+        next_step: ''|ASK_NAME|ASK_SEGMENT|VALUE|PRICE|SEND_LINK|CTA|EXIT,
         scene_key: string (opcional),
         kb_need: [..] (somente itens de kb_need_allowed),
         reply: texto curto,
@@ -1125,102 +1249,56 @@ def sales_ai_plan(
     if not user_text:
         return {}
 
-    # prompt enxuto, sem despejar KB inteira
-    system = (
-        "Você é o PLANEJADOR do MEI Robô (Vendas) no WhatsApp (pt-BR).\n"
-        "Você devolve SOMENTE JSON válido (sem texto extra).\n\n"
-        "Objetivo: decidir a melhor próxima ação de forma humana e vendedora do bem, sem script.\n\n"
-        "Regras de saída:\n"
-        "- intent: PRICE|ACTIVATE|OPERATIONAL|PROCESS|SLA|OTHER|SMALLTALK|OBJECTION\n"
-        "- tone: confiante|consultivo|leve|bem_humano\n"
-        "- ask_mode: none|one_short|ab_choice\n"
-        "- close_mode: none|soft|hard\n"
-        "- scene_key: opcional (ex.: 'segment_pills', 'segments', 'value_in_action_blocks.services_quote_scene', 'memory_positioning')\n"
-        "- kb_need: lista objetiva do que buscar (somente permitido em kb_need_allowed)\n"
-        "- reply: texto curto (2–5 linhas) pronto pra enviar\n"
-        "- evidence: 1 linha explicando a escolha (somente para log)\n\n"
-        "Regras de comportamento (produto):\n"
-        "- Se o lead perguntar PREÇO: responda direto com valores Starter/Starter+ e diga que a diferença é só a memória.\n"
-        "- Se for DECISÃO/ASSINAR/LINK: close_mode='hard' e ask_mode='none' (zero pergunta no final).\n"
-        "- Small talk (clima, piada, 'é bot?'): responda humano 1 frase e faça ponte suave pro valor (sem puxar formulário).\n"
-        "- Não invente números; use somente pricing_facts/process_facts quando precisar de fatos.\n"
-    )
+# prompt enxuto, sem despejar KB inteira
+system = (
+    "Você é o PLANEJADOR do MEI Robô (Vendas) no WhatsApp (pt-BR).\n"
+    "Você devolve SOMENTE JSON válido (sem texto extra).\n\n"
+    "Objetivo: decidir a melhor próxima ação de forma humana e vendedora do bem, sem script.\n\n"
+    "Regras de saída:\n"
+    "- intent: PRICE|ACTIVATE|OPERATIONAL|PROCESS|SLA|OTHER|SMALLTALK|OBJECTION\n"
+    "- tone: confiante|consultivo|leve|bem_humano\n"
+    "- ask_mode: none|one_short|ab_choice\n"
+    "- close_mode: none|soft|hard\n"
+    "- next_step: ''|ASK_NAME|ASK_SEGMENT|VALUE|PRICE|SEND_LINK|CTA|EXIT\n"
+    "- scene_key: opcional (ex.: 'segment_pills', 'segments', 'value_in_action_blocks.services_quote_scene', 'memory_positioning')\n"
+    "- kb_need: lista objetiva do que buscar (somente permitido em kb_need_allowed)\n"
+    "- reply: texto curto (2–5 linhas) pronto pra enviar\n"
+    "- evidence: 1 linha explicando a escolha (somente para log)\n\n"
+    "Regras de comportamento (produto):\n"
+    "- Se o lead perguntar PREÇO: responda direto com valores Starter/Starter+ e diga que a diferença é só a memória.\n"
+    "- Se for DECISÃO/ASSINAR/LINK: close_mode='hard' e ask_mode='none' (zero pergunta no final).\n"
+    "- Se pedirem LINK/SITE/ONDE ASSINA: next_step='SEND_LINK' e inclua o site na reply.\n"
+    "- Small talk (clima, piada, 'é bot?'): responda humano 1 frase e faça ponte suave pro valor (sem puxar formulário).\n"
+    "- Não invente números; use somente pricing_facts/process_facts quando precisar de fatos.\n"
+)
 
-    user = (
-        f"STAGE={stage}\n"
-        f"TURNS={int(turns or 0)}\n"
-        f"NOME={name or '—'}\n"
-        f"RAMO={segment or '—'}\n"
-        f"OBJETIVO={goal or '—'}\n"
-        f"NLU_INTENT={nlu_intent or '—'}\n"
-        f"ULTIMA_RESPOSTA_NAO_REPETIR={last_bot_excerpt or '—'}\n\n"
-        f"kb_need_allowed={allow}\n"
-        f"kb_catalog={cat}\n\n"
-        f"MENSAGEM={user_text}\n"
-    )
-
-    raw = (_openai_chat(
-        [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        model=OPENAI_SALES_NLU_MODEL,
-        max_tokens=220,
-        temperature=0.1,
-        response_format={"type": "json_object"},
-    ) or "").strip()
-
-    if not raw:
-        return {}
-
+# PATCH7: quando SALES_COMPOSER_MODE=v1, o Planner NÃO gera o texto final (sem campo reply).
+if _composer_mode() == "v1":
     try:
-        obj = json.loads(raw)
-        if not isinstance(obj, dict):
-            return {}
-
-        intent = str(obj.get("intent") or "OTHER").strip().upper()
-        if intent not in ("PRICE", "ACTIVATE", "OPERATIONAL", "PROCESS", "SLA", "OTHER", "SMALLTALK", "OBJECTION"):
-            intent = "OTHER"
-
-        tone = str(obj.get("tone") or "bem_humano").strip().lower()
-        if tone not in ("confiante", "consultivo", "leve", "bem_humano"):
-            tone = "bem_humano"
-
-        ask_mode = str(obj.get("ask_mode") or "one_short").strip().lower()
-        if ask_mode not in ("none", "one_short", "ab_choice"):
-            ask_mode = "one_short"
-
-        close_mode = str(obj.get("close_mode") or "none").strip().lower()
-        if close_mode not in ("none", "soft", "hard"):
-            close_mode = "none"
-
-        scene_key = str(obj.get("scene_key") or "").strip()
-
-        kb_need = obj.get("kb_need")
-        if not isinstance(kb_need, list):
-            kb_need = []
-        kb_need_norm = []
-        for k in kb_need:
-            ks = str(k or "").strip()
-            if ks and (not allow or ks in allow):
-                kb_need_norm.append(ks)
-
-        reply = str(obj.get("reply") or "").strip()
-        evidence = str(obj.get("evidence") or "").strip()
-
-        return {
-            "intent": intent,
-            "tone": tone,
-            "ask_mode": ask_mode,
-            "close_mode": close_mode,
-            "scene_key": scene_key,
-            "kb_need": kb_need_norm,
-            "reply": reply,
-            "evidence": evidence,
-            "raw": obj,
-        }
+        system = system.replace(
+            "- reply: texto curto (2–5 linhas) pronto pra enviar\n",
+            "- NÃO inclua campo reply (o Composer gera o texto final)\n"
+        )
+        system = system.replace(
+            "- Se pedirem LINK/SITE/ONDE ASSINA: next_step='SEND_LINK' e inclua o site na reply.\n",
+            "- Se pedirem LINK/SITE/ONDE ASSINA: next_step='SEND_LINK'. (O texto final incluirá o site.)\n"
+        )
     except Exception:
-        return {}
+        pass
+
+
+user = (
+    f"STAGE={stage}\n"
+    f"TURNS={int(turns or 0)}\n"
+    f"NOME={name or '—'}\n"
+    f"RAMO={segment or '—'}\n"
+    f"OBJETIVO={goal or '—'}\n"
+    f"NLU_INTENT={nlu_intent or '—'}\n"
+    f"ULTIMA_RESPOSTA_NAO_REPETIR={last_bot_excerpt or '—'}\n\n"
+    f"kb_need_allowed={allow}\n"
+    f"kb_catalog={cat}\n\n"
+    f"MENSAGEM={user_text}\n"
+)
 
 
 
@@ -1834,22 +1912,34 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         kb_used = [str(x).strip() for x in kb_need if str(x or "").strip()]
         kb_snip = _kb_pick(kb, kb_used, segment=segment)
         scene_text = _resolve_scene_text(kb, scene_key, segment=segment)
+        reply_txt = ""
 
-        reply_txt = str(plan.get("reply") or "").strip()
-        if not reply_txt:
-            # fallback: usa a IA de resposta tradicional
-            reply_txt = (_ai_sales_answer(
+        if _composer_mode() == "v1":
+            reply_txt = (_compose_from_plan(
+                plan=plan,
                 name=name,
                 segment=segment,
                 goal=goal,
                 user_text=text_in,
-                intent_hint=("CTA" if intent_p == "ACTIVATE" else intent_p),
                 state=st,
-            ) or "").strip() or _fallback_min_reply(name)
+                scene_text=scene_text,
+            ) or "").strip()
+        else:
+            reply_txt = str(plan.get("reply") or "").strip()
+            if not reply_txt:
+                # fallback: usa a IA de resposta tradicional
+                reply_txt = (_ai_sales_answer(
+                    name=name,
+                    segment=segment,
+                    goal=goal,
+                    user_text=text_in,
+                    intent_hint=("CTA" if intent_p == "ACTIVATE" else intent_p),
+                    state=st,
+                ) or "").strip() or _fallback_min_reply(name)
 
-        # Se vier cena e a resposta não tiver micro-fluxo, injeta 1 linha (sem inventar)
-        if scene_text and ("→" not in reply_txt):
-            reply_txt = (scene_text + "\n" + reply_txt).strip()
+            # Se vier cena e a resposta não tiver micro-fluxo, injeta 1 linha (sem inventar)
+            if scene_text and ("→" not in reply_txt):
+                reply_txt = (scene_text + "\n" + reply_txt).strip()
 
         ask_mode = str(plan.get("ask_mode") or "one_short").strip().lower()
         close_mode = str(plan.get("close_mode") or "none").strip().lower()
@@ -1881,6 +1971,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             st["ask_mode"] = ask_mode
             st["close_mode"] = close_mode
             st["plan_intent"] = intent_p
+            st["plan_next_step"] = str(plan.get("next_step") or "").strip().upper()
             st["plan_evidence"] = str(plan.get("evidence") or "").strip()
         except Exception:
             pass
@@ -2026,10 +2117,38 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         }
 
     st, wa_key = _load_state(from_e164)
+    # Trace simples (auditoria e correlação de logs)
+    try:
+        trace_id = hashlib.sha1(f"{wa_key}:{int(time.time()*1000)}".encode("utf-8")).hexdigest()[:12]
+    except Exception:
+        trace_id = ""
+
+    policies_applied = []
     # wa_key disponível para observabilidade (não afeta fluxo)
     if isinstance(st, dict):
         st["wa_key"] = wa_key
     reply = _reply_from_state(text_in, st)
+
+    # Intenção final preferencial: IA (plan_intent) -> estado (last_intent) -> cheap
+    try:
+        intent_final = str(st.get("plan_intent") or st.get("last_intent") or "").strip().upper()
+    except Exception:
+        intent_final = ""
+    if not intent_final:
+        try:
+            intent_final = str(_intent_cheap(text_in) or "").strip().upper()
+        except Exception:
+            intent_final = ""
+
+    # Next step final (Planner soberano): usado para policy (link/close), sem heurística esperta.
+    try:
+        next_step_final = str(st.get("plan_next_step") or "").strip().upper()
+    except Exception:
+        next_step_final = ""
+
+    # Purificação: quando existe plano da IA (intent/next_step), overrides estratégicos não podem competir.
+    has_plan = bool((str(st.get("plan_intent") or "").strip()) or (next_step_final or "").strip())
+
 
     # Salva interesse já setado pelo _reply_from_state
     # (sem re-chamar a IA)
@@ -2106,39 +2225,77 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             or ("qual é o link" in t)
         )
 
-    # Se o lead pedir link, manda o URL por escrito (texto) e áudio curto
-    if _wants_link(text_in):
+    # Policy (novo trilho): se o Planner mandou SEND_LINK, o código só GARANTE que o link aparece.
+    # Isso não é estratégia: é execução do plano (sem competir com a IA).
+    if next_step_final == "SEND_LINK":
+        if not _has_url(reply_final):
+            reply_final = (reply_final.rstrip() + f"\n\n{SITE_URL}").strip()
+        prefers_text = True
+        spoken_final = "Te mandei o link por escrito aqui na conversa."
+        policies_applied.append("policy:plan_send_link")
+
+    # Legado controlado (compat): se não há plano e overrides estão ligados, mantém o comportamento antigo.
+    if (next_step_final != "SEND_LINK") and (not has_plan) and _strategic_overrides_enabled() and _wants_link(text_in):
         reply_final = (
             f"{SITE_URL} — ali você cria a conta e já deixa serviços/agenda prontos. "
             "A ativação completa leva até 7 dias úteis."
         )
         prefers_text = True
         spoken_final = "Te mandei o link por escrito aqui na conversa."
+        policies_applied.append("override:link")
 
     if _has_url(reply_final):
         prefers_text = True
         # áudio curto e humano; link vai por escrito
         spoken_final = "Te mandei o link por escrito aqui na conversa."
 
-    # Regra de fechamento: ACTIVATE (ou sinais claros de decisão) não termina em pergunta
-    hard_close = ((st.get("last_intent") or "").strip().upper() == "ACTIVATE")
-    if not hard_close:
+    # Regra de fechamento (POLICY): não termina em pergunta quando a decisão já está clara.
+    # Purificação: quando SALES_STRATEGIC_OVERRIDES=0, evitamos heurísticas 'espertas' aqui.
+
+    hard_close = False
+
+    # 1) Sinais fortes vindos do trilho principal (IA/estado)
+    try:
+        if str(intent_final or '').strip().upper() == 'ACTIVATE':
+            hard_close = True
+    except Exception:
+        pass
+
+    try:
+        if str((st.get('last_intent') or '')).strip().upper() == 'ACTIVATE':
+            hard_close = True
+    except Exception:
+        pass
+    try:
+        ns = str(next_step_final or '').strip().upper()
+        if ns == 'CTA':
+            hard_close = True
+        if ns == 'SEND_LINK':
+            hard_close = True
+    except Exception:
+        pass
+
+    # 2) Compat (somente quando overrides estratégicos estão ligados):
+    #    heurísticas antigas de decisão (mantém comportamento atual por padrão).
+    if (not hard_close) and _strategic_overrides_enabled() and (not has_plan):
         try:
-            hard_close = (_intent_cheap(text_in) == "ACTIVATE")
+            hard_close = (_intent_cheap(text_in) == 'ACTIVATE')
         except Exception:
             hard_close = False
-    if not hard_close:
-        try:
-            tdec = _norm(text_in)
-        except Exception:
-            tdec = (text_in or "").lower()
-        if ("vou assinar" in tdec) or ("quero assinar" in tdec) or ("vou querer assinar" in tdec):
-            hard_close = True
-        if ("procedimento" in tdec) and (("assina" in tdec) or ("assin" in tdec) or ("ativ" in tdec)):
-            hard_close = True
-    if hard_close or _wants_link(text_in):
+        if not hard_close:
+            try:
+                tdec = _norm(text_in)
+            except Exception:
+                tdec = (text_in or '').lower()
+            if ('vou assinar' in tdec) or ('quero assinar' in tdec) or ('vou querer assinar' in tdec):
+                hard_close = True
+            if ('procedimento' in tdec) and (('assina' in tdec) or ('assin' in tdec) or ('ativ' in tdec)):
+                hard_close = True
+
+    if hard_close or (_strategic_overrides_enabled() and (not has_plan) and _wants_link(text_in)):
         reply_final = _strip_trailing_question(reply_final)
         spoken_final = _strip_trailing_question(spoken_final)
+        policies_applied.append('hard_close:no_question')
 
     # Sempre: remove finais genéricos de "SAC" para evitar loop
     reply_final = _strip_generic_question_ending(reply_final)
@@ -2148,19 +2305,10 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     # BLINDAGEM FINAL (produto)
     # =========================
 
-    # PREÇO: se o lead pediu preço, a saída FINAL sempre vem do Firestore (nunca inventar).
-    try:
-        t_intent = str(st.get("last_intent") or "").strip().upper()
-    except Exception:
-        t_intent = ""
-
-    cheap = ""
-    try:
-        cheap = _intent_cheap(text_in)
-    except Exception:
-        cheap = ""
-
-    is_price = (t_intent in ("PRICE", "PLANS", "DIFF")) or (cheap in ("PRICE", "PLANS", "DIFF"))
+    # PREÇO (política única): se intent_final é PRICE/PLANS/DIFF, a saída FINAL sempre vem do Firestore.
+    is_price = intent_final in ("PRICE", "PLANS", "DIFF")
+    pricing_used = False
+    pricing_source = ""
     if is_price:
         reply_final = _enforce_price_direct(kb, segment="")
         reply_final = _strip_trailing_question(reply_final)
@@ -2168,6 +2316,17 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         spoken_final = _sanitize_spoken(reply_final)
         spoken_final = _strip_md_for_tts(spoken_final)
         spoken_final = _spoken_normalize_numbers(spoken_final)
+        pricing_used = True
+        pricing_source = str((kb or {}).get("pricing_source") or "platform_pricing/current")
+        policies_applied.append("price:firestore_only")
+
+    # Política dura (opcional): fora de PRICE/PLANS/DIFF, não pode sair "R$...".
+    if (not is_price) and _strict_no_price_outside_intent() and ("r$" in (reply_final or "").lower()):
+        reply_final = _strip_price_mentions(reply_final)
+        spoken_final = _sanitize_spoken(reply_final)
+        spoken_final = _strip_md_for_tts(spoken_final)
+        spoken_final = _spoken_normalize_numbers(spoken_final)
+        policies_applied.append("price:strip_outside_intent")
 
     # CTA/ASSINAR: se a IA mencionar preço (R$) fora do modo PRICE,
     # força os valores do Firestore para não inventar 99/149.
@@ -2197,26 +2356,32 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         or ("vou querer assinar" in tnorm)
     )
 
-    if (not is_price) and is_activate_flow and looks_like_pricing_text and (not wants_procedure):
+    if _strategic_overrides_enabled() and (not has_plan) and (not is_price) and is_activate_flow and looks_like_pricing_text and (not wants_procedure):
         reply_final = _enforce_price_direct(kb, segment="")
         reply_final = _strip_trailing_question(reply_final)
         spoken_final = _sanitize_spoken(reply_final)
         spoken_final = _strip_md_for_tts(spoken_final)
         spoken_final = _spoken_normalize_numbers(spoken_final)
+        policies_applied.append("override:activate_flow_price")
 
-    if wants_procedure:
+    # Legado controlado: procedimento/link só entra se NÃO houver plano de SEND_LINK
+    if (next_step_final != "SEND_LINK") and (not has_plan) and _strategic_overrides_enabled() and wants_procedure:
         reply_final = (
             f"{SITE_URL} — ali você assina e já deixa serviços/agenda prontos. "
             "A ativação completa leva até 7 dias úteis."
         )
         prefers_text = True
         spoken_final = "Te mandei o link por escrito aqui na conversa."
+        policies_applied.append("override:procedure_link")
 
     # AGENDAMENTO: se o lead perguntou sobre agenda/agendamento e a resposta saiu genérica,
     # força o "como funciona na prática" do Firestore (sem prometer automático).
 
     is_agenda_question = ("agend" in tnorm) or ("agenda" in tnorm) or ("marcar" in tnorm) or ("consulta" in tnorm) or ("horário" in tnorm) or ("horario" in tnorm)
-    if is_agenda_question and (not is_price):
+    # Legado controlado: override de agenda NÃO pode competir com plano da IA.
+    # Se já existe plan_intent/plan_next_step, deixa o trilho principal mandar.
+    # has_plan já calculado acima (plano da IA)
+    if (not has_plan) and _strategic_overrides_enabled() and is_agenda_question and (not is_price):
         try:
             oc = kb.get("operational_capabilities") or {}
             sched = str(oc.get("scheduling_practice") or "").strip()
@@ -2237,6 +2402,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
                 spoken_final = _strip_md_for_tts(spoken_final)
 
                 spoken_final = _spoken_normalize_numbers(spoken_final)
+                policies_applied.append("override:agenda_practice")
 
     # aplica também aqui (garante consistência)
     spoken_final = _spoken_normalize_numbers(spoken_final)
@@ -2250,6 +2416,13 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "ttsText": spoken_final,
         "spokenText": spoken_final,
 
+        # Contrato de política/auditoria (incremental)
+        "intentFinal": intent_final,
+        "pricingUsed": pricing_used,
+        "pricingSource": pricing_source,
+        "policiesApplied": policies_applied,
+        "traceId": trace_id,
+
         # Observabilidade (IA no comando): prova do plano e do que foi usado
         "aiPlan": (st.get("ai_plan") or {}),
         "kbUsed": (st.get("kb_used") or []),
@@ -2257,6 +2430,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "askMode": (st.get("ask_mode") or ""),
         "closeMode": (st.get("close_mode") or ""),
         "planIntent": (st.get("plan_intent") or ""),
+        "planNextStep": (st.get("plan_next_step") or ""),
         "planEvidence": (st.get("plan_evidence") or ""),
         "kbSnippet": json.dumps((st.get("kb_snippet") or {}), ensure_ascii=False),
         "spokenSource": "replyText",
