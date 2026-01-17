@@ -2189,6 +2189,12 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     except Exception:
         last_int = ""
 
+    # Normaliza texto uma vez (evita UnboundLocalError em 'tnorm')
+    try:
+        tnorm = _norm(text_in)
+    except Exception:
+        tnorm = (text_in or "").lower()
+
     looks_like_pricing_text = ("r$" in (reply_final or "").lower()) and (("starter" in (reply_final or "").lower()) or ("plano" in (reply_final or "").lower()))
     is_activate_flow = (last_int in ("ACTIVATE",)) or ("assina" in tnorm) or ("assin" in tnorm) or ("procedimento" in tnorm)
 
@@ -2200,10 +2206,6 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
     # AGENDAMENTO: se o lead perguntou sobre agenda/agendamento e a resposta saiu genérica,
     # força o "como funciona na prática" do Firestore (sem prometer automático).
-    try:
-        tnorm = _norm(text_in)
-    except Exception:
-        tnorm = (text_in or "").lower()
 
     is_agenda_question = ("agend" in tnorm) or ("agenda" in tnorm) or ("marcar" in tnorm) or ("consulta" in tnorm) or ("horário" in tnorm) or ("horario" in tnorm)
     if is_agenda_question and (not is_price):
