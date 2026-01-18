@@ -72,6 +72,48 @@ ycloud_tasks_bp = Blueprint("ycloud_tasks_bp", __name__)
 _IDENTITY_MODE = (os.environ.get("IDENTITY_MODE") or "on").strip().lower()  # on|off
 
 
+def _upload_mp3_bytes_to_signed_url(*, b: bytes, audio_debug: dict, tag: str = "ttsAck") -> str:
+    """
+    Reusa o MESMO esquema de bytes_upload_signed que já funciona no worker:
+    Storage -> upload_from_string -> generate_signed_url.
+    """
+    try:
+        if not b or len(b) < 200:
+            audio_debug[tag] = {"ok": False, "reason": "empty_mp3_bytes"}
+            return ""
+
+        # Garante que parece mp3 (ID3 ou frame sync 0xFF)
+        if not (b.startswith(b"ID3") or (len(b) > 2 and b[0] == 0xFF)):
+            audio_debug[tag] = {"ok": False, "reason": "not_mp3_bytes"}
+            return ""
+
+        from google.cloud import storage  # type: ignore
+        import uuid
+        from datetime import datetime
+
+        bucket_name = os.environ.get("STORAGE_BUCKET", "").strip()
+        if not bucket_name:
+            audio_debug[tag] = {"ok": False, "reason": "missing_STORAGE_BUCKET"}
+            return ""
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+
+        now = datetime.now()
+        obj = f"sandbox/institutional_tts_ack/{now:%Y/%m/%d}/{uuid.uuid4().hex}.mp3"
+        blob = bucket.blob(obj)
+        blob.upload_from_string(b, content_type="audio/mpeg")
+
+        exp_s = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900") or "900")
+        url = blob.generate_signed_url(expiration=exp_s, method="GET")
+
+        audio_debug[tag] = {"ok": True, "mode": "bytes_upload_signed", "bytes": len(b), "ct": "audio/mpeg", "object": obj}
+        return str(url or "").strip()
+    except Exception as e:
+        audio_debug[tag] = {"ok": False, "reason": f"upload_fail:{type(e).__name__}:{str(e)[:120]}"}
+        return ""
+
+
 def _db():
     project_id = (os.getenv("FIREBASE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "").strip() or None
     return firestore.Client(project=project_id)
@@ -1496,43 +1538,17 @@ def ycloud_inbound_worker():
                                     timeout=35,
                                 )
 
-                                audio_url = ""
-                                ct = (tts_resp.headers.get("content-type") or "").lower()
-
-                                # 1) Se vier JSON com audioUrl
-                                if "application/json" in ct:
-                                    try:
-                                        payload = tts_resp.json() or {}
-                                    except Exception:
-                                        payload = {}
-                                    if isinstance(payload, dict):
-                                        audio_url = (payload.get("audioUrl") or payload.get("audio_url") or "").strip()
-
-                                # 2) Se NÃO veio audioUrl, tenta bytes MP3 e sobe pro storage (signed url)
-                                if tts_resp.ok and not audio_url:
-                                    try:
-                                        b = tts_resp.content or b""
-                                    except Exception:
-                                        b = b""
-                                    if b:
-                                        try:
-                                            # Use a mesma função/helper que teu pipeline já usa pra bytes_upload_signed.
-                                            # Se o nome for diferente no teu arquivo, troca só esta chamada.
-                                            audio_url = upload_bytes_signed(
-                                                prefix="sandbox/institutional_tts_ack",
-                                                data=b,
-                                                content_type="audio/mpeg",
-                                            )
-                                        except Exception:
-                                            audio_url = ""
-
-                                if audio_url:
-                                    audio_debug["ttsAck"] = {"ok": True}
-                                else:
+                                # (ACK) /api/voz/tts retorna MP3 bytes; sobe pro storage e gera Signed URL (mesmo padrão do worker)
+                                try:
                                     if not tts_resp.ok:
-                                        audio_debug["ttsAck"] = {"ok": False, "reason": f"http_{tts_resp.status_code}"}
+                                        audio_debug["ttsAck"] = {"ok": False, "reason": f"tts_http_{tts_resp.status_code}"}
+                                        audio_url = ""
                                     else:
-                                        audio_debug["ttsAck"] = {"ok": False, "reason": "missing_audioUrl"}
+                                        b = tts_resp.content or b""
+                                        audio_url = _upload_mp3_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck")
+                                except Exception as e:
+                                    audio_debug["ttsAck"] = {"ok": False, "reason": f"tts_exception:{type(e).__name__}:{str(e)[:120]}"}
+                                    audio_url = ""
                             else:
                                 audio_debug["ttsAck"] = {"ok": False, "reason": "missing_INSTITUTIONAL_VOICE_ID"}
                         except Exception as e:
