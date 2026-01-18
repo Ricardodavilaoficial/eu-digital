@@ -1298,6 +1298,23 @@ def ycloud_inbound_worker():
                         ctx=ctx_for_bot,
                     )
 
+                    # PATCH: preencher audio_debug["source"] ANTES de montar waOutMeta
+                    # (evita source=null no waOutMeta)
+                    try:
+                        if isinstance(wa_out, dict) and isinstance(audio_debug, dict):
+                            dbg = wa_out.get("_debug")
+                            if isinstance(dbg, dict):
+                                audio_debug["source"] = dbg.get("source") or "sales_lead"
+                                audio_debug["planner"] = {
+                                    "intent": dbg.get("intent") or "",
+                                    "next_step": dbg.get("next_step") or "",
+                                    "composer_mode": dbg.get("composer_mode") or "",
+                                }
+                            else:
+                                audio_debug["source"] = audio_debug.get("source") or "unknown"
+                    except Exception:
+                        pass
+
                     # ==========================================================
                     # DEBUG (produto): prova do que veio do wa_bot
                     # - não altera comportamento
@@ -1533,6 +1550,7 @@ def ycloud_inbound_worker():
                     # A2: marca ACK do worker (fechamento)
                     if isinstance(audio_debug, dict):
                         audio_debug["ack_source"] = "worker_ack"
+                        audio_debug["source"] = "worker_ack"
 
                     # gera áudio curto institucional (sem url) para manter "entra áudio -> sai áudio"
                     if not audio_url:

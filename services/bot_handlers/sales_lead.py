@@ -2266,10 +2266,27 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
     # Sem remetente => resposta padrão (sem estado)
     if not from_e164:
+        # Sempre devolve debug leve, mesmo se plan/intent estiverem vazios
+        try:
+            _dbg_intent = ""
+        except Exception:
+            _dbg_intent = ""
+        try:
+            _dbg_next = ""
+        except Exception:
+            _dbg_next = ""
+
+        dbg = {
+            "source": "sales_lead",
+            "composer_mode": _composer_mode(),
+            "intent": _dbg_intent,
+            "next_step": _dbg_next,
+        }
         return {
             "replyText": OPENING_ASK_NAME,
             "ttsOwner": "worker",
             "kind": "sales",
+            "_debug": dbg,
         }
 
     st, wa_key = _load_state(from_e164)
@@ -2563,12 +2580,26 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     # aplica também aqui (garante consistência)
     spoken_final = _spoken_normalize_numbers(spoken_final)
 
-    # Debug leve: quem mandou e por quê (não afeta resposta ao lead)
+    # Sempre devolve debug leve, mesmo se plan/intent estiverem vazios
+    try:
+        _dbg_intent = (intent_final or "").strip().upper()
+    except Exception:
+        _dbg_intent = ""
+    try:
+        _dbg_next = ""
+        plan = st.get("ai_plan") if isinstance(st, dict) else None
+        if isinstance(plan, dict):
+            _dbg_next = str(plan.get("next_step") or "").strip()
+        if not _dbg_next:
+            _dbg_next = str(next_step_final or "").strip()
+    except Exception:
+        _dbg_next = ""
+
     dbg = {
         "source": "sales_lead",
         "composer_mode": _composer_mode(),
-        "intent": (intent_final or "").strip().upper(),
-        "next_step": (next_step_final or "").strip().upper(),
+        "intent": _dbg_intent,
+        "next_step": _dbg_next,
     }
 
     return {
