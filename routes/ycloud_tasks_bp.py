@@ -1312,6 +1312,7 @@ def ycloud_inbound_worker():
                                 "prefersText": bool(wa_out.get("prefersText")),
                                 "displayName": str(wa_out.get("displayName") or "").strip()[:40],
                                 "ttsOwner": str(wa_out.get("ttsOwner") or "").strip()[:40],
+                                "source": (audio_debug.get("source") if isinstance(audio_debug, dict) else "unknown"),
                             }
                     except Exception:
                         pass
@@ -1354,6 +1355,21 @@ def ycloud_inbound_worker():
                 or ""
             ).strip()
             allow_sales_demo = bool(wa_out.get("allowSalesDemo"))
+
+            # A2: propaga _debug do handler para facilitar auditoria (planner/composer/fallback/worker)
+            spoken_text = (wa_out.get("spokenText") or "").strip()
+            dbg = wa_out.get("_debug") if isinstance(wa_out, dict) else None
+
+            # marca quem gerou (planner/composer/fallback/worker etc.)
+            if isinstance(audio_debug, dict) and isinstance(dbg, dict):
+                audio_debug["source"] = dbg.get("source") or audio_debug.get("source") or "unknown"
+                audio_debug["planner"] = {
+                    "intent": dbg.get("intent") or "",
+                    "next_step": dbg.get("next_step") or "",
+                    "composer_mode": dbg.get("composer_mode") or "",
+                }
+            elif isinstance(audio_debug, dict):
+                audio_debug["source"] = audio_debug.get("source") or "unknown"
         elif wa_out:
             reply_text = str(wa_out)
         reply_text = reply_text or ""
@@ -1513,6 +1529,10 @@ def ycloud_inbound_worker():
                 # prefersText por link (não é "usuário pediu texto")
                 if (msg_type in ("audio", "voice", "ptt")) and _rt and _has_url_local(_rt):
                     audio_debug["mode"] = "audio_plus_text_link"
+
+                    # A2: marca ACK do worker (fechamento)
+                    if isinstance(audio_debug, dict):
+                        audio_debug["ack_source"] = "worker_ack"
 
                     # gera áudio curto institucional (sem url) para manter "entra áudio -> sai áudio"
                     if not audio_url:
@@ -1901,6 +1921,25 @@ def ycloud_inbound_worker():
                 send_text = None  # type: ignore
                 send_audio = None  # type: ignore
 
+            def _clean_url_weirdness(s: str) -> str:
+                t = (s or "").strip()
+                if not t:
+                    return t
+                # cola "meirobo. com. br" -> "meirobo.com.br"
+                t = t.replace("meirobo. com. br", "meirobo.com.br")
+                # remove duplicação óbvia se vier 2x
+                if t.count("meirobo.com.br") > 1:
+                    first = t.find("meirobo.com.br")
+                    while t.count("meirobo.com.br") > 1:
+                        idx = t.rfind("meirobo.com.br")
+                        if idx == first:
+                            break
+                        t = (t[:idx] + t[idx+len("meirobo.com.br"):]).strip()
+                # garante https clicável
+                if ("http://" not in t.lower()) and ("https://" not in t.lower()) and ("meirobo.com.br" in t.lower()):
+                    t = t.replace("meirobo.com.br", "https://www.meirobo.com.br")
+                return t
+
             # PATCH B: se prefersText, manda o texto (ex.: link) e, se houver áudio curto, manda também.
             audio_plus_text_link = bool(
                 prefers_text
@@ -1933,7 +1972,7 @@ def ycloud_inbound_worker():
             # PATCH B: se prefersText (caso geral), manda texto primeiro.
             if (not audio_plus_text_link) and prefers_text and send_text:
                 try:
-                    sent_ok, _ = send_text(from_e164, reply_text)
+                    sent_ok, _ = send_text(from_e164, _clean_url_weirdness(reply_text))
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text (prefersText)")
 
@@ -1999,7 +2038,7 @@ def ycloud_inbound_worker():
             # Fallback: se nada foi, tenta texto
             if (not sent_ok) and send_text:
                 try:
-                    sent_ok, _ = send_text(from_e164, reply_text)
+                    sent_ok, _ = send_text(from_e164, _clean_url_weirdness(reply_text))
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text")
       

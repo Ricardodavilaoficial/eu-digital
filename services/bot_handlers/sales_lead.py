@@ -2563,6 +2563,14 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     # aplica também aqui (garante consistência)
     spoken_final = _spoken_normalize_numbers(spoken_final)
 
+    # Debug leve: quem mandou e por quê (não afeta resposta ao lead)
+    dbg = {
+        "source": "sales_lead",
+        "composer_mode": _composer_mode(),
+        "intent": (intent_final or "").strip().upper(),
+        "next_step": (next_step_final or "").strip().upper(),
+    }
+
     return {
         "replyText": reply_final,
         "nameUse": (st.get("last_name_use") or ""),
@@ -2599,6 +2607,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "kbContext": json.dumps(kb_compact, ensure_ascii=False),
         "ttsOwner": "worker",
         "nameToSay": lead_name,
+
+        "_debug": dbg,
     }
 def handle_sales_lead(change_value: Dict[str, Any]) -> Dict[str, Any]:
     """
