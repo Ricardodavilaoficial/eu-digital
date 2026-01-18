@@ -1979,59 +1979,76 @@ def ycloud_inbound_worker():
             # Se entrou por áudio e temos audio_url, manda o áudio curto mesmo com prefersText
             if (not audio_plus_text_link) and prefers_text and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
                 try:
-                    _ok2, _ = send_audio(from_e164, audio_url)
-
-                    # PATCH: se a resposta contém link, mandar o link por TEXTO logo após o áudio.
-                    # Regra de produto: "entra áudio -> sai áudio" + "link sempre por texto".
+                    sent_ack_audio = False
+                    _ok2 = False
+                    if audio_url and send_audio:
+                        try:
+                            _ok2, _ = send_audio(from_e164, audio_url)
+                            sent_ack_audio = bool(_ok2)
+                        except Exception as e:
+                            if isinstance(audio_debug, dict):
+                                audio_debug["ttsAckSend"] = {
+                                    "ok": False,
+                                    "err": f"{type(e).__name__}:{str(e)[:140]}",
+                                    "audioUrl": (audio_url[:120] if isinstance(audio_url, str) else ""),
+                                }
+                    if isinstance(audio_debug, dict) and sent_ack_audio:
+                        audio_debug["ttsAckSend"] = {"ok": True}
+                    # 2) texto com link (reply completo) - SEMPRE manda
                     try:
                         _rt = (reply_text or "").strip()
-                    except Exception:
-                        _rt = ""
-
-                    def _has_url_local(s: str) -> bool:
-                        t = (s or "").lower()
-                        return ("http://" in t) or ("https://" in t) or ("www." in t) or ("meirobo.com.br" in t)
-
-                    if _rt and _has_url_local(_rt) and send_text:
-                        try:
-                            # se o texto não tiver um URL "clicável", garante o https
+                        if _rt and send_text:
                             if ("http://" not in _rt.lower()) and ("https://" not in _rt.lower()):
                                 _rt = _rt.replace("www.meirobo.com.br", "https://www.meirobo.com.br").replace(
                                     "meirobo.com.br", "https://www.meirobo.com.br"
                                 )
-                            send_text(from_e164, _rt)
-                        except Exception:
-                            pass
-                    sent_ok = sent_ok or _ok2
+                            _ok3, _ = send_text(from_e164, _rt)
+                            sent_ok = sent_ok or bool(_ok3)
+                    except Exception as e:
+                        if isinstance(audio_debug, dict):
+                            audio_debug["sendTextAfterAck"] = {"ok": False, "err": f"{type(e).__name__}:{str(e)[:140]}"}
+                    if isinstance(audio_debug, dict):
+                        audio_debug["sendTextAfterAck"] = {"ok": True}
+                    if sent_ack_audio:
+                        sent_ok = sent_ok or bool(_ok2)
                 except Exception:
                     logger.exception("[tasks] lead: falha send_audio (prefersText)")
 
             # Caso normal: entrou por áudio e NÃO pediu prefersText → manda só áudio
             if (not prefers_text) and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
                 try:
-                    sent_ok, _ = send_audio(from_e164, audio_url)
-
-                    # PATCH: se a resposta contém link, mandar o link por TEXTO logo após o áudio.
-                    # Regra de produto: "entra áudio -> sai áudio" + "link sempre por texto".
+                    sent_ack_audio = False
+                    _ok2 = False
+                    if audio_url and send_audio:
+                        try:
+                            _ok2, _ = send_audio(from_e164, audio_url)
+                            sent_ack_audio = bool(_ok2)
+                        except Exception as e:
+                            if isinstance(audio_debug, dict):
+                                audio_debug["ttsAckSend"] = {
+                                    "ok": False,
+                                    "err": f"{type(e).__name__}:{str(e)[:140]}",
+                                    "audioUrl": (audio_url[:120] if isinstance(audio_url, str) else ""),
+                                }
+                    if isinstance(audio_debug, dict) and sent_ack_audio:
+                        audio_debug["ttsAckSend"] = {"ok": True}
+                    # 2) texto com link (reply completo) - SEMPRE manda
                     try:
                         _rt = (reply_text or "").strip()
-                    except Exception:
-                        _rt = ""
-
-                    def _has_url_local(s: str) -> bool:
-                        t = (s or "").lower()
-                        return ("http://" in t) or ("https://" in t) or ("www." in t) or ("meirobo.com.br" in t)
-
-                    if _rt and _has_url_local(_rt) and send_text:
-                        try:
-                            # se o texto não tiver um URL "clicável", garante o https
+                        if _rt and send_text:
                             if ("http://" not in _rt.lower()) and ("https://" not in _rt.lower()):
                                 _rt = _rt.replace("www.meirobo.com.br", "https://www.meirobo.com.br").replace(
                                     "meirobo.com.br", "https://www.meirobo.com.br"
                                 )
-                            send_text(from_e164, _rt)
-                        except Exception:
-                            pass
+                            _ok3, _ = send_text(from_e164, _rt)
+                            sent_ok = sent_ok or bool(_ok3)
+                    except Exception as e:
+                        if isinstance(audio_debug, dict):
+                            audio_debug["sendTextAfterAck"] = {"ok": False, "err": f"{type(e).__name__}:{str(e)[:140]}"}
+                    if isinstance(audio_debug, dict):
+                        audio_debug["sendTextAfterAck"] = {"ok": True}
+                    if sent_ack_audio:
+                        sent_ok = sent_ok or bool(_ok2)
                 except Exception:
                     logger.exception("[tasks] lead: falha send_audio")
 
