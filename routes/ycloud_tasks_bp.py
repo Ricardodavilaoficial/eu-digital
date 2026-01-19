@@ -462,9 +462,9 @@ def _openai_extract_speaker(text: str, owner_name: str = "", active_name: str = 
     Return ONLY valid JSON.
     Rules:
     - If the message is self-identification, return that name.
-    - If the message indicates returning to the owner (e.g., \"voltei\", \"agora sou eu de novo\") and owner_name is known, return owner_name.
-    - Avoid third-person mentions (e.g., \"o papo é com o José\") unless it\'s clearly the speaker.
-    - Name can be nickname (e.g., \"Banana\", \"Zé\").
+    - If the message indicates returning to the owner (e.g., "voltei", "agora sou eu de novo") and owner_name is known, return owner_name.
+    - Avoid third-person mentions (e.g., "o papo é com o José") unless it\'s clearly the speaker.
+    - Name can be nickname (e.g., "Banana", "Zé").
     JSON schema:
     { "identified": true|false, "name": "...", "confidence": 0..1, "reason": "..." }
     """
@@ -800,11 +800,11 @@ def _openai_generate_concept_speech(question: str, kb_context: str, display_name
     f"TEMPEROS (use raramente e só se combinar): {spice}\n"
     "\n"
     "Regras obrigatórias:\n"
-    "- NÃO comece com saudação (nada de \"oi\", \"olá\", \"fala\", \"Faaala\", \"Graaande\").\n"
+    "- NÃO comece com saudação (nada de 'oi', 'olá', 'fala', 'Faaala', 'Graaande').\n"
     "- NÃO use o nome da pessoa.\n"
     "- Sem emojis, sem CAPS, sem múltiplas exclamações.\n"
     "- 2–4 frases curtas + 1 pergunta final.\n"
-    "- Se citar limites, use \"megabytes/gigabytes\" por extenso (nunca \"MB/GB\").\n"
+    "- Se citar limites, use 'megabytes/gigabytes' por extenso (nunca 'MB/GB').\n"
     "\n"
     "DICAS:\n"
     "- use o CONTEXTO apenas para não inventar, NÃO leia o texto\n"
@@ -1348,6 +1348,9 @@ def ycloud_inbound_worker():
         display_name = ""
         tts_text_from_bot = ""
         allow_sales_demo = False
+        plan_next_step = ""
+        intent_final = ""
+        policies_applied = []
         if isinstance(wa_out, dict):
             reply_text = (
                 wa_out.get("replyText")
@@ -1363,8 +1366,14 @@ def ycloud_inbound_worker():
                 audio_debug = {**(audio_debug or {}), **wa_audio_debug}
             kb_context = (wa_out.get("kbContext") or wa_out.get("kb_context") or "")
             wa_kind = (wa_out.get("kind") or wa_out.get("type") or "")
+            plan_next_step = str(wa_out.get("planNextStep") or wa_out.get("plan_next_step") or "").strip().upper()
+            intent_final = str(wa_out.get("intentFinal") or wa_out.get("intent_final") or "").strip().upper()
+            policies_applied = wa_out.get("policiesApplied") or []
+            if not isinstance(policies_applied, list):
+                policies_applied = []
             prefers_text = bool(wa_out.get("prefersText"))
-            display_name = (wa_out.get("displayName") or "").strip()
+            # display_name vem do handler (leadName/nameToSay) ou de displayName (compat)
+            display_name = ((wa_out.get("displayName") or "") or (wa_out.get("leadName") or "") or (wa_out.get("nameToSay") or "")).strip()
             tts_text_from_bot = str(
                 wa_out.get("ttsText")
                 or wa_out.get("spokenText")
@@ -1513,6 +1522,11 @@ def ycloud_inbound_worker():
                     audio_debug = dict(audio_debug or {})
                     audio_debug["nameOverride"] = {"applied": True, "name": override}
 
+
+                    # mantém display_name consistente (para TTS/ack/meta)
+                    if override and not (display_name or "").strip():
+                        display_name = str(override).strip()
+
                     # 🔥 CRÍTICO: se já tinha áudio pronto (ex.: vindo do wa_bot),
                     # mas o texto mudou por override, invalida áudio pra regenerar com o nome certo.
                     if audio_url and reply_text != reply_text_before_override:
@@ -1544,13 +1558,29 @@ def ycloud_inbound_worker():
                 _rt = (reply_text or "").strip()
 
                 # prefersText por link (não é "usuário pediu texto")
-                if (msg_type in ("audio", "voice", "ptt")) and _rt and _has_url_local(_rt):
+                # Só vira audio_plus_text_link quando o handler sinalizou FECHAMENTO/CTA (contrato).
+                try:
+                    _kind = str(wa_kind or "").strip().lower()
+                    _ns = str(plan_next_step or "").strip().upper()
+                    _intent = str(intent_final or "").strip().upper()
+                    _pol = policies_applied if isinstance(policies_applied, list) else []
+                    is_close_signal = (
+                        (_kind == "sales_close")
+                        or (_ns in ("SEND_LINK", "CTA", "EXIT"))
+                        or (_intent == "ACTIVATE")
+                        or ("hard_close:no_question" in _pol)
+                        or ("policy:plan_send_link" in _pol)
+                    )
+                except Exception:
+                    is_close_signal = False
+
+                if (msg_type in ("audio", "voice", "ptt")) and _rt and _has_url_local(_rt) and is_close_signal:
                     audio_debug["mode"] = "audio_plus_text_link"
 
                     # A2: marca ACK do worker (fechamento)
+                    # Não sobrescreve audio_debug["source"] (isso vem do handler).
                     if isinstance(audio_debug, dict):
                         audio_debug["ack_source"] = "worker_ack"
-                        audio_debug["source"] = "worker_ack"
 
                     # gera áudio curto institucional (sem url) para manter "entra áudio -> sai áudio"
                     if not audio_url:
@@ -1958,12 +1988,16 @@ def ycloud_inbound_worker():
                     t = t.replace("meirobo.com.br", "https://www.meirobo.com.br")
                 return t
 
-            # PATCH B: se prefersText, manda o texto (ex.: link) e, se houver áudio curto, manda também.
-            audio_plus_text_link = bool(
-                prefers_text
-                and msg_type in ("audio", "voice", "ptt")
-                and (audio_debug or {}).get("mode") == "audio_plus_text_link"
+                        # PATCH B: se prefersText veio do handler e é FECHAMENTO com link => áudio curto + texto com link.
+            # (o worker NÃO decide; só executa o contrato do handler)
+            has_link = ("http://" in (reply_text or "").lower()) or ("https://" in (reply_text or "").lower()) or ("www." in (reply_text or "").lower()) or ("meirobo.com.br" in (reply_text or "").lower())
+            is_close_signal = (
+                str(wa_kind or "").strip().lower() == "sales_close"
+                or plan_next_step in ("SEND_LINK", "CTA", "EXIT")
+                or intent_final == "ACTIVATE"
+                or ("hard_close:no_question" in [str(x) for x in (policies_applied or [])])
             )
+            audio_plus_text_link = bool(prefers_text and msg_type in ("audio", "voice", "ptt") and has_link and is_close_signal)
 
             # PATCH: quando é link e veio por áudio, manda 1 áudio curto e depois o texto com link.
             if audio_plus_text_link and allow_audio and audio_url and send_audio:
@@ -1993,67 +2027,6 @@ def ycloud_inbound_worker():
                     sent_ok, _ = send_text(from_e164, _clean_url_weirdness(reply_text))
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text (prefersText)")
-
-
-        _rt = (reply_text or "").strip()
-        # Regra de produto:
-        # - Entrou ÁUDIO -> sai ÁUDIO (apenas)
-        # - Exceção: FECHAMENTO/ASSINAR com link -> 1 áudio curto (ack) + 1 texto com link
-        def _should_send_text_after_audio(*, msg_type: str, mode: str, reply_text: str) -> bool:
-            if (msg_type or '').lower() not in ('audio', 'voice', 'ptt'):
-                return False
-            if (mode or "").strip() != "audio_plus_text_link":
-                return False
-            t = (reply_text or "").lower()
-            return ("http://" in t) or ("https://" in t) or ("www." in t) or ("meirobo.com.br" in t)
-
-        # Se entrou por áudio e temos audio_url, manda o áudio curto mesmo com prefersText
-        if (not audio_plus_text_link) and prefers_text and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
-            try:
-                sent_ack_audio = False
-                _ok2 = False
-                if audio_url and send_audio:
-                    try:
-                        _ok2, _ = send_audio(from_e164, audio_url)
-                        sent_ack_audio = bool(_ok2)
-                    except Exception as e:
-                        if isinstance(audio_debug, dict):
-                            audio_debug["ttsAckSend"] = {
-                                "ok": False,
-                                "err": f"{type(e).__name__}:{str(e)[:140]}",
-                                "audioUrl": (audio_url[:120] if isinstance(audio_url, str) else ""),
-                            }
-                if isinstance(audio_debug, dict) and sent_ack_audio:
-                    audio_debug["ttsAckSend"] = {"ok": True}
-                # 2) texto com link (reply completo) - SOMENTE na exceção (audio_plus_text_link)
-
-                sent_text_after_ack = False
-
-                if _should_send_text_after_audio(msg_type=msg_type, mode=str((audio_debug or {}).get('mode') or ''), reply_text=_rt):
-
-                    try:
-
-                        _ok3, _ = send_text(from_e164, _rt)
-
-                        sent_ok = sent_ok or bool(_ok3)
-
-                        sent_text_after_ack = True
-
-                    except Exception as e:
-
-                        if isinstance(audio_debug, dict):
-
-                            audio_debug['sendTextAfterAck'] = {'ok': False, 'err': f"{type(e).__name__}:{str(e)[:140]}"}
-
-
-                if isinstance(audio_debug, dict) and sent_text_after_ack:
-
-                    audio_debug['sendTextAfterAck'] = {'ok': True}
-                if sent_ack_audio:
-                    sent_ok = sent_ok or bool(_ok2)
-            except Exception:
-                logger.exception("[tasks] lead: falha send_audio (prefersText)")
-
         # Caso normal: entrou por áudio e NÃO pediu prefersText → manda só áudio
         if (not prefers_text) and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
             try:
@@ -2072,30 +2045,6 @@ def ycloud_inbound_worker():
                             }
                 if isinstance(audio_debug, dict) and sent_ack_audio:
                     audio_debug["ttsAckSend"] = {"ok": True}
-                # 2) texto com link (reply completo) - SOMENTE na exceção (audio_plus_text_link)
-
-                sent_text_after_ack = False
-
-                if _should_send_text_after_audio(msg_type=msg_type, mode=str((audio_debug or {}).get('mode') or ''), reply_text=_rt):
-
-                    try:
-
-                        _ok3, _ = send_text(from_e164, _rt)
-
-                        sent_ok = sent_ok or bool(_ok3)
-
-                        sent_text_after_ack = True
-
-                    except Exception as e:
-
-                        if isinstance(audio_debug, dict):
-
-                            audio_debug['sendTextAfterAck'] = {'ok': False, 'err': f"{type(e).__name__}:{str(e)[:140]}"}
-
-
-                if isinstance(audio_debug, dict) and sent_text_after_ack:
-
-                    audio_debug['sendTextAfterAck'] = {'ok': True}
                 if sent_ack_audio:
                     sent_ok = sent_ok or bool(_ok2)
             except Exception:
@@ -2125,22 +2074,21 @@ def ycloud_inbound_worker():
                 "spokenTextSha1": _sha1(tts_text_final_used),
                 "note": "Áudio é versão otimizada para fala do replyText (ou do kbContext quando conceptual).",
             })
-
-    # log leve (auditoria). Precisa ocorrer antes do return.
+            # log leve (auditoria). Precisa ocorrer antes do return.
             try:
                 _db().collection("platform_wa_outbox_logs").add({
-            "createdAt": firestore.SERVER_TIMESTAMP,
-            "from": from_e164,
-            "to": to_e164,
-            "wamid": wamid,
-            "msgType": msg_type,
-            "route": "sales" if not uid else "customer",
-            "replyText": (reply_text or "")[:400],
-            "audioUrl": (audio_url or "")[:300],
-            "audioDebug": audio_debug,
-            "spokenText": (tts_text_final_used or "")[:600],
-            "eventKey": event_key,
-            "sentOk": bool(sent_ok),
+                    "createdAt": firestore.SERVER_TIMESTAMP,
+                    "from": from_e164,
+                    "to": to_e164,
+                    "wamid": wamid,
+                    "msgType": msg_type,
+                    "route": "sales" if not uid else "customer",
+                    "replyText": (reply_text or "")[:400],
+                    "audioUrl": (audio_url or "")[:300],
+                    "audioDebug": audio_debug,
+                    "spokenText": (tts_text_final_used or "")[:600],
+                    "eventKey": event_key,
+                    "sentOk": bool(sent_ok),
                 })
             except Exception:
                 logger.warning("[tasks] outbox_log_failed from=%s to=%s wamid=%s eventKey=%s", from_e164, to_e164, wamid, event_key, exc_info=True)
