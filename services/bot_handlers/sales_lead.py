@@ -1124,8 +1124,22 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
     # Heurísticas pequenas só pra economizar IA em casos óbvios (não substitui IA).
     if stage == "ASK_NAME" and text and len(text.strip()) <= 30:
         t = text.strip().lower()
-        if any(k in t for k in ("quanto custa", "preço", "preco", "planos", "valor", "mensal", "assinatura")):
-            return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": "ASK_NAME"}
+        # IMPORTANTE (produto): intenção direta NÃO pode virar "formulário".
+        # Se perguntarem preço/planos/diferença logo no início, responda direto (sem travar em ASK_NAME).
+        if any(k in t for k in ("quanto custa", "preço", "preco", "valor", "mensal", "assinatura", "planos", "plano", "starter", "starter+", "plus", "diferença", "diferenca", "memória", "memoria", "2gb", "10gb")):
+            _intent = "PRICE"
+            if any(k in t for k in ("diferença", "diferenca", "memória", "memoria", "2gb", "10gb")):
+                _intent = "DIFF"
+            elif any(k in t for k in ("planos", "plano", "starter", "starter+", "plus")):
+                _intent = "PLANS"
+            return {
+                "route": "sales",
+                "intent": _intent,
+                "name": "",
+                "segment": "",
+                "interest_level": "mid",
+                "next_step": "",
+            }
         if t in ("oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "eai", "e aí", "opa"):
             return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": ""}
         nm = _extract_name_freeform(text) or text.strip()
