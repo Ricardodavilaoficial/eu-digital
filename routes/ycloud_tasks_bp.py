@@ -1994,110 +1994,112 @@ def ycloud_inbound_worker():
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text (prefersText)")
 
+
+        _rt = (reply_text or "").strip()
         # Regra de produto:
         # - Entrou ÁUDIO -> sai ÁUDIO (apenas)
         # - Exceção: FECHAMENTO/ASSINAR com link -> 1 áudio curto (ack) + 1 texto com link
         def _should_send_text_after_audio(*, msg_type: str, mode: str, reply_text: str) -> bool:
-            if (msg_type or "").lower() != "audio":
+            if (msg_type or '').lower() not in ('audio', 'voice', 'ptt'):
                 return False
             if (mode or "").strip() != "audio_plus_text_link":
                 return False
             t = (reply_text or "").lower()
             return ("http://" in t) or ("https://" in t) or ("www." in t) or ("meirobo.com.br" in t)
 
-            # Se entrou por áudio e temos audio_url, manda o áudio curto mesmo com prefersText
-            if (not audio_plus_text_link) and prefers_text and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
-                try:
-                    sent_ack_audio = False
-                    _ok2 = False
-                    if audio_url and send_audio:
-                        try:
-                            _ok2, _ = send_audio(from_e164, audio_url)
-                            sent_ack_audio = bool(_ok2)
-                        except Exception as e:
-                            if isinstance(audio_debug, dict):
-                                audio_debug["ttsAckSend"] = {
-                                    "ok": False,
-                                    "err": f"{type(e).__name__}:{str(e)[:140]}",
-                                    "audioUrl": (audio_url[:120] if isinstance(audio_url, str) else ""),
-                                }
-                    if isinstance(audio_debug, dict) and sent_ack_audio:
-                        audio_debug["ttsAckSend"] = {"ok": True}
-                    # 2) texto com link (reply completo) - SOMENTE na exceção (audio_plus_text_link)
+        # Se entrou por áudio e temos audio_url, manda o áudio curto mesmo com prefersText
+        if (not audio_plus_text_link) and prefers_text and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
+            try:
+                sent_ack_audio = False
+                _ok2 = False
+                if audio_url and send_audio:
+                    try:
+                        _ok2, _ = send_audio(from_e164, audio_url)
+                        sent_ack_audio = bool(_ok2)
+                    except Exception as e:
+                        if isinstance(audio_debug, dict):
+                            audio_debug["ttsAckSend"] = {
+                                "ok": False,
+                                "err": f"{type(e).__name__}:{str(e)[:140]}",
+                                "audioUrl": (audio_url[:120] if isinstance(audio_url, str) else ""),
+                            }
+                if isinstance(audio_debug, dict) and sent_ack_audio:
+                    audio_debug["ttsAckSend"] = {"ok": True}
+                # 2) texto com link (reply completo) - SOMENTE na exceção (audio_plus_text_link)
 
-                    sent_text_after_ack = False
+                sent_text_after_ack = False
 
-                    if _should_send_text_after_audio(msg_type=msg_type, mode=str((audio_debug or {}).get('mode') or ''), reply_text=_rt):
+                if _should_send_text_after_audio(msg_type=msg_type, mode=str((audio_debug or {}).get('mode') or ''), reply_text=_rt):
 
-                        try:
+                    try:
 
-                            _ok3, _ = send_text(from_e164, _rt)
+                        _ok3, _ = send_text(from_e164, _rt)
 
-                            sent_ok = sent_ok or bool(_ok3)
+                        sent_ok = sent_ok or bool(_ok3)
 
-                            sent_text_after_ack = True
+                        sent_text_after_ack = True
 
-                        except Exception as e:
+                    except Exception as e:
 
-                            if isinstance(audio_debug, dict):
+                        if isinstance(audio_debug, dict):
 
-                                audio_debug['sendTextAfterAck'] = {'ok': False, 'err': f"{type(e).__name__}:{str(e)[:140]}"}
-
-
-                    if isinstance(audio_debug, dict) and sent_text_after_ack:
-
-                        audio_debug['sendTextAfterAck'] = {'ok': True}
-                    if sent_ack_audio:
-                        sent_ok = sent_ok or bool(_ok2)
-                except Exception:
-                    logger.exception("[tasks] lead: falha send_audio (prefersText)")
-
-            # Caso normal: entrou por áudio e NÃO pediu prefersText → manda só áudio
-            if (not prefers_text) and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
-                try:
-                    sent_ack_audio = False
-                    _ok2 = False
-                    if audio_url and send_audio:
-                        try:
-                            _ok2, _ = send_audio(from_e164, audio_url)
-                            sent_ack_audio = bool(_ok2)
-                        except Exception as e:
-                            if isinstance(audio_debug, dict):
-                                audio_debug["ttsAckSend"] = {
-                                    "ok": False,
-                                    "err": f"{type(e).__name__}:{str(e)[:140]}",
-                                    "audioUrl": (audio_url[:120] if isinstance(audio_url, str) else ""),
-                                }
-                    if isinstance(audio_debug, dict) and sent_ack_audio:
-                        audio_debug["ttsAckSend"] = {"ok": True}
-                    # 2) texto com link (reply completo) - SOMENTE na exceção (audio_plus_text_link)
-
-                    sent_text_after_ack = False
-
-                    if _should_send_text_after_audio(msg_type=msg_type, mode=str((audio_debug or {}).get('mode') or ''), reply_text=_rt):
-
-                        try:
-
-                            _ok3, _ = send_text(from_e164, _rt)
-
-                            sent_ok = sent_ok or bool(_ok3)
-
-                            sent_text_after_ack = True
-
-                        except Exception as e:
-
-                            if isinstance(audio_debug, dict):
-
-                                audio_debug['sendTextAfterAck'] = {'ok': False, 'err': f"{type(e).__name__}:{str(e)[:140]}"}
+                            audio_debug['sendTextAfterAck'] = {'ok': False, 'err': f"{type(e).__name__}:{str(e)[:140]}"}
 
 
-                    if isinstance(audio_debug, dict) and sent_text_after_ack:
+                if isinstance(audio_debug, dict) and sent_text_after_ack:
 
-                        audio_debug['sendTextAfterAck'] = {'ok': True}
-                    if sent_ack_audio:
-                        sent_ok = sent_ok or bool(_ok2)
-                except Exception:
-                    logger.exception("[tasks] lead: falha send_audio")
+                    audio_debug['sendTextAfterAck'] = {'ok': True}
+                if sent_ack_audio:
+                    sent_ok = sent_ok or bool(_ok2)
+            except Exception:
+                logger.exception("[tasks] lead: falha send_audio (prefersText)")
+
+        # Caso normal: entrou por áudio e NÃO pediu prefersText → manda só áudio
+        if (not prefers_text) and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
+            try:
+                sent_ack_audio = False
+                _ok2 = False
+                if audio_url and send_audio:
+                    try:
+                        _ok2, _ = send_audio(from_e164, audio_url)
+                        sent_ack_audio = bool(_ok2)
+                    except Exception as e:
+                        if isinstance(audio_debug, dict):
+                            audio_debug["ttsAckSend"] = {
+                                "ok": False,
+                                "err": f"{type(e).__name__}:{str(e)[:140]}",
+                                "audioUrl": (audio_url[:120] if isinstance(audio_url, str) else ""),
+                            }
+                if isinstance(audio_debug, dict) and sent_ack_audio:
+                    audio_debug["ttsAckSend"] = {"ok": True}
+                # 2) texto com link (reply completo) - SOMENTE na exceção (audio_plus_text_link)
+
+                sent_text_after_ack = False
+
+                if _should_send_text_after_audio(msg_type=msg_type, mode=str((audio_debug or {}).get('mode') or ''), reply_text=_rt):
+
+                    try:
+
+                        _ok3, _ = send_text(from_e164, _rt)
+
+                        sent_ok = sent_ok or bool(_ok3)
+
+                        sent_text_after_ack = True
+
+                    except Exception as e:
+
+                        if isinstance(audio_debug, dict):
+
+                            audio_debug['sendTextAfterAck'] = {'ok': False, 'err': f"{type(e).__name__}:{str(e)[:140]}"}
+
+
+                if isinstance(audio_debug, dict) and sent_text_after_ack:
+
+                    audio_debug['sendTextAfterAck'] = {'ok': True}
+                if sent_ack_audio:
+                    sent_ok = sent_ok or bool(_ok2)
+            except Exception:
+                logger.exception("[tasks] lead: falha send_audio")
 
             # Fallback: se nada foi, tenta texto
             if (not sent_ok) and send_text:
