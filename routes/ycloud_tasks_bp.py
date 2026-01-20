@@ -1304,14 +1304,18 @@ def ycloud_inbound_worker():
                         if isinstance(wa_out, dict) and isinstance(audio_debug, dict):
                             dbg = wa_out.get("_debug")
                             if isinstance(dbg, dict):
-                                audio_debug["source"] = dbg.get("source") or "sales_lead"
+                                _src = (dbg.get("source") or "").strip()
+                                if not _src:
+                                    _src = "sales_lead" if str(route_hint or "").strip().lower() == "sales" else "wa_bot"
+                                audio_debug["source"] = _src
                                 audio_debug["planner"] = {
                                     "intent": dbg.get("intent") or "",
                                     "next_step": dbg.get("next_step") or "",
                                     "composer_mode": dbg.get("composer_mode") or "",
                                 }
                             else:
-                                audio_debug["source"] = audio_debug.get("source") or "unknown"
+                                # nunca loga como "unknown"; se não veio _debug, inferimos pelo route_hint
+                                audio_debug["source"] = audio_debug.get("source") or ("sales_lead" if str(route_hint or "").strip().lower() == "sales" else "wa_bot")
                     except Exception:
                         pass
 
@@ -1327,9 +1331,14 @@ def ycloud_inbound_worker():
                                 "route": str(wa_out.get("route") or "")[:80],
                                 "hasAudioUrl": bool((wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()),
                                 "prefersText": bool(wa_out.get("prefersText")),
-                                "displayName": str(wa_out.get("displayName") or "").strip()[:40],
+                                "displayName": str(
+                                    wa_out.get("displayName")
+                                    or wa_out.get("leadName")
+                                    or wa_out.get("nameToSay")
+                                    or ""
+                                ).strip()[:40],
                                 "ttsOwner": str(wa_out.get("ttsOwner") or "").strip()[:40],
-                                "source": (audio_debug.get("source") if isinstance(audio_debug, dict) else "unknown"),
+                                "source": (audio_debug.get("source") if isinstance(audio_debug, dict) else ""),
                             }
                     except Exception:
                         pass
@@ -2056,7 +2065,62 @@ def ycloud_inbound_worker():
                     sent_ok, _ = send_text(from_e164, _clean_url_weirdness(reply_text))
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text")
-      
+
+            # ==========================================================
+            # Meta final (observabilidade): garante displayName/source/plan no audioDebug
+            # - NÃO altera comportamento de envio (só log/meta)
+            # ==========================================================
+            try:
+                if isinstance(audio_debug, dict):
+                    # 1) displayName (prioridade: override -> display_name -> leadName/nameToSay/displayName)
+                    _ov = ""
+                    try:
+                        _no = audio_debug.get("nameOverride") if isinstance(audio_debug.get("nameOverride"), dict) else {}
+                        _ov = str((_no or {}).get("name") or "").strip()
+                    except Exception:
+                        _ov = ""
+
+                    _dn = (str(_ov or "").strip() or str(display_name or "").strip())
+                    if (not _dn) and isinstance(wa_out, dict):
+                        _dn = str(wa_out.get("leadName") or wa_out.get("nameToSay") or wa_out.get("displayName") or "").strip()
+                    if _dn:
+                        display_name = _dn
+
+                    # 2) source (prioridade: _debug.source -> inferido por route_hint)
+                    _src = ""
+                    if isinstance(wa_out, dict):
+                        dbg = wa_out.get("_debug")
+                        if isinstance(dbg, dict):
+                            _src = str(dbg.get("source") or "").strip()
+                    if not _src:
+                        _src = "sales_lead" if str(route_hint or "").strip().lower() == "sales" else "wa_bot"
+
+                    if (audio_debug.get("source") in (None, "", "unknown")):
+                        audio_debug["source"] = _src
+
+                    # 3) waOutMeta: atualizar/garantir campos finais
+                    wom = audio_debug.get("waOutMeta") if isinstance(audio_debug.get("waOutMeta"), dict) else {}
+                    wom = dict(wom or {})
+                    wom["displayName"] = str(display_name or _dn or "").strip()[:40]
+                    wom["source"] = str(audio_debug.get("source") or _src).strip()[:80]
+
+                    # (opcional) planner/meta para acabar com achismo
+                    if plan_next_step:
+                        wom["planNextStep"] = str(plan_next_step)[:40]
+                    if intent_final:
+                        wom["intentFinal"] = str(intent_final)[:40]
+                    if policies_applied:
+                        try:
+                            wom["policiesApplied"] = list(policies_applied)[:10]
+                        except Exception:
+                            wom["policiesApplied"] = str(policies_applied)[:200]
+                    if wa_kind:
+                        wom["kind"] = str(wa_kind)[:40]
+
+                    audio_debug["waOutMeta"] = wom
+            except Exception:
+                pass
+
             # ==========================================================
             # Auditoria: alinhamento explícito entre replyText e spokenText (TTS)
             # ==========================================================

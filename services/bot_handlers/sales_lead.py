@@ -2655,6 +2655,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "spokenSource": "replyText",
 
         "leadName": lead_name,
+        "displayName": lead_name,  # alias compat (worker/logs antigos)
         "segment": lead_segment,
         "goal": lead_goal,
         "interest_level": (st.get("interest_level") or "").strip(),
