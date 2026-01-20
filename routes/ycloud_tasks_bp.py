@@ -1397,14 +1397,14 @@ def ycloud_inbound_worker():
 
             # marca quem gerou (planner/composer/fallback/worker etc.)
             if isinstance(audio_debug, dict) and isinstance(dbg, dict):
-                audio_debug["source"] = dbg.get("source") or audio_debug.get("source") or "unknown"
+                audio_debug["source"] = dbg.get("source") or audio_debug.get("source") or ("sales_lead" if (route_hint == "sales") else "wa_bot")
                 audio_debug["planner"] = {
                     "intent": dbg.get("intent") or "",
                     "next_step": dbg.get("next_step") or "",
                     "composer_mode": dbg.get("composer_mode") or "",
                 }
             elif isinstance(audio_debug, dict):
-                audio_debug["source"] = audio_debug.get("source") or "unknown"
+                audio_debug["source"] = audio_debug.get("source") or ("sales_lead" if (route_hint == "sales") else "wa_bot")
         elif wa_out:
             reply_text = str(wa_out)
         reply_text = reply_text or ""
@@ -1546,7 +1546,7 @@ def ycloud_inbound_worker():
 
             # ==========================================================
             # Se o usuário pediu "somente texto", respeita.
-            if prefers_text and msg_type in ("audio", "voice", "ptt"):
+            if prefers_text and msg_type in ("audio", "voice", "ptt", "text"):
                 # PATCH: Se a entrada foi ÁUDIO e a resposta contém LINK/CTA,
                 # não pode virar "text_only_requested".
                 # Regra: manda 1 áudio curto (sem url) e depois manda o texto com o link.
