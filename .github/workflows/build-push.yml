@@ -35,7 +35,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/ricardodavilaoficial/mei-robo:latest
-            ghcr.io/ricardodavilaoficial/mei-robo:${{ github.sha }}
+            ghcr.io/ricardodavilaoficial/eu-digital:latest
+            ghcr.io/ricardodavilaoficial/eu-digital:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
