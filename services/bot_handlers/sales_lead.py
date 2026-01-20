@@ -1530,16 +1530,21 @@ def _kb_compact_for_prompt(kb: Dict[str, Any]) -> Dict[str, Any]:
         "pricing_blurb": _clip(str(pills.get("pricing_blurb") or kb.get("pricing_reasoning") or ""), 260),
         # CTA curto
         "cta_one_liners": _first_n(pills.get("cta_one_liners") or [], 3),
-        "conversation_limits": _clip_long(str(kb.get("conversation_limits") or ""), 420),        "operational_capabilities_compact": _pick_map(kb.get("operational_capabilities") or {}, 6),
-        "availability_policy": _clip_long(str(kb.get("availability_policy") or ""), 420),
-        "operational_flows": _first_n(kb.get("operational_flows") or [], 3),
-        "empathy_triggers": _first_n(kb.get("empathy_triggers") or [], 4),
-
+        "conversation_limits": _clip_long(str(kb.get("conversation_limits") or ""), 420),
         "sales_audio_modes": {
             "demo": _first_n(((kb.get("sales_audio_modes") or {}).get("demo") or []), 6),
             "close": _first_n(((kb.get("sales_audio_modes") or {}).get("close") or []), 7),
         },
         "objections_compact": _pick_map(kb.get("objections") or {}, 4),
+
+        # operações (repertório factual; ex.: e-mail diário 06:30)
+        "operational_capabilities": {
+            "scheduling_practice": _clip_long(
+                str((((kb.get("operational_capabilities") or {}) if isinstance(kb, dict) else {}).get("scheduling_practice") or "")),
+                520,
+            )
+        },
+        "empathy_triggers": _first_n(kb.get("empathy_triggers") or [], 6),
 
     }
 
@@ -2424,6 +2429,15 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             or ("manda o link" in t)
             or ("qual o link" in t)
             or ("qual é o link" in t)
+            or ("como assina" in t)
+            or ("como assinar" in t)
+            or ("quero assinar" in t)
+            or ("quero contratar" in t)
+            or ("quero fechar" in t)
+            or ("vou assinar" in t)
+            or ("pode me mandar" in t and "proced" in t)
+            or ("me manda" in t and "proced" in t)
+            or ("como eu contrato" in t)
         )
 
     # Policy (novo trilho): se o Planner mandou SEND_LINK, o código só GARANTE que o link aparece.
@@ -2432,11 +2446,10 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         if not _has_url(reply_final):
             reply_final = (reply_final.rstrip() + f"\n\n{SITE_URL}").strip()
         prefers_text = True
-        # áudio curto e humano; link vai por escrito
         if lead_name:
-            spoken_final = f"Valeu, {lead_name}! Vou te mandar o link por escrito agora. Obrigado por chamar."
+            spoken_final = f"Fechado, {lead_name}! Na sequência eu te mando por escrito o link pra assinar."
         else:
-            spoken_final = "Perfeito! Vou te mandar o link por escrito agora. Obrigado por chamar."
+            spoken_final = "Fechado! Na sequência eu te mando por escrito o link pra assinar."
         policies_applied.append("policy:plan_send_link")
 
     # Legado controlado (compat): se não há plano e overrides estão ligados, mantém o comportamento antigo.
@@ -2446,16 +2459,16 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             "A ativação completa leva até 7 dias úteis."
         )
         prefers_text = True
-        spoken_final = "Te mandei o link por escrito aqui na conversa."
+        if lead_name:
+            spoken_final = f"Fechado, {lead_name}! Na sequência eu te mando por escrito o link pra assinar."
+        else:
+            spoken_final = "Fechado! Na sequência eu te mando por escrito o link pra assinar."
         policies_applied.append("override:link")
 
     if _has_url(reply_final):
         prefers_text = True
         # áudio curto e humano; link vai por escrito
-        if lead_name:
-            spoken_final = f"Fechado, {lead_name}! Vou te mandar o link por escrito agora."
-        else:
-            spoken_final = "Fechado! Vou te mandar o link por escrito agora."
+        spoken_final = "Te mandei o link por escrito aqui na conversa."
 
     # Regra de fechamento (POLICY): não termina em pergunta quando a decisão já está clara.
     # Purificação: quando SALES_STRATEGIC_OVERRIDES=0, evitamos heurísticas 'espertas' aqui.
@@ -2611,6 +2624,24 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
                 spoken_final = _spoken_normalize_numbers(spoken_final)
                 policies_applied.append("override:agenda_practice")
+
+    # Complemento leve (sem competir com plano): se o Firestore tem o fato do e-mail 06:30,
+    # e a pergunta foi sobre agenda/agendamento/notificação, mas a resposta não citou isso,
+    # acrescenta apenas a frase factual.
+    try:
+        oc2 = kb.get("operational_capabilities") or {}
+        sched2 = str(oc2.get("scheduling_practice") or "").strip()
+    except Exception:
+        sched2 = ""
+
+    if is_agenda_question and sched2:
+        out_norm2 = _norm(reply_final)
+        if ("06:30" in sched2) and ("06:30" not in reply_final) and ("email" not in out_norm2) and ("e-mail" not in out_norm2):
+            reply_final = (reply_final.rstrip(". ") + ".\n\nTambém recebe um e-mail diário (dias úteis) às 06:30 com os agendamentos do dia.").strip()
+            spoken_final = _sanitize_spoken(reply_final)
+            spoken_final = _strip_md_for_tts(spoken_final)
+            spoken_final = _spoken_normalize_numbers(spoken_final)
+            policies_applied.append("append:email_digest_0630")
 
     # aplica também aqui (garante consistência)
     spoken_final = _spoken_normalize_numbers(spoken_final)
