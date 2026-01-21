@@ -63,10 +63,4 @@ COPY . /app
 # Inicializao (nico ponto de entrada)
 # server.py -> app.py (como vocs j usam)
 # -------------------------
-CMD gunicorn app:app \
-    -k gthread \
-    --workers 2 \
-    --threads 8 \
-    --bind 0.0.0.0:$PORT \
-    --access-logfile - \
-    --error-logfile -
+CMD sh -c "gunicorn app:app -k gthread --workers 2 --threads 8 --bind 0.0.0.0:${PORT:-8080} --access-logfile - --error-logfile -"
