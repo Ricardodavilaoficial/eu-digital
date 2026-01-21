@@ -56,8 +56,8 @@ COPY . /app
 # -------------------------
 # Porta (Render injeta PORT em runtime)
 # -------------------------
-EXPOSE 10000
-ENV PORT=10000
+# EXPOSE 10000  # (Cloud Run)
+# ENV PORT=10000  # (Cloud Run)
 
 # -------------------------
 # Inicializao (nico ponto de entrada)
