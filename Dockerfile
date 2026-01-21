@@ -1,4 +1,4 @@
-# Dockerfile - produção (Render + Gunicorn)
+# Dockerfile - produo (Render + Gunicorn)
 # Blindado contra cache fantasma e deploy silencioso
 
 FROM python:3.11-slim
@@ -21,12 +21,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 # -------------------------
-# Dependências do sistema
+# Dependncias do sistema
 # -------------------------
-# ffmpeg        -> pydub / áudio
-# libsndfile1   -> libs de áudio
+# ffmpeg        -> pydub / udio
+# libsndfile1   -> libs de udio
 # build-essential / libffi-dev -> wheels nativas
-# git / curl    -> diagnósticos e deps
+# git / curl    -> diagnsticos e deps
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
@@ -38,18 +38,18 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
-# Diretório da aplicação
+# Diretrio da aplicao
 # -------------------------
 WORKDIR /app
 
 # -------------------------
-# Dependências Python (camada separada = cache saudável)
+# Dependncias Python (camada separada = cache saudvel)
 # -------------------------
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # -------------------------
-# Código da aplicação (ANTI-CACHE SILENCIOSO)
+# Cdigo da aplicao (ANTI-CACHE SILENCIOSO)
 # -------------------------
 COPY . /app
 
@@ -60,10 +60,10 @@ EXPOSE 10000
 ENV PORT=10000
 
 # -------------------------
-# Inicialização (único ponto de entrada)
-# server.py -> app.py (como vocês já usam)
+# Inicializao (nico ponto de entrada)
+# server.py -> app.py (como vocs j usam)
 # -------------------------
-CMD gunicorn server:app \
+CMD gunicorn app:app \
     -k gthread \
     --workers 2 \
     --threads 8 \
