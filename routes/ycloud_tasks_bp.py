@@ -1354,6 +1354,9 @@ def ycloud_inbound_worker():
 
         # --- Extração canônica do retorno do wa_bot (texto/áudio/debug) ---
         prefers_text = False
+        # Default seguro: se algum caminho não setar allow_audio, não quebra o worker
+        allow_audio = True
+
         display_name = ""
         tts_text_from_bot = ""
         allow_sales_demo = False
