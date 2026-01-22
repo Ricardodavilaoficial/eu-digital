@@ -245,17 +245,23 @@ def ycloud_webhook_ingress():
     # enfileira e sai (best-effort, nunca quebra o webhook)
     try:
         from services.cloud_tasks import enqueue_ycloud_inbound  # lazy import
-        enqueue_ycloud_inbound(env, event_key=event_key)
 
-        # DEBUG inbound (best-effort)
+        # Enfileira no Cloud Tasks (NÃO mentir: só loga "enqueued" depois de sucesso)
+        task_name = enqueue_ycloud_inbound(env, event_key=event_key)
+
         try:
+            event_type = _safe_str(env.get("eventType"))
+            msg_type = _safe_str(env.get("messageType"))
+            from_e164 = _safe_str(env.get("from"))
+            text_len = len(_safe_str(env.get("text"), 2000) or "")
             logger.info(
-                "[ycloud_webhook] enqueued: type=%s msgType=%s from=%s wamid=%s textLen=%s",
-                _safe_str(env.get("eventType")),
-                _safe_str(env.get("messageType")),
-                _safe_str(env.get("from")),
+                "[ycloud_webhook] enqueued_ok: task=%s type=%s msgType=%s from=%s wamid=%s textLen=%s",
+                _safe_str(task_name),
+                event_type,
+                msg_type,
+                from_e164,
                 _safe_str(env.get("wamid")),
-                len(_safe_str(env.get("text"), 2000) or ""),
+                text_len,
             )
         except Exception:
             pass
@@ -277,18 +283,31 @@ def ycloud_webhook_ingress():
         except Exception:
             pass
 
-        return jsonify({"ok": True, "enqueued": True, "eventKey": event_key}), 200
+        return jsonify({"ok": True, "enqueued": True, "eventKey": event_key, "task": task_name}), 200
 
-    except Exception:
+    except Exception as e:
         try:
-            logger.exception("[ycloud_webhook] enqueue failed")
+            logger.exception(
+                "[ycloud_webhook] enqueued_fail: type=%s msgType=%s from=%s wamid=%s",
+                _safe_str(env.get("eventType")),
+                _safe_str(env.get("messageType")),
+                _safe_str(env.get("from")),
+                _safe_str(env.get("wamid")),
+            )
         except Exception:
             pass
-        return jsonify({"ok": True, "enqueued": False, "eventKey": event_key}), 200
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "enqueue_failed",
+                    "err": f"{type(e).__name__}:{str(e)[:180]}",
+                }
+            ),
+            500,
+        )
 
     # IMPORTANTE:
     # O webhook é MAGRO. Ele só normaliza + enfileira e retorna 200 rápido.
     # Qualquer processamento pesado (roteamento, IA, envio de texto/áudio, etc.)
     # acontece no worker: routes/ycloud_tasks_bp.py
-
-
