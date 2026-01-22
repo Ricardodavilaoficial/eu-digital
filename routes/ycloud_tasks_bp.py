@@ -2096,10 +2096,26 @@ def ycloud_inbound_worker():
                     except Exception:
                         logger.exception("[tasks] lead: falha send_text (audio_plus_text_link)")
 
+            # Regra operacional (Cloud Run/Tasks):
+            # - Se inbound é TEXTO e temos reply_text, envia TEXTO sempre.
+            #   (não depender de prefers_text; senão fica mudo quando prefers_text=False e não há áudio)
+            if (not audio_plus_text_link) and (msg_type in ("text", "chat", "")) and send_text:
+                try:
+                    _rt2 = _clean_url_weirdness(reply_text)
+                    if (_rt2 or "").strip():
+                        logger.info("[outbound] send_text (inbound_text_default) to=%s chars=%d", from_e164, len(_rt2))
+                        _okT, _ = send_text(from_e164, _rt2)
+                        sent_ok = sent_ok or bool(_okT)
+                except Exception:
+                    logger.exception("[tasks] lead: falha send_text (inbound_text_default)")
+
             # PATCH B: se prefersText (caso geral), manda texto primeiro.
             if (not audio_plus_text_link) and prefers_text and send_text:
                 try:
-                    sent_ok, _ = send_text(from_e164, _clean_url_weirdness(reply_text))
+                    _rt2 = _clean_url_weirdness(reply_text)
+                    logger.info("[outbound] send_text (prefersText) to=%s chars=%d", from_e164, len(_rt2 or ""))
+                    _okP, _ = send_text(from_e164, _rt2)
+                    sent_ok = sent_ok or bool(_okP)
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text (prefersText)")
         # Caso normal: entrou por áudio e NÃO pediu prefersText → manda só áudio
