@@ -895,6 +895,7 @@ def _idempotency_once(event_key: str, ttl_seconds: int = 86400) -> bool:
 def ycloud_inbound_worker():
     # Ping GET (diagnóstico)
     if request.method == "GET":
+        logger.info("[tasks] early_return reason=%s", "PING_GET")
         return jsonify({"ok": True, "route": "tasks/ycloud-inbound", "methods": ["GET", "POST"]}), 200
 
     # Auth simples via secret (modo Render)
@@ -913,6 +914,7 @@ def ycloud_inbound_worker():
             "[tasks] unauthorized: bad secret got=%s expected=%s ua=%s",
             g6, s6, (request.headers.get("User-Agent") or "")[:60]
         )
+        logger.info("[tasks] early_return reason=%s got=%s", "UNAUTHORIZED_SECRET", g6)
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
     data = request.get_json(silent=True) or {}
@@ -928,6 +930,7 @@ def ycloud_inbound_worker():
         logger.info("[tasks] start eventKey=%s (no payload details)", event_key)
 
     if not event_key or not isinstance(payload, dict):
+        logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "BAD_REQUEST_MISSING_EVENTKEY_OR_PAYLOAD", event_key, _wamid)
         return jsonify({"ok": False, "error": "bad_request"}), 400
 
     # ... resto do seu handler continua INTACTO ...
@@ -937,11 +940,13 @@ def ycloud_inbound_worker():
     # ==========================================================
     ev_type = (payload.get("eventType") or "").strip()
     if ev_type != "whatsapp.inbound_message.received":
+        logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s eventType=%s", "IGNORED_EVENTTYPE", event_key, _wamid, ev_type)
         return jsonify({"ok": True, "ignored": True, "eventType": ev_type}), 200
 
 
     dedup_ttl = int(os.environ.get("CLOUD_TASKS_DEDUP_TTL_SECONDS", "86400") or "86400")
     if not _idempotency_once(event_key, ttl_seconds=dedup_ttl):
+        logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "DEDUP_ALREADY_PROCESSED", event_key, _wamid)
         return jsonify({"ok": True, "deduped": True}), 200
 
     try:
@@ -1090,10 +1095,12 @@ def ycloud_inbound_worker():
                     })
                 except Exception:
                     pass
+                logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "VOICE_INGEST_STORED", event_key, wamid)
                 return jsonify({"ok": True, "voice": "stored"}), 200
 
             except Exception:
                 logger.exception("[tasks] voice: falha ingest uid=%s", uid)
+                logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "VOICE_INGEST_FAILED", event_key, wamid)
                 return jsonify({"ok": True, "voice": "failed"}), 200
 
         # --- 2) LEAD / TEXTO: chama WA_BOT (vendas se uid vazio) ---
@@ -1473,6 +1480,16 @@ def ycloud_inbound_worker():
         # SENTINELA: prova que gerou (ou não) conteúdo
         logger.info("[tasks] computed reply chars=%d prefers_text=%s has_audio=%s",
                     len((reply_text or "").strip()), bool(prefers_text), bool(audio_url))
+
+
+        # SENTINELA: daqui pra frente deveria entrar no outbound (ou cair em algum return/guard)
+        try:
+            logger.info(
+                "[tasks] after_compute route_hint=%s uid=%s msg_type=%s reply_empty=%s",
+                str(route_hint), ("yes" if uid else "no"), str(msg_type), (not (reply_text or "").strip())
+            )
+        except Exception:
+            logger.info("[tasks] after_compute (no details)")
 
         # Se entrou por áudio: por padrão não preferir texto.
         # EXCEÇÃO: se o wa_bot pediu prefersText (ex.: para mandar link por escrito), respeitar.
@@ -2247,7 +2264,12 @@ def ycloud_inbound_worker():
                 logger.info("[tasks] end eventKey=%s sent_ok=%s", event_key, bool(sent_ok))
 
             return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
+        logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "FELLTHROUGH_NOOP", event_key, _wamid)
         return jsonify({"ok": True, "note": "fellthrough_noop"}), 200
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
+        try:
+            logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "FATAL_EXCEPTION", event_key, _wamid)
+        except Exception:
+            logger.info("[tasks] early_return reason=%s", "FATAL_EXCEPTION")
         return jsonify({"ok": True}), 200
