@@ -1096,11 +1096,39 @@ def ycloud_inbound_worker():
         wa_out = None
 
         try:
-            from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
-            ensure_firebase_admin()
+            # Firebase Admin (Firestore) — harden Cloud Run
+            try:
+                from services.firebase_admin_init import ensure_firebase_admin as _ensure_firebase_admin  # type: ignore
+                _ensure_firebase_admin()
+            except Exception as e:
+                # Em Cloud Run, preferimos NÃO matar o worker aqui.
+                # Se Firebase admin falhar, ainda podemos responder fallback (texto)
+                import traceback as _tb
+                logger.error("[tasks] firebase_admin_init_failed (will fallback) err=%s", f"{type(e).__name__}:{str(e)[:200]}")
+                logger.error("[tasks] firebase_admin_init_failed_traceback\n%s", _tb.format_exc())
+                firebase_failed = True
+            else:
+                firebase_failed = False
 
-            from services import wa_bot as wa_bot_entry  # lazy import
-            route_hint = "sales" if not uid else "customer"
+            # Se Firebase falhou, evita chamar wa_bot (que depende de Firestore) e responde fallback curto
+            if firebase_failed:
+                reply_text = "Tive uma instabilidade aqui. Pode mandar sua mensagem de novo? 🙂"
+                spoken_text = reply_text
+                audio_url = ""
+                try:
+                    audio_debug = dict(audio_debug or {})
+                    audio_debug["firebaseAdmin"] = {"ok": False, "reason": "init_failed"}
+                except Exception:
+                    pass
+                prefers_text = True
+                wa_kind = "fallback"
+                kb_context = ""
+                # cai adiante no bloco de envio (send_text), sem quebrar o worker
+                wa_out = {"replyText": reply_text, "spokenText": spoken_text, "audioUrl": "", "audioDebug": audio_debug, "prefersText": True, "kind": wa_kind, "kbContext": kb_context}
+                skip_wa_bot = True
+            else:
+                from services import wa_bot as wa_bot_entry  # lazy import
+                route_hint = "sales" if not uid else "customer"
 
             skip_wa_bot = False
 
