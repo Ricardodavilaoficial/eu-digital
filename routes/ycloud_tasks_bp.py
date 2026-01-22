@@ -2327,3 +2327,12 @@ def _clean_url_weirdness(s: str) -> str:
             logger.info("[tasks] early_return reason=%s", "WORKER_EXCEPTION")
         # IMPORTANTE: retornar 200 evita retry infinito do Cloud Tasks enquanto depuramos
         return jsonify({"ok": True, "error": "worker_exception"}), 200
+        
+     # Guard final: nunca pode "cair fora" sem return (evita 500 + retry infinito no Cloud Tasks)
+    logger.error(
+        "[tasks] final_return_guard eventKey=%s wamid=%s",
+        (event_key if "event_key" in locals() else ""),
+        (_wamid if "_wamid" in locals() else ""),
+    )
+    return jsonify({"ok": True, "guard": "final_return_guard"}), 200
+       
