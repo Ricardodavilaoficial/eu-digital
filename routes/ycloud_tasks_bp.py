@@ -899,8 +899,20 @@ def ycloud_inbound_worker():
 
     # Auth simples via secret (modo Render)
     secret = (os.environ.get("CLOUD_TASKS_SECRET") or "").strip()
-    got = (request.headers.get("X-MR-Tasks-Secret") or "").strip()
-    if not secret or got != secret:
+    # Aceita header alternativo (compat): alguns builders/stubs podem enviar nome diferente
+    got = (
+        (request.headers.get("X-MR-Tasks-Secret") or "").strip()
+        or (request.headers.get("X-CloudTasks-Secret") or "").strip()
+        or (request.headers.get("X-Cloudtasks-Secret") or "").strip()
+    )
+    if (not secret) or (not got) or (got != secret):
+        # Log seguro (não vaza secret inteiro)
+        g6 = (got[:6] + "...") if got else "NONE"
+        s6 = (secret[:6] + "...") if secret else "NONE"
+        logger.warning(
+            "[tasks] unauthorized: bad secret got=%s expected=%s ua=%s",
+            g6, s6, (request.headers.get("User-Agent") or "")[:60]
+        )
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
     data = request.get_json(silent=True) or {}
@@ -1345,10 +1357,20 @@ def ycloud_inbound_worker():
 
         except Exception as e:
             # Best-effort: não derruba o worker se o wa_bot falhar/import quebrar
-            logger.exception("[tasks] wa_bot_failed route_hint=%s from=%s wamid=%s", ("sales" if not uid else "customer"), from_e164, wamid)
+            # (Cloud Run às vezes trunca logger.exception; então imprimimos traceback explícito também)
+            import traceback as _tb  # local import (mínimo)
+            tb_txt = _tb.format_exc()
+            logger.exception(
+                "[tasks] wa_bot_failed route_hint=%s from=%s wamid=%s",
+                ("sales" if not uid else "customer"), from_e164, wamid
+            )
+            logger.error(
+                "[tasks] wa_bot_failed_traceback route_hint=%s from=%s wamid=%s\n%s",
+                ("sales" if not uid else "customer"), from_e164, wamid, tb_txt
+            )
             reply_text = ""
             audio_url = ""
-            audio_debug = {"err": str(e)}
+            audio_debug = {"err": f"{type(e).__name__}:{str(e)[:200]}", "trace": "wa_bot_failed"}
             kb_context = ""
             wa_kind = ""
 
