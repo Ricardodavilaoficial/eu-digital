@@ -1,0 +1,13 @@
+_trash/
+**/_trash/
+*.backup*
+*.diff
+*.patch
+*.log
+*.tmp
+__pycache__/
+**/__pycache__/
+*.pyc
+.git/
+.env
+.env.*
