@@ -2040,7 +2040,8 @@ def ycloud_inbound_worker():
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text (prefersText)")
         # Caso normal: entrou por áudio e NÃO pediu prefersText → manda só áudio
-        if (not prefers_text) and allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
+        _allow_audio = locals().get("allow_audio", True)
+        if (not prefers_text) and _allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
             try:
                 sent_ack_audio = False
                 _ok2 = False
