@@ -919,6 +919,14 @@ def ycloud_inbound_worker():
     event_key = (data.get("eventKey") or "").strip()
     payload = data.get("payload") or {}
 
+    # SENTINELA: prova que o handler entrou e leu payload
+    try:
+        _wamid = str((payload or {}).get("wamid") or "")
+        _msg_type = str((payload or {}).get("msgType") or (payload or {}).get("messageType") or "")
+        logger.info("[tasks] start eventKey=%s wamid=%s msgType=%s", event_key, _wamid, _msg_type)
+    except Exception:
+        logger.info("[tasks] start eventKey=%s (no payload details)", event_key)
+
     if not event_key or not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "bad_request"}), 400
 
@@ -1461,6 +1469,11 @@ def ycloud_inbound_worker():
         elif wa_out:
             reply_text = str(wa_out)
         reply_text = reply_text or ""
+
+        # SENTINELA: prova que gerou (ou não) conteúdo
+        logger.info("[tasks] computed reply chars=%d prefers_text=%s has_audio=%s",
+                    len((reply_text or "").strip()), bool(prefers_text), bool(audio_url))
+
         # Se entrou por áudio: por padrão não preferir texto.
         # EXCEÇÃO: se o wa_bot pediu prefersText (ex.: para mandar link por escrito), respeitar.
         if msg_type in ("audio", "voice", "ptt") and (not prefers_text):
@@ -2210,6 +2223,12 @@ def ycloud_inbound_worker():
                 })
             except Exception:
                 logger.warning("[tasks] outbox_log_failed from=%s to=%s wamid=%s eventKey=%s", from_e164, to_e164, wamid, event_key, exc_info=True)
+
+            # SENTINELA: prova que chegou no fim (independente de enviar)
+            try:
+                logger.info("[tasks] end eventKey=%s wamid=%s sent_ok=%s", event_key, _wamid, bool(sent_ok))
+            except Exception:
+                logger.info("[tasks] end eventKey=%s sent_ok=%s", event_key, bool(sent_ok))
 
             return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
         return jsonify({"ok": True, "note": "fellthrough_noop"}), 200
