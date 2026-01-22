@@ -2264,8 +2264,28 @@ def ycloud_inbound_worker():
                 logger.info("[tasks] end eventKey=%s sent_ok=%s", event_key, bool(sent_ok))
 
             return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
+        # Fallback de segurança: se chegamos até aqui com reply_text e inbound é TEXTO,
+        # não podemos ficar mudos. Tenta enviar texto best-effort.
+        try:
+            _rt_final = (reply_text or "").strip()
+        except Exception:
+            _rt_final = ""
+
+        if (msg_type in ("text", "chat", "")) and _rt_final:
+            try:
+                if send_text:
+                    logger.info("[outbound] send_text (fellthrough_fallback) to=%s chars=%d", from_e164, len(_rt_final))
+                    _okF, _ = send_text(from_e164, _clean_url_weirdness(_rt_final))
+                    sent_ok = sent_ok or bool(_okF)
+                    logger.info("[tasks] end eventKey=%s wamid=%s sent_ok=%s", event_key, _wamid, bool(sent_ok))
+                    return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
+                else:
+                    logger.warning("[tasks] fellthrough_fallback: send_text is None (no provider)")
+            except Exception:
+                logger.exception("[tasks] fellthrough_fallback: send_text failed")
+
         logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "FELLTHROUGH_NOOP", event_key, _wamid)
-        return jsonify({"ok": True, "note": "fellthrough_noop"}), 200
+        return jsonify({"ok": True}), 200
     except Exception:
         logger.exception("[tasks] fatal: erro inesperado")
         try:
