@@ -917,9 +917,16 @@ def ycloud_inbound_worker():
         logger.info("[tasks] early_return reason=%s got=%s", "UNAUTHORIZED_SECRET", g6)
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
-    data = request.get_json(silent=True) or {}
-    event_key = (data.get("eventKey") or "").strip()
-    payload = data.get("payload") or {}
+
+    try:
+        data = request.get_json(silent=True) or {}
+        event_key = (data.get("eventKey") or "").strip()
+        payload = data.get("payload") or {}
+    except Exception:
+        logger.exception("[tasks] worker_unhandled_exception")
+        # IMPORTANTE: retornar 200 evita retry infinito do Cloud Tasks enquanto depuramos
+        return jsonify({"ok": True, "error": "worker_exception"}), 200
+
 
 # Defaults seguros: SEMPRE definidos (evita UnboundLocalError em trilhas de fallback)
 send_text = None
@@ -2313,9 +2320,10 @@ def _clean_url_weirdness(s: str) -> str:
         logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "FELLTHROUGH_NOOP", event_key, _wamid)
         return jsonify({"ok": True}), 200
     except Exception:
-        logger.exception("[tasks] fatal: erro inesperado")
+        logger.exception("[tasks] worker_unhandled_exception")
         try:
-            logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "FATAL_EXCEPTION", event_key, _wamid)
+            logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "WORKER_EXCEPTION", event_key, _wamid)
         except Exception:
-            logger.info("[tasks] early_return reason=%s", "FATAL_EXCEPTION")
-        return jsonify({"ok": True}), 200
+            logger.info("[tasks] early_return reason=%s", "WORKER_EXCEPTION")
+        # IMPORTANTE: retornar 200 evita retry infinito do Cloud Tasks enquanto depuramos
+        return jsonify({"ok": True, "error": "worker_exception"}), 200
