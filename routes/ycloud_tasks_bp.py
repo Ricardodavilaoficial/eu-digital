@@ -2054,13 +2054,21 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                     now = datetime.datetime.utcnow()
                                     obj = f"sandbox/institutional_tts/{now:%Y/%m/%d}/{uuid.uuid4().hex}.mp3"
 
-                                    client = gcs_storage.Client()
+                                    # IMPORTANT: usar client com credencial que tenha private_key
+                                    # (evita "you need a private key to sign credentials" no Cloud Run)
+                                    try:
+                                        from services.gcp_creds import get_storage_client as _get_storage_client
+                                        client = _get_storage_client()
+                                    except Exception:
+                                        # fallback: mantém comportamento anterior
+                                        client = gcs_storage.Client()
                                     bucket = client.bucket(bucket_name)
                                     blob = bucket.blob(obj)
                                     blob.upload_from_string(b, content_type="audio/mpeg")
 
                                     exp_s = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900") or "900")
                                     audio_url = blob.generate_signed_url(
+                                        version="v4",
                                         expiration=datetime.timedelta(seconds=exp_s),
                                         method="GET",
                                     )
