@@ -1192,7 +1192,6 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 # Áudio de lead: baixar mídia e transcrever (STT) antes da IA
                 transcript = ""
                 stt_err = ""
-                stt_failed_force_text = False  # Pacote 1: nunca ficar mudo quando STT falhar
 
                 try:
                     url = ""
@@ -1312,7 +1311,6 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     logger.warning("[tasks] lead: stt_failed from=%s wamid=%s reason=%s", from_e164, wamid, stt_err)
                     reply_text = "Não consegui entender esse áudio. Pode mandar em texto ou repetir rapidinho?"
                     skip_wa_bot = True
-                    stt_failed_force_text = True
                     audio_debug = dict(audio_debug or {})
                     audio_debug.setdefault("stt", {"ok": False, "reason": stt_err})
 
@@ -1375,12 +1373,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
             if hasattr(wa_bot_entry, "reply_to_text"):
                 if skip_wa_bot:
-                    # Pacote 1: se STT falhar em inbound de ÁUDIO, forçamos saída em TEXTO (nunca ficar mudo)
-                    _force_text = bool(locals().get("stt_failed_force_text"))
                     wa_out = {"replyText": reply_text, "audioUrl": "", "audioDebug": audio_debug}
-                    if _force_text:
-                        wa_out["prefersText"] = True
-                        wa_out["kind"] = wa_out.get("kind") or "stt_fallback"
                 else:
                     ctx_for_bot = {
                         "channel": "whatsapp",
@@ -2109,6 +2102,36 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 send_text = None  # type: ignore
                 send_audio = None  # type: ignore
 
+            # Pacote 1 (robustez): grava outbox imediatamente após envio bem-sucedido.
+            # Evita depender do "bloco final" e facilita auditoria em produção.
+            def _try_log_outbox_immediate(_sent_ok: bool, _channel: str, _extra: dict = None) -> None:
+                try:
+                    payload_out = {
+                        "createdAt": firestore.SERVER_TIMESTAMP,
+                        "from": from_e164,
+                        "to": to_e164,
+                        "wamid": wamid,
+                        "msgType": msg_type,
+                        "route": "sales" if not uid else "customer",
+                        "replyText": (reply_text or "")[:900],
+                        "audioUrl": (audio_url or "")[:500],
+                        "audioDebug": (audio_debug or {}),
+                        "spokenText": (tts_text_final_used or "")[:900],
+                        "eventKey": event_key,
+                        "sentOk": bool(_sent_ok),
+                        "sentVia": str(_channel or "")[:40],
+                    }
+                    if isinstance(_extra, dict) and _extra:
+                        payload_out.update(_extra)
+                    ref = _db().collection("platform_wa_outbox_logs").add(payload_out)
+                    try:
+                        doc_id = ref[1].id if isinstance(ref, (list, tuple)) and len(ref) > 1 else ""
+                    except Exception:
+                        doc_id = ""
+                    logger.info("[tasks] outbox_immediate ok=%s via=%s docId=%s wamid=%s", bool(_sent_ok), _channel, doc_id, wamid)
+                except Exception:
+                    logger.warning("[tasks] outbox_immediate_failed via=%s wamid=%s", str(_channel or ""), wamid, exc_info=True)
+
             def _clean_url_weirdness(s: str) -> str:
                 t = (s or "").strip()
                 if not t:
@@ -2144,6 +2167,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 try:
                     _ok2, _ = send_audio(from_e164, audio_url)
                     sent_ok = sent_ok or _ok2
+                    if _ok2:
+                        _try_log_outbox_immediate(True, "send_audio_audio_plus_link")
                 except Exception:
                     logger.exception("[tasks] lead: falha send_audio (audio_plus_text_link)")
 
@@ -2158,6 +2183,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 )
                             _ok3, _ = send_text(from_e164, _rt)
                             sent_ok = sent_ok or _ok3
+                            if _ok3:
+                                _try_log_outbox_immediate(True, "send_text_audio_plus_link")
                     except Exception:
                         logger.exception("[tasks] lead: falha send_text (audio_plus_text_link)")
 
@@ -2171,6 +2198,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         logger.info("[outbound] send_text (inbound_text_default) to=%s chars=%d", from_e164, len(_rt2))
                         _okT, _ = send_text(from_e164, _rt2)
                         sent_ok = sent_ok or bool(_okT)
+                        if _okT:
+                            _try_log_outbox_immediate(True, "send_text_inbound_default")
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text (inbound_text_default)")
 
@@ -2181,6 +2210,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     logger.info("[outbound] send_text (prefersText) to=%s chars=%d", from_e164, len(_rt2 or ""))
                     _okP, _ = send_text(from_e164, _rt2)
                     sent_ok = sent_ok or bool(_okP)
+                    if _okP:
+                        _try_log_outbox_immediate(True, "send_text_prefersText")
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text (prefersText)")
         # Caso normal: entrou por áudio e NÃO pediu prefersText → manda só áudio
@@ -2193,6 +2224,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     try:
                         _ok2, _ = send_audio(from_e164, audio_url)
                         sent_ack_audio = bool(_ok2)
+                        if _ok2:
+                            _try_log_outbox_immediate(True, "send_audio")
                     except Exception as e:
                         if isinstance(audio_debug, dict):
                             audio_debug["ttsAckSend"] = {
@@ -2211,6 +2244,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             if (not sent_ok) and send_text:
                 try:
                     sent_ok, _ = send_text(from_e164, _clean_url_weirdness(reply_text))
+                    if sent_ok:
+                        _try_log_outbox_immediate(True, "send_text_audio_fallback")
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text")
 
