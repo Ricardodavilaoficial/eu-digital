@@ -2312,7 +2312,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         except Exception:
             _rt_final = ""
 
-        if (msg_type in ("text", "chat", "")) and _rt_final:
+        if (msg_type in ("text", "chat", "", "audio", "voice", "ptt")) and _rt_final:
             try:
                 _st = send_text
                 # Import sob demanda: só tenta carregar provider aqui (não mexe no fluxo "normal")
