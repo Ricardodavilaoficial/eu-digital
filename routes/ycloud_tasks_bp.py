@@ -1192,6 +1192,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 # Áudio de lead: baixar mídia e transcrever (STT) antes da IA
                 transcript = ""
                 stt_err = ""
+                stt_failed_force_text = False  # Pacote 1: nunca ficar mudo quando STT falhar
 
                 try:
                     url = ""
@@ -1311,6 +1312,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     logger.warning("[tasks] lead: stt_failed from=%s wamid=%s reason=%s", from_e164, wamid, stt_err)
                     reply_text = "Não consegui entender esse áudio. Pode mandar em texto ou repetir rapidinho?"
                     skip_wa_bot = True
+                    stt_failed_force_text = True
                     audio_debug = dict(audio_debug or {})
                     audio_debug.setdefault("stt", {"ok": False, "reason": stt_err})
 
@@ -1373,7 +1375,12 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
             if hasattr(wa_bot_entry, "reply_to_text"):
                 if skip_wa_bot:
+                    # Pacote 1: se STT falhar em inbound de ÁUDIO, forçamos saída em TEXTO (nunca ficar mudo)
+                    _force_text = bool(locals().get("stt_failed_force_text"))
                     wa_out = {"replyText": reply_text, "audioUrl": "", "audioDebug": audio_debug}
+                    if _force_text:
+                        wa_out["prefersText"] = True
+                        wa_out["kind"] = wa_out.get("kind") or "stt_fallback"
                 else:
                     ctx_for_bot = {
                         "channel": "whatsapp",
