@@ -1829,7 +1829,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 tts_resp = requests.post(
                                     tts_url,
                                     headers={"Accept": "application/json"},
-                                    json={"text": ack, "voice_id": voice_id, "format": "ogg"},
+                                    json={"text": ack, "voice_id": voice_id, "format": "mp3"},
                                     timeout=35,
                                 )
                                 if not tts_resp.ok:
@@ -1837,7 +1837,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                     audio_url = ""
                                 else:
                                     b = tts_resp.content or b""
-                                    audio_url = _upload_audio_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck", ext="ogg", content_type="audio/ogg")
+                                    audio_url = _upload_audio_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck", ext="mp3", content_type="audio/mpeg")
                             else:
                                 try:
                                     audio_debug["ttsAck"] = {"ok": False, "reason": "missing_INSTITUTIONAL_VOICE_ID"}
@@ -1879,7 +1879,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 tts_resp = requests.post(
                                     tts_url,
                                     headers={"Accept": "application/json"},
-                                    json={"text": ack, "voice_id": voice_id, "format": "ogg"},
+                                    json={"text": ack, "voice_id": voice_id, "format": "mp3"},
                                     timeout=35,
                                 )
 
@@ -1890,7 +1890,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                         audio_url = ""
                                     else:
                                         b = tts_resp.content or b""
-                                        audio_url = _upload_audio_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck", ext="ogg", content_type="audio/ogg")
+                                        audio_url = _upload_audio_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck", ext="mp3", content_type="audio/mpeg")
                                 except Exception as e:
                                     audio_debug["ttsAck"] = {"ok": False, "reason": f"tts_exception:{type(e).__name__}:{str(e)[:120]}"}
                                     audio_url = ""
