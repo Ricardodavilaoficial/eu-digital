@@ -1751,6 +1751,69 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 except Exception:
                     is_close_signal = False
 
+                # ==========================================================
+                # Pacote 2 (regra explícita): "decisão de assinar" por ÁUDIO
+                # => SEMPRE: 1 áudio curto de ACK + 1 texto com procedimento/link
+                # Mesmo que prefersText=true. (prefersText aqui é "link por escrito", não "calar áudio")
+                # ==========================================================
+                if is_close_signal and (msg_type in ("audio", "voice", "ptt")):
+                    try:
+                        # garante que o texto tenha link copiável (sem "meirobo. com. br")
+                        _rt_fix = _clean_url_weirdness(_rt)
+                        if _rt_fix and ("meirobo.com.br" not in _rt_fix.lower()) and ("https://www.meirobo.com.br" not in _rt_fix.lower()):
+                            _rt_fix = (_rt_fix.rstrip() + "\n\nhttps://www.meirobo.com.br").strip()
+                            try:
+                                audio_debug["policy"] = (audio_debug.get("policy") or []) + ["close_ack:forced_link_append"]
+                            except Exception:
+                                pass
+                        reply_text = _rt_fix or reply_text
+                        _rt = (reply_text or "").strip()
+                    except Exception:
+                        pass
+
+                    # força modo "áudio + texto" no fechamento (mesmo que o reply não tenha url originalmente)
+                    try:
+                        audio_debug["mode"] = "audio_plus_text_link"
+                        audio_debug["ack_source"] = "worker_ack"
+                    except Exception:
+                        pass
+
+                    # Se não tem audio_url ainda, gera ACK institucional via /api/voz/tts e sobe Signed URL (padrão do worker)
+                    if not audio_url:
+                        try:
+                            base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+                            if not base:
+                                base = (request.host_url or "").strip().rstrip("/")
+                            tts_url = f"{base}/api/voz/tts"
+                            voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
+                            if voice_id:
+                                nm = (display_name or "").strip()
+                                ack = _build_ack_audio(nm)
+                                tts_resp = requests.post(
+                                    tts_url,
+                                    headers={"Accept": "application/json"},
+                                    json={"text": ack, "voice_id": voice_id, "format": "mp3"},
+                                    timeout=35,
+                                )
+                                if not tts_resp.ok:
+                                    audio_debug["ttsAck"] = {"ok": False, "reason": f"tts_http_{tts_resp.status_code}"}
+                                    audio_url = ""
+                                else:
+                                    b = tts_resp.content or b""
+                                    audio_url = _upload_mp3_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck")
+                            else:
+                                try:
+                                    audio_debug["ttsAck"] = {"ok": False, "reason": "missing_INSTITUTIONAL_VOICE_ID"}
+                                except Exception:
+                                    pass
+                        except Exception as e:
+                            try:
+                                audio_debug["ttsAck"] = {"ok": False, "reason": f"{type(e).__name__}:{str(e)[:120]}"}
+                            except Exception:
+                                pass
+
+                    # se gerou áudio, o outbound vai mandar áudio e depois texto (audio_plus_text_link)
+                    # (não cair no "text_only_requested")
                 if (msg_type in ("audio", "voice", "ptt", "text")) and _rt and _has_url_local(_rt) and is_close_signal and (os.environ.get("YCLOUD_CLOSE_ACK_FOR_TEXT", "1") not in ("0", "false", "False") or msg_type in ("audio", "voice", "ptt")):
                     audio_debug["mode"] = "audio_plus_text_link"
 
@@ -2398,6 +2461,15 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             _rt_final = (reply_text or "").strip()
         except Exception:
             _rt_final = ""
+
+        # Anti-duplicidade: se já enviamos algo (ex.: send_text(prefersText) ou audio_plus_text_link),
+        # NUNCA cair no fellthrough para mandar de novo.
+        try:
+            if bool(sent_ok):
+                logger.info("[tasks] fellthrough_skipped (already_sent) eventKey=%s wamid=%s", event_key, _wamid)
+                return jsonify({"ok": True, "sent": True, "dedup": "fellthrough_skipped"}), 200
+        except Exception:
+            pass
 
         if (msg_type in ("text", "chat", "", "audio", "voice", "ptt")) and _rt_final:
             try:
