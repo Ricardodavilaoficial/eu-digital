@@ -2318,9 +2318,18 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # o outbound NÃO pode rebaixar para "send_text_prefersText".
             decided_audio_plus_text = False
             try:
-                decided_audio_plus_text = (isinstance(audio_debug, dict) and str(audio_debug.get("mode") or "").strip() == "audio_plus_text_link")
+                decided_audio_plus_text = (
+                    isinstance(audio_debug, dict)
+                    and str(audio_debug.get("mode") or "").strip() == "audio_plus_text_link"
+                )
             except Exception:
                 decided_audio_plus_text = False
+
+            # ==========================================================
+            # REGRA CANÔNICA — ACK obrigatório em áudio
+            # audio_plus_text_link IGNORA prefersText
+            # ==========================================================
+            force_ack_audio = bool(decided_audio_plus_text)
 
             audio_plus_text_link = bool(
                 prefers_text
@@ -2339,6 +2348,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     sent_ok = sent_ok or _ok2
                 except Exception:
                     logger.exception("[tasks] lead: falha send_audio (audio_plus_text_link)")
+
+                try:
+                    _try_log_outbox_immediate(True, "send_audio_ack_then_text")
+                except Exception:
+                    pass
 
                 # texto com link (reply completo)
                 if send_text:
@@ -2368,7 +2382,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     logger.exception("[tasks] lead: falha send_text (inbound_text_default)")
 
             # PATCH B: se prefersText (caso geral), manda texto primeiro.
-            if (not audio_plus_text_link) and prefers_text and send_text:
+            if (not force_ack_audio) and (not audio_plus_text_link) and prefers_text and send_text:
                 try:
                     _rt2 = _clean_url_weirdness(reply_text)
                     logger.info("[outbound] send_text (prefersText) to=%s chars=%d", from_e164, len(_rt2 or ""))
@@ -2380,7 +2394,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     logger.exception("[tasks] lead: falha send_text (prefersText)")
         # Caso normal: entrou por áudio e NÃO pediu prefersText → manda só áudio
         _allow_audio = locals().get("allow_audio", True)
-        if (not prefers_text) and _allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio:
+        if (_allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio
+            and (not prefers_text or force_ack_audio)):
             try:
                 sent_ack_audio = False
                 _ok2 = False
