@@ -72,20 +72,17 @@ ycloud_tasks_bp = Blueprint("ycloud_tasks_bp", __name__)
 _IDENTITY_MODE = (os.environ.get("IDENTITY_MODE") or "on").strip().lower()  # on|off
 
 
-def _upload_mp3_bytes_to_signed_url(*, b: bytes, audio_debug: dict, tag: str = "ttsAck") -> str:
+def _upload_audio_bytes_to_signed_url(*, b: bytes, audio_debug: dict, tag: str = "ttsAck", ext: str = "mp3", content_type: str = "audio/mpeg") -> str:
     """
     Reusa o MESMO esquema de bytes_upload_signed que já funciona no worker:
     Storage -> upload_from_string -> generate_signed_url.
     """
     try:
         if not b or len(b) < 200:
-            audio_debug[tag] = {"ok": False, "reason": "empty_mp3_bytes"}
+            audio_debug[tag] = {"ok": False, "reason": f"empty_audio_bytes:{ext}"}
             return ""
 
-        # Garante que parece mp3 (ID3 ou frame sync 0xFF)
-        if not (b.startswith(b"ID3") or (len(b) > 2 and b[0] == 0xFF)):
-            audio_debug[tag] = {"ok": False, "reason": "not_mp3_bytes"}
-            return ""
+        # Validação leve (não bloquear formatos): só garante que tem bytes suficientes
 
         from google.cloud import storage  # type: ignore
         from services.gcp_creds import get_storage_client
@@ -97,21 +94,25 @@ def _upload_mp3_bytes_to_signed_url(*, b: bytes, audio_debug: dict, tag: str = "
             audio_debug[tag] = {"ok": False, "reason": "missing_STORAGE_BUCKET"}
             return ""
 
+        now = datetime.utcnow()
+        obj = f"sandbox/institutional_tts_ack/{now:%Y/%m/%d}/{uuid.uuid4().hex}.{ext}"
+
         client = get_storage_client()
         bucket = client.bucket(bucket_name)
-
-        now = datetime.now()
-        obj = f"sandbox/institutional_tts_ack/{now:%Y/%m/%d}/{uuid.uuid4().hex}.mp3"
         blob = bucket.blob(obj)
-        blob.upload_from_string(b, content_type="audio/mpeg")
+        blob.upload_from_string(b, content_type=(content_type or "application/octet-stream"))
 
         exp_s = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900") or "900")
-        url = blob.generate_signed_url(expiration=exp_s, method="GET")
+        url = blob.generate_signed_url(
+            version="v4",
+            expiration=datetime.timedelta(seconds=exp_s),
+            method="GET",
+        )
 
-        audio_debug[tag] = {"ok": True, "mode": "bytes_upload_signed", "bytes": len(b), "ct": "audio/mpeg", "object": obj}
-        return str(url or "").strip()
+        audio_debug[tag] = {"ok": True, "mode": "bytes_upload_signed", "bytes": len(b), "ct": (content_type or ""), "object": obj}
+        return url
     except Exception as e:
-        audio_debug[tag] = {"ok": False, "reason": f"upload_fail:{type(e).__name__}:{str(e)[:120]}"}
+        audio_debug[tag] = {"ok": False, "reason": f"upload_exc:{type(e).__name__}:{str(e)[:120]}"}
         return ""
 
 
@@ -1828,7 +1829,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 tts_resp = requests.post(
                                     tts_url,
                                     headers={"Accept": "application/json"},
-                                    json={"text": ack, "voice_id": voice_id, "format": "mp3"},
+                                    json={"text": ack, "voice_id": voice_id, "format": "ogg"},
                                     timeout=35,
                                 )
                                 if not tts_resp.ok:
@@ -1836,7 +1837,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                     audio_url = ""
                                 else:
                                     b = tts_resp.content or b""
-                                    audio_url = _upload_mp3_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck")
+                                    audio_url = _upload_audio_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck", ext="ogg", content_type="audio/ogg")
                             else:
                                 try:
                                     audio_debug["ttsAck"] = {"ok": False, "reason": "missing_INSTITUTIONAL_VOICE_ID"}
@@ -1878,7 +1879,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 tts_resp = requests.post(
                                     tts_url,
                                     headers={"Accept": "application/json"},
-                                    json={"text": ack, "voice_id": voice_id, "format": "mp3"},
+                                    json={"text": ack, "voice_id": voice_id, "format": "ogg"},
                                     timeout=35,
                                 )
 
@@ -1889,7 +1890,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                         audio_url = ""
                                     else:
                                         b = tts_resp.content or b""
-                                        audio_url = _upload_mp3_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck")
+                                        audio_url = _upload_audio_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck", ext="ogg", content_type="audio/ogg")
                                 except Exception as e:
                                     audio_debug["ttsAck"] = {"ok": False, "reason": f"tts_exception:{type(e).__name__}:{str(e)[:120]}"}
                                     audio_url = ""
@@ -2344,8 +2345,18 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # PATCH: quando é link e veio por áudio, manda 1 áudio curto e depois o texto com link.
             if audio_plus_text_link and allow_audio and audio_url and send_audio:
                 try:
-                    _ok2, _ = send_audio(from_e164, audio_url)
-                    sent_ok = sent_ok or _ok2
+                    _ok2, _resp2 = send_audio(from_e164, audio_url)
+                    sent_ok = sent_ok or bool(_ok2)
+                    # Observabilidade: guardar resposta do provider (sem vazar gigante)
+                    try:
+                        if isinstance(audio_debug, dict):
+                            audio_debug["ttsAckSend"] = {
+                                "ok": bool(_ok2),
+                                "resp": (str(_resp2)[:500] if _resp2 is not None else ""),
+                                "audioUrl": (audio_url[:160] if isinstance(audio_url, str) else ""),
+                            }
+                    except Exception:
+                        pass
                 except Exception:
                     logger.exception("[tasks] lead: falha send_audio (audio_plus_text_link)")
 
