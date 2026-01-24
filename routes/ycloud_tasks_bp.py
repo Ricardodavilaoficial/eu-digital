@@ -2425,6 +2425,35 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     audio_debug["ttsAckSend"] = {"ok": True}
                 if sent_ack_audio:
                     sent_ok = sent_ok or bool(_ok2)
+
+
+                # Pacote 2 (regra): se foi "decisão de assinar" por ÁUDIO, manda TEXTO com link também,
+                # mesmo quando prefersText=False (porque o lead precisa copiar o procedimento).
+                try:
+                    close_heur2 = False
+                    _tr2 = str(transcript or "").strip().lower()
+                    if _tr2 and msg_type in ("audio", "voice", "ptt"):
+                        close_words2 = (
+                            "assinar", "assinatura", "contratar", "contrato",
+                            "ativar", "ativação", "procedimento", "como assino",
+                            "quero assinar", "quero contratar", "pode me enviar o procedimento",
+                        )
+                        close_heur2 = any(w in _tr2 for w in close_words2)
+                    if close_heur2 and send_text:
+                        _rt = (reply_text or "").strip()
+                        if _rt:
+                            if ("http://" not in _rt.lower()) and ("https://" not in _rt.lower()):
+                                _rt = _rt.replace("www.meirobo.com.br", "https://www.meirobo.com.br").replace(
+                                    "meirobo.com.br", "https://www.meirobo.com.br"
+                                )
+                            _okT2, _ = send_text(from_e164, _rt)
+                            sent_ok = sent_ok or bool(_okT2)
+                            try:
+                                _try_log_outbox_immediate(True, "send_audio_then_text_close")
+                            except Exception:
+                                pass
+                except Exception:
+                    logger.exception("[tasks] lead: falha send_text (close_after_audio)")
             except Exception:
                 logger.exception("[tasks] lead: falha send_audio")
 
