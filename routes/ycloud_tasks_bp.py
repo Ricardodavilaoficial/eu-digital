@@ -2314,7 +2314,23 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 or intent_final == "ACTIVATE"
                 or ("hard_close:no_question" in [str(x) for x in (policies_applied or [])])
             )
-            audio_plus_text_link = bool(prefers_text and has_link and is_close_signal and (msg_type in ("audio", "voice", "ptt") or (msg_type == "text" and os.environ.get("YCLOUD_CLOSE_ACK_FOR_TEXT", "1") not in ("0", "false", "False"))))
+            # Se o bloco anterior (prefers_text) já decidiu "audio_plus_text_link" e até gerou ttsAck/audioUrl,
+            # o outbound NÃO pode rebaixar para "send_text_prefersText".
+            decided_audio_plus_text = False
+            try:
+                decided_audio_plus_text = (isinstance(audio_debug, dict) and str(audio_debug.get("mode") or "").strip() == "audio_plus_text_link")
+            except Exception:
+                decided_audio_plus_text = False
+
+            audio_plus_text_link = bool(
+                prefers_text
+                and (has_link or decided_audio_plus_text)
+                and (is_close_signal or decided_audio_plus_text)
+                and (
+                    msg_type in ("audio", "voice", "ptt")
+                    or (msg_type == "text" and os.environ.get("YCLOUD_CLOSE_ACK_FOR_TEXT", "1") not in ("0", "false", "False"))
+                )
+            )
 
             # PATCH: quando é link e veio por áudio, manda 1 áudio curto e depois o texto com link.
             if audio_plus_text_link and allow_audio and audio_url and send_audio:
