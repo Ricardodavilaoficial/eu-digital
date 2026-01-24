@@ -87,14 +87,14 @@ def _upload_audio_bytes_to_signed_url(*, b: bytes, audio_debug: dict, tag: str =
         from google.cloud import storage  # type: ignore
         from services.gcp_creds import get_storage_client
         import uuid
-        from datetime import datetime
+        # usa o módulo datetime (já importado no topo) para acessar datetime + timedelta
 
         bucket_name = os.environ.get("STORAGE_BUCKET", "").strip()
         if not bucket_name:
             audio_debug[tag] = {"ok": False, "reason": "missing_STORAGE_BUCKET"}
             return ""
 
-        now = datetime.utcnow()
+        now = datetime.datetime.utcnow()
         obj = f"sandbox/institutional_tts_ack/{now:%Y/%m/%d}/{uuid.uuid4().hex}.{ext}"
 
         client = get_storage_client()
