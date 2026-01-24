@@ -998,7 +998,23 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         t = (s or "").strip()
         if not t:
             return t
+        # normaliza variações quebradas do domínio
         t = t.replace("meirobo. com. br", "meirobo.com.br")
+        t = t.replace("meirobo .com.br", "meirobo.com.br")
+        t = t.replace("meirobo . com . br", "meirobo.com.br")
+
+        # remove duplicatas do domínio (às vezes o handler coloca 2x)
+        try:
+            first = t.find("meirobo.com.br")
+            while t.count("meirobo.com.br") > 1:
+                idx = t.rfind("meirobo.com.br")
+                if idx == first:
+                    break
+                t = (t[:idx] + t[idx+len("meirobo.com.br"):]).strip()
+        except Exception:
+            pass
+
+        # garante https clicável
         if ("http://" not in t.lower()) and ("https://" not in t.lower()) and ("meirobo.com.br" in t.lower()):
             t = t.replace("meirobo.com.br", "https://www.meirobo.com.br")
         return t
@@ -1750,6 +1766,26 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     )
                 except Exception:
                     is_close_signal = False
+
+                # Heurística mínima (Pacote 2): se o handler não marcou ACTIVATE,
+                # mas o lead falou claramente "assinar/contratar/ativar/procedimento" em ÁUDIO,
+                # tratamos como fechamento para manter: áudio (ACK) + texto (passos/link).
+                close_heur = False
+                try:
+                    if msg_type in ("audio", "voice", "ptt"):
+                        _tr = str(transcript or "").strip().lower()
+                        if _tr:
+                            close_words = (
+                                "assinar", "assinatura", "contratar", "contrato",
+                                "ativar", "ativação", "procedimento", "como assino",
+                                "quero assinar", "quero contratar", "pode me enviar o procedimento",
+                            )
+                            close_heur = any(w in _tr for w in close_words)
+                except Exception:
+                    close_heur = False
+
+                if close_heur:
+                    is_close_signal = True
 
                 # ==========================================================
                 # Pacote 2 (regra explícita): "decisão de assinar" por ÁUDIO
