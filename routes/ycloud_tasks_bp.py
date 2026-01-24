@@ -88,6 +88,7 @@ def _upload_mp3_bytes_to_signed_url(*, b: bytes, audio_debug: dict, tag: str = "
             return ""
 
         from google.cloud import storage  # type: ignore
+        from services.gcp_creds import get_storage_client
         import uuid
         from datetime import datetime
 
@@ -96,7 +97,7 @@ def _upload_mp3_bytes_to_signed_url(*, b: bytes, audio_debug: dict, tag: str = "
             audio_debug[tag] = {"ok": False, "reason": "missing_STORAGE_BUCKET"}
             return ""
 
-        client = storage.Client()
+        client = get_storage_client()
         bucket = client.bucket(bucket_name)
 
         now = datetime.now()
@@ -180,6 +181,7 @@ def _get_sales_kb() -> Dict[str, Any]:
         data = snap.to_dict() or {}
         # Mantém shape simples (Firestore é a verdade; IA decide como usar)
         out = {
+            # Núcleo (já usado hoje)
             "tone_rules": data.get("tone_rules") or [],
             "behavior_rules": data.get("behavior_rules") or [],
             "ethical_guidelines": data.get("ethical_guidelines") or [],
@@ -193,6 +195,46 @@ def _get_sales_kb() -> Dict[str, Any]:
             "plans": data.get("plans") or {},
             "segments": data.get("segments") or {},
             "objections": data.get("objections") or {},
+
+            # Expansão do KB (Firestore é a verdade — evita “capar” vendas no áudio)
+            "availability_policy": data.get("availability_policy") or {},
+            "brand_guardrails": data.get("brand_guardrails") or [],
+            "closing_behaviors": data.get("closing_behaviors") or [],
+            "closing_guidance": data.get("closing_guidance") or [],
+            "closing_styles": data.get("closing_styles") or {},
+            "commercial_positioning": data.get("commercial_positioning") or {},
+            "conversation_limits": str(data.get("conversation_limits") or "").strip(),
+            "cta_variations": data.get("cta_variations") or [],
+            "depth_policy": str(data.get("depth_policy") or "").strip(),
+            "discovery_policy": data.get("discovery_policy") or [],
+            "empathy_triggers": data.get("empathy_triggers") or [],
+            "example_templates": data.get("example_templates") or {},
+            "how_it_works_long": data.get("how_it_works_long") or [],
+            "how_it_works_rich": data.get("how_it_works_rich") or {},
+            "steps": data.get("steps") or [],
+            "how_to_get_started": str(data.get("how_to_get_started") or "").strip(),
+            "how_to_get_started_long": str(data.get("how_to_get_started_long") or "").strip(),
+            "identity_disclosure": data.get("identity_disclosure") or {},
+            "intent_guidelines": data.get("intent_guidelines") or {},
+            "kb_catalog": data.get("kb_catalog") or {},
+            "kb_need_allowed": data.get("kb_need_allowed") or [],
+            "kb_policy": data.get("kb_policy") or {},
+            "memory_positioning": data.get("memory_positioning") or {},
+            "operational_capabilities": data.get("operational_capabilities") or {},
+            "operational_examples": data.get("operational_examples") or {},
+            "operational_examples_long": data.get("operational_examples_long") or {},
+            "operational_flows": data.get("operational_flows") or {},
+            "operational_value_scenarios": data.get("operational_value_scenarios") or {},
+            "process_facts": data.get("process_facts") or {},
+            "product_boundaries": data.get("product_boundaries") or [],
+            "sales_audio_modes": data.get("sales_audio_modes") or {},
+            "sales_energy": str(data.get("sales_energy") or "").strip(),
+            "sales_pills": data.get("sales_pills") or {},
+            "segment_pills": data.get("segment_pills") or {},
+            "support_scope": data.get("support_scope") or [],
+            "tone_rules_full": data.get("tone_rules") or [],  # compat/clareza
+            "value_in_action_blocks": data.get("value_in_action_blocks") or {},
+            "voice_positioning": data.get("voice_positioning") or {},
         }
         _SALES_KB_CACHE = out
         _SALES_KB_CACHE_AT = now
