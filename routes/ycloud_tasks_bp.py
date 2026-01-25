@@ -969,37 +969,37 @@ def ycloud_inbound_worker():
         event_key = (data.get("eventKey") or "").strip()
         payload = data.get("payload") or {}
 
-    # ==========================================================
-    # DEDUPE (produção): garante idempotência por eventKey
-    # Se o mesmo eventKey cair 2x (retry YCloud/Tasks), NÃO reenviar outbound.
-    # ==========================================================
-    try:
-        _wamid_d = str((payload or {}).get("wamid") or (payload or {}).get("messageId") or "")
-    except Exception:
-        _wamid_d = ""
-    try:
-        _ek = str(event_key or "").strip()
-        if _ek:
-            _dedupe_id = hashlib.sha1(_ek.encode("utf-8")).hexdigest()
-            # TTL opcional via env (padrão 2 dias)
-            _ttl = int(os.environ.get("YCLOUD_DEDUPE_TTL_SECONDS", "172800") or "172800")
-            _now = time.time()
-            _db().collection("platform_wa_dedupe").document(_dedupe_id).create({
-                "eventKey": _ek[:500],
-                "wamid": _wamid_d[:120],
-                "createdAt": firestore.SERVER_TIMESTAMP,
-                "expiresAt": _now + _ttl,
-                "service": "ycloud_inbound_worker",
-            })
-        else:
-            _dedupe_id = ""
-    except Exception as e:
-        # Se já existe, é replay: retorna 200 sem reenviar.
-        # Firestore levanta AlreadyExists em create().
-        if "AlreadyExists" in str(type(e)) or "already exists" in str(e).lower():
-            logger.info("[tasks] deduped eventKey=%s wamid=%s", str(event_key or "")[:160], _wamid_d)
-            return jsonify({"ok": True, "deduped": True}), 200
-        logger.warning("[tasks] dedupe_guard_failed eventKey=%s err=%s", str(event_key or "")[:120], f"{type(e).__name__}:{str(e)[:160]}")
+        # ==========================================================
+        # DEDUPE (produção): garante idempotência por eventKey
+        # Se o mesmo eventKey cair 2x (retry YCloud/Tasks), NÃO reenviar outbound.
+        # ==========================================================
+        try:
+            _wamid_d = str((payload or {}).get("wamid") or (payload or {}).get("messageId") or "")
+        except Exception:
+            _wamid_d = ""
+        try:
+            _ek = str(event_key or "").strip()
+            if _ek:
+                _dedupe_id = hashlib.sha1(_ek.encode("utf-8")).hexdigest()
+                # TTL opcional via env (padrão 2 dias)
+                _ttl = int(os.environ.get("YCLOUD_DEDUPE_TTL_SECONDS", "172800") or "172800")
+                _now = time.time()
+                _db().collection("platform_wa_dedupe").document(_dedupe_id).create({
+                    "eventKey": _ek[:500],
+                    "wamid": _wamid_d[:120],
+                    "createdAt": firestore.SERVER_TIMESTAMP,
+                    "expiresAt": _now + _ttl,
+                    "service": "ycloud_inbound_worker",
+                })
+            else:
+                _dedupe_id = ""
+        except Exception as e:
+            # Se já existe, é replay: retorna 200 sem reenviar.
+            # Firestore levanta AlreadyExists em create().
+            if "AlreadyExists" in str(type(e)) or "already exists" in str(e).lower():
+                logger.info("[tasks] deduped eventKey=%s wamid=%s", str(event_key or "")[:160], _wamid_d)
+                return jsonify({"ok": True, "deduped": True}), 200
+            logger.warning("[tasks] dedupe_guard_failed eventKey=%s err=%s", str(event_key or "")[:120], f"{type(e).__name__}:{str(e)[:160]}")
 
     except Exception:
         logger.exception("[tasks] worker_unhandled_exception (parse_json)")
