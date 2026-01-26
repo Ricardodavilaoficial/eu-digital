@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime
 import random
 import re
 import hashlib
@@ -1615,6 +1616,50 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         # SENTINELA: prova que gerou (ou não) conteúdo
         logger.info("[tasks] computed reply chars=%d prefers_text=%s has_audio=%s",
                     len((reply_text or "").strip()), bool(prefers_text), bool(audio_url))
+
+
+        
+        # ==========================================================
+        # Pacote 2 — Memória/CRM do Lead (afinidade + marketing)
+        # Garante que as coleções apareçam e sejam atualizadas SEM depender do handler.
+        # Impacto: só cria/atualiza 2 docs por lead (merge=True).
+        # ==========================================================
+        try:
+            _wa_key = str(locals().get("wa_key") or locals().get("waKey") or "").strip()
+            _from_e164 = str(locals().get("from_e164") or locals().get("fromE164") or "").strip()
+            _disp = str(locals().get("display_name") or locals().get("displayName") or "").strip()
+            _msg_type = str(locals().get("msg_type") or "").strip().lower()
+            _route_hint = str(locals().get("route_hint") or locals().get("route") or "").strip().lower()
+
+            # Só para VENDAS/LEAD (sem UID). Se você tiver um boolean explícito, use ele aqui.
+            # Heurística segura: route_hint contém "sales" e tem wa_key.
+            if _wa_key and ("sales" in _route_hint):
+                leads_coll = os.getenv("INSTITUTIONAL_LEADS_COLL", "institutional_leads")
+                prof_coll = os.getenv("PLATFORM_LEAD_PROFILES_COLL", "platform_lead_profiles")
+
+                base = {
+                    "waKey": _wa_key,
+                    "from": _from_e164,
+                    "lastSeenAt": firestore.SERVER_TIMESTAMP,
+                    "lastMsgType": _msg_type,
+                    "lastEventKey": str(event_key or "")[:500],
+                }
+                if _disp:
+                    base["displayName"] = _disp
+
+                # lead canônico
+                _db().collection(leads_coll).document(_wa_key).set(
+                    {**base, "msgCount": firestore.Increment(1)},
+                    merge=True,
+                )
+
+                # perfil (afinidade/marketing)
+                _db().collection(prof_coll).document(_wa_key).set(
+                    {**base, "msgCount": firestore.Increment(1)},
+                    merge=True,
+                )
+        except Exception:
+            logger.exception("[tasks] lead_profile_touch_failed waKey=%s", str(locals().get("wa_key") or "")[:40])
 
 
         # SENTINELA: daqui pra frente deveria entrar no outbound (ou cair em algum return/guard)
