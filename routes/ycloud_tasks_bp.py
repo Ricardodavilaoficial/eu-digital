@@ -1072,10 +1072,36 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     # FILTRO DE EVENTO (anti-eco / anti-loop)
     # Worker só processa inbound real do usuário.
     # ==========================================================
-    ev_type = (payload.get("eventType") or "").strip()
+    # Compat: alguns envelopes colocam o tipo fora do payload
+    ev_type = (
+        (payload.get("eventType") or "")
+        or (data.get("eventType") or "")
+        or (payload.get("type") or "")
+        or (data.get("type") or "")
+    )
+    ev_type = str(ev_type).strip()
+
     if ev_type != "whatsapp.inbound_message.received":
-        logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s eventType=%s", "IGNORED_EVENTTYPE", event_key, _wamid, ev_type)
-        return jsonify({"ok": True, "ignored": True, "eventType": ev_type}), 200
+        # Fallback saudável: eventType pode vir vazio em testes manuais/alguns provedores.
+        # Se houver sinais fortes de inbound real, processa mesmo assim.
+        _mt = str((payload or {}).get("msgType") or (payload or {}).get("messageType") or "").strip().lower()
+        _from0 = str((payload or {}).get("from") or "").strip()
+        _to0 = str((payload or {}).get("to") or "").strip()
+        _w0 = str((payload or {}).get("wamid") or (payload or {}).get("messageId") or "").strip()
+
+        _looks_inbound = bool(_w0 and _from0 and _to0 and (_mt in ("text", "chat", "audio", "voice", "ptt")))
+
+        if (not ev_type) and _looks_inbound:
+            logger.info(
+                "[tasks] eventType_missing_fallback=true eventKey=%s wamid=%s msgType=%s",
+                event_key, (_w0 or _wamid), _mt
+            )
+        else:
+            logger.info(
+                "[tasks] early_return reason=%s eventKey=%s wamid=%s eventType=%s msgType=%s",
+                "IGNORED_EVENTTYPE", event_key, (_w0 or _wamid), ev_type, _mt
+            )
+            return jsonify({"ok": True, "ignored": True, "eventType": ev_type}), 200
 
 
     dedup_ttl = int(os.environ.get("CLOUD_TASKS_DEDUP_TTL_SECONDS", "86400") or "86400")
