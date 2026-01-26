@@ -2286,6 +2286,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
             # envia resposta: se lead mandou áudio, tentamos áudio (se veio audioUrl), senão texto
             sent_ok = False
+            did_send_audio = False
             allow_audio = os.environ.get("YCLOUD_TEXT_REPLY_AUDIO", "1") not in ("0", "false", "False")
 
             try:
@@ -2383,10 +2384,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             )
 
             # PATCH: quando é link e veio por áudio, manda 1 áudio curto e depois o texto com link.
-            if audio_plus_text_link and allow_audio and audio_url and send_audio:
+            if audio_plus_text_link and allow_audio and audio_url and send_audio and (not did_send_audio):
                 try:
                     _ok2, _resp2 = send_audio(from_e164, audio_url)
                     sent_ok = sent_ok or bool(_ok2)
+                    did_send_audio = did_send_audio or bool(_ok2)
                     # Observabilidade: guardar resposta do provider (sem vazar gigante)
                     try:
                         if isinstance(audio_debug, dict):
@@ -2446,7 +2448,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         # Caso normal: entrou por áudio e NÃO pediu prefersText → manda só áudio
         _allow_audio = locals().get("allow_audio", True)
         if (_allow_audio and msg_type in ("audio", "voice", "ptt") and audio_url and send_audio
-            and (not prefers_text or force_ack_audio)):
+            and (not prefers_text or force_ack_audio) and (not did_send_audio)):
             try:
                 sent_ack_audio = False
                 _ok2 = False
@@ -2465,6 +2467,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     audio_debug["ttsAckSend"] = {"ok": True}
                 if sent_ack_audio:
                     sent_ok = sent_ok or bool(_ok2)
+                    did_send_audio = did_send_audio or bool(_ok2)
 
 
                 # Pacote 2 (regra): se foi "decisão de assinar" por ÁUDIO, manda TEXTO com link também,
