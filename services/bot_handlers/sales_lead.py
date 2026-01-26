@@ -1289,7 +1289,13 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
     system = (
         "Você é um CLASSIFICADOR de mensagens do WhatsApp do MEI Robô (pt-BR). "
         "Responda SOMENTE JSON válido (sem texto extra).\n\n"
-        "Objetivo: entender a intenção do usuário para um atendimento de VENDAS do MEI Robô.\n\n"
+        "Objetivo: entender a intenção do usuário para um atendimento de VENDAS do MEI Robô.\n\n"        "IMPORTANTE (IA no comando): você pode pedir 1 esclarecimento quando for essencial.\n"
+        "- Se a intenção estiver clara, mas faltar um dado essencial ou a frase estiver ambígua: needs_clarification=true\n"
+        "- Nesse caso, devolva clarifying_question com UMA pergunta curta e objetiva.\n"
+        "- Se não precisar: needs_clarification=false e clarifying_question=\"\".\n"
+        "- Extraia entities (map simples) quando existir (ex.: tipo_orcamento, timbrado, cor, logo, prazo, local, etc.).\n"
+        "- confidence: high|mid|low.\n\n"
+
         "Regras IMPORTANTES (produto):\n"
         "1) Continuidade: se STAGE_ATUAL NÃO for 'ASK_NAME', assuma que a conversa já começou — route DEVE ser 'sales' (exceto emergency).\n"
         "2) Boa-fé: mensagens curtas como 'sim', 'ok', 'pedidos', 'agenda', 'orçamento' normalmente são continuação.\n"
@@ -1300,13 +1306,17 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
         "OFFTOPIC (somente no início):\n"
         "- Use route='offtopic' apenas se STAGE_ATUAL='ASK_NAME' e a mensagem for claramente aleatória.\n\n"
         "Formato do JSON: {route, intent, name, segment, interest_level, next_step}.\n"
-        "INTENTS permitidos: PRICE | PLANS | DIFF | ACTIVATE | WHAT_IS | OPERATIONAL | SLA | PROCESS | OTHER.\n"
+        "INTENTS permitidos: VOICE | PRICE | PLANS | DIFF | ACTIVATE | WHAT_IS | OPERATIONAL | SLA | PROCESS | OTHER.\n"
+        "- VOICE: pergunta sobre parecer o profissional / responder em áudio com a voz/estilo do próprio profissional.\n"
+
         "- OPERATIONAL: pergunta prática de como funciona no dia a dia (ex.: agendar, organizar pedidos).\n"
         "- SLA: pergunta sobre demora/prazo para começar (ex.: \"demora?\", \"em quantos dias?\").\n"
         "- PROCESS: pergunta sobre etapas do processo (ativação/configuração), sem focar em preço.\n\n"
         "route: 'sales' | 'offtopic' | 'emergency'.\n"
         "interest_level: 'low' | 'mid' | 'high'.\n"
         "next_step: '' | 'ASK_NAME' | 'ASK_SEGMENT' | 'VALUE' | 'PRICE' | 'CTA' | 'EXIT'.\n"
+        "Campos extras permitidos: entities (map), needs_clarification (bool), clarifying_question (string), confidence (high|mid|low).\n"
+
     )
 
     user = f"STAGE_ATUAL: {stage}\nMENSAGEM: {text}"
@@ -1325,7 +1335,7 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
         if route not in ("sales", "offtopic", "emergency"):
             route = "offtopic"
         intent = (out.get("intent") or "OTHER").strip().upper()
-        if intent not in ("PRICE", "PLANS", "DIFF", "ACTIVATE", "WHAT_IS", "OPERATIONAL", "SLA", "PROCESS", "OTHER"):
+        if intent not in ("VOICE", "PRICE", "PLANS", "DIFF", "ACTIVATE", "WHAT_IS", "OPERATIONAL", "SLA", "PROCESS", "OTHER"):
             intent = "OTHER"
         name = (out.get("name") or "").strip()
         segment = (out.get("segment") or "").strip()
@@ -1335,6 +1345,14 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
         next_step = (out.get("next_step") or "").strip().upper()
         if next_step not in ("ASK_NAME", "ASK_SEGMENT", "VALUE", "PRICE", "CTA", "EXIT"):
             next_step = ""
+
+        entities = out.get("entities") if isinstance(out.get("entities"), dict) else {}
+        needs_clarification = bool(out.get("needs_clarification")) if out.get("needs_clarification") is not None else False
+        clarifying_question = str(out.get("clarifying_question") or "").strip()
+        confidence = str(out.get("confidence") or "").strip().lower()
+        if confidence not in ("high", "mid", "low"):
+            confidence = "mid"
+
         return {
             "route": route,
             "intent": intent,
@@ -1342,6 +1360,10 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
             "segment": segment,
             "interest_level": interest_level,
             "next_step": next_step,
+            "entities": entities,
+            "needs_clarification": needs_clarification,
+            "clarifying_question": clarifying_question,
+            "confidence": confidence,
         }
     except Exception:
         return {"route": "offtopic", "intent": "OTHER", "name": "", "segment": "", "interest_level": "low", "next_step": "EXIT"}
@@ -1499,7 +1521,7 @@ def sales_ai_plan(
         "Você devolve SOMENTE JSON válido (sem texto extra).\n\n"
         "Objetivo: decidir a melhor próxima ação de forma humana e vendedora do bem, sem script.\n\n"
         "Regras de saída:\n"
-        "- intent: PRICE|ACTIVATE|OPERATIONAL|PROCESS|SLA|OTHER|SMALLTALK|OBJECTION\n"
+        "- intent: VOICE|PRICE|ACTIVATE|OPERATIONAL|PROCESS|SLA|OTHER|SMALLTALK|OBJECTION\n"
         "- tone: confiante|consultivo|leve|bem_humano\n"
         "- ask_mode: none|one_short|ab_choice\n"
         "- close_mode: none|soft|hard\n"
@@ -1509,6 +1531,8 @@ def sales_ai_plan(
         "- reply: texto curto (2–5 linhas) pronto pra enviar\n"
         "- evidence: 1 linha explicando a escolha (somente para log)\n\n"
         "Regras de comportamento (produto):\n"
+        "- Se intent=VOICE: responda direto e curto (sim + como funciona + limites + próximo passo). Não misture com 'número virtual' a menos que perguntem isso.\n"
+
         "- Se o lead perguntar PREÇO: responda direto com valores Starter/Starter+ e diga que a diferença é só a memória.\n"
         "- Se for DECISÃO/ASSINAR/LINK: close_mode='hard' e ask_mode='none' (zero pergunta no final).\n"
         "- Se pedirem LINK/SITE/ONDE ASSINA: next_step='SEND_LINK' e inclua o site na reply.\n"
@@ -1564,7 +1588,7 @@ def sales_ai_plan(
 
         # normaliza campos principais
         plan_intent = str(plan.get("intent") or "").strip().upper()
-        if plan_intent and plan_intent not in ("PRICE","ACTIVATE","OPERATIONAL","PROCESS","SLA","OTHER","SMALLTALK","OBJECTION"):
+        if plan_intent and plan_intent not in ("VOICE","PRICE","ACTIVATE","OPERATIONAL","PROCESS","SLA","OTHER","SMALLTALK","OBJECTION"):
             plan_intent = "OTHER"
         if plan_intent:
             plan["intent"] = plan_intent
@@ -1691,6 +1715,10 @@ def _select_kb_blocks_by_intent(intent_final: str) -> list:
 
     if intent == "TRUST":
         return ["objections", "memory_positioning"]
+
+    if intent == "VOICE":
+        # factual e curto; voice_pill entra quando existir no Firestore
+        return ["voice_pill", "voice_positioning", "process_facts"]
 
     if intent in ("PROCESS", "SLA"):
         return ["process_facts", "intent_guidelines"]
@@ -2183,6 +2211,34 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     st["interest_level"] = interest  # evita segunda chamada no generate_reply
     next_step = (nlu.get("next_step") or "").strip().upper()
     route = (nlu.get("route") or "sales").strip().lower()
+
+    # Guarda entities (slots) para continuidade/observabilidade (best-effort)
+    try:
+        ents = nlu.get("entities") or {}
+        if isinstance(ents, dict) and ents:
+            st["entities"] = ents
+    except Exception:
+        pass
+
+    # Clarificação universal (IA decide; código só executa)
+    try:
+        if bool(nlu.get("needs_clarification")):
+            q = str(nlu.get("clarifying_question") or "").strip()
+            if q:
+                # Guardrails universais: 1 pergunta, sem loop, falável
+                q = _strip_generic_question_ending(q)
+                q = _limit_questions(q, max_questions=1)
+                q = _apply_anti_loop(
+                    st,
+                    q,
+                    name=(st.get("name") or "").strip(),
+                    segment=(st.get("segment") or "").strip(),
+                    goal=(st.get("goal") or "").strip(),
+                    user_text=text_in,
+                )
+                return _clip(q, SALES_MAX_CHARS_REPLY)
+    except Exception:
+        pass
 
     # Regra de produto: depois que conversa começou, não existe "offtopic".
     if (route == "offtopic") and (turns > 1 or name or segment or stage != "ASK_NAME"):
@@ -2880,6 +2936,15 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     # aplica também aqui (garante consistência)
     spoken_final = _spoken_normalize_numbers(spoken_final)
 
+        # VOICE: sinal para o worker preservar resposta conceitual importante (sem truncar)
+    tts_no_truncate = False
+    try:
+        if str(intent_final or "").strip().upper() == "VOICE":
+            tts_no_truncate = True
+            policies_applied.append("voice:no_truncate")
+    except Exception:
+        pass
+
     # =========================
     # SPOKENIZER v1 (só fala)
     # =========================
@@ -2938,6 +3003,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "pricingSource": pricing_source,
         "policiesApplied": policies_applied,
         "traceId": trace_id,
+
+        "ttsNoTruncate": tts_no_truncate,
 
         # Observabilidade (IA no comando): prova do plano e do que foi usado
         "aiPlan": (st.get("ai_plan") or {}),
