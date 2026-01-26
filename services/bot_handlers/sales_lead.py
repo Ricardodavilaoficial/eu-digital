@@ -210,6 +210,13 @@ SALES_MIN_ADVANCE_SLOTS = int(os.getenv("SALES_MIN_ADVANCE_SLOTS", "2") or "2") 
 SALES_PITCH_MAX_TOKENS = int(os.getenv("SALES_PITCH_MAX_TOKENS", "180") or "180")
 SALES_ANSWER_MAX_TOKENS = int(os.getenv("SALES_ANSWER_MAX_TOKENS", "220") or "220")
 
+
+# Spokenizer (texto -> fala humana) — V1
+# - NÃO altera replyText (texto WhatsApp)
+# - Só ajusta spokenText/ttsText (fala)
+# - Default: v1 (pode desligar com SPOKENIZER_MODE=off)
+SPOKENIZER_MODE = str(os.getenv("SPOKENIZER_MODE", "v1") or "v1").strip().lower()
+
 # =========================
 # Sales KB (Firestore-first)
 # Fonte de verdade: platform_kb/sales (doc único)
@@ -477,6 +484,106 @@ def _sanitize_spoken(text: str) -> str:
         t = t + "."
     return t
 
+
+
+
+def _spokenizer_should_run() -> bool:
+    m = (SPOKENIZER_MODE or "").strip().lower()
+    if not m:
+        return False
+    if m in ("0", "off", "false", "no", "none", "disabled", "disable"):
+        return False
+    return True
+
+
+def _spokenize_v1(
+    *,
+    reply_text: str,
+    intent_final: str,
+    prefers_text: bool,
+    has_url: bool,
+    lead_name: str,
+    turns: int,
+) -> str:
+    """
+    Spokenizer v1 (determinístico e barato):
+    - deixa a fala com ritmo (frases curtas, pausas naturais)
+    - remove "cara de texto" (bullets, markdown, url)
+    - quando há link/URL: fala curto e manda o link por escrito
+    - no máximo 1 interjeição leve (sem teatrinho)
+    """
+    rt = (reply_text or "").strip()
+    if not rt:
+        return ""
+
+    # Se a resposta contém link ou o policy marcou prefers_text, fala curto e humano
+    if prefers_text or has_url:
+        nm = (lead_name or "").strip()
+        if nm:
+            return f"Fechado, {nm}. Te mandei por escrito o link e o caminho pra seguir."
+        return "Fechado. Te mandei por escrito o link e o caminho pra seguir."
+
+    t = rt
+    # remove URLs explícitas (mesmo sem prefers_text)
+    t = re.sub(r"(https?://\S+|www\.\S+)", "", t, flags=re.IGNORECASE).strip()
+    # remove markdown simples
+    t = _strip_md_for_tts(t)
+
+    # troca quebras por pausa e limpa bullets/numeração no início de linha
+    t = t.replace("\r", "\n")
+    t = re.sub(r"\n{2,}", "\n", t).strip()
+    t = re.sub(r"(?m)^\s*[-•\*\d]+\s*[\)\.\-–—]?\s*", "", t).strip()
+    t = re.sub(r"\s+", " ", t).strip()
+
+    # evita "cara de template"
+    t = t.replace(":", ". ")
+    t = t.replace("—", ". ").replace("–", ". ")
+    t = t.replace("…", ". ")
+    t = _flatten_scene_arrows(t)
+    t = re.sub(r"\s*\.\s*", ". ", t).strip()
+    t = re.sub(r"\s+", " ", t).strip()
+
+    # intenção -> ritmo (micro-ajuste de pontuação)
+    it = (intent_final or "").strip().upper()
+    # 1 interjeição leve, só quando ajuda (não em PRICE)
+    interj = ""
+    if it in ("TRUST", "OTHER", "OPERATIONAL", "PROCESS", "SLA") and int(turns or 0) <= 3:
+        interj = "Entendi. "
+    elif it in ("ACTIVATE",) and int(turns or 0) <= 3:
+        interj = "Fechado. "
+
+    # PRICE: seco e direto (sem “Entendi”)
+    if it in ("PRICE", "PLANS", "DIFF"):
+        interj = ""
+
+    # quebra frases longas: insere pausa antes de "mas", "só que", "aí", "então"
+    t = re.sub(r"\s+(mas|só que|so que|aí|ai|então|entao)\s+", r". \1 ", t, flags=re.IGNORECASE).strip()
+    t = re.sub(r"\s+", " ", t).strip()
+
+    # nome no máximo 1x e só se curto
+    nm = (lead_name or "").strip()
+    if nm and len(nm) <= 22:
+        # se já contém o nome no começo, não repete
+        if not t.lower().startswith((nm.lower() + " ", nm.lower() + ",", nm.lower() + "!")):
+            # só usa nome em intents que pedem proximidade
+            if it in ("TRUST", "ACTIVATE") and int(turns or 0) <= 4:
+                interj = (f"{nm}, " + interj) if interj else (f"{nm}, ")
+
+    out = (interj + t).strip()
+
+    # normaliza números e unidades pra fala
+    out = _spoken_normalize_numbers(out)
+    out = _sanitize_spoken(out)
+
+    # limite (evita fala longa demais no áudio)
+    try:
+        max_chars = int(os.getenv("SPOKENIZER_MAX_CHARS", "520") or "520")
+    except Exception:
+        max_chars = 520
+    if max_chars > 0 and len(out) > max_chars:
+        out = out[:max_chars].rstrip(" ,;:-") + "."
+
+    return out.strip()
 
 
 def _strip_md_for_tts(text: str) -> str:
@@ -1582,6 +1689,36 @@ def _kb_compact_for_prompt(kb: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+
+def _select_kb_blocks_by_intent(intent_final: str) -> list:
+    """
+    Retorna lista de chaves da KB que devem entrar no prompt,
+    com base na intenção final detectada.
+    Sempre curto, previsível e econômico.
+    """
+    if not intent_final:
+        return []
+
+    intent = str(intent_final).strip().upper()
+
+    if intent == "PRICE":
+        return ["pricing_facts", "scenario_index"]
+
+    if intent == "TRUST":
+        return ["objections", "memory_positioning"]
+
+    if intent in ("PROCESS", "SLA"):
+        return ["process_facts", "intent_guidelines"]
+
+    if intent == "OPERATIONAL":
+        return ["segment_pills", "operational_capabilities"]
+
+    if intent == "ACTIVATE":
+        return ["closing_guidance", "pricing_facts"]
+
+    return []
+
+
 def _ai_sales_answer(
     *,
     name: str,
@@ -1599,6 +1736,20 @@ def _ai_sales_answer(
     """
     kb = _get_sales_kb()
     rep = _kb_compact_for_prompt(kb)
+
+    kb_blocks = []
+
+    # --- Roteamento de KB por intenção (econômico e previsível) ---
+    routed_kb_keys = _select_kb_blocks_by_intent(intent_hint)
+
+    for kb_key in routed_kb_keys:
+        if kb_key in kb:
+            kb_blocks.append(kb[kb_key])
+
+    # Respeita política: usar pills primeiro, long form só como referência
+    kb_policy = (kb or {}).get("kb_policy") or {}
+    if isinstance(kb_policy, dict) and kb_policy.get("runtime_use_pills_first", False):
+        kb_blocks = [b for b in kb_blocks if isinstance(b, (str, dict))]
     process_facts = (kb.get("process_facts") or {}) if isinstance(kb, dict) else {}
     # Fallback seguro: verdade do produto (evita promessas irreais)
     if not process_facts:
@@ -1692,6 +1843,17 @@ def _ai_sales_answer(
         f"- Se o lead perguntar se é humano/bot/quem está falando: responda 1 frase curta e honesta (ex.: {disclosure_line}) e volte pro valor.\n\n"
     )
 
+    routed_block_line = ""
+    try:
+        if kb_blocks:
+            routed_block_line = (
+                "kb_routed_blocks (use como referência; não copie): "
+                + json.dumps(kb_blocks, ensure_ascii=False, separators=(",", ":"))
+                + "\n"
+            )
+    except Exception:
+        routed_block_line = ""
+
 
     prompt = (
         f"{brand_block}{discovery_block}{identity_block}Você é o MEI Robô – Vendas, atendendo leads no WhatsApp (pt-BR).\n"
@@ -1766,6 +1928,7 @@ def _ai_sales_answer(
         f"continuidade: {continuity}\n\n"
         f"is_first_contact: {'yes' if turns == 0 else 'no'}\n\n"
         f"onboarding_hint (se existir): {json.dumps(onboarding_hint, ensure_ascii=False)}\n"
+        f"{routed_block_line}"
         f"fatos_do_produto (não negociar; não inventar): {json.dumps(process_facts, ensure_ascii=False, separators=(',',':'))}\n"
         f"repertório_firestore (base, não copie): {json.dumps(rep, ensure_ascii=False, separators=(',', ':'))}\n"
     )
@@ -2731,6 +2894,27 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
     # aplica também aqui (garante consistência)
     spoken_final = _spoken_normalize_numbers(spoken_final)
+
+    # =========================
+    # SPOKENIZER v1 (só fala)
+    # =========================
+    try:
+        if _spokenizer_should_run():
+            _has = _has_url(reply_final)
+            spoken_v1 = _spokenize_v1(
+                reply_text=reply_final,
+                intent_final=intent_final,
+                prefers_text=bool(prefers_text),
+                has_url=bool(_has),
+                lead_name=lead_name,
+                turns=int(st.get("turns") or 0),
+            )
+            if spoken_v1:
+                spoken_final = spoken_v1
+    except Exception:
+        # nunca quebra o fluxo por causa da fala
+        pass
+
 
     # Sempre devolve debug leve, mesmo se plan/intent estiverem vazios
     try:
