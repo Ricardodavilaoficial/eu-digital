@@ -1764,7 +1764,23 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
             # ==========================================================
             # Se o usuário pediu "somente texto", respeita.
-            if prefers_text and msg_type in ("audio", "voice", "ptt", "text"):
+            # Pacote 2: se o lead FECHOU por áudio ("assinar/procedimento"), também entra no modo
+            # ACK em áudio + texto com link, mesmo quando prefersText=false.
+            close_heur_global = False
+            try:
+                if msg_type in ("audio", "voice", "ptt"):
+                    _trg = str(transcript or "").strip().lower()
+                    if _trg:
+                        close_words_g = (
+                            "assinar", "assinatura", "contratar", "contrato",
+                            "ativar", "ativação", "procedimento", "como assino",
+                            "quero assinar", "quero contratar", "pode me enviar o procedimento",
+                        )
+                        close_heur_global = any(w in _trg for w in close_words_g)
+            except Exception:
+                close_heur_global = False
+
+            if (prefers_text or close_heur_global) and msg_type in ("audio", "voice", "ptt", "text"):
                 # PATCH: Se a entrada foi ÁUDIO e a resposta contém LINK/CTA,
                 # não pode virar "text_only_requested".
                 # Regra: manda 1 áudio curto (sem url) e depois manda o texto com o link.
@@ -1801,22 +1817,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 except Exception:
                     is_close_signal = False
 
+                # Se fechou por áudio, força o close_signal (Pacote 2)
+                is_close_signal = bool(is_close_signal or close_heur_global)
+
                 # Heurística mínima (Pacote 2): se o handler não marcou ACTIVATE,
                 # mas o lead falou claramente "assinar/contratar/ativar/procedimento" em ÁUDIO,
                 # tratamos como fechamento para manter: áudio (ACK) + texto (passos/link).
-                close_heur = False
-                try:
-                    if msg_type in ("audio", "voice", "ptt"):
-                        _tr = str(transcript or "").strip().lower()
-                        if _tr:
-                            close_words = (
-                                "assinar", "assinatura", "contratar", "contrato",
-                                "ativar", "ativação", "procedimento", "como assino",
-                                "quero assinar", "quero contratar", "pode me enviar o procedimento",
-                            )
-                            close_heur = any(w in _tr for w in close_words)
-                except Exception:
-                    close_heur = False
+                close_heur = bool(close_heur_global)
 
                 if close_heur:
                     is_close_signal = True
