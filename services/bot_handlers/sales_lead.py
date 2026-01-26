@@ -841,6 +841,39 @@ def _detect_human_noise(text: str) -> bool:
     return False
 
 
+
+
+def _should_disclose_identity(user_text: str) -> bool:
+    """Disclosure só quando provocado (lead pergunta se é humano/bot/quem está falando)."""
+    t = (user_text or "").strip()
+    if not t:
+        return False
+    tl = t.lower()
+
+    # Perguntas explícitas / provocação direta
+    patterns = [
+        r"\b(vc|você)\s+é\s+(humano|pessoa)\b",
+        r"\b(é|eh)\s+(humano|pessoa)\b",
+        r"\b(é|eh)\s+(bot|rob[oô]|robozinho)\b",
+        r"\b(quem)\s+(tá|ta|está|esta)\s+falando\b",
+        r"\b(quem)\s+é\s+você\b",
+        r"\b(quem)\s+é\s+vc\b",
+        r"\b(atendente)\s+(humano|de\s+verdade)\b",
+        r"\b(você)\s+é\s+real\b",
+    ]
+    for p in patterns:
+        try:
+            if re.search(p, tl, re.IGNORECASE):
+                return True
+        except Exception:
+            continue
+
+    # Heurística curta: "é bot?" / "é humano?" etc.
+    if "?" in tl and len(tl) <= 30 and any(x in tl for x in ("bot", "robô", "robo", "humano", "real", "pessoa", "atendente")):
+        return True
+
+    return False
+
 def _human_gate_reply() -> str:
     # 1 pergunta só, acolhe e puxa pro trilho
     return "😂 Respondo sim. Valeu por chamar 🙂 Como posso te chamar?"
@@ -1618,8 +1651,50 @@ def _ai_sales_answer(
     if last_bot:
         continuity += f" | NÃO repetir: {last_bot}"
 
+    # Políticas extras (Firestore) — manter curto pra custo
+    should_disclose = _should_disclose_identity(user_text)
+
+    disclosure_line = ""
+    try:
+        disclosure_line = str(((kb.get("identity_disclosure") or {}) if isinstance(kb.get("identity_disclosure"), dict) else {}).get("disclosure_line") or "").strip()
+    except Exception:
+        disclosure_line = ""
+    if not disclosure_line:
+        disclosure_line = "Sou assistente virtual do MEI Robô."
+
+    brand_guardrails = []
+    try:
+        bg = kb.get("brand_guardrails") or []
+        if isinstance(bg, list):
+            brand_guardrails = [str(x).strip() for x in bg if str(x).strip()]
+    except Exception:
+        brand_guardrails = []
+
+    depth_policy = str(kb.get("depth_policy") or "").strip()
+    discovery_policy = []
+    try:
+        dp = kb.get("discovery_policy") or []
+        if isinstance(dp, list):
+            discovery_policy = [str(x).strip() for x in dp if str(x).strip()]
+    except Exception:
+        discovery_policy = []
+
+    brand_block = ""
+    if brand_guardrails:
+        brand_block = "MARCA (obrigatório):\n" + "\n".join([f"- {x}" for x in brand_guardrails[:6]]) + "\n\n"
+
+    discovery_block = ""
+    if discovery_policy:
+        discovery_block = "DESCOBERTA (jeito de puxar contexto):\n" + "\n".join([f"- {x}" for x in discovery_policy[:4]]) + "\n\n"
+
+    identity_block = (
+        "IDENTIDADE (só quando provocado):\n"
+        f"- Se o lead perguntar se é humano/bot/quem está falando: responda 1 frase curta e honesta (ex.: {disclosure_line}) e volte pro valor.\n\n"
+    )
+
+
     prompt = (
-        "Você é o MEI Robô – Vendas, atendendo leads no WhatsApp (pt-BR).\n"
+        f"{brand_block}{discovery_block}{identity_block}Você é o MEI Robô – Vendas, atendendo leads no WhatsApp (pt-BR).\n"
         "Use o conteúdo do Firestore (platform_kb/sales) como REPERTÓRIO de identidade, nunca como script.\n"
         "Nada deve soar decorado, técnico ou robótico.\n\n"
         "Fale com energia positiva (vibrante na medida), como um vendedor humano, sem soar forçado.\n\n"
@@ -1634,7 +1709,8 @@ def _ai_sales_answer(
         "- se a mensagem é teste/ironia/resistência consciente: acompanhe como humano e siga, sem puxar pra formulário\n"
         "Use behavior_rules, tone_rules, closing_guidance, sales_audio_modes e conversation_limits para DECIDIR.\n"
         "Não siga regras mecânicas do tipo 'use nome no turno X'.\n\n"
-        "- Nunca diga 'meu nome é ...'. Você fala com o lead; não se apresenta como a pessoa.\n"
+        "- Não se apresente do nada (sem 'meu nome é...'). EXCEÇÃO: se o lead perguntar se é humano/bot/quem está falando, responda 1 frase curta e honesta sobre ser assistente virtual do MEI Robô e volte pro valor.\n"
+        f"depth_policy_ref: {depth_policy or '—'}\n"
         "TAMANHO:\n"
         "- Curto por padrão (2–5 linhas).\n"
         "- Pode ser um pouco mais longo quando houver interesse real, confusão, comparação ou quando um exemplo prático ajudar a decidir.\n"
@@ -1776,6 +1852,16 @@ def _ai_sales_answer(
         pass
 
     reply_text = _flatten_scene_arrows(reply_text)
+
+
+    # Disclosure só quando provocado (e sem virar textão)
+    try:
+        if should_disclose and disclosure_line:
+            low = (reply_text or "").lower()
+            if not re.search(r"(assistente\s+virtual|atendente\s+virtual|sou\s+um\s+(bot|rob[oô]))", low, re.IGNORECASE):
+                reply_text = (disclosure_line.strip() + "\n" + reply_text).strip()
+    except Exception:
+        pass
 
 
     return reply_text
