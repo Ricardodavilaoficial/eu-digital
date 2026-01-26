@@ -1023,10 +1023,15 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     Implementação do worker. Conteúdo original (Render) foi movido para cá
     apenas para garantir return absoluto no Cloud Run.
     """
-    # Defaults seguros: SEMPRE definidos (evita UnboundLocalError em trilhas de fallback)
+    # Defaults seguros (evita UnboundLocalError em trilhas que não passam pelo bloco de envio)
     send_text = None
     send_audio = None
     sent_ok = False
+
+    # Stub seguro: alguns caminhos (fallback / firebase_off) chamam _try_log_outbox_immediate
+    # antes dela ser definida. Mantém o worker vivo.
+    def _try_log_outbox_immediate(*args, **kwargs):
+        return None
 
     # Helper sempre disponível (evita NameError se fallback rodar antes do bloco "normal")
     def _clean_url_weirdness(s: str) -> str:
