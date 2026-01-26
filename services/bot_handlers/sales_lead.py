@@ -97,6 +97,44 @@ def _composer_mode() -> str:
     return "legacy"
 
 
+
+
+def _decider_mode() -> str:
+    """
+    Decider (IA) para "decisão cognitiva" antes do resto.
+    - off: não roda (default)
+    - v1: roda com cache e guardrails
+    Env: SALES_DECIDER_MODE=off|v1
+    """
+    try:
+        m = str(os.getenv("SALES_DECIDER_MODE", "off") or "off").strip().lower()
+    except Exception:
+        m = "off"
+    if m in ("1", "true", "on", "yes", "v1"):
+        return "v1"
+    return "off"
+
+
+def _decider_should_run(turns: int, user_text: str) -> bool:
+    """
+    Custo estável: roda mais quando o impacto é maior (início) e quando há risco de desvio.
+    """
+    if _decider_mode() != "v1":
+        return False
+    try:
+        t = (user_text or "").strip()
+    except Exception:
+        t = ""
+    if not t:
+        return False
+    # começo da conversa = onde errar intenção mata a experiência
+    if int(turns or 0) <= 3:
+        return True
+    # também roda se for pergunta (?)
+    if "?" in t:
+        return True
+    return False
+
 def _compose_from_plan(
     *,
     plan: Dict[str, Any],
@@ -1141,6 +1179,119 @@ def _kv_set(key: str, value: Dict[str, Any], ttl_seconds: int) -> None:
         kv.set(key, json.dumps(value, ensure_ascii=False), ttl_seconds=ttl_seconds)
     except Exception:
         return
+
+
+def _decider_cache_key(user_text: str) -> str:
+    base = _norm(user_text or "")[:240]
+    h = hashlib.sha1(base.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    return f"sales:decider:{h}"
+
+
+def _decider_cache_get(user_text: str) -> Optional[Dict[str, Any]]:
+    try:
+        raw = _kv_get(_decider_cache_key(user_text))
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            return json.loads(raw)
+    except Exception:
+        return None
+    return None
+
+
+def _decider_cache_set(user_text: str, val: Dict[str, Any]) -> None:
+    try:
+        ttl = int(os.getenv("SALES_DECIDER_CACHE_TTL_SECONDS", "600") or "600")  # 10 min
+    except Exception:
+        ttl = 600
+    try:
+        _kv_set(_decider_cache_key(user_text), val, ttl_seconds=ttl)
+    except Exception:
+        pass
+
+
+def sales_ai_decider(
+    *,
+    user_text: str,
+    turns: int,
+    last_bot_excerpt: str,
+) -> Dict[str, Any]:
+    """
+    IA (barata) para decisão cognitiva:
+    - intent: VOICE|PRICE|PLANS|DIFF|ACTIVATE|WHAT_IS|OPERATIONAL|SLA|PROCESS|OTHER
+    - confidence: high|mid|low
+    - needs_clarification: bool
+    - clarifying_question: 1 pergunta curta quando essencial
+    - forbid_price: bool (evita cair em PRICE sem o usuário pedir)
+    - safe_to_use_humor: bool (humor/empatia só com entendimento alto)
+    """
+    t = (user_text or "").strip()
+    if not t:
+        return {}
+
+    cached = _decider_cache_get(t)
+    if isinstance(cached, dict) and cached.get("intent"):
+        return cached
+
+    system = (
+        "Você é o DECIDER do MEI Robô (Vendas) no WhatsApp (pt-BR).\n"
+        "Responda SOMENTE JSON válido.\n\n"
+        "Você decide o 'modo correto' de responder ANTES do texto final.\n"
+        "Regras:\n"
+        "- Não inventar. Não vender. Não falar preço se o usuário não pediu.\n"
+        "- Se estiver ambíguo e precisar de dado essencial: needs_clarification=true e faça UMA pergunta curta.\n"
+        "- Se estiver claro: needs_clarification=false.\n"
+        "- VOICE: quando a pessoa pergunta se o robô 'parece ela', 'fala como ela', 'usa a voz dela', etc.\n\n"
+        "Schema:\n"
+        "{\"intent\":\"VOICE|PRICE|PLANS|DIFF|ACTIVATE|WHAT_IS|OPERATIONAL|SLA|PROCESS|OTHER\","
+        "\"confidence\":\"high|mid|low\","
+        "\"needs_clarification\":true|false,"
+        "\"clarifying_question\":\"\","
+        "\"forbid_price\":true|false,"
+        "\"safe_to_use_humor\":true|false}\n"
+    )
+    user = (
+        f"TURNS={int(turns or 0)}\n"
+        f"ULTIMA_RESPOSTA_NAO_REPETIR={last_bot_excerpt or '—'}\n"
+        f"MENSAGEM={t}\n"
+    )
+
+    raw = (_openai_chat(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        model=OPENAI_SALES_NLU_MODEL,
+        max_tokens=160,
+        temperature=0.0,
+        response_format={"type": "json_object"},
+    ) or "").strip()
+    if not raw:
+        return {}
+    try:
+        obj = json.loads(raw)
+        if not isinstance(obj, dict):
+            return {}
+        intent = str(obj.get("intent") or "").strip().upper()
+        if intent not in ("VOICE","PRICE","PLANS","DIFF","ACTIVATE","WHAT_IS","OPERATIONAL","SLA","PROCESS","OTHER"):
+            intent = "OTHER"
+        conf = str(obj.get("confidence") or "").strip().lower()
+        if conf not in ("high","mid","low"):
+            conf = "mid"
+        needs = bool(obj.get("needs_clarification")) if obj.get("needs_clarification") is not None else False
+        q = str(obj.get("clarifying_question") or "").strip()
+        forbid_price = bool(obj.get("forbid_price")) if obj.get("forbid_price") is not None else False
+        safe_humor = bool(obj.get("safe_to_use_humor")) if obj.get("safe_to_use_humor") is not None else False
+
+        out = {
+            "intent": intent,
+            "confidence": conf,
+            "needs_clarification": needs,
+            "clarifying_question": q,
+            "forbid_price": forbid_price,
+            "safe_to_use_humor": safe_humor,
+        }
+        _decider_cache_set(t, out)
+        return out
+    except Exception:
+        return {}
 
 def _pitch_cache_key(segment: str, hint: str, user_text: str) -> str:
     segment = (segment or "geral").strip().lower()
@@ -2205,12 +2356,63 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     nudges = int(st.get("nudges") or 0)
 
+    # =========================
+    # DECIDER (IA) — manda no "modo de resposta"
+    # =========================
+    dec = {}
+    try:
+        if _decider_should_run(turns=turns, user_text=text_in):
+            dec = sales_ai_decider(
+                user_text=text_in,
+                turns=turns,
+                last_bot_excerpt=str(st.get("last_bot_reply_excerpt") or "").strip(),
+            ) or {}
+            # Observabilidade
+            if isinstance(dec, dict) and dec:
+                st["decision_intent"] = str(dec.get("intent") or "").strip().upper()
+                st["decision_confidence"] = str(dec.get("confidence") or "").strip().lower()
+                st["decision_forbid_price"] = bool(dec.get("forbid_price"))
+                st["decision_safe_humor"] = bool(dec.get("safe_to_use_humor"))
+                st["decision_needs_clarification"] = bool(dec.get("needs_clarification"))
+    except Exception:
+        dec = {}
+
+    # Se a IA decidiu que precisa esclarecer (1 pergunta) -> obedece e para
+    try:
+        if isinstance(dec, dict) and dec.get("needs_clarification"):
+            q = str(dec.get("clarifying_question") or "").strip()
+            if q:
+                q = _strip_generic_question_ending(q)
+                q = _limit_questions(q, max_questions=1)
+                q = _apply_anti_loop(
+                    st, q,
+                    name=(st.get("name") or "").strip(),
+                    segment=(st.get("segment") or "").strip(),
+                    goal=(st.get("goal") or "").strip(),
+                    user_text=text_in
+                )
+                return _clip(q, SALES_MAX_CHARS_REPLY)
+    except Exception:
+        pass
+
     # NLU (IA) — fonte canônica de intent/route/next_step/interest
     nlu = sales_micro_nlu(text_in, stage=stage)
     interest = (nlu.get("interest_level") or "mid").strip().lower()
     st["interest_level"] = interest  # evita segunda chamada no generate_reply
     next_step = (nlu.get("next_step") or "").strip().upper()
     route = (nlu.get("route") or "sales").strip().lower()
+
+    # Se o Decider estiver confiante, ele ganha (IA-first).
+    # Isso evita o caso que você viu: cair em PRICE e forçar preço fora de contexto.
+    try:
+        if isinstance(dec, dict) and dec.get("intent"):
+            if str(dec.get("confidence") or "").strip().lower() == "high":
+                nlu["intent"] = str(dec.get("intent") or "").strip().upper()
+                # Quando o Decider proíbe preço, evitamos qualquer trilho que force preço
+                if bool(dec.get("forbid_price")) and str(nlu.get("intent") or "").strip().upper() in ("PRICE","PLANS","DIFF"):
+                    nlu["intent"] = "OTHER"
+    except Exception:
+        pass
 
     # Guarda entities (slots) para continuidade/observabilidade (best-effort)
     try:
@@ -2820,7 +3022,15 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     is_price = intent_final in ("PRICE", "PLANS", "DIFF")
     pricing_used = False
     pricing_source = ""
-    if is_price:
+
+    # Decider (IA) pode proibir preço quando o usuário NÃO pediu preço
+    forbid_price = False
+    try:
+        forbid_price = bool(st.get("decision_forbid_price"))
+    except Exception:
+        forbid_price = False
+
+    if is_price and (not forbid_price):
         reply_final = _enforce_price_direct(kb, segment="")
         reply_final = _strip_trailing_question(reply_final)
         prefers_text = False
@@ -2830,6 +3040,9 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         pricing_used = True
         pricing_source = str((kb or {}).get("pricing_source") or "platform_pricing/current")
         policies_applied.append("price:firestore_only")
+    elif is_price and forbid_price:
+        policies_applied.append("price:blocked_by_decider")
+
 
     # Política dura (opcional): fora de PRICE/PLANS/DIFF, não pode sair "R$...".
     if (not is_price) and _strict_no_price_outside_intent() and ("r$" in (reply_final or "").lower()):
@@ -2988,6 +3201,16 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "next_step": _dbg_next,
     }
 
+    # Decider debug (IA-first)
+    decision_debug = {
+        "mode": _decider_mode(),
+        "intent": str(st.get("decision_intent") or "").strip(),
+        "confidence": str(st.get("decision_confidence") or "").strip(),
+        "forbid_price": bool(st.get("decision_forbid_price")),
+        "needs_clarification": bool(st.get("decision_needs_clarification")),
+        "safe_to_use_humor": bool(st.get("decision_safe_humor")),
+    }
+
     return {
         "replyText": reply_final,
         "nameUse": (st.get("last_name_use") or ""),
@@ -3017,6 +3240,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "planEvidence": (st.get("plan_evidence") or ""),
         "kbSnippet": json.dumps((st.get("kb_snippet") or {}), ensure_ascii=False),
         "spokenSource": "replyText",
+        "decisionDebug": decision_debug,
 
         "leadName": lead_name,
         "segment": lead_segment,
