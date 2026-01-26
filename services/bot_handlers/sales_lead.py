@@ -543,33 +543,18 @@ def _spokenize_v1(
     t = re.sub(r"\s*\.\s*", ". ", t).strip()
     t = re.sub(r"\s+", " ", t).strip()
 
-    # intenção -> ritmo (micro-ajuste de pontuação)
+    # intenção -> ritmo (sem interjeições fixas)
+    # A IA já decide o tom no replyText; aqui a gente só deixa "falável".
     it = (intent_final or "").strip().upper()
-    # 1 interjeição leve, só quando ajuda (não em PRICE)
     interj = ""
-    if it in ("TRUST", "OTHER", "OPERATIONAL", "PROCESS", "SLA") and int(turns or 0) <= 3:
-        interj = "Entendi. "
-    elif it in ("ACTIVATE",) and int(turns or 0) <= 3:
-        interj = "Fechado. "
-
-    # PRICE: seco e direto (sem “Entendi”)
-    if it in ("PRICE", "PLANS", "DIFF"):
-        interj = ""
 
     # quebra frases longas: insere pausa antes de "mas", "só que", "aí", "então"
     t = re.sub(r"\s+(mas|só que|so que|aí|ai|então|entao)\s+", r". \1 ", t, flags=re.IGNORECASE).strip()
     t = re.sub(r"\s+", " ", t).strip()
 
-    # nome no máximo 1x e só se curto
-    nm = (lead_name or "").strip()
-    if nm and len(nm) <= 22:
-        # se já contém o nome no começo, não repete
-        if not t.lower().startswith((nm.lower() + " ", nm.lower() + ",", nm.lower() + "!")):
-            # só usa nome em intents que pedem proximidade
-            if it in ("TRUST", "ACTIVATE") and int(turns or 0) <= 4:
-                interj = (f"{nm}, " + interj) if interj else (f"{nm}, ")
+    # (Opcional) NÃO forçar nome aqui. Se a IA quiser usar nome, ela usa no replyText.
 
-    out = (interj + t).strip()
+    out = t.strip()
 
     # normaliza números e unidades pra fala
     out = _spoken_normalize_numbers(out)
