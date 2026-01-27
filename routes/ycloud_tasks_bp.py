@@ -1665,6 +1665,20 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     len((reply_text or "").strip()), bool(prefers_text), bool(audio_url))
 
 
+        # Sentinela curta IA-first (não quebra nada; ajuda diagnóstico sem Firestore)
+        try:
+            if isinstance(understanding, dict) and understanding:
+                logger.info(
+                    "[tasks] ia_first understand intent=%s conf=%s risk=%s depth=%s",
+                    str(understanding.get("intent") or ""),
+                    str(understanding.get("confidence") or ""),
+                    str(understanding.get("risk") or ""),
+                    str(understanding.get("depth") or ""),
+                )
+        except Exception:
+            pass
+
+
         
         # ==========================================================
         # Pacote 2 — Memória/CRM do Lead (afinidade + marketing)
