@@ -1127,7 +1127,7 @@ def _upsert_lead_from_state(wa_key: str, st: dict) -> None:
 
     lead = {
         "name": name,
-            "segment": segment,
+        "segment": segment,
         "goal": goal,
         "turns": turns,
         "status": st.get("lead_status") or "new",
@@ -2514,9 +2514,12 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         if isinstance(dec, dict) and dec.get("intent"):
             if str(dec.get("confidence") or "").strip().lower() == "high":
                 nlu["intent"] = str(dec.get("intent") or "").strip().upper()
+                # Árbitro final (IA-first): promove para plano canônico
+                st["plan_intent"] = str(nlu.get("intent") or "").strip().upper()
                 # Quando o Decider proíbe preço, evitamos qualquer trilho que force preço
                 if bool(dec.get("forbid_price")) and str(nlu.get("intent") or "").strip().upper() in ("PRICE","PLANS","DIFF"):
                     nlu["intent"] = "OTHER"
+                    st["plan_intent"] = "OTHER"
     except Exception:
         pass
 
@@ -2532,13 +2535,13 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         pass
 
 
-        # Guarda entities (slots) para continuidade/observabilidade (best-effort)
-        try:
-            ents = nlu.get("entities") or {}
-            if isinstance(ents, dict) and ents:
-                st["entities"] = ents
-        except Exception:
-            pass
+    # Guarda entities (slots) para continuidade/observabilidade (best-effort)
+    try:
+        ents = nlu.get("entities") or {}
+        if isinstance(ents, dict) and ents:
+            st["entities"] = ents
+    except Exception:
+        pass
 
     # Clarificação universal (IA decide; código só executa)
     try:
@@ -2560,30 +2563,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     except Exception:
         pass
 
-    # VOICE é “tópico econômico fechado”: responde direto, sem pedir nome/triagem
-    try:
-        _i = str(nlu.get("intent") or "").strip().upper()
-        if _i == "VOICE":
-            st["plan_intent"] = "VOICE"
-            st["plan_next_step"] = "VALUE"
-            st["plan_depth"] = "economic"
-            txt = (
-                "Sim — o MEI Robô é um assistente digital com a voz e o jeito de falar do profissional, "
-                "além das lembranças que ficam nos acervos.\n"
-                "Mas isso só funciona depois que o profissional envia os áudios dele (é assim que a conta é ativada).\n\n"
-                f"{SITE_URL}"
-            )
-            txt = _apply_anti_loop(
-                st,
-                txt,
-                name=(st.get("name") or "").strip(),
-                segment=(st.get("segment") or "").strip(),
-                goal=(st.get("goal") or "").strip(),
-                user_text=text_in,
-            )
-            return _clip(txt, SALES_MAX_CHARS_REPLY)
-    except Exception:
-        pass
+    # VOICE: não “pula” o pipeline. A resposta sairá pelo econ/planner/composer.
 
     # Regra de produto: depois que conversa começou, não existe "offtopic".
     if (route == "offtopic") and (turns > 1 or name or segment or stage != "ASK_NAME"):
@@ -3109,6 +3089,14 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
     # Policy (novo trilho): se o Planner mandou SEND_LINK, o código só GARANTE que o link aparece.
     # Isso não é estratégia: é execução do plano (sem competir com a IA).
+    # Blindagem de produto: VOICE não é fechamento, a menos que o lead tenha pedido link/assinar.
+    try:
+        if str(intent_final or "").strip().upper() == "VOICE" and (not _wants_link(text_in)):
+            if str(next_step_final or "").strip().upper() == "SEND_LINK":
+                next_step_final = "VALUE"
+    except Exception:
+        pass
+
     if next_step_final == "SEND_LINK":
         if not _has_url(reply_final):
             reply_final = (reply_final.rstrip() + f"\n\n{SITE_URL}").strip()
@@ -3131,15 +3119,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         else:
             spoken_final = "Fechado! Na sequência eu te mando por escrito o link pra assinar."
         policies_applied.append("override:link")
-    # Link NO TEXTO não significa "prefersText".
-    # prefersText só liga quando é FECHAMENTO real (SEND_LINK)
-    # ou quando o usuário pediu link explicitamente.
-    if _has_url(reply_final) and (
-        str(next_step_final or "").strip().upper() == "SEND_LINK" or _wants_link(text_in)
-    ):
-        prefers_text = True
-        # áudio curto e humano; link vai por escrito
-        spoken_final = "Te mandei o link por escrito aqui na conversa."
+    # URL no replyText NUNCA liga prefersText.
+    # prefersText só vem do plano (next_step_final == SEND_LINK) ou do override controlado (wants_link sem plano).
 
     # Regra de fechamento (POLICY): não termina em pergunta quando a decisão já está clara.
     # Purificação: quando SALES_STRATEGIC_OVERRIDES=0, evitamos heurísticas 'espertas' aqui.
