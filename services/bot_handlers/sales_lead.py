@@ -2646,6 +2646,16 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     # Só roda 1x por lead e só antes de coletar nome/ramo.
     if not st.get("__human_gate_done"):
         if (turns <= 2) and (stage in ("ASK_NAME", "ASK_SEGMENT")) and (not has_name) and (not has_segment):
+            # Não aciona Human Gate quando a mensagem é claramente sobre VOICE (produto).
+            try:
+                tl = (text_in or "").strip().lower()
+                if ("voz" in tl) or ("fala com" in tl and "voz" in tl) or ("minha voz" in tl) or ("voz da gente" in tl):
+                    st["__human_gate_done"] = True
+                # também: se a pessoa já mandou "meu nome é", não pedir de novo
+                if ("meu nome" in tl) or ("me chamo" in tl) or ("pode me chamar" in tl):
+                    st["__human_gate_done"] = True
+            except Exception:
+                pass
             if _detect_human_noise(text_in):
                 st["__human_gate_done"] = True
                 # IA soberana: ela decide se pergunta nome, se brinca, se avança.
