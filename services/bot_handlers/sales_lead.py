@@ -2482,6 +2482,18 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     # NLU (IA) — fonte canônica de intent/route/next_step/interest
     nlu = sales_micro_nlu(text_in, stage=stage)
+    # IA-first (mínimo garantido): se ainda não existe plano, “promove” NLU para plano leve.
+    # Isso NÃO gera texto caro — só evita cair no genérico.
+    try:
+        _nlu_intent = str(nlu.get("intent") or "").strip().upper()
+        _nlu_next = str(nlu.get("next_step") or "").strip().upper()
+        if not str(st.get("plan_intent") or "").strip() and _nlu_intent:
+            st["plan_intent"] = _nlu_intent
+        if not str(st.get("plan_next_step") or "").strip() and _nlu_next:
+            st["plan_next_step"] = _nlu_next
+    except Exception:
+        pass
+
     interest = (nlu.get("interest_level") or "mid").strip().lower()
     st["interest_level"] = interest  # evita segunda chamada no generate_reply
     next_step = (nlu.get("next_step") or "").strip().upper()
@@ -2536,6 +2548,30 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                     user_text=text_in,
                 )
                 return _clip(q, SALES_MAX_CHARS_REPLY)
+    except Exception:
+        pass
+
+    # VOICE é “tópico econômico fechado”: responde direto, sem pedir nome/triagem
+    try:
+        _i = str(nlu.get("intent") or "").strip().upper()
+        if _i == "VOICE":
+            st["plan_intent"] = "VOICE"
+            st["plan_next_step"] = "SEND_LINK"
+            st["plan_depth"] = "economic"
+            txt = (
+                "Sim. Dá pra responder em áudio com a voz do próprio profissional depois que ele envia alguns áudios pra treinar.\n"
+                "Enquanto isso, dá pra usar com a voz institucional normal.\n\n"
+                f"{SITE_URL}"
+            )
+            txt = _apply_anti_loop(
+                st,
+                txt,
+                name=(st.get("name") or "").strip(),
+                segment=(st.get("segment") or "").strip(),
+                goal=(st.get("goal") or "").strip(),
+                user_text=text_in,
+            )
+            return _clip(txt, SALES_MAX_CHARS_REPLY)
     except Exception:
         pass
 
