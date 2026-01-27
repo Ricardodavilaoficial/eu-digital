@@ -1635,12 +1635,29 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 or ""
             ).strip()
             allow_sales_demo = bool(wa_out.get("allowSalesDemo"))
+            # Se o handler não manda "understanding", construímos a partir do que ele já manda:
+            # planIntent/planNextStep/decisionDebug (sales_lead.py já devolve isso)
             try:
                 _u = wa_out.get("understanding")
                 if isinstance(_u, dict) and _u:
                     understanding = _u
+                else:
+                    _pi = str(wa_out.get("planIntent") or intent_final or "").strip()
+                    _pn = str(wa_out.get("planNextStep") or plan_next_step or "").strip()
+                    _dd = wa_out.get("decisionDebug") if isinstance(wa_out.get("decisionDebug"), dict) else {}
+                    _conf = str((_dd or {}).get("confidence") or "").strip().lower()
+                    if _conf not in ("high", "mid", "low"):
+                        _conf = ""
+                    understanding = {
+                        "intent": (_pi or "").strip(),
+                        "next_step": (_pn or "").strip(),
+                        "confidence": _conf,
+                        "risk": ("high" if _conf == "low" else ("mid" if _conf == "mid" else "low")) if _conf else "",
+                        "depth": "economic" if str(_pn).strip().upper() in ("PRICE","SEND_LINK") or str(_pi).strip().upper() in ("PRICE","PLANS","DIFF","PROCESS","SLA","VOICE","ACTIVATE") else "deep",
+                    }
             except Exception:
                 pass
+
 
             # A2: propaga _debug do handler para facilitar auditoria (planner/composer/fallback/worker)
             spoken_text = (wa_out.get("spokenText") or "").strip()
@@ -1666,17 +1683,20 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
 
         # Sentinela curta IA-first (não quebra nada; ajuda diagnóstico sem Firestore)
+        # Log rápido (Cloud Run) pra você ver sem Firestore
         try:
             if isinstance(understanding, dict) and understanding:
                 logger.info(
-                    "[tasks] ia_first understand intent=%s conf=%s risk=%s depth=%s",
+                    "[tasks] ia_first intent=%s conf=%s risk=%s depth=%s next=%s",
                     str(understanding.get("intent") or ""),
                     str(understanding.get("confidence") or ""),
                     str(understanding.get("risk") or ""),
                     str(understanding.get("depth") or ""),
+                    str(understanding.get("next_step") or ""),
                 )
         except Exception:
             pass
+
 
 
         
