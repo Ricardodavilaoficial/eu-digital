@@ -1599,7 +1599,7 @@ def _economic_reply(
             f"Enquanto isso, dá pra usar com a voz institucional normalmente.\n\n"
             f"Se quiser ver o caminho certinho, é por aqui: {_site_line()}"
         )
-        return (txt, "SEND_LINK", policies)
+        return (txt, "VALUE", policies)
 
     # ACTIVATE (quero assinar / ativar / manda o link)
     if intent_u == "ACTIVATE":
@@ -2565,7 +2565,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         _i = str(nlu.get("intent") or "").strip().upper()
         if _i == "VOICE":
             st["plan_intent"] = "VOICE"
-            st["plan_next_step"] = "SEND_LINK"
+            st["plan_next_step"] = "VALUE"
             st["plan_depth"] = "economic"
             txt = (
                 "Sim — o MEI Robô é um assistente digital com a voz e o jeito de falar do profissional, "
@@ -3399,6 +3399,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "route": str(st.get("understand_route") or "sales").strip().lower(),
         "risk": str(st.get("understand_risk") or "mid").strip().lower(),
         "depth": str(st.get("plan_depth") or "deep").strip().lower(),
+        "next_step": str(next_step_final or "").strip().upper(),
     }
 
     return {
