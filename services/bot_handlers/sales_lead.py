@@ -2564,8 +2564,9 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             st["plan_next_step"] = "SEND_LINK"
             st["plan_depth"] = "economic"
             txt = (
-                "Sim. Dá pra responder em áudio com a voz do próprio profissional depois que ele envia alguns áudios pra treinar.\n"
-                "Enquanto isso, dá pra usar com a voz institucional normal.\n\n"
+                "Sim — o MEI Robô é um assistente digital com a voz e o jeito de falar do profissional, "
+                "além das lembranças que ficam nos acervos.\n"
+                "Mas isso só funciona depois que o profissional envia os áudios dele (é assim que a conta é ativada).\n\n"
                 f"{SITE_URL}"
             )
             txt = _apply_anti_loop(

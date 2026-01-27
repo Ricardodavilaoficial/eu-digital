@@ -1946,6 +1946,18 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 # Se fechou por áudio, força o close_signal (Pacote 2)
                 is_close_signal = bool(is_close_signal or close_heur_global)
 
+
+                # PILAR: entrou ÁUDIO -> sai ÁUDIO (exceto fechamento).
+                # prefersText aqui é "tem link", não é "usuário pediu texto".
+                # Então, se NÃO for fechamento, não pode bloquear o áudio.
+                if (msg_type in ("audio", "voice", "ptt")) and prefers_text and (not is_close_signal):
+                    prefers_text = False
+                    try:
+                        audio_debug = dict(audio_debug or {})
+                        audio_debug["mode"] = "pillar_force_audio_non_close"
+                    except Exception:
+                        pass
+
                 # Heurística mínima (Pacote 2): se o handler não marcou ACTIVATE,
                 # mas o lead falou claramente "assinar/contratar/ativar/procedimento" em ÁUDIO,
                 # tratamos como fechamento para manter: áudio (ACK) + texto (passos/link).
