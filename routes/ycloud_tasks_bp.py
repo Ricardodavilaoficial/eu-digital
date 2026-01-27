@@ -1603,6 +1603,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         plan_next_step = ""
         intent_final = ""
         policies_applied = []
+        # Observabilidade IA-first (não muda comportamento): entendimento/custo/risco
+        understanding = {}
         if isinstance(wa_out, dict):
             reply_text = (
                 wa_out.get("replyText")
@@ -1633,6 +1635,12 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 or ""
             ).strip()
             allow_sales_demo = bool(wa_out.get("allowSalesDemo"))
+            try:
+                _u = wa_out.get("understanding")
+                if isinstance(_u, dict) and _u:
+                    understanding = _u
+            except Exception:
+                pass
 
             # A2: propaga _debug do handler para facilitar auditoria (planner/composer/fallback/worker)
             spoken_text = (wa_out.get("spokenText") or "").strip()
@@ -2411,6 +2419,9 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         "sentOk": bool(_sent_ok),
                         "sentVia": str(_channel or "")[:40],
                     }
+                    # Observabilidade (opcional): entendimento IA-first (depth/risk/intent/confidence)
+                    if isinstance(understanding, dict) and understanding:
+                        payload_out["understanding"] = understanding
                     if isinstance(_extra, dict) and _extra:
                         payload_out.update(_extra)
                     # add() returns (update_time, doc_ref) in google-cloud-firestore
@@ -2698,6 +2709,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     "replyText": (reply_text or "")[:400],
                     "audioUrl": (audio_url or "")[:300],
                     "audioDebug": audio_debug,
+                    "understanding": understanding if isinstance(understanding, dict) else {},
                     "spokenText": (tts_text_final_used or "")[:600],
                     "eventKey": event_key,
                     "sentOk": bool(sent_ok),
