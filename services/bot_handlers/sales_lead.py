@@ -3131,8 +3131,14 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         else:
             spoken_final = "Fechado! Na sequência eu te mando por escrito o link pra assinar."
         policies_applied.append("override:link")
-    if _has_url(reply_final) and bool(prefers_text):
-        # áudio curto e humano; link vai por escrito (somente quando prefers_text já está ligado)
+    # Link NO TEXTO não significa "prefersText".
+    # prefersText só liga quando é FECHAMENTO real (SEND_LINK)
+    # ou quando o usuário pediu link explicitamente.
+    if _has_url(reply_final) and (
+        str(next_step_final or "").strip().upper() == "SEND_LINK" or _wants_link(text_in)
+    ):
+        prefers_text = True
+        # áudio curto e humano; link vai por escrito
         spoken_final = "Te mandei o link por escrito aqui na conversa."
 
     # Regra de fechamento (POLICY): não termina em pergunta quando a decisão já está clara.
