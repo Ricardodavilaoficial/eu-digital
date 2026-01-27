@@ -1945,6 +1945,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
                             if not base:
                                 base = (request.host_url or "").strip().rstrip("/")
+                            # Cloud Run pode redirecionar http->https com 302; requests pode virar GET e quebrar o POST.
+                            # Força HTTPS para evitar 302->GET (e 404 no GET).
+                            if base.startswith("http://"):
+                                base = "https://" + base[len("http://"):]
                             tts_url = f"{base}/api/voz/tts"
                             voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
                             if voice_id:
@@ -1989,6 +1993,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
                             if not base:
                                 base = (request.host_url or "").strip().rstrip("/")
+                            # Cloud Run pode redirecionar http->https com 302; requests pode virar GET e quebrar o POST.
+                            # Força HTTPS para evitar 302->GET (e 404 no GET).
+                            if base.startswith("http://"):
+                                base = "https://" + base[len("http://"):]
                             tts_url = f"{base}/api/voz/tts"
                             voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
                             if voice_id:
@@ -2044,6 +2052,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
                     if not base:
                         base = (request.host_url or "").strip().rstrip("/")
+                    # Cloud Run pode redirecionar http->https com 302; requests pode virar GET e quebrar o POST.
+                    # Força HTTPS para evitar 302->GET (e 404 no GET).
+                    if base.startswith("http://"):
+                        base = "https://" + base[len("http://"):]
                     tts_url = f"{base}/api/voz/tts"
 
                     voice_id = ""
