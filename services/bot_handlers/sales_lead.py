@@ -107,9 +107,9 @@ def _decider_mode() -> str:
     Env: SALES_DECIDER_MODE=off|v1
     """
     try:
-        m = str(os.getenv("SALES_DECIDER_MODE", "off") or "off").strip().lower()
+        m = str(os.getenv("SALES_DECIDER_MODE", "v1") or "v1").strip().lower()
     except Exception:
-        m = "off"
+        m = "v1"
     if m in ("1", "true", "on", "yes", "v1"):
         return "v1"
     return "off"
@@ -1122,8 +1122,8 @@ def _upsert_lead_from_state(wa_key: str, st: dict) -> None:
         return
 
     lead = {
-        "name": name,
-        "segment": segment,
+        "name": name or prefill_name,
+            "segment": segment or prefill_segment,
         "goal": goal,
         "turns": turns,
         "status": st.get("lead_status") or "new",
@@ -1397,45 +1397,40 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
 
     stage = (stage or "").strip().upper()
 
-    # Heurísticas pequenas só pra economizar IA em casos óbvios (não substitui IA).
-    if stage == "ASK_NAME" and text and len(text.strip()) <= 30:
-        t = text.strip().lower()
-        # IMPORTANTE (produto): intenção direta NÃO pode virar "formulário".
-        # Se perguntarem preço/planos/diferença logo no início, responda direto (sem travar em ASK_NAME).
-        if any(k in t for k in ("quanto custa", "preço", "preco", "valor", "mensal", "assinatura", "planos", "plano", "starter", "starter+", "plus", "diferença", "diferenca", "memória", "memoria", "2gb", "10gb")):
-            _intent = "PRICE"
-            if any(k in t for k in ("diferença", "diferenca", "memória", "memoria", "2gb", "10gb")):
-                _intent = "DIFF"
-            elif any(k in t for k in ("planos", "plano", "starter", "starter+", "plus")):
-                _intent = "PLANS"
-            return {
-                "route": "sales",
-                "intent": _intent,
-                "name": "",
-                "segment": "",
-                "interest_level": "mid",
-                "next_step": "",
-            }
-        if t in ("oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "eai", "e aí", "opa"):
-            return {"route": "sales", "intent": "OTHER", "name": "", "segment": "", "interest_level": "mid", "next_step": ""}
-        nm = _extract_name_freeform(text) or text.strip()
-        nm = re.sub(r"[\.!\?,;:]+$", "", nm).strip()
-        nm = re.sub(
-            r"^(me chamo|me chamam de|o pessoal me chama de|pessoal me chama de|pode me chamar de|podem me chamar de|meu nome é|meu nome e|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*",
-            "",
-            nm,
-            flags=re.IGNORECASE,
-        ).strip()
-        nm = re.sub(r"[^\wÀ-ÿ\s'\-]", "", nm).strip()
-        nm = re.sub(r"\s+", " ", nm).strip()
-        if len(nm.split(" ")) > 3:
-            nm = " ".join(nm.split(" ")[:3])
-        if _looks_like_greeting(nm):
-            nm = ""
-        return {"route": "sales", "intent": "OTHER", "name": nm, "segment": "", "interest_level": "mid", "next_step": "ASK_SEGMENT"}
+    # IA-first: heurísticas viram *prefill* (ajudam a IA), mas NUNCA retornam sem IA.
+    prefill_name = ""
+    prefill_segment = ""
+    prefill_intent = ""
+    try:
+        if stage == "ASK_NAME" and len(text.strip()) <= 30:
+            t = text.strip().lower()
+            if any(k in t for k in ("quanto custa", "preço", "preco", "valor", "mensal", "assinatura", "planos", "plano", "starter", "starter+", "plus", "diferença", "diferenca", "memória", "memoria", "2gb", "10gb")):
+                prefill_intent = "PRICE"
+                if any(k in t for k in ("diferença", "diferenca", "memória", "memoria", "2gb", "10gb")):
+                    prefill_intent = "DIFF"
+                elif any(k in t for k in ("planos", "plano", "starter", "starter+", "plus")):
+                    prefill_intent = "PLANS"
+            if t not in ("oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "eai", "e aí", "opa"):
+                nm = _extract_name_freeform(text) or ""
+                nm = re.sub(r"[^\wÀ-ÿ\s'\-]", "", nm).strip()
+                nm = re.sub(r"\s+", " ", nm).strip()
+                if len(nm.split(" ")) > 3:
+                    nm = " ".join(nm.split(" ")[:3])
+                if nm and (not _looks_like_greeting(nm)):
+                    prefill_name = nm
+        if stage == "ASK_SEGMENT" and len(text.strip()) <= 40:
+            prefill_segment = text.strip()
+    except Exception:
+        prefill_name = prefill_segment = prefill_intent = ""
 
-    if stage == "ASK_SEGMENT" and text and len(text.strip()) <= 40:
-        return {"route": "sales", "intent": "OTHER", "name": "", "segment": text.strip(), "interest_level": "mid", "next_step": "VALUE"}
+    # Se não temos OpenAI, devolve algo seguro (degradação saudável)
+    if not OPENAI_API_KEY:
+        out = {"route": "sales", "intent": (prefill_intent or "OTHER"), "name": prefill_name, "segment": prefill_segment, "interest_level": "mid", "next_step": ""}
+        if stage == "ASK_NAME" and prefill_name:
+            out["next_step"] = "ASK_SEGMENT"
+        if stage == "ASK_SEGMENT" and prefill_segment:
+            out["next_step"] = "VALUE"
+        return out
 
     system = (
         "Você é um CLASSIFICADOR de mensagens do WhatsApp do MEI Robô (pt-BR). "
@@ -1471,6 +1466,13 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
     )
 
     user = f"STAGE_ATUAL: {stage}\nMENSAGEM: {text}"
+    # Prefill (não é decisão; só ajuda a IA a não errar slots óbvios)
+    if prefill_name or prefill_segment or prefill_intent:
+        user = (
+            user
+            + "\nPREFILL (heurística, se fizer sentido): "
+            + json.dumps({"intent": prefill_intent, "name": prefill_name, "segment": prefill_segment}, ensure_ascii=False)
+        )
 
     content = _sales_nlu_http([
         {"role": "system", "content": system},
@@ -1518,6 +1520,86 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
         }
     except Exception:
         return {"route": "offtopic", "intent": "OTHER", "name": "", "segment": "", "interest_level": "low", "next_step": "EXIT"}
+
+
+def _economic_reply(
+    *,
+    intent: str,
+    name: str,
+    segment: str,
+    goal: str,
+    user_text: str,
+    st: Dict[str, Any],
+) -> Tuple[str, str, list]:
+    """
+    Execução econômica (sem IA geradora):
+    Retorna (replyText, planNextStep, policiesApplied)
+    """
+    intent_u = (intent or "").strip().upper()
+    policies: list = []
+    kb = _get_sales_kb() or {}
+    process = (kb.get("process_facts") or {}) if isinstance(kb, dict) else {}
+
+    # defaults factuais (não promete o que não existe)
+    if not isinstance(process, dict) or not process:
+        process = {
+            "billing_model": "assinatura mensal (paga)",
+            "no_free_trial": True,
+            "sla_setup": "até 7 dias úteis para número virtual + configuração concluída",
+            "can_prepare_now": "você já cria a conta e deixa tudo pronto na plataforma (serviços, rotina, agenda).",
+        }
+
+    def _site_line() -> str:
+        return SITE_URL if SITE_URL else "www.meirobo.com.br"
+
+    # PRICE/PLANS/DIFF: determinístico e canônico
+    if intent_u in ("PRICE", "PLANS", "DIFF"):
+        policies.append("depth:economic")
+        return (_enforce_price_direct(kb, segment=segment), "PRICE", policies)
+
+    # SLA
+    if intent_u == "SLA":
+        policies.append("depth:economic")
+        sla = str(process.get("sla_setup") or "até 7 dias úteis para número virtual + configuração concluída").strip()
+        can = str(process.get("can_prepare_now") or "").strip()
+        txt = f"Hoje o prazo é {sla}. {can}".strip()
+        txt = (txt + f"\n\nSe quiser, eu te mando o link pra criar a conta: {_site_line()}").strip()
+        return (txt, "SEND_LINK", policies)
+
+    # PROCESS (como assina / passos)
+    if intent_u == "PROCESS":
+        policies.append("depth:economic")
+        billing = str(process.get("billing_model") or "assinatura mensal (paga)").strip()
+        txt = (
+            f"É {billing}. O caminho é simples:\n"
+            f"1) entra no site\n"
+            f"2) cria a conta\n"
+            f"3) segue a ativação\n\n"
+            f"{_site_line()}"
+        )
+        txt = _strip_trailing_question(txt)
+        return (txt, "SEND_LINK", policies)
+
+    # VOICE (pergunta sobre voz/parecer a pessoa)
+    if intent_u == "VOICE":
+        policies.append("depth:economic")
+        nm = (name or "").strip()
+        head = f"{nm}, sim —" if nm else "Sim —"
+        txt = (
+            f"{head} o MEI Robô pode responder em áudio com a voz do próprio profissional, depois que ele envia alguns áudios pra gente treinar.\n"
+            f"Enquanto isso, dá pra usar com a voz institucional normalmente.\n\n"
+            f"Se quiser ver o caminho certinho, é por aqui: {_site_line()}"
+        )
+        return (txt, "SEND_LINK", policies)
+
+    # ACTIVATE (quero assinar / ativar / manda o link)
+    if intent_u == "ACTIVATE":
+        policies.append("depth:economic")
+        txt = f"Fechado. Pra assinar e começar a ativação, é por aqui: {_site_line()}"
+        txt = _strip_trailing_question(txt)
+        return (txt, "SEND_LINK", policies)
+
+    return ("", "", [])
 
 
 # =========================
@@ -2359,9 +2441,11 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     # =========================
     # DECIDER (IA) — manda no "modo de resposta"
     # =========================
+
     dec = {}
     try:
-        if _decider_should_run(turns=turns, user_text=text_in):
+        # IA-first: sempre roda (custo controlado por cache + max_tokens)
+        if _decider_mode() == "v1":
             dec = sales_ai_decider(
                 user_text=text_in,
                 turns=turns,
@@ -2376,6 +2460,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                 st["decision_needs_clarification"] = bool(dec.get("needs_clarification"))
     except Exception:
         dec = {}
+
 
     # Se a IA decidiu que precisa esclarecer (1 pergunta) -> obedece e para
     try:
@@ -2414,13 +2499,25 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     except Exception:
         pass
 
-    # Guarda entities (slots) para continuidade/observabilidade (best-effort)
+    # Guarda um “intent de entendimento” (contrato) — usado na saída
     try:
-        ents = nlu.get("entities") or {}
-        if isinstance(ents, dict) and ents:
-            st["entities"] = ents
+        st["understand_intent"] = str(nlu.get("intent") or "").strip().upper()
+        st["understand_confidence"] = str(nlu.get("confidence") or "").strip().lower()
+        st["understand_route"] = str(nlu.get("route") or "sales").strip().lower()
+        # risco simples: low/mid/high (barato)
+        _cf = st.get("understand_confidence") or "mid"
+        st["understand_risk"] = ("high" if _cf == "low" else ("mid" if _cf == "mid" else "low"))
     except Exception:
         pass
+
+
+        # Guarda entities (slots) para continuidade/observabilidade (best-effort)
+        try:
+            ents = nlu.get("entities") or {}
+            if isinstance(ents, dict) and ents:
+                st["entities"] = ents
+        except Exception:
+            pass
 
     # Clarificação universal (IA decide; código só executa)
     try:
@@ -2554,6 +2651,34 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             return "Pra ver tudo com calma e ativar, o melhor é pelo site 🙂 Se quiser, me diz teu tipo de negócio em 1 frase que eu te indico o caminho mais enxuto."
 
 
+
+
+    # =========================
+    # EXECUÇÃO ECONÔMICA (templates) — 80–90% dos casos
+    (econ, econ_next, econ_policies) = ("", "", [])
+    try:
+        econ, econ_next, econ_policies = _economic_reply(
+            intent=str(nlu.get("intent") or "").strip().upper(),
+            name=name,
+            segment=segment,
+            goal=goal,
+            user_text=text_in,
+            st=st,
+        )
+        if econ:
+            try:
+                st["plan_intent"] = str(nlu.get("intent") or "").strip().upper()
+                st["plan_next_step"] = (econ_next or "").strip().upper()
+                st["plan_depth"] = "economic"
+                st["plan_risk"] = str(st.get("understand_risk") or "mid")
+                st["policiesApplied"] = list(set((st.get("policiesApplied") or []) + econ_policies))
+            except Exception:
+                pass
+            econ = _apply_anti_loop(st, econ, name=name, segment=segment, goal=goal, user_text=text_in)
+            econ = _limit_questions(econ, max_questions=1)
+            return _clip(econ, SALES_MAX_CHARS_REPLY)
+    except Exception:
+        pass
 
     # =========================
     # IA NO COMANDO (PLANO)
@@ -2807,6 +2932,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             "intent": _dbg_intent,
             "next_step": _dbg_next,
         }
+
         return {
             "replyText": OPENING_ASK_NAME,
             "ttsOwner": "worker",
@@ -2827,16 +2953,19 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         st["wa_key"] = wa_key
     reply = _reply_from_state(text_in, st)
 
-    # Intenção final preferencial: IA (plan_intent) -> estado (last_intent) -> cheap
+    
+    # Intenção final preferencial: IA (plan_intent / understand_intent) -> estado (last_intent) -> cheap (só se sem OpenAI)
     try:
-        intent_final = str(st.get("plan_intent") or st.get("last_intent") or "").strip().upper()
+        intent_final = str(st.get("plan_intent") or st.get("understand_intent") or st.get("last_intent") or "").strip().upper()
     except Exception:
         intent_final = ""
     if not intent_final:
-        try:
-            intent_final = str(_intent_cheap(text_in) or "").strip().upper()
-        except Exception:
-            intent_final = ""
+        # Só cai no cheap se NÃO tem OpenAI (degradação saudável)
+        if not OPENAI_API_KEY:
+            try:
+                intent_final = str(_intent_cheap(text_in) or "").strip().upper()
+            except Exception:
+                intent_final = ""
 
     # Next step final (Planner soberano): usado para policy (link/close), sem heurística esperta.
     try:
@@ -3211,6 +3340,17 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "safe_to_use_humor": bool(st.get("decision_safe_humor")),
     }
 
+
+
+    # Contrato IA-first (entendimento): usado só para observabilidade agora
+    understand_contract = {
+        "intent": str(st.get("understand_intent") or "").strip().upper(),
+        "confidence": str(st.get("understand_confidence") or "").strip().lower(),
+        "route": str(st.get("understand_route") or "sales").strip().lower(),
+        "risk": str(st.get("understand_risk") or "mid").strip().lower(),
+        "depth": str(st.get("plan_depth") or "deep").strip().lower(),
+    }
+
     return {
         "replyText": reply_final,
         "nameUse": (st.get("last_name_use") or ""),
@@ -3222,6 +3362,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
         # Contrato de política/auditoria (incremental)
         "intentFinal": intent_final,
+        "understanding": understand_contract,
         "pricingUsed": pricing_used,
         "pricingSource": pricing_source,
         "policiesApplied": policies_applied,
@@ -3241,6 +3382,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "kbSnippet": json.dumps((st.get("kb_snippet") or {}), ensure_ascii=False),
         "spokenSource": "replyText",
         "decisionDebug": decision_debug,
+
+        "decision": decision_debug,
 
         "leadName": lead_name,
         "segment": lead_segment,
