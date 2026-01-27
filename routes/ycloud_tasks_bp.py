@@ -1350,10 +1350,18 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         else:
                             # Chama STT interno via HTTP (mesmo serviço)
                             try:
-                                base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+                                base = (
+                                    os.environ.get("BACKEND_BASE_URL")
+                                    or os.environ.get("BACKEND_BASE")
+                                    or ""
+                                ).strip().rstrip("/")
                                 if not base:
                                     # tenta inferir pelo request atual
                                     base = (request.host_url or "").strip().rstrip("/")
+                                # Cloud Run pode redirecionar http->https com 302; requests pode virar GET e quebrar o POST.
+                                # Força HTTPS para evitar 302->GET.
+                                if base.startswith("http://"):
+                                    base = "https://" + base[len("http://"):]
                                 stt_url = f"{base}/api/voz/stt"
 
                                 headers = {"Content-Type": ctype or "audio/ogg"}
