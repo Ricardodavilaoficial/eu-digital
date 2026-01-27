@@ -832,6 +832,23 @@ def _extract_name_freeform(text: str) -> str:
             name = re.sub(r"[^\wÀ-ÿ\s'\-]", "", name).strip()
             return name
 
+
+    # Pega "meu nome é X" / "me chamo X" no meio da frase (áudio STT real)
+    try:
+        m2 = re.search(
+            r"\b(me chamo|meu nome é|meu nome e|pode me chamar de|podem me chamar de|aqui é|aqui e|eu sou|sou)\s+(?:o|a)?\s*([a-zA-ZÀ-ÿ'\-]{2,20}(?:\s+[a-zA-ZÀ-ÿ'\-]{2,20}){0,2})\b",
+            t,
+            flags=re.IGNORECASE,
+        )
+        if m2:
+            name = (m2.group(2) or "").strip()
+            name = re.sub(r"\s+", " ", name).strip()
+            name = re.sub(r"[^\wÀ-ÿ\s'\-]", "", name).strip()
+            if name and (not _looks_like_greeting(name)):
+                return name
+    except Exception:
+        pass
+
     # fallback: se for curtinho (1-3 palavras), assume que é nome
     parts = t.split()
     if 1 <= len(parts) <= 3 and len(t) <= 30:
@@ -923,7 +940,7 @@ def _apply_next_step_safely(st: Dict[str, Any], next_step: str, has_name: bool, 
 # =========================
 
 _HUMAN_NOISE_PATTERNS = [
-    r"\b(e bot|é bot|eh bot|tu é bot|vc é bot|você é bot|rob[oô])\b",
+    r"\b(e bot|é bot|eh bot|tu é bot|vc é bot|você é bot)\b",
     r"\b(teste|testando|to testando|tô testando|só testando)\b",
     r"\b(kkk+|haha+|rsrs+)\b",
     r"\b(futebol|time|gol|gr[êe]mio|inter|flamengo|corinthians|palmeiras)\b",
@@ -947,6 +964,28 @@ def _detect_human_noise(text: str) -> bool:
     t = (text or "").strip()
     if not t:
         return False
+
+
+def _is_capability_question(text: str) -> bool:
+    """
+    Detector barato de pergunta de capacidade/produto.
+    Ex.: "O robô envia fotos?", "O robô canta?", "Ele marca horário?"
+    Regra: se for pergunta objetiva de "faz X", NÃO é ruído.
+    """
+    t = (text or "").strip()
+    if not t:
+        return False
+    tl = t.lower()
+    if "?" not in tl:
+        return False
+    # começos típicos de dúvida objetiva
+    if any(tl.startswith(x) for x in ("o robô", "o robo", "ele ", "ela ", "vocês", "voces", "dá pra", "da pra", "pode", "consegue", "tem como")):
+        return True
+    # verbos de capability (sem tentar prever tudo)
+    if any(v in tl for v in ("envia", "manda", "responde", "fala", "canta", "marca", "agenda", "confirma", "anota", "cobra", "lembra")):
+        return True
+    return False
+
 
     tl = t.lower()
 
@@ -2656,7 +2695,8 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                     st["__human_gate_done"] = True
             except Exception:
                 pass
-            if _detect_human_noise(text_in):
+            # Pergunta objetiva de capacidade/produto NÃO é ruído (bloqueia gate).
+            if (not _is_capability_question(text_in)) and _detect_human_noise(text_in):
                 st["__human_gate_done"] = True
                 # IA soberana: ela decide se pergunta nome, se brinca, se avança.
                 txt = (_ai_sales_answer(
@@ -3398,7 +3438,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "safe_to_use_humor": bool(st.get("decision_safe_humor")),
     }
     # Contrato IA-first (entendimento) — nunca vazio (auditável no worker/Firestore)
-    _intent_u = (intent_final or "").strip().upper()
+    # Contrato: preferir entendimento da IA/NLU já gravado no state
+    _intent_u = str(st.get("understand_intent") or intent_final or "").strip().upper()
     if not _intent_u:
         _intent_u = "OTHER"
     _ns_u = (next_step_final or "").strip().upper()
