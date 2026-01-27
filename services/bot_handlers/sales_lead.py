@@ -1122,8 +1122,8 @@ def _upsert_lead_from_state(wa_key: str, st: dict) -> None:
         return
 
     lead = {
-        "name": name or prefill_name,
-            "segment": segment or prefill_segment,
+        "name": name,
+            "segment": segment,
         "goal": goal,
         "turns": turns,
         "status": st.get("lead_status") or "new",
@@ -1402,6 +1402,11 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
     prefill_segment = ""
     prefill_intent = ""
     try:
+        # Prefill VOICE: ajuda a IA a classificar certo quando a frase é curta ("voz da gente", "fala como eu")
+        tl = text.strip().lower()
+        if any(k in tl for k in ("voz", "fala como", "fala igual", "minha voz", "voz da gente", "parece minha voz", "voz do dono", "responde com a voz")):
+            prefill_intent = "VOICE"
+
         if stage == "ASK_NAME" and len(text.strip()) <= 30:
             t = text.strip().lower()
             if any(k in t for k in ("quanto custa", "preço", "preco", "valor", "mensal", "assinatura", "planos", "plano", "starter", "starter+", "plus", "diferença", "diferenca", "memória", "memoria", "2gb", "10gb")):
