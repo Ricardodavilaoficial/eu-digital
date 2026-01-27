@@ -2874,7 +2874,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         return _clip(txt, SALES_MAX_CHARS_REPLY)
 
     # Regra (memória fraca): se a intenção é vaga (OTHER) e faltam dados, aí sim DISCOVERY.
-    if (not has_name) or (not has_segment):
+    if ((not has_name) or (not has_segment)) and intent not in ("VOICE",):
         st["nudges"] = nudges + 1
         txt = (_ai_sales_answer(
             name=name,
@@ -2993,7 +2993,24 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             except Exception:
                 intent_final = ""
 
-    # Next step final (Planner soberano): usado para policy (link/close), sem heurística esperta.
+    
+    # --------------------------------------------------
+    # FALLBACK SEMÂNTICO BARATO — VOICE (sem IA cara)
+    # --------------------------------------------------
+    if not intent_final:
+        t = (text_in or "").lower()
+        if any(k in t for k in [
+            "minha voz",
+            "voz da gente",
+            "fala com a minha voz",
+            "robô fala como eu",
+            "fala com a voz"
+        ]):
+            intent_final = "VOICE"
+            # VOICE é conceitual; não é fechamento
+            # (next_step_final fica resolvido abaixo; aqui só dá um default seguro)
+
+# Next step final (Planner soberano): usado para policy (link/close), sem heurística esperta.
     try:
         next_step_final = str(st.get("plan_next_step") or "").strip().upper()
     except Exception:
@@ -3370,17 +3387,19 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "needs_clarification": bool(st.get("decision_needs_clarification")),
         "safe_to_use_humor": bool(st.get("decision_safe_humor")),
     }
+    # Contrato IA-first (entendimento) — nunca vazio (auditável no worker/Firestore)
+    _intent_u = (intent_final or "").strip().upper()
+    if not _intent_u:
+        _intent_u = "OTHER"
+    _ns_u = (next_step_final or "").strip().upper()
 
-
-
-    # Contrato IA-first (entendimento): usado só para observabilidade agora
     understand_contract = {
-        "intent": str(st.get("understand_intent") or "").strip().upper(),
+        "intent": _intent_u,
         "confidence": str(st.get("understand_confidence") or "").strip().lower(),
         "route": str(st.get("understand_route") or "sales").strip().lower(),
         "risk": str(st.get("understand_risk") or "mid").strip().lower(),
         "depth": str(st.get("plan_depth") or "deep").strip().lower(),
-        "next_step": str(next_step_final or "").strip().upper(),
+        "next_step": _ns_u,
     }
 
     return {
@@ -3393,7 +3412,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "spokenText": spoken_final,
 
         # Contrato de política/auditoria (incremental)
-        "intentFinal": intent_final,
+        "intentFinal": understand_contract.get("intent") or "OTHER",
+        "planNextStep": understand_contract.get("next_step") or "",
         "understanding": understand_contract,
         "pricingUsed": pricing_used,
         "pricingSource": pricing_source,
