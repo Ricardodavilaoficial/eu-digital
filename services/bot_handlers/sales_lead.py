@@ -555,11 +555,15 @@ def _spokenize_v1(
         return ""
 
     # Se a resposta contém link ou o policy marcou prefers_text, fala curto e humano
-    if prefers_text or has_url:
+    # - prefers_text = fechamento/pedido explícito de link (ACK curto + link vai por escrito)
+    # - has_url sozinho NÃO pode sequestrar a fala: só remove o link e mantém o conteúdo
+    if prefers_text:
         nm = (lead_name or "").strip()
         if nm:
             return f"Fechado, {nm}. Te mandei por escrito o link e o caminho pra seguir."
         return "Fechado. Te mandei por escrito o link e o caminho pra seguir."
+
+    # Se has_url=True sem prefers_text, seguimos e só limpamos o link da fala.
 
     t = rt
     # remove URLs explícitas (mesmo sem prefers_text)
@@ -3127,10 +3131,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         else:
             spoken_final = "Fechado! Na sequência eu te mando por escrito o link pra assinar."
         policies_applied.append("override:link")
-
-    if _has_url(reply_final):
-        prefers_text = True
-        # áudio curto e humano; link vai por escrito
+    if _has_url(reply_final) and bool(prefers_text):
+        # áudio curto e humano; link vai por escrito (somente quando prefers_text já está ligado)
         spoken_final = "Te mandei o link por escrito aqui na conversa."
 
     # Regra de fechamento (POLICY): não termina em pergunta quando a decisão já está clara.
