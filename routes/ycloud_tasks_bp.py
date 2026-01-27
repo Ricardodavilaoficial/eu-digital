@@ -2085,7 +2085,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         except Exception as e:
                             audio_debug["ttsAck"] = {"ok": False, "reason": f"exc:{type(e).__name__}"}
 
-                else:
+                elif prefers_text:
                     # Caso geral: realmente só texto (ex.: usuário pediu explicitamente texto)
                     audio_debug["mode"] = "text_only_requested"
                     audio_url = ""  # garante que não envia áudio
