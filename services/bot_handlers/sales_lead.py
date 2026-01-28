@@ -1446,6 +1446,12 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
         if any(k in tl for k in ("voz", "fala como", "fala igual", "minha voz", "voz da gente", "parece minha voz", "voz do dono", "responde com a voz")):
             prefill_intent = "VOICE"
 
+        # Prefill OPERATIONAL+SEND_LINK: quando o lead pede link/site/onde entra (pedido operacional explícito)
+        # (não é decisão final; só ajuda a IA a não escorregar para VALUE/triagem)
+        if any(k in tl for k in ("link", "site", "url", "endereço", "endereco", "onde eu entro", "onde entro", "me manda o link", "me passa o site", "qual é o link", "qual o link")):
+            if not prefill_intent:
+                prefill_intent = "OPERATIONAL"
+
         if stage == "ASK_NAME" and len(text.strip()) <= 30:
             t = text.strip().lower()
             if any(k in t for k in ("quanto custa", "preço", "preco", "valor", "mensal", "assinatura", "planos", "plano", "starter", "starter+", "plus", "diferença", "diferenca", "memória", "memoria", "2gb", "10gb")):
@@ -1500,11 +1506,13 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
         "- VOICE: pergunta sobre parecer o profissional / responder em áudio com a voz/estilo do próprio profissional.\n"
 
         "- OPERATIONAL: pergunta prática de como funciona no dia a dia (ex.: agendar, organizar pedidos).\n"
+"- PEDIDO DE LINK/SITE/ONDE ENTRA: isso é operacional explícito.\n"
+"  -> intent='OPERATIONAL' e next_step='SEND_LINK' (sem triagem, sem VALUE).\n"
         "- SLA: pergunta sobre demora/prazo para começar (ex.: \"demora?\", \"em quantos dias?\").\n"
         "- PROCESS: pergunta sobre etapas do processo (ativação/configuração), sem focar em preço.\n\n"
         "route: 'sales' | 'offtopic' | 'emergency'.\n"
         "interest_level: 'low' | 'mid' | 'high'.\n"
-        "next_step: '' | 'ASK_NAME' | 'ASK_SEGMENT' | 'VALUE' | 'PRICE' | 'CTA' | 'EXIT'.\n"
+        "next_step: '' | 'ASK_NAME' | 'ASK_SEGMENT' | 'VALUE' | 'PRICE' | 'SEND_LINK' | 'ASK_CLARIFY' | 'CTA' | 'EXIT'.\n"
         "Campos extras permitidos: entities (map), needs_clarification (bool), clarifying_question (string), confidence (high|mid|low).\n"
 
     )
@@ -1540,7 +1548,7 @@ def sales_micro_nlu(text: str, stage: str = "") -> Dict[str, Any]:
         if interest_level not in ("low", "mid", "high"):
             interest_level = "mid"
         next_step = (out.get("next_step") or "").strip().upper()
-        if next_step not in ("ASK_NAME", "ASK_SEGMENT", "VALUE", "PRICE", "CTA", "EXIT"):
+        if next_step not in ("ASK_NAME", "ASK_SEGMENT", "VALUE", "PRICE", "SEND_LINK", "ASK_CLARIFY", "CTA", "EXIT"):
             next_step = ""
 
         entities = out.get("entities") if isinstance(out.get("entities"), dict) else {}
@@ -2529,6 +2537,20 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     # NLU (IA) — fonte canônica de intent/route/next_step/interest
     nlu = sales_micro_nlu(text_in, stage=stage)
+
+    # IA-first: quando a NLU já decidiu SEND_LINK, isso é execução imediata (não triagem).
+    # OBS: o generate_reply é quem garante prefersText + link no replyText + ACK falável.
+    try:
+        _ns0 = str((nlu or {}).get("next_step") or "").strip().upper()
+        if _ns0 == "SEND_LINK":
+            st["plan_intent"] = str((nlu or {}).get("intent") or "OPERATIONAL").strip().upper() or "OPERATIONAL"
+            st["plan_next_step"] = "SEND_LINK"
+            _name = (st.get("name") or "").strip()
+            if _name:
+                return f"{_name}, fechado — vou te mandar o link aqui na conversa."
+            return "Fechado — vou te mandar o link aqui na conversa."
+    except Exception:
+        pass
 
     # Guardrail (IA-first): pedido OPERACIONAL não pode cair em "OTHER".
     # Se não estiver claro o que enviar, faz 1 pergunta objetiva (sem congelar).
