@@ -1658,6 +1658,23 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             except Exception:
                 pass
 
+            # Normalização final (não muda comportamento): evita ia_first vazio
+            try:
+                if isinstance(understanding, dict):
+                    _ii = str(understanding.get("intent") or "").strip().upper()
+                    _nn = str(understanding.get("next_step") or "").strip().upper()
+                    if not _ii:
+                        _ii = str(intent_final or wa_out.get("planIntent") or "").strip().upper()
+                    if not _nn:
+                        _nn = str(plan_next_step or wa_out.get("planNextStep") or "").strip().upper()
+                    # só seta se conseguimos algo; senão mantém como está
+                    if _ii:
+                        understanding["intent"] = _ii
+                    if _nn:
+                        understanding["next_step"] = _nn
+            except Exception:
+                pass
+
 
             # A2: propaga _debug do handler para facilitar auditoria (planner/composer/fallback/worker)
             spoken_text = (wa_out.get("spokenText") or "").strip()
