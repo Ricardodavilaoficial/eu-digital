@@ -2533,6 +2533,54 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     # NLU (IA) — fonte canônica de intent/route/next_step/interest
     nlu = sales_micro_nlu(text_in, stage=stage)
+
+    # Guardrail (IA-first): pedido OPERACIONAL não pode cair em "OTHER".
+    # Se não estiver claro o que enviar, faz 1 pergunta objetiva (sem congelar).
+    try:
+        _t = str(text_in or "").strip().lower()
+        _i = str((nlu or {}).get("intent") or "").strip().upper()
+        _ns = str((nlu or {}).get("next_step") or "").strip().upper()
+
+        # Sinais fracos porém úteis de "pedido" (não depende de palavra exata; só reduz falso-negative)
+        _has_request_shape = any(x in _t for x in (
+            "pode", "podes", "poderia", "consegue", "tem como",
+            "me ", "pra mim", "pra gente", "aí", "ai"
+        ))
+        _has_send_shape = any(x in _t for x in (
+            "manda", "mandar", "envia", "enviar", "passa", "passar",
+            "compartilha", "compartilhar", "anexa", "anexar",
+            "me dá", "me da", "joga", "jogar", "solta", "soltar"
+        ))
+
+        # Objetos comuns (apenas para decidir "SEND_LINK" quando for muito óbvio; resto pergunta)
+        _asks_link = any(x in _t for x in ("link", "site", "página", "pagina", "url", "endereço", "endereco"))
+
+        _looks_operational = (_has_request_shape and _has_send_shape) or _asks_link
+
+        if _looks_operational and (_i in ("", "OTHER")):
+            nlu = dict(nlu or {})
+            nlu["intent"] = "OP_REQUEST"
+            # Se é claramente link/site, já manda SEND_LINK; senão, 1 clarificação objetiva
+            if _asks_link:
+                nlu["next_step"] = "SEND_LINK"
+                nlu["depth"] = nlu.get("depth") or "shallow"
+                nlu["risk"] = nlu.get("risk") or "low"
+                nlu["confidence"] = nlu.get("confidence") or "high"
+            else:
+                nlu["next_step"] = "ASK_CLARIFY"
+                nlu["depth"] = nlu.get("depth") or "shallow"
+                nlu["risk"] = nlu.get("risk") or "low"
+                nlu["confidence"] = nlu.get("confidence") or "mid"
+                # UMA pergunta curta, sem triagem genérica
+                nlu["clarifying_question"] = nlu.get("clarifying_question") or "Beleza — você quer que eu te envie o link do site, um PDF ou uma imagem?"
+        else:
+            # Se a IA já escolheu ASK_CLARIFY, garante que exista pergunta
+            if _ns == "ASK_CLARIFY":
+                nlu = dict(nlu or {})
+                if not str(nlu.get("clarifying_question") or "").strip():
+                    nlu["clarifying_question"] = "Só pra eu te atender certo: você quer link, PDF ou imagem?"
+    except Exception:
+        pass
     # IA-first (mínimo garantido): se ainda não existe plano, “promove” NLU para plano leve.
     # Isso NÃO gera texto caro — só evita cair no genérico.
     try:
