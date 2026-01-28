@@ -3438,18 +3438,45 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "safe_to_use_humor": bool(st.get("decision_safe_humor")),
     }
     # Contrato IA-first (entendimento) — nunca vazio (auditável no worker/Firestore)
-    # Contrato: preferir entendimento da IA/NLU já gravado no state
-    _intent_u = str(st.get("understand_intent") or intent_final or "").strip().upper()
+    try:
+        _intent_u = str(st.get("understand_intent") or intent_final or "").strip().upper()
+    except Exception:
+        _intent_u = (intent_final or "").strip().upper()
     if not _intent_u:
         _intent_u = "OTHER"
-    _ns_u = (next_step_final or "").strip().upper()
+
+    try:
+        _ns_u = str(next_step_final or st.get("plan_next_step") or "").strip().upper()
+    except Exception:
+        _ns_u = str(next_step_final or "").strip().upper()
+
+    try:
+        _conf_u = str(st.get("understand_confidence") or st.get("decision_confidence") or "").strip().lower()
+    except Exception:
+        _conf_u = ""
+    if _conf_u not in ("high", "mid", "low"):
+        _conf_u = ""
+
+    try:
+        _risk_u = str(st.get("understand_risk") or "").strip().lower()
+    except Exception:
+        _risk_u = ""
+    if _risk_u not in ("low", "mid", "high"):
+        _risk_u = ("high" if _conf_u == "low" else ("mid" if _conf_u else "mid"))
+
+    try:
+        _depth_u = str(st.get("plan_depth") or "").strip().lower()
+    except Exception:
+        _depth_u = ""
+    if _depth_u not in ("economic", "deep"):
+        _depth_u = "economic" if _intent_u in ("VOICE","PRICE","PLANS","DIFF","PROCESS","SLA","ACTIVATE") else "deep"
 
     understand_contract = {
         "intent": _intent_u,
-        "confidence": str(st.get("understand_confidence") or "").strip().lower(),
+        "confidence": _conf_u,
         "route": str(st.get("understand_route") or "sales").strip().lower(),
-        "risk": str(st.get("understand_risk") or "mid").strip().lower(),
-        "depth": str(st.get("plan_depth") or "deep").strip().lower(),
+        "risk": _risk_u,
+        "depth": _depth_u,
         "next_step": _ns_u,
     }
 
@@ -3480,7 +3507,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "askMode": (st.get("ask_mode") or ""),
         "closeMode": (st.get("close_mode") or ""),
         "planIntent": (st.get("plan_intent") or ""),
-        "planNextStep": (st.get("plan_next_step") or ""),
+        "planNextStepRaw": (st.get("plan_next_step") or ""),
         "planEvidence": (st.get("plan_evidence") or ""),
         "kbSnippet": json.dumps((st.get("kb_snippet") or {}), ensure_ascii=False),
         "spokenSource": "replyText",
