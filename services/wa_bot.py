@@ -131,6 +131,25 @@ def _sales_lead_neutral_fallback(name: str = "") -> str:
         return f"{name}, perfeito. Você quer falar de pedidos, agenda, orçamento ou só conhecer?"
     return "Show 🙂 Me diz teu nome e o que você quer resolver: pedidos, agenda, orçamento ou conhecer?"
 
+def _looks_like_link_request(t: str) -> bool:
+    try:
+        s = (t or "").strip().lower()
+        if not s:
+            return False
+        # Não depende de palavra exata; só pega casos óbvios (link/site/url/endereço/onde entro)
+        return (
+            ("link" in s)
+            or ("site" in s)
+            or ("url" in s)
+            or ("endereço" in s)
+            or ("endereco" in s)
+            or ("onde entro" in s)
+            or ("onde eu entro" in s)
+        )
+    except Exception:
+        return False
+
+
 def _log_sales_lead_fallback(ctx: Optional[Dict[str, Any]], *, reason: str, err: Optional[Exception] = None):
     try:
         ctx = ctx or {}
@@ -323,8 +342,57 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
         except Exception as e:
             # fallback ultra conservador (nunca fica mudo) — neutro, sem marketing
             _log_sales_lead_fallback(ctx, reason="exception", err=e)
+
+            # Se caiu em exceção, mas o lead pediu LINK, não devolve triagem.
+            try:
+                if _looks_like_link_request(text):
+                    base = (
+                        os.getenv("FRONTEND_BASE")
+                        or os.getenv("FRONTEND_BASE_URL")
+                        or "https://mei-robo-prod.web.app"
+                    )
+                    base = (base or "").strip().rstrip("/")
+                    link = base + "/"
+                    reply = f"Aqui tá o link: {link}"
+                    out = {
+                        "ok": True,
+                        "route": "sales_lead",
+                        "replyText": reply,
+                        "prefersText": True,
+                        "intentFinal": "ACTIVATE",
+                        "planNextStep": "SEND_LINK",
+                        "policiesApplied": ["wa_bot:fallback_send_link_on_exception"],
+                        "understanding": {
+                            "route": "sales",
+                            "intent": "ACTIVATE",
+                            "confidence": "low",
+                            "risk": "mid",
+                            "depth": "shallow",
+                            "next_step": "SEND_LINK",
+                        },
+                        "decisionDebug": {
+                            "fallback": True,
+                            "reason": "exception_in_sales_lead",
+                            "err": (str(e) or "exception")[:180],
+                        },
+                        "ttsOwner": "worker",
+                    }
+                    return out
+            except Exception:
+                pass
+
             reply = _sales_lead_neutral_fallback()
-            out = {"ok": True, "route": "sales_lead", "replyText": reply, "ttsOwner": "worker"}
+            out = {
+                "ok": True,
+                "route": "sales_lead",
+                "replyText": reply,
+                "decisionDebug": {
+                    "fallback": True,
+                    "reason": "exception_in_sales_lead",
+                    "err": (str(e) or "exception")[:180],
+                },
+                "ttsOwner": "worker",
+            }
             return out
     # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
     try:
