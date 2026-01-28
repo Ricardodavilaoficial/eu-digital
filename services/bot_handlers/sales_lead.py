@@ -1628,16 +1628,19 @@ def _economic_reply(
         txt = _strip_trailing_question(txt)
         return (txt, "SEND_LINK", policies)
 
-    # VOICE (pergunta sobre voz/parecer a pessoa)
+    # VOICE (pergunta sobre voz / parecer a própria pessoa)
     if intent_u == "VOICE":
         policies.append("depth:economic")
+
         nm = (name or "").strip()
         head = f"{nm}, sim —" if nm else "Sim —"
+
         txt = (
-            f"{head} o MEI Robô pode responder em áudio com a voz do próprio profissional, depois que ele envia alguns áudios pra gente treinar.\n"
-            f"Enquanto isso, dá pra usar com a voz institucional normalmente.\n\n"
-            f"Se quiser ver o caminho certinho, é por aqui: {_site_line()}"
+            f"{head} o MEI Robô pode responder em áudio com a voz do próprio profissional, "
+            "depois que ele configura a voz na conta dele. "
+            "Se quiser ver o caminho certinho, é só entrar no nosso site."
         )
+
         return (txt, "VALUE", policies)
 
     # ACTIVATE (quero assinar / ativar / manda o link)
