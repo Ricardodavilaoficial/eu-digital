@@ -3109,6 +3109,33 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     reply = _reply_from_state(text_in, st)
 
     
+
+    # Helpers locais (precisam existir ANTES do primeiro uso)
+    def _wants_link(s: str) -> bool:
+        t = _norm(s)
+        return (
+            ("link" in t)
+            or ("site" in t)
+            or ("endereço" in t)
+            or ("endereco" in t)
+            or ("onde entro" in t)
+            or ("onde eu entro" in t)
+            or ("onde eu me dirijo" in t)
+            or ("me dirijo" in t)
+            or ("manda o link" in t)
+            or ("qual o link" in t)
+            or ("qual é o link" in t)
+            or ("como assina" in t)
+            or ("como assinar" in t)
+            or ("quero assinar" in t)
+            or ("quero contratar" in t)
+            or ("quero fechar" in t)
+            or ("vou assinar" in t)
+            or ("pode me mandar" in t and "proced" in t)
+            or ("me manda" in t and "proced" in t)
+            or ("como eu contrato" in t)
+        )
+
     # Intenção final preferencial: IA (plan_intent / understand_intent) -> estado (last_intent) -> cheap (só se sem OpenAI)
     try:
         intent_final = str(st.get("plan_intent") or st.get("understand_intent") or st.get("last_intent") or "").strip().upper()
@@ -3149,11 +3176,10 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     has_plan = bool((str(st.get("plan_intent") or "").strip()) or (next_step_final or "").strip())
 
 
-    # IA-first (policy): se o lead pediu LINK/SITE, o sistema precisa acionar SEND_LINK,
-    # mesmo que um plano fraco (ex.: VALUE) tenha sido setado antes.
-    # Isso evita cair na triagem quando o pedido é operacional ("podes me enviar o link?").
+    # Paraquedas controlado: se NÃO há plano, e o lead pediu LINK/SITE,
+    # força SEND_LINK para garantir experiência (ACK curto + link copiável).
     try:
-        if (next_step_final != "SEND_LINK") and _wants_link(text_in):
+        if (not has_plan) and (next_step_final != "SEND_LINK") and _wants_link(text_in):
             next_step_final = "SEND_LINK"
             st["plan_next_step"] = "SEND_LINK"
             # Ajuda a manter o contrato estável sem inventar intent novo.
@@ -3222,31 +3248,6 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         return ("http://" in t) or ("https://" in t) or ("www." in t) or ("meirobo.com.br" in t) or ("[site" in t)
 
     prefers_text = False
-
-    def _wants_link(s: str) -> bool:
-        t = _norm(s)
-        return (
-            ("link" in t)
-            or ("site" in t)
-            or ("endereço" in t)
-            or ("endereco" in t)
-            or ("onde entro" in t)
-            or ("onde eu entro" in t)
-            or ("onde eu me dirijo" in t)
-            or ("me dirijo" in t)
-            or ("manda o link" in t)
-            or ("qual o link" in t)
-            or ("qual é o link" in t)
-            or ("como assina" in t)
-            or ("como assinar" in t)
-            or ("quero assinar" in t)
-            or ("quero contratar" in t)
-            or ("quero fechar" in t)
-            or ("vou assinar" in t)
-            or ("pode me mandar" in t and "proced" in t)
-            or ("me manda" in t and "proced" in t)
-            or ("como eu contrato" in t)
-        )
 
     # Policy (novo trilho): se o Planner mandou SEND_LINK, o código só GARANTE que o link aparece.
     # Isso não é estratégia: é execução do plano (sem competir com a IA).
