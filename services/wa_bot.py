@@ -281,6 +281,27 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 ):
                     if k in reply_obj:
                         out[k] = reply_obj.get(k)
+
+                # Compat: alguns caminhos do worker ainda leem planIntent/planNextStep.
+                # sales_lead já entrega intentFinal/planNextStep; então garantimos aliases.
+                try:
+                    if not str(out.get("planIntent") or "").strip():
+                        _if = str(out.get("intentFinal") or "").strip()
+                        if _if:
+                            out["planIntent"] = _if
+                except Exception:
+                    pass
+                try:
+                    if not str(out.get("planNextStep") or "").strip():
+                        _ns = str(out.get("planNextStep") or out.get("plan_next_step") or "").strip()
+                        if not _ns:
+                            _ns = str(out.get("planNextStepRaw") or "").strip()
+                        if not _ns:
+                            _ns = str((out.get("understanding") or {}).get("next_step") or "").strip() if isinstance(out.get("understanding"), dict) else ""
+                        if _ns:
+                            out["planNextStep"] = _ns
+                except Exception:
+                    pass
                 # garante nameToSay a partir de leadName (humanização no fechamento)
                 try:
                     if not str(out.get("nameToSay") or "").strip():
