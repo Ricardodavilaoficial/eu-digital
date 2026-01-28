@@ -965,28 +965,6 @@ def _detect_human_noise(text: str) -> bool:
     if not t:
         return False
 
-
-def _is_capability_question(text: str) -> bool:
-    """
-    Detector barato de pergunta de capacidade/produto.
-    Ex.: "O robô envia fotos?", "O robô canta?", "Ele marca horário?"
-    Regra: se for pergunta objetiva de "faz X", NÃO é ruído.
-    """
-    t = (text or "").strip()
-    if not t:
-        return False
-    tl = t.lower()
-    if "?" not in tl:
-        return False
-    # começos típicos de dúvida objetiva
-    if any(tl.startswith(x) for x in ("o robô", "o robo", "ele ", "ela ", "vocês", "voces", "dá pra", "da pra", "pode", "consegue", "tem como")):
-        return True
-    # verbos de capability (sem tentar prever tudo)
-    if any(v in tl for v in ("envia", "manda", "responde", "fala", "canta", "marca", "agenda", "confirma", "anota", "cobra", "lembra")):
-        return True
-    return False
-
-
     tl = t.lower()
 
     # Se tem intenção prática, não é ruído
@@ -1014,7 +992,25 @@ def _is_capability_question(text: str) -> bool:
     return False
 
 
-
+def _is_capability_question(text: str) -> bool:
+    """
+    Detector barato de pergunta de capacidade/produto.
+    Ex.: "O robô envia fotos?", "O robô canta?", "Ele marca horário?"
+    Regra: se for pergunta objetiva de "faz X", NÃO é ruído.
+    """
+    t = (text or "").strip()
+    if not t:
+        return False
+    tl = t.lower()
+    if "?" not in tl:
+        return False
+    # começos típicos de dúvida objetiva
+    if any(tl.startswith(x) for x in ("o robô", "o robo", "ele ", "ela ", "vocês", "voces", "dá pra", "da pra", "pode", "consegue", "tem como")):
+        return True
+    # verbos de capability (sem tentar prever tudo)
+    if any(v in tl for v in ("envia", "manda", "responde", "fala", "canta", "marca", "agenda", "confirma", "anota", "cobra", "lembra")):
+        return True
+    return False
 
 def _should_disclose_identity(user_text: str) -> bool:
     """Disclosure só quando provocado (lead pergunta se é humano/bot/quem está falando)."""
@@ -2559,7 +2555,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
         if _looks_operational and (_i in ("", "OTHER")):
             nlu = dict(nlu or {})
-            nlu["intent"] = "OP_REQUEST"
+            nlu["intent"] = "OPERATIONAL"
             # Se é claramente link/site, já manda SEND_LINK; senão, 1 clarificação objetiva
             if _asks_link:
                 nlu["next_step"] = "SEND_LINK"
@@ -2581,86 +2577,39 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                     nlu["clarifying_question"] = "Só pra eu te atender certo: você quer link, PDF ou imagem?"
     except Exception:
         pass
-    # IA-first (trava operacional): se for pedido operacional, não deixa cair no fluxo de VALUE/triagem.
-    # Motivo: hoje o sistema está classificando OP_REQUEST, mas o next_step está sendo sobrescrito pra VALUE.
-    try:
-        _i = str((nlu or {}).get("intent") or "").strip().upper()
-        _ns = str((nlu or {}).get("next_step") or "").strip().upper()
-        if _i == "OP_REQUEST" and _ns in ("SEND_LINK", "ASK_CLARIFY"):
-            st["plan_intent"] = "OP_REQUEST"
-            st["plan_next_step"] = _ns
+        # IA-first (trava operacional): pedido operacional NÃO pode cair em VALUE/triagem.
+        # Aqui o handler só executa a decisão: ou manda link (SEND_LINK) ou faz 1 pergunta objetiva (ASK_CLARIFY).
+        # Importante: _reply_from_state SEMPRE retorna string (o dict canônico é montado em generate_reply).
+        try:
+            _i = str((nlu or {}).get("intent") or "").strip().upper()
+            _ns = str((nlu or {}).get("next_step") or "").strip().upper()
+            if _i == "OPERATIONAL" and _ns in ("SEND_LINK", "ASK_CLARIFY"):
+                st["plan_intent"] = "OPERATIONAL"
+                st["plan_next_step"] = _ns
 
-            # Nome opcional (não quebra se não existir)
-            _name = (
-                st.get("lead_name")
-                or st.get("name")
-                or st.get("leadName")
-                or st.get("display_name")
-                or ""
-            )
-            _name = str(_name or "").strip()
-            _prefix = (f"{_name}, " if _name else "")
-
-            if _ns == "SEND_LINK":
-                # Link canônico do produto (evita hardcode; cai no fallback se env não existir)
-                base = (
-                    os.getenv("FRONTEND_BASE")
-                    or os.getenv("FRONTEND_BASE_URL")
-                    or "https://mei-robo-prod.web.app"
+                _name = (
+                    st.get("lead_name")
+                    or st.get("name")
+                    or st.get("leadName")
+                    or st.get("display_name")
+                    or ""
                 )
-                base = str(base or "").strip().rstrip("/")
-                link = base + "/"
+                _name = str(_name or "").strip()
+                _prefix = (f"{_name}, " if _name else "")
 
-                reply = _prefix + "aqui tá o link: " + link
+                if _ns == "SEND_LINK":
+                    # Não precisa colar URL aqui: generate_reply garante o link e o prefersText.
+                    return (_prefix + "fechado — vou te mandar o link aqui na conversa.").strip()
 
-                # Retorno canônico pro worker (sem mexer no resto do sistema)
-                return {
-                    "kind": "sales",
-                    "route": "sales",
-                    "replyText": reply,
-                    "spokenText": reply,
-                    "ttsText": reply,
-                    "prefersText": True,  # para o worker poder mandar texto junto (link copiável)
-                    "intentFinal": "OP_REQUEST",
-                    "planNextStep": "SEND_LINK",
-                    "policiesApplied": ["op_request:send_link"],
-                    "understanding": {
-                        "route": "sales",
-                        "intent": "OP_REQUEST",
-                        "confidence": str((nlu or {}).get("confidence") or "high"),
-                        "risk": str((nlu or {}).get("risk") or "low"),
-                        "depth": str((nlu or {}).get("depth") or "shallow"),
-                        "next_step": "SEND_LINK",
-                    },
-                }
+                # ASK_CLARIFY (1 pergunta curta, sem triagem)
+                q = str((nlu or {}).get("clarifying_question") or "").strip()
+                if not q:
+                    q = "Beleza — você quer o link do site, um PDF ou uma imagem?"
+                return (_prefix + q).strip()
+        except Exception:
+            pass
 
-            # ASK_CLARIFY (1 pergunta curta, sem triagem)
-            q = str((nlu or {}).get("clarifying_question") or "").strip()
-            if not q:
-                q = "Beleza — você quer o link do site, um PDF ou uma imagem?"
-            reply = _prefix + q
-            return {
-                "kind": "sales",
-                "route": "sales",
-                "replyText": reply,
-                "spokenText": reply,
-                "ttsText": reply,
-                "prefersText": False,
-                "intentFinal": "OP_REQUEST",
-                "planNextStep": "ASK_CLARIFY",
-                "policiesApplied": ["op_request:ask_clarify"],
-                "understanding": {
-                    "route": "sales",
-                    "intent": "OP_REQUEST",
-                    "confidence": str((nlu or {}).get("confidence") or "mid"),
-                    "risk": str((nlu or {}).get("risk") or "low"),
-                    "depth": str((nlu or {}).get("depth") or "shallow"),
-                    "next_step": "ASK_CLARIFY",
-                },
-            }
-    except Exception:
-        pass
-    # IA-first (mínimo garantido): se ainda não existe plano, “promove” NLU para plano leve.
+# IA-first (mínimo garantido): se ainda não existe plano, “promove” NLU para plano leve.
     # Isso NÃO gera texto caro — só evita cair no genérico.
     try:
         _nlu_intent = str(nlu.get("intent") or "").strip().upper()
