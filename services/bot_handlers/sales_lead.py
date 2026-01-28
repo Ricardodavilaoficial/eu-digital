@@ -3176,10 +3176,10 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     has_plan = bool((str(st.get("plan_intent") or "").strip()) or (next_step_final or "").strip())
 
 
-    # Paraquedas controlado: se NÃO há plano, e o lead pediu LINK/SITE,
-    # força SEND_LINK para garantir experiência (ACK curto + link copiável).
+    # Paraquedas controlado (execução): se o lead pediu LINK/SITE,
+    # SEND_LINK tem precedência sobre VALUE (pedido explícito do usuário).
     try:
-        if (not has_plan) and (next_step_final != "SEND_LINK") and _wants_link(text_in):
+        if (next_step_final != "SEND_LINK") and _wants_link(text_in):
             next_step_final = "SEND_LINK"
             st["plan_next_step"] = "SEND_LINK"
             # Ajuda a manter o contrato estável sem inventar intent novo.
