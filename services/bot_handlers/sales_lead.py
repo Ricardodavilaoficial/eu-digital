@@ -3200,6 +3200,21 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     has_plan = bool((str(st.get("plan_intent") or "").strip()) or (next_step_final or "").strip())
 
 
+    # IA-first (policy): se o lead pediu LINK/SITE, o sistema precisa acionar SEND_LINK,
+    # mesmo que um plano fraco (ex.: VALUE) tenha sido setado antes.
+    # Isso evita cair na triagem quando o pedido é operacional ("podes me enviar o link?").
+    try:
+        if (next_step_final != "SEND_LINK") and _wants_link(text_in):
+            next_step_final = "SEND_LINK"
+            st["plan_next_step"] = "SEND_LINK"
+            # Ajuda a manter o contrato estável sem inventar intent novo.
+            if not str(st.get("plan_intent") or "").strip():
+                st["plan_intent"] = "ACTIVATE"
+            policies_applied.append("policy:force_send_link_on_wants_link")
+    except Exception:
+        pass
+
+
     # Salva interesse já setado pelo _reply_from_state
     # (sem re-chamar a IA)
     has_name = bool((st.get("name") or "").strip())
