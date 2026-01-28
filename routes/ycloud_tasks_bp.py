@@ -1911,6 +1911,16 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # ACK em áudio + texto com link, mesmo quando prefersText=false.
             close_heur_global = False
             try:
+                # IA-first: se o cérebro já sinalizou fechamento/CTA, não dependa de transcript.
+                try:
+                    _u = understanding if isinstance(understanding, dict) else {}
+                    _u_int = str(_u.get("intent") or "").strip().upper()
+                    _u_ns = str(_u.get("next_step") or "").strip().upper()
+                    if (_u_int in ("CLOSE", "ACTIVATE")) or (_u_ns in ("SEND_LINK", "CTA", "EXIT")):
+                        close_heur_global = True
+                except Exception:
+                    pass
+
                 if msg_type in ("audio", "voice", "ptt"):
                     _trg = str(transcript or "").strip().lower()
                     if _trg:
