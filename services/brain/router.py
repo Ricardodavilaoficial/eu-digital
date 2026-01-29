@@ -89,7 +89,25 @@ def _mentions_meirobo(t: str) -> bool:
     return ("mei robô" in t) or ("mei robo" in t) or ("meirobo" in t)
 
 def _looks_custom_software_quote(t: str) -> bool:
+    # Guardrail: se a pessoa está perguntando preço/assinatura da *nossa* plataforma, isso é PRICE/PLANS,
+    # não orçamento de software sob medida.
+    if any(x in t for x in _PRICE_TERMS) and (
+        "plataforma de vocês" in t
+        or "plataforma de voces" in t
+        or "da plataforma de vocês" in t
+        or "da plataforma de voces" in t
+        or "a plataforma de vocês" in t
+        or "a plataforma de voces" in t
+    ):
+        return False
     if _mentions_meirobo(t):
+        return False
+    # Se o único termo de 'software' detectado for 'plataforma', exige evidência forte de sob-medida.
+    has_platform = ("plataforma" in t)
+    has_other_software = any(x in t for x in _SOFTWARE_TERMS if x != "plataforma")
+    if has_platform and (not has_other_software):
+        if any(x in t for x in ("sob medida", "pra mim", "para mim", "pra minha", "para minha", "criar", "fazer", "desenvolver", "programar")):
+            return True
         return False
     if any(x in t for x in _SOFTWARE_TERMS) and any(x in t for x in _PRICE_TERMS):
         return True
