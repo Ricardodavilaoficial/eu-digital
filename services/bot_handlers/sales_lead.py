@@ -3103,7 +3103,17 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
         return _clip(reply_txt, SALES_MAX_CHARS_REPLY)
     # OPERATIONAL tem prioridade absoluta: responde antes de coletar dados (nome/segmento)
-    intent = (nlu.get("intent") or _intent_cheap(text_in) or "OTHER").strip().upper()
+        # Trilho óbvio (guardrail): se a IA cair em OTHER, mas o hint barato detectar
+        # um intent "óbvio" (PRICE/PLANS/DIFF/WHAT_IS), o hint vence.
+        _nlu_int = str(nlu.get("intent") or "").strip().upper()
+        _cheap_int = str(_intent_cheap(text_in) or "").strip().upper()
+        if _nlu_int in ("", "OTHER") and _cheap_int in ("PRICE", "PLANS", "DIFF", "WHAT_IS"):
+            try:
+                nlu["intent"] = _cheap_int
+                nlu["confidence"] = "high"
+            except Exception:
+                pass
+        intent = (nlu.get("intent") or _cheap_int or "OTHER").strip().upper()
     st["last_intent"] = intent
 
     if intent == "OPERATIONAL":
