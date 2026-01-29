@@ -3475,28 +3475,41 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             # 3) Dinheiro: "R$ 89,00" -> "89 reais"
             t = re.sub(r"R\$\s*(\d+)(?:[.,](\d{2}))?", r"\1 reais", t)
 
-            # 4) URL: tira protocolo e query, fala "ponto"
+            # 4) URL: fala "ponto" APENAS dentro da URL (não no texto inteiro)
             #    Ex.: https://www.meirobo.com.br?x=1 -> "meirobo ponto com ponto br"
             u = t.lower()
             if ("http://" in u) or ("https://" in u) or ("www." in u) or ("meirobo.com.br" in u):
-                # remove protocolo
-                t = re.sub(r"https?://", "", t, flags=re.IGNORECASE)
-                # remove query e fragment
-                t = re.sub(r"[\?#].*$", "", t).strip()
-                # normaliza www
-                t = re.sub(r"\bwww\.", "", t, flags=re.IGNORECASE)
-                # fala pontos (domínios)
-                t = t.replace(".com.br", " ponto com ponto br")
-                t = t.replace(".com", " ponto com")
-                t = t.replace(".br", " ponto br")
-                t = t.replace(".", " ponto ")
-                t = re.sub(r"\s+", " ", t).strip()
+                def _speak_url(raw: str) -> str:
+                    x = str(raw or "")
+                    # remove protocolo
+                    x = re.sub(r"^https?://", "", x, flags=re.IGNORECASE)
+                    # remove query e fragment
+                    x = re.sub(r"[\?#].*$", "", x).strip()
+                    # normaliza www
+                    x = re.sub(r"^www\.", "", x, flags=re.IGNORECASE)
+                    # fala pontos (domínios)
+                    x = x.replace(".com.br", " ponto com ponto br")
+                    x = x.replace(".com", " ponto com")
+                    x = x.replace(".br", " ponto br")
+                    # troca "." somente no pedaço da URL
+                    x = x.replace(".", " ponto ")
+                    x = re.sub(r"\s+", " ", x).strip()
+                    return x
+
+                # substitui apenas os trechos que parecem URL/domínio
+                t = re.sub(
+                    r"(https?://[^\s]+|www\.[^\s]+|\b[a-z0-9][a-z0-9\-\._]*\.(?:com\.br|com|br)\b)",
+                    lambda m: _speak_url(m.group(0)),
+                    t,
+                    flags=re.IGNORECASE,
+                )
 
             return t
         except Exception:
             return s
 
-    spoken_final = _speechify_for_tts(spoken_final)
+    # (evita aplicar duas vezes; existe aplicação mais abaixo em "Ajustes mínimos...")
+    # spoken_final = _speechify_for_tts(spoken_final)
 
 
     def _has_url(s: str) -> bool:
