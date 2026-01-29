@@ -777,6 +777,35 @@ def _looks_like_greeting(t: str) -> bool:
     t = _norm(t)
     return t in ("oi", "olá", "ola", "e aí", "eai", "bom dia", "boa tarde", "boa noite", "oii", "oiii")
 
+
+def _looks_like_bad_name(name: str) -> bool:
+    """
+    Detecta nomes "colados" pelo STT/regex (ex.: "Rosália podia me", "Rosália de Ponta").
+    Regra: melhor não usar nem persistir do que falar estranho no áudio.
+    """
+    n = _norm(name or "")
+    if not n:
+        return False
+    parts = [p for p in n.split(" ") if p]
+    if not parts:
+        return False
+    # Caudas típicas de STT colado
+    bad_tail = {
+        "pode","podia","podem","podes","me","te","vc","você","voces","vocês",
+        "pra","para","dizer","fala","falar","informar","confirmar",
+    }
+    if len(parts) >= 2 and parts[-1] in bad_tail:
+        return True
+    # "de/da/do/em" como parte do "nome" (muito comum quando vem cidade)
+    bad_mid = {"de","da","do","dos","das","em"}
+    if len(parts) >= 2 and any(p in bad_mid for p in parts[1:]):
+        return True
+    # strings muito longas (nome não vira frase)
+    if len(n) > 28:
+        return True
+    return False
+
+
 def _intent_cheap(t: str) -> str:
     """
     Hint barato (não é fonte canônica). O canônico vem da IA (sales_micro_nlu).
@@ -804,21 +833,21 @@ def _extract_name_freeform(text: str) -> str:
         n = re.sub(r"\s+", " ", (n or "").strip())
         if not n:
             return ""
-        # corta quando começar "pode/podia/me/te/vc/você" etc (STT costuma emendar)
-        n = re.split(r"\b(pode|podia|podem|podes|me|te|vc|você|vocês|pra|para)\b", n, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+        # corta cola do STT logo após o nome
+        n = re.split(r"\b(pode|podia|podem|podes|me|te|vc|você|vocês|pra|para|dizer|fala|falar|informar|confirmar)\b", n, maxsplit=1, flags=re.IGNORECASE)[0].strip()
         n = re.sub(r"\s+", " ", n).strip()
-        # se terminou vazio ou ficou genérico, invalida
         if not n:
             return ""
-        # evita aceitar 3 palavras com “cola” do STT
-        bad_tail = ("pode", "podia", "me", "te", "vc", "você", "pra", "para")
+        # limita palavras
         parts = [p for p in n.split(" ") if p]
-        if parts and parts[-1].lower() in bad_tail:
-            return ""
-        # limita a 3 palavras (mantém sua regra)
         if len(parts) > 3:
             n = " ".join(parts[:3]).strip()
+        # não aceita "nome" com cara de frase/cidade
+        if _looks_like_bad_name(n):
+            return ""
         return n
+
+    
     t = (text or "").strip()
     if not t:
         return ""
@@ -1178,6 +1207,15 @@ def _upsert_lead_from_state(wa_key: str, st: dict) -> None:
     segment = (st.get("segment") or "").strip()
     goal = (st.get("goal") or "").strip()
     turns = int(st.get("turns") or 0)
+
+
+    # Não persiste nome lixo (evita poluir lead/profile/index)
+    try:
+        if name and _looks_like_bad_name(name):
+            name = ""
+            st["name"] = ""
+    except Exception:
+        pass
 
     if not name and not segment:
         return
@@ -3145,6 +3183,16 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         }
 
     st, wa_key = _load_state(from_e164)
+
+    # Produção: se veio nome "lixo" da sessão/perfil, limpa antes de usar/falar/persistir.
+    try:
+        if isinstance(st, dict):
+            cur_name = str(st.get("name") or "").strip()
+            if cur_name and _looks_like_bad_name(cur_name):
+                st["name"] = ""
+                st["name_source"] = "cleared_bad_name"
+    except Exception:
+        pass
     # Trace simples (auditoria e correlação de logs)
     try:
         trace_id = hashlib.sha1(f"{wa_key}:{int(time.time()*1000)}".encode("utf-8")).hexdigest()[:12]
