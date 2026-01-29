@@ -20,6 +20,34 @@ import hashlib
 import requests
 from typing import Any, Dict, Optional, Tuple
 
+def _speechify_for_tts(text: str) -> str:
+    """
+    Ajustes mínimos pra TTS falar bem, sem destruir conteúdo.
+    IMPORTANTE: aplicar só no texto falado (spoken/tts), nunca no replyText.
+    """
+    try:
+        s = str(text or "")
+
+        # HH:MM -> "H horas" / "H e MM"
+        def _hhmm(m):
+            hh = int(m.group(1))
+            mm = int(m.group(2))
+            if mm == 0:
+                return f"{hh} horas"
+            return f"{hh} e {mm:02d}"
+        s = re.sub(r"\b(\d{1,2}):(\d{2})\b", _hhmm, s)
+
+        # Data BR simples dd/mm/aaaa -> "dd de mm de aaaa" (sem nomes de mês)
+        s = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", r"\1 de \2 de \3", s)
+
+        # Dinheiro: "R$ 89,00" -> "89 reais"
+        s = re.sub(r"R\$\s*(\d+)(?:[.,](\d{2}))?", r"\1 reais", s)
+
+        return s
+    except Exception:
+        return text
+
+
 
 # Safe import (best-effort): usado só para observabilidade
 try:
@@ -2650,6 +2678,28 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                     st["brain_plan"] = _bp
                 except Exception:
                     pass
+                # IA NO COMANDO (roteamento sempre): propaga SEMPRE o entendimento/plan pro estado,
+                # mesmo quando não intercepta (sales_legacy).
+                try:
+                    _pi = str(_bp.get("intent") or "").strip().upper()
+                    _pn = str(_bp.get("next_step") or "").strip().upper()
+                    _rt = str(_bp.get("route") or "").strip().lower()
+                    _cf = str(_bp.get("confidence_label") or "").strip().lower()
+                    _rk = str(_bp.get("risk") or "").strip().lower()
+                    if _pi:
+                        st["plan_intent"] = _pi
+                        st["understand_intent"] = _pi
+                    if _pn:
+                        st["plan_next_step"] = _pn
+                    if _rt:
+                        st["understand_route"] = _rt
+                    if _cf:
+                        st["understand_confidence"] = _cf
+                    if _rk:
+                        st["understand_risk"] = _rk
+                except Exception:
+                    pass
+
 
                 # Se o router marcou como "handled", ele já trouxe reply_text (REDIRECT/CLARIFY)
                 if bool(_bp.get("handled")):
@@ -2658,16 +2708,6 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                     except Exception:
                         _rt = ""
                     if _rt:
-                        # Harmoniza campos canônicos para logs/worker
-                        try:
-                            st["plan_intent"] = str(_bp.get("intent") or st.get("plan_intent") or "").strip().upper()
-                            st["plan_next_step"] = str(_bp.get("next_step") or st.get("plan_next_step") or "").strip().upper()
-                            st["understand_intent"] = str(_bp.get("intent") or st.get("understand_intent") or "").strip().upper()
-                            st["understand_route"] = str(_bp.get("route") or st.get("understand_route") or "").strip().lower()
-                            st["understand_confidence"] = str(_bp.get("confidence_label") or st.get("understand_confidence") or "").strip().lower()
-                            st["understand_risk"] = str(_bp.get("risk") or st.get("understand_risk") or "").strip().lower()
-                        except Exception:
-                            pass
                         return _rt
         except Exception:
             pass
@@ -3663,6 +3703,13 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
                 spoken_final = spoken_v1
     except Exception:
         # nunca quebra o fluxo por causa da fala
+        pass
+
+
+    # Ajustes mínimos para o TTS falar melhor (sem mexer no replyText)
+    try:
+        spoken_final = _speechify_for_tts(spoken_final)
+    except Exception:
         pass
 
 
