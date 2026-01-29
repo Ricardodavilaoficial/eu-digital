@@ -3352,8 +3352,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
 
     # IA-FIRST (promoção cognitiva):
-    # Se a NLU entendeu como OPERATIONAL e há pedido explícito de link,
-    # isso NÃO é policy — é decisão da IA.
+    # Se NÃO existe plano ainda, podemos promover um pedido explícito de link.
+    # Se JÁ existe plano, a IA já decidiu e ninguém compete.
     try:
         nlu = {
             "intent": (st.get("understand_intent") or st.get("plan_intent") or ""),
@@ -3363,7 +3363,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         nlu_conf   = str((nlu or {}).get("confidence") or "").strip().lower()
 
         if (
-            nlu_intent == "OPERATIONAL"
+            (not has_plan)
+            and nlu_intent == "OPERATIONAL"
             and _wants_link(text_in)
             and str(next_step_final or "").strip().upper() != "SEND_LINK"
         ):
@@ -3377,7 +3378,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     # Paraquedas controlado (execução): se o lead pediu LINK/SITE,
     # SEND_LINK tem precedência sobre VALUE (pedido explícito do usuário).
     try:
-        if (next_step_final != "SEND_LINK") and _wants_link(text_in):
+        # Só pode "forçar" link quando NÃO existe plano (fallback).
+        if (not has_plan) and (next_step_final != "SEND_LINK") and _wants_link(text_in):
             next_step_final = "SEND_LINK"
             st["plan_next_step"] = "SEND_LINK"
             # Ajuda a manter o contrato estável sem inventar intent novo.
@@ -3443,6 +3445,59 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     # Camada de fala (padrão): números e unidades por extenso
     spoken_final = _strip_md_for_tts(spoken_final)
     spoken_final = _spoken_normalize_numbers(spoken_final)
+
+
+    # ==========================================================
+    # KIT "FALA BEM" (mínimo e seguro)
+    # - Só mexe no TEXTO FALADO (spoken_final), nunca no replyText
+    # - Corrige padrões que o TTS costuma falar estranho:
+    #   1) Hora HH:MM
+    #   2) Data dd/mm/aaaa
+    #   3) Dinheiro R$ 89,00
+    #   4) URL (fala "ponto com ponto br" e remove query gigante)
+    # ==========================================================
+    def _speechify_for_tts(s: str) -> str:
+        try:
+            t = str(s or "")
+
+            # 1) Hora HH:MM -> "H horas" / "H e MM"
+            def _hhmm(m):
+                hh = int(m.group(1))
+                mm = int(m.group(2))
+                if mm == 0:
+                    return f"{hh} horas"
+                return f"{hh} e {mm:02d}"
+            t = re.sub(r"\b(\d{1,2}):(\d{2})\b", _hhmm, t)
+
+            # 2) Data BR dd/mm/aaaa -> "dd de mm de aaaa" (sem nomes de mês)
+            t = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", r"\1 de \2 de \3", t)
+
+            # 3) Dinheiro: "R$ 89,00" -> "89 reais"
+            t = re.sub(r"R\$\s*(\d+)(?:[.,](\d{2}))?", r"\1 reais", t)
+
+            # 4) URL: tira protocolo e query, fala "ponto"
+            #    Ex.: https://www.meirobo.com.br?x=1 -> "meirobo ponto com ponto br"
+            u = t.lower()
+            if ("http://" in u) or ("https://" in u) or ("www." in u) or ("meirobo.com.br" in u):
+                # remove protocolo
+                t = re.sub(r"https?://", "", t, flags=re.IGNORECASE)
+                # remove query e fragment
+                t = re.sub(r"[\?#].*$", "", t).strip()
+                # normaliza www
+                t = re.sub(r"\bwww\.", "", t, flags=re.IGNORECASE)
+                # fala pontos (domínios)
+                t = t.replace(".com.br", " ponto com ponto br")
+                t = t.replace(".com", " ponto com")
+                t = t.replace(".br", " ponto br")
+                t = t.replace(".", " ponto ")
+                t = re.sub(r"\s+", " ", t).strip()
+
+            return t
+        except Exception:
+            return s
+
+    spoken_final = _speechify_for_tts(spoken_final)
+
 
     def _has_url(s: str) -> bool:
         t = (s or "").lower()
