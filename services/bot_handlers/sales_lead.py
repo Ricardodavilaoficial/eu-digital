@@ -800,6 +800,25 @@ def _extract_name_freeform(text: str) -> str:
     - Aceita 1–3 palavras como nome.
     - Suporta: "me chamo X", "me chamam de X", "pode me chamar de X", "meu nome é X", "aqui é X", "sou X"
     """
+    def _sanitize_name_candidate(n: str) -> str:
+        n = re.sub(r"\s+", " ", (n or "").strip())
+        if not n:
+            return ""
+        # corta quando começar "pode/podia/me/te/vc/você" etc (STT costuma emendar)
+        n = re.split(r"\b(pode|podia|podem|podes|me|te|vc|você|vocês|pra|para)\b", n, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+        n = re.sub(r"\s+", " ", n).strip()
+        # se terminou vazio ou ficou genérico, invalida
+        if not n:
+            return ""
+        # evita aceitar 3 palavras com “cola” do STT
+        bad_tail = ("pode", "podia", "me", "te", "vc", "você", "pra", "para")
+        parts = [p for p in n.split(" ") if p]
+        if parts and parts[-1].lower() in bad_tail:
+            return ""
+        # limita a 3 palavras (mantém sua regra)
+        if len(parts) > 3:
+            n = " ".join(parts[:3]).strip()
+        return n
     t = (text or "").strip()
     if not t:
         return ""
@@ -830,6 +849,7 @@ def _extract_name_freeform(text: str) -> str:
 
             # limpa pontuação residual
             name = re.sub(r"[^\wÀ-ÿ\s'\-]", "", name).strip()
+            name = _sanitize_name_candidate(name)
             return name
 
 
@@ -844,6 +864,7 @@ def _extract_name_freeform(text: str) -> str:
             name = (m2.group(2) or "").strip()
             name = re.sub(r"\s+", " ", name).strip()
             name = re.sub(r"[^\wÀ-ÿ\s'\-]", "", name).strip()
+            name = _sanitize_name_candidate(name)
             if name and (not _looks_like_greeting(name)):
                 return name
     except Exception:
@@ -853,6 +874,7 @@ def _extract_name_freeform(text: str) -> str:
     parts = t.split()
     if 1 <= len(parts) <= 3 and len(t) <= 30:
         name = re.sub(r"[^\wÀ-ÿ\s'\-]", "", t).strip()
+        name = _sanitize_name_candidate(name)
         return name
 
     return ""
