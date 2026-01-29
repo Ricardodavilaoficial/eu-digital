@@ -3203,6 +3203,30 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     has_plan = bool((str(st.get("plan_intent") or "").strip()) or (next_step_final or "").strip())
 
 
+
+    # IA-FIRST (promoção cognitiva):
+    # Se a NLU entendeu como OPERATIONAL e há pedido explícito de link,
+    # isso NÃO é policy — é decisão da IA.
+    try:
+        nlu = {
+            "intent": (st.get("understand_intent") or st.get("plan_intent") or ""),
+            "confidence": (st.get("understand_confidence") or st.get("decision_confidence") or ""),
+        }
+        nlu_intent = str((nlu or {}).get("intent") or "").strip().upper()
+        nlu_conf   = str((nlu or {}).get("confidence") or "").strip().lower()
+
+        if (
+            nlu_intent == "OPERATIONAL"
+            and _wants_link(text_in)
+            and str(next_step_final or "").strip().upper() != "SEND_LINK"
+        ):
+            next_step_final = "SEND_LINK"
+            st["plan_next_step"] = "SEND_LINK"
+            st["understand_source"] = "nlu"
+            st["understand_confidence"] = nlu_conf if nlu_conf in ("high","mid","low") else "high"
+    except Exception:
+        pass
+
     # Paraquedas controlado (execução): se o lead pediu LINK/SITE,
     # SEND_LINK tem precedência sobre VALUE (pedido explícito do usuário).
     try:
