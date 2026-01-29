@@ -2543,6 +2543,11 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     try:
         _ns0 = str((nlu or {}).get("next_step") or "").strip().upper()
         if _ns0 == "SEND_LINK":
+            # Observabilidade: prova de soberania (não é policy)
+            st["understand_source"] = "nlu"
+            # Confiança: se a NLU não mandar, este caso é explícito -> high
+            _c0 = str((nlu or {}).get("confidence") or "").strip().lower()
+            st["understand_confidence"] = _c0 if _c0 in ("high","mid","low") else "high"
             st["plan_intent"] = str((nlu or {}).get("intent") or "OPERATIONAL").strip().upper() or "OPERATIONAL"
             st["plan_next_step"] = "SEND_LINK"
             _name = (st.get("name") or "").strip()
@@ -3208,6 +3213,9 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             if not str(st.get("plan_intent") or "").strip():
                 st["plan_intent"] = "ACTIVATE"
             policies_applied.append("policy:force_send_link_on_wants_link")
+            # Observabilidade: aqui foi paraquedas, não decisão da IA
+            if not str(st.get("understand_source") or "").strip():
+                st["understand_source"] = "policy"
     except Exception:
         pass
 
@@ -3271,6 +3279,9 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
     prefers_text = False
 
+
+    tts_ack_text = ""
+
     # Policy (novo trilho): se o Planner mandou SEND_LINK, o código só GARANTE que o link aparece.
     # Isso não é estratégia: é execução do plano (sem competir com a IA).
     # Blindagem de produto: VOICE não é fechamento, a menos que o lead tenha pedido link/assinar.
@@ -3289,6 +3300,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             spoken_final = f"Fechado, {lead_name}! Na sequência eu te mando por escrito o link pra assinar."
         else:
             spoken_final = "Fechado! Na sequência eu te mando por escrito o link pra assinar."
+        tts_ack_text = spoken_final
         policies_applied.append("policy:plan_send_link")
 
     # Legado controlado (compat): se não há plano e overrides estão ligados, mantém o comportamento antigo.
@@ -3572,7 +3584,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     except Exception:
         _conf_u = ""
     if _conf_u not in ("high", "mid", "low"):
-        _conf_u = ""
+        _conf_u = "mid"
 
     try:
         _risk_u = str(st.get("understand_risk") or "").strip().lower()
@@ -3595,6 +3607,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "risk": _risk_u,
         "depth": _depth_u,
         "next_step": _ns_u,
+        "source": str(st.get("understand_source") or "").strip() or "unknown",
     }
 
     return {
@@ -3605,6 +3618,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         # 🔒 Fonte de verdade para áudio (worker deve preferir estes campos)
         "ttsText": spoken_final,
         "spokenText": spoken_final,
+        "ttsAckText": tts_ack_text,
 
         # Contrato de política/auditoria (incremental)
         "intentFinal": understand_contract.get("intent") or "OTHER",
