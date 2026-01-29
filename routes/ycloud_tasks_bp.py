@@ -567,21 +567,32 @@ def _openai_extract_speaker(text: str, owner_name: str = "", active_name: str = 
 
 
 def _detect_name_override(text: str) -> str:
-    t = (text or "").strip()
-    if not t:
+    try:
+        t = (text or "").strip()
+        if not t:
+            return ""
+        # padrões comuns (inclui "aqui quem fala é X", "aqui é o X")
+        m = re.search(
+            r"\b("
+            r"meu nome é|me chamo|sou o|sou a|"
+            r"aqui quem fala é|aqui quem tá falando é|aqui é o|aqui é a|"
+            r"quem fala é|quem tá falando é"
+            r")\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'\- ]{1,40})\b",
+            t,
+            re.IGNORECASE,
+        )
+        if not m:
+            return ""
+        name = (m.group(2) or "").strip()
+        name = re.sub(r"\s+", " ", name)
+        # corta excessos comuns
+        name = re.sub(r"\b(da|do|de)\b.*$", "", name, flags=re.IGNORECASE).strip()
+        if len(name) < 2:
+            return ""
+        return name
+    except Exception:
         return ""
-    patterns = [
-        r"\bmeu nome é\s+(?:o|a|os|as)?\s*([A-Za-zÀ-ÿ]{2,}(?:\s+[A-Za-zÀ-ÿ]{2,}){0,2})\b",
-        r"\baqui é\s+(?:o|a|os|as)?\s*([A-Za-zÀ-ÿ]{2,}(?:\s+[A-Za-zÀ-ÿ]{2,}){0,2})\b",
-        r"\baqui quem fala é\s+([A-Za-zÀ-ÿ]{2,})\b",
-        r"\bnão é\s+[A-Za-zÀ-ÿ]{2,}\s*,?\s*é\s+([A-Za-zÀ-ÿ]{2,})\b",
-        r"\bnão sou\s+[A-Za-zÀ-ÿ]{2,}\s*,?\s*sou\s+([A-Za-zÀ-ÿ]{2,})\b",
-    ]
-    for p in patterns:
-        m = re.search(p, t, flags=re.IGNORECASE)
-        if m:
-            return (m.group(1) or "").strip()
-    return ""
+
 
 def _set_name_override(wa_key: str, name: str) -> None:
     if not wa_key or not name:
@@ -1863,6 +1874,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             "name": name_probe,
                             "expiresAt": exp,
                             "now": time.time(),
+                            "path": f"platform_name_overrides/{wa_key_effective}",
                         }
 
                         # speaker state probe
@@ -1870,12 +1882,14 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             sp = _speaker_db().collection(_SPEAKER_COLL).document(wa_key_effective).get()
                             spd = sp.to_dict() or {}
                             audio_debug["speakerStateProbe_get"] = {
+                                "waKey": wa_key_effective,
                                 "docExists": bool(sp.exists),
                                 "displayName": str(spd.get("displayName") or "").strip(),
                                 "expiresAt": float(spd.get("expiresAt") or 0.0),
                                 "source": str(spd.get("source") or "").strip(),
                                 "confidence": float(spd.get("confidence") or 0.0),
                                 "now": time.time(),
+                                "path": f"{_SPEAKER_COLL}/{wa_key_effective}",
                             }
                         except Exception:
                             pass
@@ -1896,6 +1910,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     # mantém display_name consistente (para TTS/ack/meta)
                     if override and not (display_name or "").strip():
                         display_name = str(override).strip()
+
+                # fallback final: se ainda não temos display_name, tenta speakerState diretamente
+                try:
+                    if not (display_name or "").strip() and wa_key_effective:
+                        display_name = (_get_active_speaker(wa_key_effective) or "").strip()
+                except Exception:
+                    pass
 
                     # 🔥 CRÍTICO: se já tinha áudio pronto (ex.: vindo do wa_bot),
                     # mas o texto mudou por override, invalida áudio pra regenerar com o nome certo.
@@ -2477,6 +2498,26 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # Evita depender do "bloco final" e facilita auditoria em produção.
             def _try_log_outbox_immediate(_sent_ok: bool, _channel: str, _extra: dict = None) -> None:
                 try:
+                    # A3: Se cair no modo ACK+texto, não pode perder displayName no outbox
+                    try:
+                        # tenta preservar nome mesmo quando o fluxo é "send_audio_ack_then_text"
+                        _dn = (display_name or "").strip()
+                        if not _dn and isinstance(audio_debug, dict):
+                            _no = audio_debug.get("nameOverride") if isinstance(audio_debug.get("nameOverride"), dict) else {}
+                            _dn = str((_no or {}).get("name") or "").strip()
+                        # fallback final: override em escopo (já aplicado no bloco de override)
+                        if isinstance(audio_debug, dict):
+                            wom = audio_debug.get("waOutMeta") if isinstance(audio_debug.get("waOutMeta"), dict) else {}
+                            wom = dict(wom or {})
+                            if not str(wom.get("displayName") or "").strip():
+                                if _dn:
+                                    wom["displayName"] = _dn
+                                elif (override or "").strip():
+                                    wom["displayName"] = str(override).strip()
+                            audio_debug["waOutMeta"] = wom
+                    except Exception:
+                        pass
+
                     payload_out = {
                         "createdAt": firestore.SERVER_TIMESTAMP,
                         "from": from_e164,
