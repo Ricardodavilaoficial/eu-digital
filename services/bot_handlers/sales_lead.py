@@ -2642,6 +2642,18 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     except Exception:
         pass
 
+
+    # Close óbvio: se o usuário disser que vai assinar / quer o procedimento, não pode cair em menu.
+    try:
+        _t = (text_in or "").lower()
+        if any(k in _t for k in ("vou assinar", "quero assinar", "fazer assinatura", "assinatura", "quero contratar", "quero ativar", "procedimento", "passo a passo")):
+            nlu = dict(nlu or {})
+            nlu["intent"] = nlu.get("intent") or "ACTIVATE"
+            nlu["confidence"] = nlu.get("confidence") or "high"
+            nlu["next_step"] = nlu.get("next_step") or "SEND_LINK"
+    except Exception:
+        pass
+
     # ==========================================================
     # OBSERVABILIDADE: sempre preencher "understanding" no estado
     # (pra nunca mais aparecer source=unknown e campos vazios)
