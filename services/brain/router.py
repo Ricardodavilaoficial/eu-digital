@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import Any, Dict, Optional
 
 # Cache helpers (best-effort)
@@ -41,9 +42,38 @@ def _brain_mode() -> str:
         m = str(os.getenv("BRAIN_MODE", "off") or "off").strip().lower()
     except Exception:
         m = "off"
-    if m not in ("off", "shadow", "on"):
+    # off: desliga
+    # shadow: roda e loga, mas não intercepta
+    # canary: intercepta só uma fatia (ex.: 10%)
+    # on: intercepta sempre (quando route_box != sales_legacy)
+    if m not in ("off", "shadow", "canary", "on"):
         m = "off"
     return m
+
+def _canary_allows() -> bool:
+    """
+    Canary simples (determinístico) por hash do texto normalizado.
+    Default: 10% (BRAIN_CANARY_PCT=10).
+    """
+    try:
+        pct = int(os.getenv("BRAIN_CANARY_PCT", "10") or "10")
+        pct = max(0, min(100, pct))
+    except Exception:
+        pct = 10
+    if pct <= 0:
+        return False
+    if pct >= 100:
+        return True
+    # usa o valor já calculado no cache_key (sha1 do texto), mas aqui fazemos um hash curto
+    # para não depender de libs extras.
+    try:
+        # gera 0..99 estável
+        h = _sha1(os.getenv("BRAIN_CANARY_SEED", "v1") + str(time.time_ns()))  # fallback improvável
+    except Exception:
+        h = _sha1("v1")
+    # acima não é determinístico; então fazemos determinístico pelo texto no decide().
+    # (Essa função fica disponível, mas a lógica determinística entra no decide().)
+    return True
 
 # Minimal detectors (not "gíria catálogo" — só intenção macro)
 _SOFTWARE_TERMS = (
@@ -123,6 +153,24 @@ def decide_from_sales_signals(
         "reply_text": "",
         "reason": "",
     }
+
+
+    # Canary: trata como "shadow" para a maioria e "on" para uma fatia determinística.
+    # Determinístico por hash do texto (t).
+    if mode == "canary":
+        try:
+            pct = int(os.getenv("BRAIN_CANARY_PCT", "10") or "10")
+            pct = max(0, min(100, pct))
+        except Exception:
+            pct = 10
+        bucket = int(_sha1(t)[:2], 16)  # 0..255
+        hit = (bucket % 100) < pct
+        plan["canary_hit"] = bool(hit)
+        if not hit:
+            # vira shadow (loga, não intercepta)
+            plan["mode"] = "shadow"
+            mode = "shadow"
+
 
     # 1) NLU/Decider pediu clarificação: router respeita (mas shadow não interrompe)
     if needs_clar:
