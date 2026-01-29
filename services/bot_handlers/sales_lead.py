@@ -2626,6 +2626,36 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     # NLU (IA) — fonte canônica de intent/route/next_step/interest
     nlu = sales_micro_nlu(text_in, stage=stage)
 
+
+    # ==========================================================
+    # TRILHO ÓBVIO (anti-regressão)
+    # Se a IA cair em OTHER/vazio, mas o hint barato detectar intenção óbvia,
+    # a intenção óbvia vence. Isso evita "menu" em pergunta simples.
+    # ==========================================================
+    try:
+        _nlu_int = str((nlu or {}).get("intent") or "").strip().upper()
+        _cheap_int = str(_intent_cheap(text_in) or "").strip().upper()
+        if _nlu_int in ("", "OTHER") and _cheap_int in ("PRICE", "PLANS", "DIFF", "WHAT_IS", "VOICE"):
+            nlu = dict(nlu or {})
+            nlu["intent"] = _cheap_int
+            nlu["confidence"] = "high"
+    except Exception:
+        pass
+
+    # ==========================================================
+    # OBSERVABILIDADE: sempre preencher "understanding" no estado
+    # (pra nunca mais aparecer source=unknown e campos vazios)
+    # ==========================================================
+    try:
+        st["understand_source"] = "sales_micro_nlu"
+        st["understand_intent"] = str((nlu or {}).get("intent") or "").strip().upper()
+        st["understand_confidence"] = str((nlu or {}).get("confidence") or "").strip().lower()
+        st["understand_route"] = str((nlu or {}).get("route") or "sales").strip().lower()
+        st["understand_next_step"] = str((nlu or {}).get("next_step") or "").strip().upper()
+        st["understand_cheap_intent"] = str(_intent_cheap(text_in) or "").strip().upper()
+    except Exception:
+        pass
+
     # IA-first: quando a NLU já decidiu SEND_LINK, isso é execução imediata (não triagem).
     # OBS: o generate_reply é quem garante prefersText + link no replyText + ACK falável.
     try:
@@ -3863,7 +3893,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "risk": _risk_u,
         "depth": _depth_u,
         "next_step": _ns_u,
-        "source": str(st.get("understand_source") or "").strip() or "unknown",
+        "source": str(st.get("understand_source") or "sales_micro_nlu").strip(),
     }
 
     return {
@@ -3880,6 +3910,14 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "intentFinal": understand_contract.get("intent") or "OTHER",
         "planNextStep": understand_contract.get("next_step") or "",
         "understanding": understand_contract,
+        "understandingDebug": {
+            "nlu_intent": str(st.get("understand_intent") or ""),
+            "nlu_conf": str(st.get("understand_confidence") or ""),
+            "nlu_next": str(st.get("understand_next_step") or ""),
+            "cheap_intent": str(st.get("understand_cheap_intent") or ""),
+            "dec_intent": str(st.get("decision_intent") or ""),
+            "dec_conf": str(st.get("decision_confidence") or ""),
+        },
         "pricingUsed": pricing_used,
         "pricingSource": pricing_source,
         "policiesApplied": policies_applied,
