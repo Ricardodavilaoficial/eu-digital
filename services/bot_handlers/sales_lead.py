@@ -2635,6 +2635,43 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             "me dá", "me da", "joga", "jogar", "solta", "soltar"
         ))
 
+        # ==========================================================
+        # CÉREBRO ÚNICO (router) — decide "caixa" ANTES de heurísticas.
+        # - Não muda o contrato externo
+        # - Pode rodar em shadow mode (só log)
+        # - Se decidir REDIRECT/CLARIFY, faz early-return aqui
+        # ==========================================================
+        try:
+            from services.brain.router import decide_from_sales_signals  # lazy import
+            _bp = decide_from_sales_signals(text_in=text_in, stage=stage, st=st, nlu=nlu, dec=dec)
+            if isinstance(_bp, dict) and _bp:
+                # Observabilidade: sempre guarda o plano (mesmo em shadow)
+                try:
+                    st["brain_plan"] = _bp
+                except Exception:
+                    pass
+
+                # Se o router marcou como "handled", ele já trouxe reply_text (REDIRECT/CLARIFY)
+                if bool(_bp.get("handled")):
+                    try:
+                        _rt = str(_bp.get("reply_text") or "").strip()
+                    except Exception:
+                        _rt = ""
+                    if _rt:
+                        # Harmoniza campos canônicos para logs/worker
+                        try:
+                            st["plan_intent"] = str(_bp.get("intent") or st.get("plan_intent") or "").strip().upper()
+                            st["plan_next_step"] = str(_bp.get("next_step") or st.get("plan_next_step") or "").strip().upper()
+                            st["understand_intent"] = str(_bp.get("intent") or st.get("understand_intent") or "").strip().upper()
+                            st["understand_route"] = str(_bp.get("route") or st.get("understand_route") or "").strip().lower()
+                            st["understand_confidence"] = str(_bp.get("confidence_label") or st.get("understand_confidence") or "").strip().lower()
+                            st["understand_risk"] = str(_bp.get("risk") or st.get("understand_risk") or "").strip().lower()
+                        except Exception:
+                            pass
+                        return _rt
+        except Exception:
+            pass
+
         # Objetos comuns (apenas para decidir "SEND_LINK" quando for muito óbvio; resto pergunta)
         _asks_link = any(x in _t for x in ("link", "site", "página", "pagina", "url", "endereço", "endereco"))
 
