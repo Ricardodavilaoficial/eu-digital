@@ -2646,8 +2646,16 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         _rt = (reply_text or "").strip()
                         if _rt:
                             if ("http://" not in _rt.lower()) and ("https://" not in _rt.lower()):
-                                _rt = _rt.replace("www.meirobo.com.br", "https://www.meirobo.com.br").replace(
-                                    "meirobo.com.br", "https://www.meirobo.com.br"
+                                _rt = (
+
+                                    _rt.replace("www.https://", "https://")
+
+                                       .replace("www.http://", "http://")
+
+                                       .replace("www.meirobo.com.br", "https://www.meirobo.com.br")
+
+                                       .replace("meirobo.com.br", "https://www.meirobo.com.br")
+
                                 )
                             _ok3, _ = send_text(from_e164, _rt)
                             sent_ok = sent_ok or _ok3
@@ -2730,8 +2738,16 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             _rt = (reply_text or "").strip()
                             if _rt:
                                 if ("http://" not in _rt.lower()) and ("https://" not in _rt.lower()):
-                                    _rt = _rt.replace("www.meirobo.com.br", "https://www.meirobo.com.br").replace(
-                                        "meirobo.com.br", "https://www.meirobo.com.br"
+                                    _rt = (
+
+                                        _rt.replace("www.https://", "https://")
+
+                                           .replace("www.http://", "http://")
+
+                                           .replace("www.meirobo.com.br", "https://www.meirobo.com.br")
+
+                                           .replace("meirobo.com.br", "https://www.meirobo.com.br")
+
                                     )
                                 _okT2, _ = send_text(from_e164, _rt)
                                 sent_ok = sent_ok or bool(_okT2)
