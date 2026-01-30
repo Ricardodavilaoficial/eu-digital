@@ -33,7 +33,7 @@ _SALES_TTS_MODE = (os.environ.get("SALES_TTS_MODE") or "on").strip().lower()  # 
 _SALES_TTS_MODEL = (os.environ.get("SALES_TTS_MODEL") or "gpt-4o-mini").strip()
 _SALES_TTS_MAX_TOKENS = int(os.environ.get("SALES_TTS_MAX_TOKENS", "220") or "220")
 _SALES_TTS_MAX_CHARS = int(os.environ.get("SALES_TTS_MAX_CHARS", "520") or "520")
-_SALES_SITE_URL = (os.environ.get("MEI_ROBO_SITE_URL") or "meirobo.com.br").strip()
+_SALES_SITE_URL = (os.environ.get("MEI_ROBO_SITE_URL") or "www.meirobo.com.br").strip()
 
 
 _SUPPORT_TTS_SUMMARY_MODE = (os.environ.get("SUPPORT_TTS_SUMMARY_MODE") or "off").strip().lower()  # on|off
@@ -1730,6 +1730,23 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             reply_text = str(wa_out)
         reply_text = reply_text or ""
 
+        # ==========================================================
+        # GUARD (produto): SEND_LINK => texto com link SEMPRE
+        # - Se prefersText=true e planNextStep=SEND_LINK, o link não pode "sumir"
+        # - Mesmo quando entrou áudio e a resposta também é áudio.
+        # ==========================================================
+        force_send_link_text = False
+        try:
+            if bool(prefers_text) and str(plan_next_step or "").strip().upper() == "SEND_LINK":
+                force_send_link_text = True
+                _rt0 = (reply_text or "").strip()
+                # garante link canônico (sem https obrigatório)
+                if ("www.meirobo.com.br" not in _rt0.lower()):
+                    reply_text = (_rt0.rstrip() + "\n\nwww.meirobo.com.br").strip() if _rt0 else "www.meirobo.com.br"
+        except Exception:
+            force_send_link_text = False
+
+
         # SENTINELA: prova que gerou (ou não) conteúdo
         logger.info("[tasks] computed reply chars=%d prefers_text=%s has_audio=%s",
                     len((reply_text or "").strip()), bool(prefers_text), bool(audio_url))
@@ -2023,7 +2040,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 # PILAR: entrou ÁUDIO -> sai ÁUDIO (exceto fechamento).
                 # prefersText aqui é "tem link", não é "usuário pediu texto".
                 # Então, se NÃO for fechamento, não pode bloquear o áudio.
-                if (msg_type in ("audio", "voice", "ptt")) and prefers_text and (not is_close_signal):
+                # EXCEÇÃO: SEND_LINK => texto com link é obrigatório (mesmo com áudio).
+                if (msg_type in ("audio", "voice", "ptt")) and prefers_text and (not is_close_signal) and (not force_send_link_text):
                     prefers_text = False
                     try:
                         audio_debug = dict(audio_debug or {})
@@ -2746,6 +2764,25 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 if sent_ack_audio:
                     sent_ok = sent_ok or bool(_ok2)
                     did_send_audio = did_send_audio or bool(_ok2)
+
+                # ==========================================================
+                # GUARD (produto): se era SEND_LINK, manda TEXTO com o link também
+                # mesmo quando a trilha principal foi áudio.
+                # ==========================================================
+                try:
+                    if force_send_link_text and send_text:
+                        _rtL = (reply_text or "").strip()
+                        if _rtL and ("www.meirobo.com.br" not in _rtL.lower()):
+                            _rtL = (_rtL.rstrip() + "\n\nwww.meirobo.com.br").strip()
+                        if _rtL:
+                            _okL, _ = send_text(from_e164, _rtL)
+                            sent_ok = sent_ok or bool(_okL)
+                            try:
+                                _try_log_outbox_immediate(True, "send_audio_then_text_send_link")
+                            except Exception:
+                                pass
+                except Exception:
+                    logger.exception("[tasks] lead: falha send_text (send_link_after_audio)")
 
 
                 # Pacote 2 (regra): se foi "decisão de assinar" por ÁUDIO, manda TEXTO com link também,
