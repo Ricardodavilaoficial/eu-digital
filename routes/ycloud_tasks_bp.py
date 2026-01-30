@@ -1097,6 +1097,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     )
     ev_type = str(ev_type).strip()
 
+    eventType_missing_fallback = False
+
     if ev_type != "whatsapp.inbound_message.received":
         # Fallback saudável: eventType pode vir vazio em testes manuais/alguns provedores.
         # Se houver sinais fortes de inbound real, processa mesmo assim.
@@ -1108,6 +1110,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         _looks_inbound = bool(_w0 and _from0 and _to0 and (_mt in ("text", "chat", "audio", "voice", "ptt")))
 
         if (not ev_type) and _looks_inbound:
+            eventType_missing_fallback = True
             logger.info(
                 "[tasks] eventType_missing_fallback=true eventKey=%s wamid=%s msgType=%s",
                 event_key, (_w0 or _wamid), _mt
@@ -1685,6 +1688,21 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         understanding["next_step"] = _nn
             except Exception:
                 pass
+            # Observabilidade IA-first (fallback): garante campos básicos no understanding
+            try:
+                if not isinstance(understanding, dict):
+                    understanding = {}
+                if not understanding.get("source"):
+                    understanding["source"] = "worker_fallback_from_wa_out"
+                if not understanding.get("intent"):
+                    understanding["intent"] = intent_final or ""
+                if not understanding.get("next_step"):
+                    understanding["next_step"] = plan_next_step or ""
+                if eventType_missing_fallback:
+                    understanding["eventType_missing_fallback"] = True
+            except Exception:
+                pass
+
 
 
             # A2: propaga _debug do handler para facilitar auditoria (planner/composer/fallback/worker)
@@ -2044,7 +2062,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     # Se não tem audio_url ainda, gera ACK institucional via /api/voz/tts e sobe Signed URL (padrão do worker)
                     if not audio_url:
                         try:
-                            base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+                            base = (
+                                    os.environ.get("BACKEND_BASE_URL")
+                                    or os.environ.get("BACKEND_BASE")
+                                    or ""
+                                ).strip().rstrip("/")
                             if not base:
                                 base = (request.host_url or "").strip().rstrip("/")
                             # Cloud Run pode redirecionar http->https com 302; requests pode virar GET e quebrar o POST.
@@ -2092,7 +2114,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     # gera áudio curto institucional (sem url) para manter "entra áudio -> sai áudio"
                     if not audio_url:
                         try:
-                            base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+                            base = (
+                                    os.environ.get("BACKEND_BASE_URL")
+                                    or os.environ.get("BACKEND_BASE")
+                                    or ""
+                                ).strip().rstrip("/")
                             if not base:
                                 base = (request.host_url or "").strip().rstrip("/")
                             # Cloud Run pode redirecionar http->https com 302; requests pode virar GET e quebrar o POST.
@@ -2151,7 +2177,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # ==========================================================
             if msg_type in ("audio", "voice", "ptt") and (not audio_url) and reply_text and (not prefers_text):
                 try:
-                    base = (os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+                    base = (
+                                    os.environ.get("BACKEND_BASE_URL")
+                                    or os.environ.get("BACKEND_BASE")
+                                    or ""
+                                ).strip().rstrip("/")
                     if not base:
                         base = (request.host_url or "").strip().rstrip("/")
                     # Cloud Run pode redirecionar http->https com 302; requests pode virar GET e quebrar o POST.
