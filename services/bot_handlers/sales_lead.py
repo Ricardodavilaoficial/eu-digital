@@ -308,6 +308,11 @@ _SALES_KB_CACHE: Optional[Dict[str, Any]] = None
 _SALES_KB_CACHE_AT: float = 0.0
 _SALES_KB_TTL_SECONDS: int = int(os.getenv("SALES_KB_TTL_SECONDS", "600"))
 
+
+
+# Blindagem de economia: nunca enviar KB inteira ao LLM
+# Limite duro do "slice" de KB que pode entrar em prompts (chars ~ tokens*4)
+_SALES_KB_SLICE_MAX_CHARS = int(os.getenv("SALES_KB_SLICE_MAX_CHARS", "3600") or "3600")
 def _fmt_brl_from_cents(cents: Any) -> str:
     try:
         c = int(cents)
@@ -2647,6 +2652,113 @@ def _kb_compact_for_prompt(kb: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _kb_intent_allowlist_keys(intent_hint: str) -> set:
+    """Chaves do KB compacto permitidas por intenção.
+    Blindagem: mesmo se platform_kb/sales crescer, o prompt fica estável.
+    """
+    i = (intent_hint or "").strip().upper()
+    base = {
+        "identity_blurb",
+        "tone_rules",
+        "behavior_rules",
+        "ethical_guidelines",
+        "value_props",
+        "cta_one_liners",
+    }
+    if i in ("PRICE", "PLANS"):
+        return base | {"pricing_behavior", "objections_preco"}
+    if i in ("VOICE",):
+        return base | {"voice_pill", "voice_positioning"}
+    if i in ("OPERATIONAL", "WHAT_IS", "OPERATIONAL_FLOW"):
+        return base | {"how_it_works_3steps", "operational_examples", "value_in_action_blocks", "segments"}
+    if i in ("ACTIVATE", "ACTIVATE_SEND_LINK", "SEND_LINK"):
+        return base | {"process_facts", "intent_guidelines", "closing_behaviors", "how_to_get_started"}
+    if i in ("DIFF",):
+        return base | {"commercial_positioning", "product_boundaries", "how_it_works_rich", "plans"}
+    if i in ("TRUST", "SECURITY"):
+        return base | {"product_boundaries", "objections_confianca"}
+    return base | {"how_it_works_3steps"}
+
+
+def _compact_json(obj: Any) -> str:
+    try:
+        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        try:
+            return str(obj)
+        except Exception:
+            return ""
+
+
+def _enforce_kb_slice_cap(obj: Dict[str, Any], *, max_chars: int) -> Tuple[Dict[str, Any], bool, int]:
+    """Limite duro: garante que o contexto de KB para o LLM não explode."""
+    if not isinstance(obj, dict):
+        return ({}, False, 0)
+    s = _compact_json(obj)
+    n = len(s)
+    if n <= max_chars:
+        return (obj, False, n)
+
+    # Truncagem segura: mantém só o núcleo útil e curto
+    keep_order = [
+        "identity_blurb",
+        "tone_rules",
+        "behavior_rules",
+        "ethical_guidelines",
+        "value_props",
+        "how_it_works_3steps",
+        "cta_one_liners",
+        "process_facts",
+        "voice_pill",
+        "value_in_action_blocks",
+    ]
+    out: Dict[str, Any] = {}
+    for k in keep_order:
+        if k in obj:
+            out[k] = obj.get(k)
+            if len(_compact_json(out)) >= max_chars:
+                break
+
+    try:
+        if isinstance(out.get("identity_blurb"), str) and len(out["identity_blurb"]) > 220:
+            out["identity_blurb"] = out["identity_blurb"][:220]
+    except Exception:
+        pass
+
+    return (out, True, len(_compact_json(out)))
+
+
+def _kb_slice_for_llm(*, kb: Dict[str, Any], intent_hint: str, segment: str = "") -> Dict[str, Any]:
+    """Gera slice compacto + allowlist do KB para prompts (economia garantida)."""
+    rep = _kb_compact_for_prompt(kb or {})
+    allowed = _kb_intent_allowlist_keys(intent_hint)
+
+    sliced: Dict[str, Any] = {}
+    for k in allowed:
+        if k in rep:
+            sliced[k] = rep.get(k)
+
+    seg = (segment or "").strip().lower()
+    if seg and isinstance(sliced.get("segments"), dict):
+        try:
+            segs = sliced.get("segments") or {}
+            if isinstance(segs, dict) and seg in segs:
+                sliced["segments"] = {seg: segs.get(seg)}
+            else:
+                # não inclui segments se não for relevante
+                sliced.pop("segments", None)
+        except Exception:
+            pass
+
+    final, truncated, chars = _enforce_kb_slice_cap(sliced, max_chars=_SALES_KB_SLICE_MAX_CHARS)
+    if truncated:
+        try:
+            logger.info("[sales_kb] slice_truncated intent=%s chars=%s max=%s", (intent_hint or ""), chars, _SALES_KB_SLICE_MAX_CHARS)
+        except Exception:
+            pass
+    return final
+
+
 
 def _select_kb_blocks_by_intent(intent_final: str) -> list:
     """
@@ -2697,7 +2809,7 @@ def _ai_sales_answer(
     - Usa Firestore como repertório (sem copiar literal).
     """
     kb = _get_sales_kb()
-    rep = _kb_compact_for_prompt(kb)
+    rep = _kb_slice_for_llm(kb=kb, intent_hint=intent_hint or "", segment=segment or "")
 
     kb_blocks = []
 
@@ -3009,7 +3121,7 @@ def _ai_pitch(name: str, segment: str, user_text: str, state: Optional[Dict[str,
         return cached
 
     kb = _get_sales_kb() or {}
-    rep = _kb_compact_for_prompt(kb)
+    rep = _kb_slice_for_llm(kb=kb, intent_hint=hint or "", segment=segment or "")
     # Seleciona exemplo operacional só quando há segmento (anti-custo)
     examples = {}
     if segment:
