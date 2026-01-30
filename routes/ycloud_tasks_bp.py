@@ -1627,6 +1627,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 or wa_out.get("message")
                 or ""
             )
+            # Blindagem: se o bot quer texto e o reply contém link, nunca "perder" o texto.
+            # (evita casos onde a pipeline envia só áudio e o link some)
+            try:
+                if prefers_text and isinstance(reply_text, str) and ("http://" in reply_text or "https://" in reply_text):
+                    allow_audio = True  # mantém áudio ACK se houver
+            except Exception:
+                pass
             audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
             wa_audio_debug = wa_out.get("audioDebug") or {}
             if isinstance(wa_audio_debug, dict):
