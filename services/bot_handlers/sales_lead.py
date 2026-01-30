@@ -18,6 +18,7 @@ import json
 import re
 import hashlib
 import requests
+import unicodedata
 from typing import Any, Dict, Optional, Tuple
 
 def _speechify_for_tts(text: str) -> str:
@@ -98,6 +99,11 @@ PLATFORM_PRICING_DOC = os.getenv(
     "PLATFORM_PRICING_DOC",
     "platform_pricing/current",
 ).strip()
+
+# Auto-alias + cache mínimo (Firestore)
+PLATFORM_ALIAS_DOC = os.getenv("PLATFORM_ALIAS_DOC", "platform_kb_action_maps/aliases_sales").strip()
+PLATFORM_RESPONSE_CACHE_COLLECTION = os.getenv("PLATFORM_RESPONSE_CACHE_COLLECTION", "platform_response_cache").strip()
+
 
 
 # Purificação (incremental e reversível):
@@ -811,7 +817,14 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
 
     if i == "PRICE":
         fields = base_fields + ["sales_pills.cta_one_liners"]
-        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+        # cache mínimo (Firestore) — evita reler sempre se estiver quente
+        ck = _kb_slice_cache_key(i, segment)
+        cached = _fs_cache_get(ck)
+        if isinstance(cached, dict) and cached.get("kind") == "kb_slice" and isinstance(cached.get("payload"), dict):
+            return cached.get("payload") or {}
+        payload = _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+        _fs_cache_set(ck, {"kind": "kb_slice", "intent": i, "payload": payload}, ttl_seconds=int(os.getenv("SALES_KB_SLICE_CACHE_TTL_SECONDS", "600") or "600"))
+        return payload
 
     if i == "ACTIVATE_SEND_LINK":
         fields = base_fields + [
@@ -823,7 +836,14 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
             "cta_variations",
             "sales_pills.cta_one_liners",
         ]
-        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+        # cache mínimo (Firestore) — evita reler sempre se estiver quente
+        ck = _kb_slice_cache_key(i, segment)
+        cached = _fs_cache_get(ck)
+        if isinstance(cached, dict) and cached.get("kind") == "kb_slice" and isinstance(cached.get("payload"), dict):
+            return cached.get("payload") or {}
+        payload = _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+        _fs_cache_set(ck, {"kind": "kb_slice", "intent": i, "payload": payload}, ttl_seconds=int(os.getenv("SALES_KB_SLICE_CACHE_TTL_SECONDS", "600") or "600"))
+        return payload
 
     if i == "WHAT_IS":
         fields = base_fields + [
@@ -832,7 +852,14 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
             "sales_pills.how_it_works",
             "identity_positioning",
         ]
-        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+        # cache mínimo (Firestore) — evita reler sempre se estiver quente
+        ck = _kb_slice_cache_key(i, segment)
+        cached = _fs_cache_get(ck)
+        if isinstance(cached, dict) and cached.get("kind") == "kb_slice" and isinstance(cached.get("payload"), dict):
+            return cached.get("payload") or {}
+        payload = _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+        _fs_cache_set(ck, {"kind": "kb_slice", "intent": i, "payload": payload}, ttl_seconds=int(os.getenv("SALES_KB_SLICE_CACHE_TTL_SECONDS", "600") or "600"))
+        return payload
 
     if i == "DIFF":
         fields = base_fields + ["commercial_positioning", "product_boundaries", "plans.difference"]
@@ -1098,6 +1125,272 @@ def _norm(s: str) -> str:
     s = (s or "").strip().lower()
     s = re.sub(r"\s+", " ", s)
     return s
+
+def _strip_accents(s: str) -> str:
+    try:
+        s = str(s or "")
+        nfkd = unicodedata.normalize("NFKD", s)
+        return "".join([c for c in nfkd if not unicodedata.combining(c)])
+    except Exception:
+        return str(s or "")
+
+def _norm_alias(s: str) -> str:
+    """
+    Normalização "Brasil-raiz" pra alias:
+    - lowercase
+    - sem acento
+    - remove pontuação básica
+    - colapsa espaços
+    """
+    try:
+        t = _strip_accents(str(s or "").lower())
+        t = re.sub(r"[^\w\s]", " ", t, flags=re.UNICODE)  # remove pontuação
+        t = re.sub(r"\s+", " ", t).strip()
+        return t
+    except Exception:
+        return _norm(s or "")
+
+def _sha1_short(s: str, n: int = 16) -> str:
+    try:
+        h = hashlib.sha1((s or "").encode("utf-8", errors="ignore")).hexdigest()
+        return h[: max(8, int(n or 16))]
+    except Exception:
+        return ""
+
+def _now_epoch() -> int:
+    try:
+        return int(time.time())
+    except Exception:
+        return 0
+
+def _fs_cache_get(doc_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Cache mínimo no Firestore (platform_response_cache).
+    Regra: ignora se expirado (expiresAt < now epoch).
+    Best-effort: nunca quebra fluxo.
+    """
+    try:
+        if not doc_id:
+            return None
+        from google.cloud import firestore  # type: ignore
+        client = firestore.Client()
+        ref = client.collection(PLATFORM_RESPONSE_CACHE_COLLECTION).document(doc_id)
+        doc = ref.get()
+        if not doc or not doc.exists:
+            return None
+        data = doc.to_dict() or {}
+        if not isinstance(data, dict):
+            return None
+        exp = data.get("expiresAt")
+        try:
+            exp_i = int(exp)
+        except Exception:
+            exp_i = 0
+        if exp_i and exp_i < _now_epoch():
+            return None
+        return data
+    except Exception:
+        return None
+
+def _fs_cache_set(doc_id: str, payload: Dict[str, Any], *, ttl_seconds: int) -> None:
+    try:
+        if not doc_id or not isinstance(payload, dict):
+            return
+        from google.cloud import firestore  # type: ignore
+        client = firestore.Client()
+        exp = _now_epoch() + int(ttl_seconds or 0)
+        obj = dict(payload)
+        obj["expiresAt"] = int(exp)
+        obj["createdAt"] = firestore.SERVER_TIMESTAMP
+        client.collection(PLATFORM_RESPONSE_CACHE_COLLECTION).document(doc_id).set(obj, merge=True)
+    except Exception:
+        pass
+
+def _intent_cache_key(text_in: str) -> str:
+    base = _norm_alias(text_in)[:240]
+    return f"sales_intent:{_sha1_short(base, 20)}"
+
+def _kb_slice_cache_key(intent: str, segment: str = "") -> str:
+    i = (intent or "OTHER").strip().upper()
+    seg = (segment or "").strip().lower()[:32]
+    return f"kb_slice:{i}:{seg or 'na'}"
+
+_ALIAS_MEM_CACHE: Dict[str, Any] = {}
+_ALIAS_MEM_AT: float = 0.0
+_ALIAS_MEM_TTL: int = int(os.getenv("SALES_ALIAS_MEM_TTL_SECONDS", "60") or "60")
+
+def _load_alias_config_and_enabled_items() -> Tuple[Dict[str, Any], list]:
+    """
+    Lê platform_kb_action_maps/aliases_sales e lista items enabled=true.
+    Cache curto em memória pra reduzir custo.
+    """
+    global _ALIAS_MEM_CACHE, _ALIAS_MEM_AT
+    now = time.time()
+    if isinstance(_ALIAS_MEM_CACHE, dict) and _ALIAS_MEM_CACHE and (now - float(_ALIAS_MEM_AT or 0.0)) < float(_ALIAS_MEM_TTL or 0):
+        cfg = _ALIAS_MEM_CACHE.get("cfg") or {}
+        items = _ALIAS_MEM_CACHE.get("items") or []
+        return (cfg if isinstance(cfg, dict) else {}, items if isinstance(items, list) else [])
+
+    cfg: Dict[str, Any] = {}
+    items: list = []
+    try:
+        from google.cloud import firestore  # type: ignore
+        client = firestore.Client()
+        parts = [p for p in PLATFORM_ALIAS_DOC.split("/") if p]
+        if len(parts) >= 2:
+            doc = client.collection(parts[0]).document(parts[1]).get()
+            if doc and doc.exists:
+                cfg = doc.to_dict() or {}
+        # items enabled
+        col = client.collection(parts[0]).document(parts[1]).collection("items")
+        try:
+            qs = col.where("enabled", "==", True).stream()
+        except Exception:
+            qs = col.stream()
+        for d in qs:
+            try:
+                dd = d.to_dict() or {}
+                if not isinstance(dd, dict):
+                    continue
+                if dd.get("enabled") is not True:
+                    continue
+                phrase = str(dd.get("phrase") or "").strip()
+                if not phrase:
+                    continue
+                items.append(dd)
+            except Exception:
+                continue
+    except Exception:
+        cfg = {}
+        items = []
+
+    try:
+        _ALIAS_MEM_CACHE = {"cfg": cfg, "items": items}
+        _ALIAS_MEM_AT = now
+    except Exception:
+        pass
+    return (cfg if isinstance(cfg, dict) else {}, items if isinstance(items, list) else [])
+
+def _alias_lookup(text_in: str) -> Optional[Dict[str, Any]]:
+    """
+    Match simples:
+    - exato por phrase normalizada
+    - ou "contém" (phrase curta dentro do texto) quando phrase >= 4 chars
+    """
+    t = _norm_alias(text_in)
+    if not t:
+        return None
+    _cfg, enabled_items = _load_alias_config_and_enabled_items()
+    if not enabled_items:
+        return None
+    # tenta exato primeiro
+    for it in enabled_items:
+        try:
+            ph = _norm_alias(it.get("phrase") or "")
+            if ph and ph == t:
+                return it
+        except Exception:
+            continue
+    # fallback: contém
+    for it in enabled_items:
+        try:
+            ph = _norm_alias(it.get("phrase") or "")
+            if not ph or len(ph) < 4:
+                continue
+            if ph in t:
+                return it
+        except Exception:
+            continue
+    return None
+
+def _alias_candidate_allowed(text_in: str, max_len: int) -> bool:
+    """
+    Auto-learn só pra frase curta e "limpa":
+    - <= max_phrase_len
+    - sem URL
+    - sem números (reduz alias errado)
+    """
+    try:
+        raw = str(text_in or "").strip()
+        if not raw:
+            return False
+        if len(raw) > int(max_len or 0):
+            return False
+        if _has_url(raw):
+            return False
+        if re.search(r"\d", raw):
+            return False
+        return True
+    except Exception:
+        return False
+
+def _alias_autolearn_update(text_in: str, *, intent: str, next_step: str, confidence: float) -> None:
+    """
+    Atualiza/Cria item em platform_kb_action_maps/aliases_sales/items:
+    - incrementa count
+    - atualiza confidence_avg
+    - habilita enabled=true ao bater threshold do doc aliases_sales
+    """
+    try:
+        cfg, _ = _load_alias_config_and_enabled_items()
+        if not isinstance(cfg, dict) or not cfg:
+            return
+        if cfg.get("enabled") is not True:
+            return
+        max_len = int(cfg.get("max_phrase_len") or 60)
+        min_count = int(cfg.get("min_count") or 10)
+        min_avg = float(cfg.get("min_confidence_avg") or 0.85)
+
+        if not _alias_candidate_allowed(text_in, max_len):
+            return
+        i = str(intent or "").strip().upper()
+        ns = str(next_step or "").strip().upper() or "NONE"
+        if not i:
+            return
+
+        phrase_norm = _norm_alias(text_in)
+        if not phrase_norm:
+            return
+
+        from google.cloud import firestore  # type: ignore
+        client = firestore.Client()
+        parts = [p for p in PLATFORM_ALIAS_DOC.split("/") if p]
+        if len(parts) < 2:
+            return
+        alias_id = _sha1_short(phrase_norm, 16)
+        ref = client.collection(parts[0]).document(parts[1]).collection("items").document(alias_id)
+        doc = ref.get()
+        old = doc.to_dict() if doc and doc.exists else {}
+        if not isinstance(old, dict):
+            old = {}
+
+        old_count = int(old.get("count") or 0)
+        old_avg = float(old.get("confidence_avg") or 0.0)
+        new_count = old_count + 1
+        conf_f = float(confidence or 0.0)
+        conf_f = max(0.0, min(1.0, conf_f))
+        new_avg = ((old_avg * float(old_count)) + conf_f) / float(new_count) if new_count > 0 else conf_f
+
+        enabled_now = bool(old.get("enabled")) is True
+        if (not enabled_now) and (new_count >= min_count) and (new_avg >= min_avg):
+            enabled_now = True
+
+        patch = {
+            "phrase": str(old.get("phrase") or text_in).strip(),
+            "intent": i,
+            "next_step": ns,
+            "enabled": bool(enabled_now),
+            "count": int(new_count),
+            "confidence_avg": float(round(new_avg, 4)),
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }
+        if not (doc and doc.exists):
+            patch["createdAt"] = firestore.SERVER_TIMESTAMP
+        ref.set(patch, merge=True)
+    except Exception:
+        pass
+
+
 
 def _hash_reply(text: str) -> str:
     t = _norm(text or "")
@@ -3401,7 +3694,47 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         if _is_link_request(text_in):
             st["plan_intent"] = "ACTIVATE"
             st["plan_next_step"] = "SEND_LINK"
-            return f"Criar conta / começar agora: {SALES_SIGNUP_URL}"
+            return f"Criar conta / começar agora: {SITE_URL}"
+    except Exception:
+        pass
+
+    # ==========================================================
+    # AUTO-ALIAS (antes de IA): se bater, pula decider/NLU
+    # ==========================================================
+    try:
+        hit = _alias_lookup(text_in)
+        if isinstance(hit, dict) and hit.get("enabled") is True:
+            a_int = str(hit.get("intent") or "").strip().upper()
+            a_ns = str(hit.get("next_step") or "NONE").strip().upper()
+            if a_int:
+                st["understand_source"] = "alias"
+                st["understand_intent"] = a_int
+                st["understand_confidence"] = "high"
+                st["plan_intent"] = a_int
+                st["plan_next_step"] = ("SEND_LINK" if a_ns == "SEND_LINK" else "")
+                try:
+                    st["policiesApplied"] = list(set((st.get("policiesApplied") or []) + ["alias_hit"]))
+                except Exception:
+                    pass
+
+                # Se o alias for SEND_LINK, não cola URL aqui: generate_reply garante link no texto.
+                if a_ns == "SEND_LINK":
+                    nm = (st.get("name") or "").strip()
+                    if nm:
+                        return f"{nm}, fechado — vou te mandar o link aqui na conversa."
+                    return "Fechado — vou te mandar o link aqui na conversa."
+
+                # Caso conceitual (ex.: VOICE): usa caminho econômico (sem IA geradora)
+                econ, _, _pol = _economic_reply(
+                    intent=a_int,
+                    name=(st.get("name") or "").strip(),
+                    segment=(st.get("segment") or "").strip(),
+                    goal=(st.get("goal") or "").strip(),
+                    user_text=text_in,
+                    st=st,
+                )
+                if econ:
+                    return econ
     except Exception:
         pass
 
@@ -3439,6 +3772,31 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
 
     
+    # ==========================================================
+    # Cache mínimo de intent (Firestore): evita IA repetida em frases iguais
+    # ==========================================================
+    try:
+        ck = _intent_cache_key(text_in)
+        cached = _fs_cache_get(ck)
+        if isinstance(cached, dict) and cached.get("kind") == "sales_intent":
+            ci = str(cached.get("intent") or "").strip().upper()
+            cns = str(cached.get("next_step") or "").strip().upper()
+            if ci:
+                st["understand_source"] = "fs_intent_cache"
+                st["understand_intent"] = ci
+                st["understand_confidence"] = "high"
+                st["plan_intent"] = ci
+                if cns:
+                    st["plan_next_step"] = cns
+                # Para casos óbvios de SEND_LINK: responde curto e deixa o link pro final
+                if cns == "SEND_LINK":
+                    nm = (st.get("name") or "").strip()
+                    if nm:
+                        return f"{nm}, fechado — vou te mandar o link aqui na conversa."
+                    return "Fechado — vou te mandar o link aqui na conversa."
+    except Exception:
+        pass
+
     # ==========================================================
     # BOX MODE (canônico): 1 caixa/turno + leitura mínima do Firestore
     # ==========================================================
@@ -3493,6 +3851,26 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
     # NLU (IA) — fonte canônica de intent/route/next_step/interest
     nlu = sales_micro_nlu(text_in, stage=stage)
+
+    # Cache mínimo do intent (curto) + auto-learn candidato (seguro)
+    try:
+        nlu_int = str((nlu or {}).get("intent") or "").strip().upper()
+        nlu_ns = str((nlu or {}).get("next_step") or "").strip().upper()
+        conf_lbl = str((nlu or {}).get("confidence") or "").strip().lower()
+        conf_f = 0.55
+        if conf_lbl == "high":
+            conf_f = 0.9
+        elif conf_lbl == "mid":
+            conf_f = 0.65
+        else:
+            conf_f = 0.45
+        if nlu_int:
+            _fs_cache_set(_intent_cache_key(text_in), {"kind": "sales_intent", "intent": nlu_int, "next_step": ("SEND_LINK" if nlu_ns == "SEND_LINK" else "")}, ttl_seconds=int(os.getenv("SALES_INTENT_CACHE_TTL_SECONDS", "900") or "900"))
+        # auto-learn só quando confiança alta e intent "útil"
+        if conf_lbl == "high" and nlu_int in ("VOICE", "ACTIVATE", "OPERATIONAL", "WHAT_IS", "PROCESS", "SLA"):
+            _alias_autolearn_update(text_in, intent=nlu_int, next_step=("SEND_LINK" if nlu_ns == "SEND_LINK" else "NONE"), confidence=float(conf_f))
+    except Exception:
+        pass
 
 
     # ==========================================================
@@ -4683,14 +5061,48 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     # aplica também aqui (garante consistência)
     spoken_final = _spoken_normalize_numbers(spoken_final)
 
-        # VOICE: sinal para o worker preservar resposta conceitual importante (sem truncar)
-    tts_no_truncate = False
+    # ==========================================================
+    # SPARK (humor/energia dosado) — 1 frase ocasional
+    # - respeita tone_spark (Firestore)
+    # - nunca em TRUST/SECURITY
+    # - budget por sessão
+    # ==========================================================
     try:
-        if str(intent_final or "").strip().upper() == "VOICE":
-            tts_no_truncate = True
-            policies_applied.append("voice:no_truncate")
+        tone_spark = (kb.get("tone_spark") or {}) if isinstance(kb, dict) else {}
+        if isinstance(tone_spark, dict) and tone_spark.get("enabled") is True:
+            i_final = str(intent_final or "").strip().upper()
+            if i_final not in ("TRUST", "SECURITY") and (not prefers_text):
+                max_per = int(tone_spark.get("max_per_session") or 2)
+                gap = int(tone_spark.get("min_turn_gap") or 3)
+                used = int(st.get("spark_used_count") or 0)
+                last_turn = int(st.get("spark_last_turn") or 0)
+                turn_now = int(st.get("turns") or 0)
+                if used < max_per and (turn_now - last_turn) >= gap:
+                    # escolhe opener/closer conforme trilho
+                    use_closer = bool(next_step_final == "SEND_LINK" or i_final == "ACTIVATE")
+                    arr = tone_spark.get("closers") if use_closer else tone_spark.get("openers")
+                    line = _pick_one(arr) if isinstance(arr, list) else ""
+                    line = str(line or "").strip()
+                    if line:
+                        nm = (lead_name or "").strip()
+                        if nm and len(line) <= 80 and "—" not in line:
+                            line = f"{line} {nm}."
+                        # 1 frase só, sem textão
+                        reply_final = (line + "\n\n" + reply_final).strip()
+                        st["spark_used_count"] = used + 1
+                        st["spark_last_turn"] = turn_now
+                        policies_applied.append("spark:used")
     except Exception:
         pass
+
+    # re-sincroniza spoken após spark (fala nunca carrega URL)
+    try:
+        spoken_final = _sanitize_spoken(reply_final)
+        spoken_final = _strip_md_for_tts(spoken_final)
+        spoken_final = _spoken_normalize_numbers(spoken_final)
+    except Exception:
+        pass
+
 
     # =========================
     # SPOKENIZER v1 (só fala)
