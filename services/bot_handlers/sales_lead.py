@@ -192,6 +192,9 @@ def _compose_from_plan(
     # Mapeia o plano para um hint canônico (sem inventar estratégia).
     if ns in ("CTA", "SEND_LINK") or intent_p == "ACTIVATE":
         intent_hint = "CTA"
+    elif intent_p == "OPERATIONAL":
+        # Força micro-fluxo fechado (entrada → confirmação → aviso → agenda → lembrete)
+        intent_hint = "OPERATIONAL_FLOW"
     else:
         intent_hint = intent_p
 
@@ -837,19 +840,40 @@ def _looks_like_bad_name(name: str) -> bool:
 def _intent_cheap(t: str) -> str:
     """
     Hint barato (não é fonte canônica). O canônico vem da IA (sales_micro_nlu).
+
+    Objetivo: evitar queda em OTHER/menus quando a frase tem sinais óbvios.
+    Ordem importa: primeiro casos operacionais/fechamento/preço.
     """
     t = _norm(t)
-    if any(k in t for k in ("preço", "preco", "quanto custa", "valor", "mensal", "mês", "mes", "89", "119")):
+
+    # Fechamento / ativação
+    if any(k in t for k in ("vou assinar", "quero assinar", "assinatura", "assinar", "quero contratar", "contratar", "ativar", "ativação", "passo a passo", "procedimento")):
+        return "ACTIVATE"
+
+    # Voz
+    if any(k in t for k in ("voz", "minha voz", "fala como", "fala igual", "parece minha voz", "voz do dono", "clone de voz", "clonagem de voz")):
+        return "VOICE"
+
+    # Operacional (dia a dia): agenda / pedidos / orçamento
+    if any(k in t for k in ("agenda", "agendar", "agendamento", "marcar horário", "marcar horario", "horário", "horario", "reagendar", "cancelar", "confirmar presença", "confirmar presenca", "cliente", "consulta")):
+        return "OPERATIONAL"
+    if any(k in t for k in ("pedido", "pedidos", "delivery", "entrega", "comanda", "orçamento", "orcamento", "cotação", "cotacao", "serviço", "servico")):
+        return "OPERATIONAL"
+
+    # Preço / planos
+    if any(k in t for k in ("preço", "preco", "quanto custa", "valor", "mensal", "mensalidade", "por mês", "por mes", "mês", "mes", "89", "119")):
         return "PRICE"
     if any(k in t for k in ("planos", "plano", "starter", "starter+", "plus")):
         return "PLANS"
     if any(k in t for k in ("diferença", "diferenca", "10gb", "2gb", "memória", "memoria")):
         return "DIFF"
-    if any(k in t for k in ("o que é", "oq é", "o que voce faz", "o que você faz", "como funciona")):
+
+    # O que é / como funciona (conceitual)
+    if any(k in t for k in ("o que é", "oq é", "o que voce faz", "o que você faz", "como funciona", "como que funciona")):
         return "WHAT_IS"
-    if any(k in t for k in ("ativar", "criar conta", "assinar", "começar", "comecar", "quero")):
-        return "ACTIVATE"
+
     return "OTHER"
+
 
 def _extract_name_freeform(text: str) -> str:
     """
@@ -2566,6 +2590,37 @@ def _should_soft_close(st: Dict[str, Any], *, has_name: bool, has_segment: bool)
     return slots < SALES_MIN_ADVANCE_SLOTS or turns >= SALES_MAX_FREE_TURNS
 
 
+
+def _soft_close_message(kb: Dict[str, Any], name: str = "") -> str:
+    """Fechamento gentil quando a conversa não está avançando (anti-curioso infinito).
+    Sempre:
+    - curto
+    - sem pergunta
+    - aponta pro site
+    """
+    try:
+        site = (SITE_URL or "www.meirobo.com.br").strip()
+    except Exception:
+        site = "www.meirobo.com.br"
+
+    nm = (name or "").strip()
+    prefix = f"{nm}, " if nm else ""
+
+    # Se o Firestore trouxer um limite/guia, usa (sem copiar textão).
+    try:
+        limits = str((kb or {}).get("conversation_limits") or "").strip()
+    except Exception:
+        limits = ""
+
+    if limits:
+        # pega 1 linha “falável”
+        one = re.sub(r"\s+", " ", limits).strip()
+        one = one[:180].rstrip(" ,;:-") + "."
+        return f"{prefix}{one}\n\nPra ver tudo com calma, é por aqui: {site}"
+
+    return f"{prefix}Pra eu não te prender aqui no vai-e-vem, o caminho mais rápido é pelo site.\n\n{site}"
+
+
 def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     """
     Única função que decide a resposta final (texto).
@@ -2580,6 +2635,28 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     st["last_user_at"] = time.time()
 
     nudges = int(st.get("nudges") or 0)
+
+
+    # Firestore é fonte de verdade (sempre): carrega KB (cache TTL interno) e registra no estado.
+    kb = _get_sales_kb() or {}
+    try:
+        st["kb_version"] = str(kb.get("version") or kb.get("kb_version") or "").strip() or st.get("kb_version") or ""
+        st["kb_loaded"] = True
+    except Exception:
+        pass
+
+    # Anti-curioso infinito: se já estourou turnos sem avançar, fecha gentil e aponta pro site.
+    has_name = bool((name or "").strip())
+    has_segment = bool((segment or "").strip())
+    if _should_soft_close(st, has_name=has_name, has_segment=has_segment):
+        st["stage"] = "EXIT"
+        st["plan_intent"] = "EXIT"
+        st["plan_next_step"] = "EXIT"
+        st["understand_source"] = "soft_close_policy"
+        st["understand_intent"] = "EXIT"
+        st["understand_confidence"] = "high"
+        return _clip(_soft_close_message(kb, name=name), SALES_MAX_CHARS_REPLY)
+
 
     # =========================
     # DECIDER (IA) — manda no "modo de resposta"
@@ -2651,6 +2728,25 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             nlu["intent"] = nlu.get("intent") or "ACTIVATE"
             nlu["confidence"] = nlu.get("confidence") or "high"
             nlu["next_step"] = nlu.get("next_step") or "SEND_LINK"
+    except Exception:
+        pass
+
+
+    # Operacional óbvio (anti-menu): "como funciona quando meu cliente quer agendar/pedir"
+    # Mesmo que o NLU caia em WHAT_IS/OTHER, aqui a gente prioriza OPERATIONAL (dia a dia).
+    try:
+        _t2 = (text_in or "").lower()
+        _oper = any(k in _t2 for k in (
+            "agenda", "agendar", "agendamento", "marcar horário", "marcar horario", "reagendar", "cancelar",
+            "confirmar", "horário", "horario", "consulta",
+            "pedido", "pedidos", "delivery", "entrega", "comanda", "orçamento", "orcamento", "cotação", "cotacao",
+        ))
+        if _oper:
+            nlu = dict(nlu or {})
+            nlu["intent"] = "OPERATIONAL"
+            # não força pergunta; só evita cair em VALUE/menu
+            if not str(nlu.get("confidence") or "").strip():
+                nlu["confidence"] = "high"
     except Exception:
         pass
 
