@@ -87,6 +87,19 @@ def _log_sales_usage(
 
 SITE_URL = os.getenv("MEI_ROBO_SITE_URL", "www.meirobo.com.br").strip()
 
+# Link canônico (cadastro/ativação) — usado quando o lead pede "assinar/ativar/link".
+MEI_ROBO_CADASTRO_URL = os.getenv(
+    "MEI_ROBO_CADASTRO_URL",
+    "https://mei-robo-prod.web.app/pages/cadastro.html",
+).strip()
+
+# Preço SEMPRE vem daqui (fonte única)
+PLATFORM_PRICING_DOC = os.getenv(
+    "PLATFORM_PRICING_DOC",
+    "platform_pricing/current",
+).strip()
+
+
 # Purificação (incremental e reversível):
 # - SALES_STRATEGIC_OVERRIDES=1 mantém overrides antigos (link/procedimento/agenda) por compat.
 #   Depois, desligar (=0) para IA+KB assumirem 100% do trilho.
@@ -433,6 +446,542 @@ def _get_sales_kb() -> Dict[str, Any]:
     _SALES_KB_CACHE = kb
     _SALES_KB_CACHE_AT = now
     return kb
+
+
+# =========================
+# Firestore: leitura mínima (1 caixa/turno)
+# =========================
+
+_SALES_SLICE_CACHE: Dict[str, Any] = {}
+_SALES_SLICE_CACHE_AT: Dict[str, float] = {}
+
+def _get_doc_fields(doc_path: str, field_paths: list, *, ttl_seconds: int = 180) -> Dict[str, Any]:
+    """Busca apenas campos específicos de um doc no Firestore.
+    Best-effort: se não suportar field_paths no ambiente, cai em get() normal e filtra em memória.
+    """
+    doc_path = (doc_path or "").strip().strip("/")
+    if not doc_path:
+        return {}
+    try:
+        fp = [str(x).strip() for x in (field_paths or []) if str(x).strip()]
+    except Exception:
+        fp = []
+    cache_key = f"doc:{doc_path}|" + ",".join(fp)
+    now = time.time()
+    try:
+        at = float(_SALES_SLICE_CACHE_AT.get(cache_key) or 0.0)
+        if cache_key in _SALES_SLICE_CACHE and (now - at) < float(ttl_seconds or 0):
+            v = _SALES_SLICE_CACHE.get(cache_key)
+            return v if isinstance(v, dict) else {}
+    except Exception:
+        pass
+
+    out: Dict[str, Any] = {}
+    try:
+        from google.cloud import firestore  # type: ignore
+        client = firestore.Client()
+        parts = [p for p in doc_path.split("/") if p]
+        if len(parts) < 2:
+            return {}
+        ref = client.collection(parts[0]).document(parts[1])
+
+        doc = None
+        if fp:
+            try:
+                doc = ref.get(field_paths=fp)
+            except Exception:
+                doc = ref.get()
+        else:
+            doc = ref.get()
+
+        if not doc or not getattr(doc, "exists", False):
+            return {}
+
+        data = doc.to_dict() or {}
+        if not isinstance(data, dict):
+            return {}
+
+        if not fp:
+            out = data
+        else:
+            # Filtra em memória (resiliente a field_paths não suportado)
+            for p in fp:
+                cur = data
+                ok = True
+                for seg in p.split("."):
+                    if not isinstance(cur, dict) or seg not in cur:
+                        ok = False
+                        break
+                    cur = cur.get(seg)
+                if ok:
+                    tgt = out
+                    segs = p.split(".")
+                    for seg in segs[:-1]:
+                        if seg not in tgt or not isinstance(tgt.get(seg), dict):
+                            tgt[seg] = {}
+                        tgt = tgt[seg]
+                    tgt[segs[-1]] = cur
+    except Exception:
+        out = {}
+
+    try:
+        _SALES_SLICE_CACHE[cache_key] = out
+        _SALES_SLICE_CACHE_AT[cache_key] = now
+    except Exception:
+        pass
+    return out
+
+
+def _get_display_prices(*, ttl_seconds: int = 180) -> Dict[str, str]:
+    """Retorna display_prices do doc canônico de pricing."""
+    data = _get_doc_fields(PLATFORM_PRICING_DOC, ["display_prices"], ttl_seconds=ttl_seconds) or {}
+    dp = data.get("display_prices") if isinstance(data, dict) else {}
+    if not isinstance(dp, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for k in ("starter", "starter_plus", "starterPlus", "starter+"):
+        v = dp.get(k)
+        if isinstance(v, str) and v.strip():
+            out[k] = v.strip()
+    if "starter_plus" not in out and "starterPlus" in out:
+        out["starter_plus"] = out["starterPlus"]
+    return out
+
+
+def _is_smalltalk(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    if _detect_human_noise(t):
+        return True
+    if any(x in t for x in ("kkk", "haha", "rsrs", "robôzinho", "robozinho", "cartoon", "chuva", "papagaio")):
+        return True
+    if len(t) <= 12 and t in ("e aí", "eai", "oi", "olá", "ola", "opa", "bom dia", "boa tarde", "boa noite"):
+        return True
+    return False
+
+
+def _smalltalk_bridge(text: str) -> str:
+    t = (text or "").strip().lower()
+    if "cartoon" in t:
+        return "Saudades do Cartoon também 😅 Mas me diz: você quer ver como o robô ajuda na agenda, pedidos ou orçamento?"
+    if "chuva" in t or "clima" in t or "tempo" in t:
+        return "Aqui o tempo muda e o WhatsApp não perdoa 😄 Quer que eu te mostre como ele organiza agenda ou pedidos?"
+    if "papagaio" in t:
+        return "Se for pra repetir, que seja pedido do cliente 😄 Quer ver como ele responde e organiza tudo no WhatsApp?"
+    if "kkk" in t or "haha" in t or "rsrs" in t:
+        return "Boa 😄 Me diz: você quer entender como funciona, preço, ou ver um exemplo prático?"
+    return "Fechado 😄 Você quer entender como funciona, preço, ou ver um exemplo prático?"
+
+_BOX_INTENTS = (
+    "PRICE",
+    "VOICE",
+    "WHAT_IS",
+    "OPERATIONAL",
+    "DIFF",
+    "ACTIVATE_SEND_LINK",
+    "TRUST",
+    "OTHER",
+)
+
+def _sales_box_mode() -> str:
+    v = str(os.getenv("SALES_BOX_MODE", "v1") or "v1").strip().lower()
+    if v in ("0", "off", "false", "no"):
+        return "off"
+    return "v1"
+
+
+def _box_decider_cache_key(text: str) -> str:
+    base = _norm(text or "")[:240]
+    h = hashlib.sha1(base.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    return f"sales:boxdec:{h}"
+
+
+def _box_decider_cache_get(text: str) -> Optional[Dict[str, Any]]:
+    try:
+        return _kv_get(_box_decider_cache_key(text))
+    except Exception:
+        return None
+
+
+def _box_decider_cache_set(text: str, val: Dict[str, Any]) -> None:
+    try:
+        ttl = int(os.getenv("SALES_BOX_DECIDER_CACHE_TTL_SECONDS", "600") or "600")
+    except Exception:
+        ttl = 600
+    try:
+        _kv_set(_box_decider_cache_key(text), val, ttl_seconds=ttl)
+    except Exception:
+        pass
+
+
+def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
+    """Decider econômico: escolhe 1 caixa e (quando necessário) 1 pergunta."""
+    t = (user_text or "").strip()
+    if not t:
+        return {"intent": "OTHER", "confidence": 0.3, "needs_clarification": False, "clarifying_question": "", "next_step": "NONE"}
+
+    cached = _box_decider_cache_get(t)
+    if isinstance(cached, dict) and str(cached.get("intent") or "").strip():
+        return cached
+
+    if not OPENAI_API_KEY:
+        cheap = _intent_cheap(t)
+        intent = "OTHER"
+        if cheap in ("PRICE", "PLANS"):
+            intent = "PRICE"
+        elif cheap in ("DIFF",):
+            intent = "DIFF"
+        elif cheap in ("VOICE",):
+            intent = "VOICE"
+        elif cheap in ("WHAT_IS",):
+            intent = "WHAT_IS"
+        elif cheap in ("OPERATIONAL",):
+            intent = "OPERATIONAL"
+        elif cheap in ("ACTIVATE",):
+            intent = "ACTIVATE_SEND_LINK"
+        out = {"intent": intent, "confidence": 0.65, "needs_clarification": False, "clarifying_question": "", "next_step": ("SEND_LINK" if intent == "ACTIVATE_SEND_LINK" else "NONE")}
+        _box_decider_cache_set(t, out)
+        return out
+
+    system = (
+        "Você é o DECIDER de VENDAS do MEI Robô (WhatsApp, pt-BR).\n"
+        "Responda SOMENTE JSON válido.\n\n"
+        "Escolha UMA intenção (caixa) por turno:\n"
+        "PRICE, VOICE, WHAT_IS, OPERATIONAL, DIFF, ACTIVATE_SEND_LINK, TRUST, OTHER.\n\n"
+        "Regras:\n"
+        "- Se estiver ambíguo e faltar dado essencial: needs_clarification=true e faça UMA pergunta curta.\n"
+        "- Se a pergunta for objetiva, responda direto (needs_clarification=false).\n"
+        "- confidence deve ser número de 0 a 1.\n"
+        "- next_step: SEND_LINK ou NONE.\n\n"
+        "Schema: {\"intent\":...,\"confidence\":0.0,\"needs_clarification\":true|false,\"clarifying_question\":\"\",\"next_step\":\"SEND_LINK|NONE\"}"
+    )
+
+    user = f"MENSAGEM={t}"
+    raw = (_openai_chat(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        model=OPENAI_SALES_NLU_MODEL,
+        max_tokens=120,
+        temperature=0.0,
+        response_format={"type": "json_object"},
+    ) or "").strip()
+    out: Dict[str, Any] = {}
+    try:
+        obj = json.loads(raw) if raw else {}
+        if not isinstance(obj, dict):
+            obj = {}
+        intent = str(obj.get("intent") or "OTHER").strip().upper()
+        if intent not in _BOX_INTENTS:
+            intent = "OTHER"
+        conf = obj.get("confidence")
+        try:
+            conf_f = float(conf)
+        except Exception:
+            conf_f = 0.55
+        conf_f = max(0.0, min(1.0, conf_f))
+        needs = bool(obj.get("needs_clarification")) if obj.get("needs_clarification") is not None else False
+        q = str(obj.get("clarifying_question") or "").strip()
+        ns = str(obj.get("next_step") or "NONE").strip().upper()
+        if ns not in ("SEND_LINK", "NONE"):
+            ns = "NONE"
+        out = {
+            "intent": intent,
+            "confidence": conf_f,
+            "needs_clarification": needs,
+            "clarifying_question": q,
+            "next_step": ns,
+        }
+    except Exception:
+        out = {"intent": "OTHER", "confidence": 0.45, "needs_clarification": False, "clarifying_question": "", "next_step": "NONE"}
+
+    _box_decider_cache_set(t, out)
+    return out
+
+
+def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
+    i = (intent or "OTHER").strip().upper()
+    seg = (segment or "").strip().lower()
+    base_fields = ["tone_rules", "value_props"]
+
+    if i == "PRICE":
+        fields = base_fields + ["sales_pills.cta_one_liners"]
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    if i == "ACTIVATE_SEND_LINK":
+        fields = base_fields + [
+            "process_facts.sla_setup",
+            "process_facts.can_prepare_now",
+            "process_facts.no_free_trial",
+            "intent_guidelines.ACTIVATE",
+            "closing_behaviors",
+            "cta_variations",
+            "sales_pills.cta_one_liners",
+        ]
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    if i == "WHAT_IS":
+        fields = base_fields + [
+            "sales_pills.identity_blurb",
+            "sales_pills.how_it_works_3steps",
+            "sales_pills.how_it_works",
+            "identity_positioning",
+        ]
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    if i == "DIFF":
+        fields = base_fields + ["commercial_positioning", "product_boundaries", "plans.difference"]
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    if i == "OPERATIONAL":
+        fields = base_fields + [
+            "value_in_action_blocks.scheduling_scene",
+            "value_in_action_blocks.services_quote_scene",
+            "value_in_action_blocks.formal_quote_email_scene",
+            "segment_pills.servicos.micro_scene",
+        ]
+        if seg:
+            fields.append(f"segment_pills.{seg}.micro_scene")
+            fields.append(f"segments.{seg}.one_question")
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    if i == "VOICE":
+        fields = base_fields + [
+            "voice_pill.short_yes",
+            "voice_pill.how_it_works",
+            "voice_pill.boundaries",
+            "voice_pill.next_step",
+            "voice_positioning.core",
+        ]
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    if i == "TRUST":
+        fields = base_fields + ["ethical_guidelines", "product_boundaries", "objections.confianca"]
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    fields = base_fields + ["sales_pills.identity_blurb", "sales_pills.how_it_works_3steps", "sales_pills.how_it_works"]
+    return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+
+def _pick_one(arr: Any) -> str:
+    if not isinstance(arr, list) or not arr:
+        return ""
+    for x in arr:
+        s = str(x or "").strip()
+        if s:
+            return s
+    return ""
+
+
+def _compose_box_reply(
+    *,
+    box_intent: str,
+    box_data: Dict[str, Any],
+    prices: Dict[str, str],
+    user_text: str,
+    name: str,
+    segment: str,
+) -> Tuple[str, str]:
+    i = (box_intent or "OTHER").strip().upper()
+    nm = (name or "").strip()
+    seg = (segment or "").strip()
+
+    def _get(path: str) -> Any:
+        cur: Any = box_data
+        for p in (path or "").split("."):
+            if not p:
+                continue
+            if not isinstance(cur, dict) or p not in cur:
+                return None
+            cur = cur.get(p)
+        return cur
+
+    if i == "PRICE":
+        starter = (prices.get("starter") or "").strip()
+        plus = (prices.get("starter_plus") or "").strip()
+        cta = ""
+        try:
+            cta = _pick_one(_get("sales_pills").get("cta_one_liners") if isinstance(_get("sales_pills"), dict) else _get("sales_pills.cta_one_liners"))
+        except Exception:
+            cta = _pick_one(_get("sales_pills.cta_one_liners") or [])
+
+        if not starter or not plus:
+            line1 = "É assinatura mensal (paga). Os valores certinhos ficam no site."
+            line2 = f"{MEI_ROBO_CADASTRO_URL}"
+            line3 = "Obs: ativação só com CNPJ."
+            return ("\n".join([x for x in (line1, line2, line3) if x]).strip(), "SEND_LINK")
+
+        prefix = f"{nm}, " if nm else ""
+        line1 = f"{prefix}hoje é {starter}/mês (Starter) ou {plus}/mês (Starter+).".strip()
+        line2 = "A diferença é só a memória."
+        line3 = "Obs: ativação só com CNPJ."
+        line4 = (cta or "").strip()
+        return ("\n".join([x for x in (line1, line2, line3, line4) if x]).strip(), "NONE")
+
+    if i == "ACTIVATE_SEND_LINK":
+        sla = str(_get("process_facts.sla_setup") or "até 7 dias úteis").strip()
+        can_now = str(_get("process_facts.can_prepare_now") or "").strip()
+        cta = _pick_one(_get("cta_variations") or []) or _pick_one(_get("sales_pills.cta_one_liners") or [])
+        prefix = f"{nm}, " if nm else ""
+        line1 = f"{prefix}fechado — é por aqui pra assinar e começar: {MEI_ROBO_CADASTRO_URL}".strip()
+        line2 = f"Prazo: {sla}.".strip()
+        line3 = can_now
+        line4 = (cta or "").strip()
+        return ("\n".join([x for x in (line1, line2, line3, line4) if x]).strip(), "SEND_LINK")
+
+    if i == "WHAT_IS":
+        blurb = str(_get("sales_pills.identity_blurb") or "").strip() or "Eu organizo o WhatsApp do teu negócio e tiro o caos do atendimento."
+        steps = _get("sales_pills.how_it_works_3steps")
+        if not isinstance(steps, list) or not steps:
+            steps = _get("sales_pills.how_it_works")
+        s1 = _pick_one(steps) if isinstance(steps, list) else ""
+        s2 = str(steps[1]).strip() if isinstance(steps, list) and len(steps) >= 2 else ""
+        prefix = f"{nm}, " if nm else ""
+        line1 = (prefix + blurb).strip()
+        line2 = "Como funciona (bem direto):" if (s1 or s2) else ""
+        line3 = (f"• {s1}" if s1 else "")
+        line4 = (f"• {s2}" if s2 else "")
+        line5 = "Quer que eu te mostre um exemplo prático de agenda ou de orçamento?"
+        return ("\n".join([x for x in (line1, line2, line3, line4, line5) if x]).strip(), "NONE")
+
+    if i == "DIFF":
+        pos = str(_get("commercial_positioning") or "").strip()
+        bounds = _get("product_boundaries")
+        one_bound = _pick_one(bounds) if isinstance(bounds, list) else ""
+        diff = str(_get("plans.difference") or "").strip()
+        prefix = f"{nm}, " if nm else ""
+        line1 = (prefix + (pos or "A diferença é bem simples: o plano muda a memória disponível.")).strip()
+        line2 = (diff or "").strip()
+        line3 = (one_bound or "").strip()
+        line4 = "Se quiser, eu te digo o melhor pro teu caso em 1 pergunta."
+        return ("\n".join([x for x in (line1, line2, line3, line4) if x]).strip(), "NONE")
+
+    if i == "OPERATIONAL":
+        t = (user_text or "").lower()
+        scene = None
+        if "agenda" in t or "agend" in t or "hor" in t:
+            scene = _get("value_in_action_blocks.scheduling_scene")
+        elif "email" in t or "e-mail" in t:
+            scene = _get("value_in_action_blocks.formal_quote_email_scene")
+        else:
+            scene = _get("value_in_action_blocks.services_quote_scene")
+
+        scene_line = ""
+        if isinstance(scene, dict):
+            sc = scene.get("scene") or scene.get("micro_scene") or scene.get("text") or ""
+            if isinstance(sc, list):
+                scene_line = " → ".join([str(x).strip() for x in sc if str(x).strip()])[:380]
+            else:
+                scene_line = str(sc).strip()[:380]
+        elif isinstance(scene, list):
+            scene_line = " → ".join([str(x).strip() for x in scene if str(x).strip()])[:380]
+        elif isinstance(scene, str):
+            scene_line = scene.strip()[:380]
+
+        seg_ms = ""
+        if seg:
+            seg_ms = str(_get(f"segment_pills.{seg.lower()}.micro_scene") or "").strip()
+        if not seg_ms:
+            seg_ms = str(_get("segment_pills.servicos.micro_scene") or "").strip()
+
+        q = ""
+        if seg:
+            q = str(_get(f"segments.{seg.lower()}.one_question") or "").strip()
+
+        prefix = f"{nm}, " if nm else ""
+        line1 = (prefix + "na prática fica assim:").strip()
+        line2 = scene_line or seg_ms
+        line3 = q or "Qual é teu tipo de negócio (bem em 1 frase), só pra eu acertar o exemplo?"
+        return ("\n".join([x for x in (line1, line2, line3) if x]).strip(), "NONE")
+
+    if i == "VOICE":
+        yes = str(_get("voice_pill.short_yes") or "Sim." ).strip()
+        how = str(_get("voice_pill.how_it_works") or "Você grava a voz na configuração e o robô passa a responder em áudio com ela.").strip()
+        bounds = str(_get("voice_pill.boundaries") or "Sem inventar coisas e sem prometer milagre — é voz, não mágica 😄").strip()
+        nxt = str(_get("voice_pill.next_step") or "Quer que eu te mande o link pra criar a conta e ver o passo-a-passo?").strip()
+        prefix = f"{nm}, " if nm else ""
+        return ("\n".join([x for x in ((prefix + yes).strip(), how, bounds, nxt) if x]).strip(), "NONE")
+
+    if i == "TRUST":
+        conf = ""
+        try:
+            conf = str(_get("objections.confianca") or "").strip()
+        except Exception:
+            conf = ""
+        bounds = _get("product_boundaries")
+        one_bound = _pick_one(bounds) if isinstance(bounds, list) else ""
+        prefix = f"{nm}, " if nm else ""
+        line1 = (prefix + (conf or "Não é golpe 🙂 É uma plataforma pra organizar teu atendimento no WhatsApp.")).strip()
+        line2 = (one_bound or "").strip()
+        line3 = "Se quiser, eu te mando o link oficial pra você ver tudo por você mesmo."
+        line4 = MEI_ROBO_CADASTRO_URL
+        return ("\n".join([x for x in (line1, line2, line3, line4) if x]).strip(), "SEND_LINK")
+
+    prefix = f"{nm}, " if nm else ""
+    return ((prefix + "me diz só o que você quer resolver primeiro: preço, voz, ou um exemplo prático?").strip(), "NONE")
+
+
+def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
+    if _sales_box_mode() != "v1":
+        return None
+
+    user_text = (text_in or "").strip()
+    if not user_text:
+        return None
+
+    name = str(st.get("name") or "").strip()
+    segment = str(st.get("segment") or "").strip()
+
+    if _is_smalltalk(user_text):
+        st["understand_source"] = "smalltalk"
+        st["plan_intent"] = "SMALLTALK"
+        st["plan_next_step"] = "NONE"
+        st["understand_intent"] = "SMALLTALK"
+        st["understand_confidence"] = "high"
+        return _smalltalk_bridge(user_text)
+
+    dec = sales_box_decider(user_text=user_text) or {}
+    intent = str(dec.get("intent") or "OTHER").strip().upper()
+    conf = float(dec.get("confidence") or 0.55)
+    needs = bool(dec.get("needs_clarification"))
+    q = str(dec.get("clarifying_question") or "").strip()
+    ns = str(dec.get("next_step") or "NONE").strip().upper()
+
+    st["understand_source"] = "box_decider"
+    st["plan_intent"] = intent
+    st["plan_next_step"] = ns
+    st["understand_intent"] = intent
+    st["understand_confidence"] = ("high" if conf >= 0.80 else ("mid" if conf >= 0.55 else "low"))
+    st["understand_next_step"] = ns
+
+    if needs and q:
+        q = _strip_generic_question_ending(q)
+        q = _limit_questions(q, max_questions=1)
+        return q
+
+    kb_slice = _kb_slice_for_box(intent if intent != "OTHER" else "OTHER", segment=segment) or {}
+    prices = _get_display_prices(ttl_seconds=180) or {}
+    reply, next_step = _compose_box_reply(
+        box_intent=intent,
+        box_data=kb_slice,
+        prices=prices,
+        user_text=user_text,
+        name=name,
+        segment=segment,
+    )
+    reply = (reply or "").strip()
+    if not reply:
+        return None
+
+    if next_step == "SEND_LINK":
+        st["plan_next_step"] = "SEND_LINK"
+        st["understand_next_step"] = "SEND_LINK"
+
+    if intent == "OTHER" and conf < 0.50:
+        return "Só pra eu te atender certo: você quer preço, voz, ou um exemplo prático?"
+
+    reply = _apply_anti_loop(st, reply, name=name, segment=segment, goal=str(st.get("goal") or "").strip(), user_text=user_text)
+    reply = _limit_questions(reply, max_questions=0 if next_step == "SEND_LINK" else 1)
+    return reply.strip()
 
 
 # =========================
@@ -2658,7 +3207,18 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         return _clip(_soft_close_message(kb, name=name), SALES_MAX_CHARS_REPLY)
 
 
-    # =========================
+    
+    # ==========================================================
+    # BOX MODE (canônico): 1 caixa/turno + leitura mínima do Firestore
+    # ==========================================================
+    try:
+        bx = _sales_box_handle_turn(text_in, st)
+        if isinstance(bx, str) and bx.strip():
+            return _clip(bx.strip(), SALES_MAX_CHARS_REPLY)
+    except Exception:
+        pass
+
+# =========================
     # DECIDER (IA) — manda no "modo de resposta"
     # =========================
 
