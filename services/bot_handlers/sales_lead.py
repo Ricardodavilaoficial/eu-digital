@@ -293,6 +293,107 @@ SALES_PITCH_MAX_TOKENS = int(os.getenv("SALES_PITCH_MAX_TOKENS", "180") or "180"
 SALES_ANSWER_MAX_TOKENS = int(os.getenv("SALES_ANSWER_MAX_TOKENS", "220") or "220")
 
 
+SALES_SIGNUP_URL = str(os.getenv("SALES_SIGNUP_URL") or "https://mei-robo-prod.web.app/pages/cadastro.html").strip()
+
+# ==========================================================
+# Spoken sanitize (TTS): horas/datas/moeda/pontuação/URL
+# - Não altera replyText (texto WhatsApp)
+# - Só melhora spokenText/ttsText
+# ==========================================================
+_RE_TIME_HHMM = re.compile(r"\b(\d{1,2}):(\d{2})\b")
+_RE_DATE_DDMMYYYY = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
+_RE_BR_MONEY = re.compile(r"\bR\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})\b")
+_RE_URL = re.compile(r"\bhttps?://\S+\b", re.IGNORECASE)
+_RE_DOT_DOT = re.compile(r"\.\s*\.")
+
+def _spoken_sanitize(text: str) -> str:
+    """Sanitiza texto para fala (TTS). Mantém o texto curto e natural."""
+    try:
+        s = str(text or "").strip()
+        if not s:
+            return s
+
+        # Evita "palestra de URL" no áudio: link fica no texto
+        s = _RE_URL.sub("o link tá aqui na mensagem", s)
+
+        # Corrige pontuação duplicada que atrapalha TTS (". .")
+        s = _RE_DOT_DOT.sub(".", s)
+
+        # Horas: 06:30 -> 06h30 (evita virar "06. 30")
+        s = _RE_TIME_HHMM.sub(r"\1h\2", s)
+
+        # Datas: 30/01/2026 -> 30 de 01 de 2026 (neutro e estável)
+        s = _RE_DATE_DDMMYYYY.sub(r"\1 de \2 de \3", s)
+
+        # Moeda: R$ 89,00 -> 89 reais (mantém simples)
+        def _money(m):
+            v = (m.group(1) or "").replace(".", "").replace(",00", "")
+            return f"{v} reais"
+        s = _RE_BR_MONEY.sub(_money, s)
+
+        # Limpa espaços estranhos
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+    except Exception:
+        return str(text or "")
+
+def _is_link_request(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    # Pedido direto/objetivo: não pode cair em OTHER
+    keys = ("link", "site", "cadastro", "criar conta", "criar a conta", "assinar", "assinatura", "começar", "comecar", "entrar")
+    return any(k in t for k in keys)
+
+_RE_NAME_1 = re.compile(r"\b(meu nome e|meu nome é|me chamo|eu sou o|eu sou a|sou o|sou a)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'\- ]{1,40})", re.IGNORECASE)
+def _extract_name_from_text(text: str) -> str:
+    """Extrai nome simples de frases comuns. Conservador por segurança."""
+    try:
+        t = (text or "").strip()
+        if not t:
+            return ""
+        m = _RE_NAME_1.search(t)
+        if not m:
+            return ""
+        name = (m.group(2) or "").strip()
+        # corta no primeiro separador óbvio
+        name = re.split(r"[,.!?/\\|\n\r]", name)[0].strip()
+        if len(name) < 2:
+            return ""
+        # pega só as 2 primeiras palavras (nome/sobrenome) pra não virar frase inteira
+        parts = [p for p in name.split() if p]
+        name = " ".join(parts[:2]).strip()
+        return name
+    except Exception:
+        return ""
+
+def _maybe_append_ask_name(reply_text: str, st: Dict[str, Any], intent_final: str) -> str:
+    """Pergunta o nome UMA vez, no momento certo (não em ACTIVATE/SEND_LINK)."""
+    try:
+        if not isinstance(st, dict):
+            return reply_text
+        name = (st.get("name") or st.get("lead_name") or "").strip()
+        if name:
+            return reply_text
+        if st.get("asked_name_once") is True:
+            return reply_text
+        i = (intent_final or "").strip().upper()
+        if i in ("ACTIVATE", "ACTIVATE_SEND_LINK") or st.get("plan_next_step") == "SEND_LINK":
+            return reply_text
+
+        turns = int(st.get("turns") or 0)
+        # Só pede depois de pelo menos 1 troca útil (evita burocracia na primeira)
+        if turns < 1:
+            return reply_text
+
+        st["asked_name_once"] = True
+        q = "Só pra eu te tratar direitinho: qual teu nome?"
+        if reply_text.endswith("?") or reply_text.endswith("!"):
+            return reply_text + " " + q
+        return reply_text.rstrip() + " " + q
+    except Exception:
+        return reply_text
+
 # Spokenizer (texto -> fala humana) — V1
 # - NÃO altera replyText (texto WhatsApp)
 # - Só ajusta spokenText/ttsText (fala)
@@ -3286,6 +3387,24 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     """
     Única função que decide a resposta final (texto).
     """
+    # Captura de nome (conservador) — antes de decidir caixa
+    try:
+        nm = _extract_name_from_text(text_in)
+        if nm:
+            st["name"] = nm
+            st["lead_name"] = nm
+    except Exception:
+        pass
+
+    # Pedido direto de link/site: não pode cair em OTHER (resposta curta)
+    try:
+        if _is_link_request(text_in):
+            st["plan_intent"] = "ACTIVATE"
+            st["plan_next_step"] = "SEND_LINK"
+            return f"Criar conta / começar agora: {SALES_SIGNUP_URL}"
+    except Exception:
+        pass
+
     name = (st.get("name") or "").strip()
     segment = (st.get("segment") or "").strip()
     goal = (st.get("goal") or "").strip()
@@ -4596,6 +4715,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
     # Ajustes mínimos para o TTS falar melhor (sem mexer no replyText)
     try:
+        spoken_final = _spoken_sanitize(spoken_final)
         spoken_final = _speechify_for_tts(spoken_final)
     except Exception:
         pass
