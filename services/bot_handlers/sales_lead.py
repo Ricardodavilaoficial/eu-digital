@@ -86,12 +86,12 @@ def _log_sales_usage(
 # Conteúdo CANÔNICO (VENDAS)
 # =========================
 
-SITE_URL = os.getenv("MEI_ROBO_SITE_URL", "www.meirobo.com.br").strip()
+SITE_URL = os.getenv("MEI_ROBO_SITE_URL", "https://www.meirobo.com.br").strip()
 
 # Link canônico (cadastro/ativação) — usado quando o lead pede "assinar/ativar/link".
 MEI_ROBO_CADASTRO_URL = os.getenv(
     "MEI_ROBO_CADASTRO_URL",
-    "https://mei-robo-prod.web.app/pages/cadastro.html",
+    "https://www.meirobo.com.br",
 ).strip()
 
 # Preço SEMPRE vem daqui (fonte única)
@@ -299,7 +299,7 @@ SALES_PITCH_MAX_TOKENS = int(os.getenv("SALES_PITCH_MAX_TOKENS", "180") or "180"
 SALES_ANSWER_MAX_TOKENS = int(os.getenv("SALES_ANSWER_MAX_TOKENS", "220") or "220")
 
 
-SALES_SIGNUP_URL = str(os.getenv("SALES_SIGNUP_URL") or "https://mei-robo-prod.web.app/pages/cadastro.html").strip()
+SALES_SIGNUP_URL = str(os.getenv("SALES_SIGNUP_URL") or "https://www.meirobo.com.br").strip()
 
 # ==========================================================
 # Spoken sanitize (TTS): horas/datas/moeda/pontuação/URL
@@ -387,10 +387,8 @@ def _maybe_append_ask_name(reply_text: str, st: Dict[str, Any], intent_final: st
         if i in ("ACTIVATE", "ACTIVATE_SEND_LINK") or st.get("plan_next_step") == "SEND_LINK":
             return reply_text
 
-        turns = int(st.get("turns") or 0)
-        # Só pede depois de pelo menos 1 troca útil (evita burocracia na primeira)
-        if turns < 1:
-            return reply_text
+        # (sem gate de turnos): responde e coleta o nome 1x, exceto em CTA/link
+
 
         st["asked_name_once"] = True
         q = "Só pra eu te tratar direitinho: qual teu nome?"
@@ -1674,8 +1672,9 @@ def _spokenize_v1(
     t = re.sub(r"(?m)^\s*[-•\*\d]+\s*[\)\.\-–—]?\s*", "", t).strip()
     t = re.sub(r"\s+", " ", t).strip()
 
-    # evita "cara de template"
-    t = t.replace(":", ". ")
+    # evita "cara de template" SEM quebrar horário (06:30)
+    # troca ":" por ". " somente quando não estiver entre dígitos
+    t = re.sub(r"(?<!\d):(?!\d)", ". ", t)
     t = t.replace("—", ". ").replace("–", ". ")
     t = t.replace("…", ". ")
     t = _flatten_scene_arrows(t)
@@ -3968,6 +3967,17 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         pass
 
     # NLU (IA) — fonte canônica de intent/route/next_step/interest
+    # Guard (ASK_SEGMENT): se a pessoa só comentou "segmento/ramo" mas não disse qual,
+    # não pode cair em OTHER/menu.
+    try:
+        if stage == "ASK_SEGMENT":
+            tl = (text_in or "").strip().lower()
+            if ("segment" in tl or "ramo" in tl) and not _extract_segment_hint(text_in):
+                st["understand_source"] = st.get("understand_source") or "ask_segment_guard"
+                return "Fechado. Qual é teu ramo? Ex.: psicóloga, barbearia, lanches, advocacia… (bem em 1 frase)."
+    except Exception:
+        pass
+
     nlu = sales_micro_nlu(text_in, stage=stage)
 
     # Cache mínimo do intent (curto) + auto-learn candidato (seguro)
@@ -4876,6 +4886,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     # Segurança: nunca falar "eu me chamo ..." se nome estiver vazio
     if not lead_name:
         reply_final = re.sub(r"\b(eu me chamo|me chamo)\b[^,]*,\s*", "", reply_final, flags=re.IGNORECASE).strip()
+    # Pergunta o nome UMA vez (quando fizer sentido) — não em CTA/link
+    reply_final = _maybe_append_ask_name(reply_final, st, intent_final)
     spoken_final = _sanitize_spoken(reply_final)
     # Camada de fala (padrão): números e unidades por extenso
     spoken_final = _strip_md_for_tts(spoken_final)

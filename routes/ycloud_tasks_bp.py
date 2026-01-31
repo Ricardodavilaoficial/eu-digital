@@ -1627,6 +1627,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 or wa_out.get("message")
                 or ""
             )
+            prefers_text = bool(wa_out.get("prefersText"))
             # Blindagem: se o bot quer texto e o reply contém link, nunca "perder" o texto.
             # (evita casos onde a pipeline envia só áudio e o link some)
             try:
@@ -1646,7 +1647,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             policies_applied = wa_out.get("policiesApplied") or []
             if not isinstance(policies_applied, list):
                 policies_applied = []
-            prefers_text = bool(wa_out.get("prefersText"))
+            # prefers_text já setado acima
             # display_name vem do handler (leadName/nameToSay) ou de displayName (compat)
             display_name = ((wa_out.get("displayName") or "") or (wa_out.get("leadName") or "") or (wa_out.get("nameToSay") or "")).strip()
             tts_text_from_bot = str(
