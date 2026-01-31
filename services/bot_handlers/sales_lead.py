@@ -1324,6 +1324,77 @@ def _alias_candidate_allowed(text_in: str, max_len: int) -> bool:
     except Exception:
         return False
 
+def _alias_snippet(text: str, max_len: int = 120) -> str:
+    try:
+        t = str(text or "").strip()
+        if not t:
+            return ""
+        t = re.sub(r"\s+", " ", t).strip()
+        if len(t) <= int(max_len or 120):
+            return t
+        return t[: max(0, int(max_len or 120) - 1)].rstrip() + "…"
+    except Exception:
+        return ""
+
+def _alias_word_count(phrase: str) -> int:
+    try:
+        # reaproveita normalização Brasil-raiz (sem acento, sem pontuação)
+        t = _norm_alias(phrase or "")
+        if not t:
+            return 0
+        parts = [p for p in t.split(" ") if p]
+        return len(parts)
+    except Exception:
+        return 0
+
+def _alias_stopwords_set(cfg_stopwords: Any) -> set:
+    try:
+        if isinstance(cfg_stopwords, list):
+            arr = [str(x or "").strip().lower() for x in cfg_stopwords]
+        else:
+            arr = [x.strip().lower() for x in str(cfg_stopwords or "").split(",")]
+        arr = [a for a in arr if a]
+        # normaliza também (sem acento/pontuação)
+        out = set()
+        for a in arr:
+            out.add(_norm_alias(a))
+        return out
+    except Exception:
+        return set()
+
+def _alias_is_stopword_only(phrase: str, stopwords: set) -> bool:
+    """
+    True quando a frase for só stopword(s).
+    Ex.: "oi", "bom dia", "kkk", "sim", "ta"
+    """
+    try:
+        t = _norm_alias(phrase or "")
+        if not t:
+            return True
+        if t in stopwords:
+            return True
+        parts = [p for p in t.split(" ") if p]
+        if not parts:
+            return True
+        return all(p in stopwords for p in parts)
+    except Exception:
+        return False
+
+def _alias_examples_push(prev: Any, new_text: str, max_examples: int) -> list:
+    ex = []
+    try:
+        if isinstance(prev, list):
+            ex = [str(x) for x in prev if str(x or "").strip()]
+    except Exception:
+        ex = []
+    sn = _alias_snippet(new_text, max_len=120)
+    if sn:
+        ex.append(sn)
+    mx = int(max_examples or 0)
+    if mx > 0 and len(ex) > mx:
+        ex = ex[-mx:]
+    return ex
+
 def _alias_autolearn_update(text_in: str, *, intent: str, next_step: str, confidence: float) -> None:
     """
     Atualiza/Cria item em platform_kb_action_maps/aliases_sales/items:
@@ -1337,9 +1408,17 @@ def _alias_autolearn_update(text_in: str, *, intent: str, next_step: str, confid
             return
         if cfg.get("enabled") is not True:
             return
+
+        # ==========================
+        # Governança (fase 1)
+        # defaults seguros quando o doc raiz ainda não tem os campos novos
+        # ==========================
         max_len = int(cfg.get("max_phrase_len") or 60)
         min_count = int(cfg.get("min_count") or 10)
         min_avg = float(cfg.get("min_confidence_avg") or 0.85)
+        min_words = int(cfg.get("min_words") or 2)
+        max_examples = int(cfg.get("max_examples") or 5)
+        stopwords = _alias_stopwords_set(cfg.get("stopwords") or ["oi","ola","bom dia","boa","ok","tá","ta","sim","não","nao","kkk","haha"])
 
         if not _alias_candidate_allowed(text_in, max_len):
             return
@@ -1351,6 +1430,14 @@ def _alias_autolearn_update(text_in: str, *, intent: str, next_step: str, confid
         phrase_norm = _norm_alias(text_in)
         if not phrase_norm:
             return
+
+        # Nunca auto-habilitar 1 palavra / stopword pura / frases “curtas demais”
+        wc = _alias_word_count(phrase_norm)
+        dangerous = False
+        if wc < int(min_words or 2):
+            dangerous = True
+        if _alias_is_stopword_only(phrase_norm, stopwords):
+            dangerous = True
 
         from google.cloud import firestore  # type: ignore
         client = firestore.Client()
@@ -1371,19 +1458,50 @@ def _alias_autolearn_update(text_in: str, *, intent: str, next_step: str, confid
         conf_f = max(0.0, min(1.0, conf_f))
         new_avg = ((old_avg * float(old_count)) + conf_f) / float(new_count) if new_count > 0 else conf_f
 
-        enabled_now = bool(old.get("enabled")) is True
-        if (not enabled_now) and (new_count >= min_count) and (new_avg >= min_avg):
-            enabled_now = True
+        enabled_prev = (old.get("enabled") is True)
+        enabled_now = bool(enabled_prev)
 
-        patch = {
+        # Evidência (últimos exemplos)
+        examples = _alias_examples_push(old.get("examples"), text_in, max_examples=max_examples)
+
+        # lastSeenAt sempre atualiza
+        patch: Dict[str, Any] = {
             "phrase": str(old.get("phrase") or text_in).strip(),
             "intent": i,
             "next_step": ns,
-            "enabled": bool(enabled_now),
             "count": int(new_count),
             "confidence_avg": float(round(new_avg, 4)),
+            "examples": examples,
+            "lastSeenAt": firestore.SERVER_TIMESTAMP,
             "updatedAt": firestore.SERVER_TIMESTAMP,
+            # mantém origem se já existir
+            "createdFrom": str(old.get("createdFrom") or "box_decider").strip(),
         }
+
+        # Se perigoso: NUNCA auto-enable. Marca pra revisão.
+        if dangerous:
+            patch["enabled"] = False
+            patch["needs_review"] = True
+            # não pisa em decisões do admin (se já estiver aprovado manualmente)
+            if (old.get("enabled") is True) and (str(old.get("enabledBy") or "") == "admin"):
+                patch["enabled"] = True
+                patch["needs_review"] = False
+        else:
+            # Só habilita quando bate threshold + regras OK
+            if (not enabled_prev) and (new_count >= min_count) and (new_avg >= min_avg):
+                enabled_now = True
+                patch["enabled"] = True
+                patch["enabledBy"] = "auto"
+                patch["enabledAt"] = firestore.SERVER_TIMESTAMP
+                patch["needs_review"] = True  # sempre que auto-habilitar
+            else:
+                patch["enabled"] = bool(enabled_prev)
+                # se foi auto, mantém needs_review true por padrão
+                if (str(old.get("enabledBy") or "") == "auto") and (old.get("enabled") is True):
+                    patch["needs_review"] = bool(old.get("needs_review") if "needs_review" in old else True)
+                else:
+                    patch["needs_review"] = bool(old.get("needs_review") or False)
+
         if not (doc and doc.exists):
             patch["createdAt"] = firestore.SERVER_TIMESTAMP
         ref.set(patch, merge=True)
