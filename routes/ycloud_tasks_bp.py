@@ -2592,6 +2592,18 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     # Observabilidade (opcional): entendimento IA-first (depth/risk/intent/confidence)
                     if isinstance(understanding, dict) and understanding:
                         payload_out["understanding"] = understanding
+                    
+                    # Auditoria de override (worker NÃO decide)
+                    try:
+                        if isinstance(wa_out, dict):
+                            if wa_out.get("intentAI") and wa_out.get("intentFinal"):
+                                payload_out["aiDecision"] = {
+                                    "intentAI": wa_out.get("intentAI"),
+                                    "intentFinal": wa_out.get("intentFinal"),
+                                    "overrideReason": wa_out.get("overrideReason") or "",
+                                }
+                    except Exception:
+                        pass
                     if isinstance(_extra, dict) and _extra:
                         payload_out.update(_extra)
                     # add() returns (update_time, doc_ref) in google-cloud-firestore

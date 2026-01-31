@@ -2323,6 +2323,44 @@ def _upsert_lead_from_state(wa_key: str, st: dict) -> None:
     name = (st.get("name") or "").strip()
     segment = (st.get("segment") or "").strip()
     goal = (st.get("goal") or "").strip()
+
+    # MEMÓRIA PEGAJOSA: se pedimos algo no turno anterior, consumir isso primeiro
+    try:
+        pending = str(st.get("pending_question") or "")
+        if pending:
+            st["pending_question"] = ""
+            st["understand_source"] = "memory_followup"
+            txt = (_ai_sales_answer(
+                name=name,
+                segment=segment,
+                goal=goal,
+                user_text=text_in,
+                intent_hint=pending,
+                state=st,
+            ) or "").strip()
+            if txt:
+                return _clip(txt, SALES_MAX_CHARS_REPLY)
+    except Exception:
+        pass
+
+    # PRIORIDADE: esclarecimento curto antes de menu
+    try:
+        conf = str(st.get("understand_confidence") or "").lower()
+        depth = str(st.get("plan_depth") or "").lower()
+        if conf in ("low", "mid") and depth == "deep":
+            txt = (_ai_sales_answer(
+                name=name,
+                segment=segment,
+                goal=goal,
+                user_text=text_in,
+                intent_hint="NEEDS_CLARIFICATION",
+                state=st,
+            ) or "").strip()
+            if txt:
+                txt = _limit_questions(txt, max_questions=1)
+                return _clip(txt, SALES_MAX_CHARS_REPLY)
+    except Exception:
+        pass
     turns = int(st.get("turns") or 0)
 
 
@@ -3280,7 +3318,9 @@ def _select_kb_blocks_by_intent(intent_final: str) -> list:
     if not intent_final:
         return []
 
-    intent = str(intent_final).strip().upper()
+    intent_ai = str(intent_final).strip().upper()
+    intent = intent_ai
+    override_reason = ""
 
     if intent == "PRICE":
         return ["pricing_facts", "scenario_index"]
@@ -4785,6 +4825,11 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             # VOICE é conceitual; não é fechamento
             # (next_step_final fica resolvido abaixo; aqui só dá um default seguro)
 
+    intent_ai = str(intent_final).strip().upper()
+    intent = intent_ai
+    override_reason = ""
+
+
 # Next step final (Planner soberano): usado para policy (link/close), sem heurística esperta.
     try:
         next_step_final = str(st.get("plan_next_step") or "").strip().upper()
@@ -4988,6 +5033,11 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             spoken_final = "Fechado! Na sequência eu te mando por escrito o link pra assinar."
         tts_ack_text = spoken_final
         policies_applied.append("policy:plan_send_link")
+
+    # ===== AUDITORIA IA-FIRST =====
+    if intent_ai != intent:
+        override_reason = override_reason or "code_override_intent"
+        policies_applied.append(f"override:intent:{intent_ai}->{intent}")
 
     # Legado controlado (compat): se não há plano e overrides estão ligados, mantém o comportamento antigo.
     if (next_step_final != "SEND_LINK") and (not has_plan) and _strategic_overrides_enabled() and _wants_link(text_in):
@@ -5302,6 +5352,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     if not _intent_u:
         _intent_u = "OTHER"
 
+    intent = _intent_u
+
     try:
         _ns_u = str(next_step_final or st.get("plan_next_step") or "").strip().upper()
     except Exception:
@@ -5349,7 +5401,9 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         "ttsAckText": tts_ack_text,
 
         # Contrato de política/auditoria (incremental)
-        "intentFinal": understand_contract.get("intent") or "OTHER",
+        "intentAI": intent_ai,
+        "intentFinal": intent,
+        "overrideReason": override_reason,
         "planNextStep": understand_contract.get("next_step") or "",
         "understanding": understand_contract,
         "understandingDebug": {
