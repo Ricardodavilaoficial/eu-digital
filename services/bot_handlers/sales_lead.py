@@ -21,6 +21,16 @@ import requests
 import unicodedata
 from typing import Any, Dict, Optional, Tuple
 
+
+# ==========================================================
+# Limites de custo / sessão (cinturão de excesso)
+# ==========================================================
+MAX_TURNS_PER_SESSION = 15
+MAX_AI_CALLS_PER_SESSION = 6
+MAX_TTS_PER_SESSION = 6
+MAX_OTHER_STREAK = 3
+
+
 def _speechify_for_tts(text: str) -> str:
     """
     Ajustes mínimos pra TTS falar bem, sem destruir conteúdo.
@@ -1058,6 +1068,24 @@ def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
     user_text = (text_in or "").strip()
     if not user_text:
         return None
+    # ==========================
+    # Contadores de sessão
+    # ==========================
+    try:
+        st["turns"] = int(st.get("turns") or 0) + 1
+    except Exception:
+        st["turns"] = 1
+
+    try:
+        st["ai_calls"] = int(st.get("ai_calls") or 0)
+    except Exception:
+        st["ai_calls"] = 0
+
+    try:
+        st["tts_calls"] = int(st.get("tts_calls") or 0)
+    except Exception:
+        st["tts_calls"] = 0
+
 
     name = str(st.get("name") or "").strip()
     segment = str(st.get("segment") or "").strip()
@@ -1076,6 +1104,58 @@ def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
     needs = bool(dec.get("needs_clarification"))
     q = str(dec.get("clarifying_question") or "").strip()
     ns = str(dec.get("next_step") or "NONE").strip().upper()
+
+    # ==========================
+    # OTHER streak
+    # ==========================
+    try:
+        if intent == "OTHER":
+            st["other_streak"] = int(st.get("other_streak") or 0) + 1
+        else:
+            st["other_streak"] = 0
+    except Exception:
+        st["other_streak"] = 0
+
+    # Se OTHER mas há contexto suficiente, responde direto (WHAT_IS)
+    try:
+        if intent == "OTHER":
+            tlen = len((user_text or "").strip())
+            has_q = "?" in (user_text or "")
+            if tlen >= 40 or has_q:
+                intent = "WHAT_IS"
+                st["understand_source"] = "other_promoted_to_whatis"
+    except Exception:
+        pass
+
+    # ==========================
+    # Cinturão de excesso
+    # ==========================
+    try:
+        if (
+            st.get("turns", 0) > MAX_TURNS_PER_SESSION or
+            st.get("ai_calls", 0) > MAX_AI_CALLS_PER_SESSION or
+            st.get("tts_calls", 0) > MAX_TTS_PER_SESSION
+        ):
+            st["excess_level"] = "HARD"
+        elif st.get("other_streak", 0) >= MAX_OTHER_STREAK:
+            st["excess_level"] = "SOFT"
+        else:
+            st["excess_level"] = "NORMAL"
+    except Exception:
+        st["excess_level"] = "NORMAL"
+    if st.get("excess_level") == "HARD":
+        msgs = [
+            "Pra não ficar repetindo respostas por aqui, concentrei tudo no site.\\n👉 www.meirobo.com.br",
+            "Aqui já deu pra passar a visão geral 🙂\\nAs infos completas estão em:\\nwww.meirobo.com.br",
+            "Pra seguir sem confusão, o próximo passo é direto pelo site:\\nwww.meirobo.com.br",
+            "A partir daqui, o melhor caminho é pelo site mesmo:\\nwww.meirobo.com.br",
+        ]
+        try:
+            idx = int(st.get("fallback_idx") or 0) % len(msgs)
+            st["fallback_idx"] = idx + 1
+            return msgs[idx]
+        except Exception:
+            return msgs[0]
 
     st["understand_source"] = "box_decider"
     st["plan_intent"] = intent
@@ -1108,7 +1188,30 @@ def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
         st["understand_next_step"] = "SEND_LINK"
 
     if intent == "OTHER" and conf < 0.50:
+        try:
+            other_streak = int(st.get("other_streak") or 0)
+            used = bool(st.get("extra_clarify_used"))
+        except Exception:
+            other_streak = 0
+            used = False
+
+        if other_streak >= 2 and not used:
+            try:
+                st["extra_clarify_used"] = True
+                st["ai_calls"] += 1
+                q = (_ai_sales_answer(
+                    user_text=user_text,
+                    intent_hint="NEEDS_CLARIFICATION",
+                    state=st,
+                ) or "").strip()
+                if q:
+                    return _limit_questions(q, 1)
+            except Exception:
+                pass
+
         return "Só pra eu te atender certo: você quer preço, voz, ou um exemplo prático?"
+
+
 
     reply = _apply_anti_loop(st, reply, name=name, segment=segment, goal=str(st.get("goal") or "").strip(), user_text=user_text)
     reply = _limit_questions(reply, max_questions=0 if next_step == "SEND_LINK" else 1)
@@ -4053,6 +4156,8 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             nlu = dict(nlu or {})
             nlu["intent"] = _cheap_int
             nlu["confidence"] = "high"
+            st["overrideReason"] = "cheap_intent_overrode_nlu"
+            st["overrideDetail"] = {"from": _nlu_int, "to": _cheap_int}
     except Exception:
         pass
 
