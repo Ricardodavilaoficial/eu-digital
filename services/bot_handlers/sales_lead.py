@@ -31,6 +31,16 @@ MAX_TTS_PER_SESSION = 6
 MAX_OTHER_STREAK = 3
 
 
+
+# ==========================================================
+# Regra de produto (VENDAS institucional): teto por contato
+# - 15..18 mensagens "inteligentes" por contato (hard cap = 18)
+# - Pergunta esclarecedora é permitida (custo assumido), mas limitada por contato
+# ==========================================================
+LEAD_MAX_SMART_MSGS = int(os.getenv("LEAD_MAX_SMART_MSGS", "18") or "18")
+LEAD_SOFT_WARNING_AT = int(os.getenv("LEAD_SOFT_WARNING_AT", "15") or "15")
+LEAD_MAX_CLARIFY_QS = int(os.getenv("LEAD_MAX_CLARIFY_QS", "1") or "1")
+
 def _speechify_for_tts(text: str) -> str:
     """
     Ajustes mínimos pra TTS falar bem, sem destruir conteúdo.
@@ -1031,7 +1041,7 @@ def _compose_box_reply(
         prefix = f"{nm}, " if nm else ""
         line1 = (prefix + "na prática fica assim:").strip()
         line2 = scene_line or seg_ms
-        line3 = q or "Qual é teu tipo de negócio (bem em 1 frase), só pra eu acertar o exemplo?"
+        line3 = "Se quiser, eu te explico com um exemplo bem do teu tipo de negócio em 1 pergunta."
         return ("\n".join([x for x in (line1, line2, line3) if x]).strip(), "NONE")
 
     if i == "VOICE":
@@ -1104,6 +1114,24 @@ def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
     needs = bool(dec.get("needs_clarification"))
     q = str(dec.get("clarifying_question") or "").strip()
     ns = str(dec.get("next_step") or "NONE").strip().upper()
+
+    # ==========================================================
+    # Pergunta esclarecedora (regra atualizada):
+    # - liberada
+    # - mas limitada por contato (evita ficar "perguntando demais")
+    # ==========================================================
+    try:
+        used = int(st.get("clarify_used") or 0)
+    except Exception:
+        used = 0
+    if needs:
+        if used >= LEAD_MAX_CLARIFY_QS:
+            # já perguntou o bastante; segue sem perguntar (melhor esforço)
+            needs = False
+            q = ""
+        else:
+            st["clarify_used"] = used + 1
+
 
     # ==========================
     # OTHER streak
@@ -4142,6 +4170,21 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             "planNextStep": und["next_step"],
         }
 
+    # ==========================================================
+    # Teto por contato (produto): se já fechou, não volta a conversar.
+    # ==========================================================
+    try:
+        if bool((ctx or {}).get("state", {}).get("closed")):
+            # se alguém passar state fechado por fora (defensivo)
+            st_closed = dict((ctx or {}).get("state") or {})
+            return _mk_out(
+                f"Pra seguir, é pelo site mesmo: {SITE_URL}",
+                st_closed,
+            )
+    except Exception:
+        pass
+
+
     # Sem remetente: ainda assim devolve canônico
     if not from_e164:
         st0: Dict[str, Any] = {
@@ -4158,6 +4201,19 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     if isinstance(st, dict):
         st["wa_key"] = wa_key
 
+    # hard-stop se o contato já foi encerrado
+    if bool(st.get("closed")):
+        st["understand_source"] = "lead_closed"
+        st["understand_intent"] = "OTHER"
+        st["understand_confidence"] = "mid"
+        st["plan_intent"] = "OTHER"
+        st["plan_next_step"] = "SEND_LINK"
+        return _mk_out(
+            f"Fechado 🙂 Pra seguir, é pelo site mesmo: {SITE_URL}",
+            st,
+        )
+
+
     try:
         reply_text = _reply_from_state(text_in, st)
     except Exception:
@@ -4168,6 +4224,49 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         st["plan_intent"] = "OTHER"
         st["plan_next_step"] = "SEND_LINK"
         reply_text = f"Pra ver tudo certinho (voz, preço e como funciona), entra aqui: {SITE_URL}"
+
+    # ==========================================================
+    # Contador de mensagens "inteligentes" por contato
+    # - conta qualquer resposta útil (inclui clarificação)
+    # ==========================================================
+    try:
+        st["smart_msgs"] = int(st.get("smart_msgs") or 0) + 1
+    except Exception:
+        st["smart_msgs"] = 1
+
+    # soft warning (a partir de 15): prepara o encerramento sem soar rude
+    try:
+        if int(st.get("smart_msgs") or 0) == LEAD_SOFT_WARNING_AT:
+            st["soft_warned"] = True
+    except Exception:
+        pass
+
+    # hard cap: encerra e marca state fechado
+    try:
+        if int(st.get("smart_msgs") or 0) >= LEAD_MAX_SMART_MSGS:
+            st["closed"] = True
+            st["closed_reason"] = "lead_max_msgs"
+            st["closed_at"] = time.time()
+            st["understand_source"] = "lead_cap_close"
+            st["understand_intent"] = "OTHER"
+            st["understand_confidence"] = "high"
+            st["plan_intent"] = "OTHER"
+            st["plan_next_step"] = "SEND_LINK"
+            reply_text = (
+                "Fechado 🙂 Pra não virar conversa infinita por aqui, eu encerro por aqui.\n"
+                f"Se você quiser seguir e ver tudo certinho (voz, preço e como funciona): {SITE_URL}"
+            )
+    except Exception:
+        pass
+
+    # Se chegou no soft warning, adiciona 1 linha humana (sem alongar)
+    try:
+        if bool(st.get("soft_warned")) and (not bool(st.get("closed"))):
+            # não cola link automaticamente; só sinaliza
+            reply_text = (str(reply_text or "").strip() + "\n\n"
+                          "Se você quiser, eu te mando o link e a gente fecha por lá.").strip()
+    except Exception:
+        pass
 
     # Persistência leve (mantém o que já existe)
     try:
