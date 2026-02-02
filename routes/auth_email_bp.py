@@ -10,6 +10,14 @@ auth_email_bp = Blueprint("auth_email_bp", __name__)
 
 SENDGRID_API_URL = "https://api.sendgrid.com/v3/mail/send"
 
+
+# ==========================================================
+# Email verification mode
+# - sendgrid (default, atual)
+# - firebase  (fallback Google)
+# ==========================================================
+def _email_verify_mode():
+    return os.getenv("EMAIL_VERIFY_MODE", "sendgrid").strip().lower()
 # === Redis setup for VT and verified flags ===
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
 _r = redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
@@ -91,7 +99,21 @@ def send_verification_email_pretty():
     Aceita GET/POST/OPTIONS (mesmo tratamento para GET e POST).
     """
 
-    # Pré-flight simples
+    
+    mode = _email_verify_mode()
+
+    # ======================================================
+    # MODO FIREBASE
+    # - Não envia SendGrid
+    # - Frontend usará sendEmailVerification() nativo
+    # ======================================================
+    if mode == "firebase":
+        current_app.logger.warning(
+            "[auth_email] EMAIL_VERIFY_MODE=firebase → skip SendGrid send"
+        )
+        return jsonify({"ok": True, "sent": False, "mode": "firebase"}), 200
+
+# Pré-flight simples
     if request.method == "OPTIONS":
         # Deixe o middleware de CORS completar os headers; aqui só respondemos vazio.
         return ("", 204)
@@ -256,6 +278,7 @@ def confirm_email():
 @auth_email_bp.get("/check-verification")
 def check_verification():
     try:
+        mode = _email_verify_mode()
         verified = False
         uid = None
 
@@ -279,8 +302,12 @@ def check_verification():
         if not uid:
             uid = (request.args.get("uid") or "").strip()
 
-        if _r and uid:
-            verified = _r.get(f"verified:{uid}") == "1"
+        if mode == "sendgrid":
+            if _r and uid:
+                verified = _r.get(f"verified:{uid}") == "1"
+        else:
+            # firebase: confirmação é feita via Auth (frontend)
+            verified = False
 
         return jsonify({"ok": True, "verified": bool(verified)})
     except Exception as e:
