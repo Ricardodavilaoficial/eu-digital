@@ -255,7 +255,11 @@ def ycloud_webhook_ingress():
         try:
             # Import lazy para evitar circular import
             from routes.ycloud_tasks_bp import _ycloud_inbound_worker_impl  # type: ignore
-            _ycloud_inbound_worker_impl(_env)
+            try:
+                _ycloud_inbound_worker_impl(_env)
+            except TypeError:
+                # Compat: algumas versões do worker não aceitam args
+                _ycloud_inbound_worker_impl()
             return True
         except Exception:
             try:
