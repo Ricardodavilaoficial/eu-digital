@@ -242,7 +242,34 @@ def ycloud_webhook_ingress():
 
     event_key = f"ycloud:{ev_type}:{msg_type}:{from_raw}:{wamid}"
 
-    # enfileira e sai (best-effort, nunca quebra o webhook)
+
+    # ==========================================================
+    # QUEUE_MODE canônico: inline | cloudtasks
+    # - inline: processa direto (modo seguro quando Billing/Cloud Tasks quebram)
+    # - cloudtasks: tenta enfileirar; se falhar => fallback inline
+    # Regra de ouro: webhook NUNCA deve responder 500 por causa de fila.
+    # ==========================================================
+    queue_mode = (os.getenv("QUEUE_MODE", "cloudtasks") or "cloudtasks").strip().lower()
+
+    def _run_inline(_env: Dict[str, Any]) -> bool:
+        try:
+            # Import lazy para evitar circular import
+            from routes.ycloud_tasks_bp import _ycloud_inbound_worker_impl  # type: ignore
+            _ycloud_inbound_worker_impl(_env)
+            return True
+        except Exception:
+            try:
+                logger.exception("[ycloud_webhook] inline_fail: eventKey=%s", _safe_str(event_key))
+            except Exception:
+                pass
+            return False
+
+    # inline: processa e sai (sempre 200)
+    if queue_mode == "inline":
+        ok_inline = _run_inline(env)
+        return jsonify({"ok": True, "mode": "inline", "processed": bool(ok_inline), "eventKey": event_key}), 200
+
+    # cloudtasks: tenta enfileirar; fallback inline se falhar (sempre 200)
     try:
         from services.cloud_tasks import enqueue_ycloud_inbound  # lazy import
 
@@ -296,16 +323,20 @@ def ycloud_webhook_ingress():
             )
         except Exception:
             pass
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": "enqueue_failed",
-                    "err": f"{type(e).__name__}:{str(e)[:180]}",
-                }
-            ),
-            500,
-        )
+        ok_inline = _run_inline(env)
+        return jsonify(
+            {
+                "ok": True,
+                "mode": "cloudtasks",
+                "enqueued": False,
+                "fallback": "inline",
+                "processed": bool(ok_inline),
+                "error": "enqueue_failed",
+                "err": f"{type(e).__name__}:{str(e)[:180]}",
+                "eventKey": event_key,
+            }
+        ), 200
+
 
     # IMPORTANTE:
     # O webhook é MAGRO. Ele só normaliza + enfileira e retorna 200 rápido.
