@@ -243,35 +243,51 @@ def ycloud_webhook_ingress():
     event_key = f"ycloud:{ev_type}:{msg_type}:{from_raw}:{wamid}"
 
 
+    
     # ==========================================================
     # QUEUE_MODE canônico: inline | cloudtasks
-    # - inline: processa direto (modo seguro quando Billing/Cloud Tasks quebram)
+    # - inline: processa agora, sem fila (modo seguro)
     # - cloudtasks: tenta enfileirar; se falhar => fallback inline
-    # Regra de ouro: webhook NUNCA deve responder 500 por causa de fila.
+    # Regra de ouro: webhook NUNCA deve responder 500 por causa de fila/worker.
     # ==========================================================
     queue_mode = (os.getenv("QUEUE_MODE", "cloudtasks") or "cloudtasks").strip().lower()
 
-    def _run_inline(_env: Dict[str, Any]) -> bool:
+    def _run_inline() -> Tuple[bool, str]:
+        """
+        Executa o worker inline com compatibilidade de assinaturas.
+        Retorna (ok, mode_used)
+        """
         try:
-            # Import lazy para evitar circular import
             from routes.ycloud_tasks_bp import _ycloud_inbound_worker_impl  # type: ignore
+
+            # Assinatura atual (keyword-only)
             try:
-                _ycloud_inbound_worker_impl(_env)
+                _ycloud_inbound_worker_impl(event_key=event_key, payload=env, data=payload)
+                return True, "kw:event_key,payload,data"
             except TypeError:
-                # Compat: algumas versões do worker não aceitam args
-                _ycloud_inbound_worker_impl()
-            return True
+                pass
+
+            # Compat antiga: 1 arg posicional
+            try:
+                _ycloud_inbound_worker_impl(env)
+                return True, "pos:env"
+            except TypeError:
+                pass
+
+            # Compat muito antiga: sem args
+            _ycloud_inbound_worker_impl()
+            return True, "noargs"
         except Exception:
             try:
                 logger.exception("[ycloud_webhook] inline_fail: eventKey=%s", _safe_str(event_key))
             except Exception:
                 pass
-            return False
+            return False, "inline_error"
 
     # inline: processa e sai (sempre 200)
     if queue_mode == "inline":
-        ok_inline = _run_inline(env)
-        return jsonify({"ok": True, "mode": "inline", "processed": bool(ok_inline), "eventKey": event_key}), 200
+        ok_inline, used = _run_inline()
+        return jsonify({"ok": True, "mode": "inline", "processed": bool(ok_inline), "inlineSig": used, "eventKey": event_key}), 200
 
     # cloudtasks: tenta enfileirar; fallback inline se falhar (sempre 200)
     try:
@@ -297,23 +313,6 @@ def ycloud_webhook_ingress():
         except Exception:
             pass
 
-        # Observabilidade mínima (best-effort)
-        try:
-            _db().collection("platform_wa_logs").add(
-                {
-                    "createdAt": _now_ts(),
-                    "kind": "inbound",
-                    "eventType": env.get("eventType"),
-                    "messageType": env.get("messageType"),
-                    "from": env.get("from"),
-                    "to": env.get("to"),
-                    "wamid": env.get("wamid"),
-                    "textPreview": (env.get("text") or "")[:120],
-                }
-            )
-        except Exception:
-            pass
-
         return jsonify({"ok": True, "enqueued": True, "eventKey": event_key, "task": task_name}), 200
 
     except Exception as e:
@@ -327,7 +326,7 @@ def ycloud_webhook_ingress():
             )
         except Exception:
             pass
-        ok_inline = _run_inline(env)
+        ok_inline, used = _run_inline()
         return jsonify(
             {
                 "ok": True,
@@ -335,6 +334,7 @@ def ycloud_webhook_ingress():
                 "enqueued": False,
                 "fallback": "inline",
                 "processed": bool(ok_inline),
+                "inlineSig": used,
                 "error": "enqueue_failed",
                 "err": f"{type(e).__name__}:{str(e)[:180]}",
                 "eventKey": event_key,
