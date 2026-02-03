@@ -20,7 +20,6 @@ import requests
 from flask import Blueprint, request, jsonify
 
 from services.phone_utils import digits_only as _digits_only_c, to_plus_e164 as _to_plus_e164_c
-from google.cloud import firestore  # type: ignore
 
 logger = logging.getLogger("mei_robo.ycloud_tasks")
 
@@ -134,6 +133,14 @@ def _db_admin():
         return admin_fs.client()
     except Exception:
         return None
+
+
+def _fs_admin():
+    """Atalhos de sentinelas do firebase-admin firestore (evita misturar com google.cloud.firestore)."""
+    from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
+    ensure_firebase_admin()
+    from firebase_admin import firestore as admin_fs  # type: ignore
+    return admin_fs
 
 
 def _sha1_id(s: str) -> str:
@@ -1008,7 +1015,7 @@ def ycloud_inbound_worker():
                 _db().collection("platform_wa_dedupe").document(_dedupe_id).create({
                     "eventKey": _ek[:500],
                     "wamid": _wamid_d[:120],
-                    "createdAt": firestore.SERVER_TIMESTAMP,
+                    "createdAt": _fs_admin().SERVER_TIMESTAMP,
                     "expiresAt": _now + _ttl,
                     "service": "ycloud_inbound_worker",
                 })
@@ -1087,6 +1094,17 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         logger.info("[tasks] start eventKey=%s wamid=%s msgType=%s", event_key, _wamid, _msg_type)
     except Exception:
         logger.info("[tasks] start eventKey=%s (no payload details)", event_key)
+
+
+    # SMOKE (FireStore): prova determinística de escrita no projeto ativo
+    # - Se isso falhar, o problema é credencial/projeto/alvo, não a lógica do bot.
+    try:
+        _db().collection("platform_tasks_smoke").document("last").set({
+            "ts": _fs_admin().SERVER_TIMESTAMP,
+            "eventKey": event_key,
+        }, merge=True)
+    except Exception:
+        logger.exception("[tasks] firestore_smoke_write_failed eventKey=%s", str(event_key or "")[:160])
 
     if not event_key or not isinstance(payload, dict):
         logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "BAD_REQUEST_MISSING_EVENTKEY_OR_PAYLOAD", event_key, _wamid)
@@ -1203,7 +1221,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     from services.voice_wa_download import sniff_extension  # type: ignore
                     ext_hint = sniff_extension(mime or "", fallback="ogg")
                 except Exception:
-                    pass
+                    logger.exception("[tasks] outbox_final_write_fail wamid=%s eventKey=%s", wamid, event_key)
 
                 # Caminho padrão já usado no projeto (não muda contrato)
                 storage_path = f"profissionais/{uid}/voz/original/whatsapp_{int(time.time())}.{ext_hint}"
@@ -1238,8 +1256,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                     "lastError": "",
                                     "lastAudioGcsPath": storage_path,
                                     "lastAudioMime": (mime or "audio/ogg"),
-                                    "lastInboundAt": firestore.SERVER_TIMESTAMP,
-                                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                                    "lastInboundAt": _fs_admin().SERVER_TIMESTAMP,
+                                    "updatedAt": _fs_admin().SERVER_TIMESTAMP,
                                     "waFromE164": from_e164,
                                 }
                             }
@@ -1269,7 +1287,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                 try:
                     _db().collection("platform_wa_outbox_logs").add({
-                        "createdAt": firestore.SERVER_TIMESTAMP,
+                        "createdAt": _fs_admin().SERVER_TIMESTAMP,
                         "from": from_e164,
                         "to": to_e164,
                         "wamid": wamid,
@@ -1801,7 +1819,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 base = {
                     "waKey": _wa_key,
                     "from": _from_e164,
-                    "lastSeenAt": firestore.SERVER_TIMESTAMP,
+                    "lastSeenAt": _fs_admin().SERVER_TIMESTAMP,
                     "lastMsgType": _msg_type,
                     "lastEventKey": str(event_key or "")[:500],
                 }
@@ -1810,13 +1828,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                 # lead canônico
                 _db().collection(leads_coll).document(_wa_key).set(
-                    {**base, "msgCount": firestore.Increment(1)},
+                    {**base, "msgCount": _fs_admin().Increment(1)},
                     merge=True,
                 )
 
                 # perfil (afinidade/marketing)
                 _db().collection(prof_coll).document(_wa_key).set(
-                    {**base, "msgCount": firestore.Increment(1)},
+                    {**base, "msgCount": _fs_admin().Increment(1)},
                     merge=True,
                 )
         except Exception:
@@ -2586,7 +2604,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                         # docId determinístico pra auditoria (e evita duplicar por retry)
                     _doc_id = _sha1_id(event_key or wamid or str(time.time()))
                     payload_out = {
-                        "createdAt": firestore.SERVER_TIMESTAMP,
+                        "createdAt": _fs_admin().SERVER_TIMESTAMP,
                         "from": from_e164,
                         "to": to_e164,
                         "wamid": wamid,
@@ -2729,6 +2747,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         logger.info("[outbound] send_text (inbound_text_default) to=%s chars=%d", from_e164, len(_rt2))
                         _okT, _ = send_text(from_e164, _rt2)
                         sent_ok = sent_ok or bool(_okT)
+                        if _okT:
+                            _try_log_outbox_immediate(True, "send_text_inbound_text_default")
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text (inbound_text_default)")
 
@@ -2918,7 +2938,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # log leve (auditoria). Precisa ocorrer antes do return.
             try:
                 _db().collection("platform_wa_outbox_logs").add({
-                    "createdAt": firestore.SERVER_TIMESTAMP,
+                    "createdAt": _fs_admin().SERVER_TIMESTAMP,
                     "from": from_e164,
                     "to": to_e164,
                     "wamid": wamid,
