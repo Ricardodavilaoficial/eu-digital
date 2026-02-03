@@ -5,9 +5,11 @@
 
 from __future__ import annotations
 
-import os, json
+import os, json, logging
 import firebase_admin
 from firebase_admin import credentials
+
+logger = logging.getLogger(__name__)
 
 def ensure_firebase_admin() -> None:
     try:
@@ -19,7 +21,10 @@ def ensure_firebase_admin() -> None:
     try:
         inline = (os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON") or "").strip()
         if inline:
-            cred = credentials.Certificate(json.loads(inline))
+            info = json.loads(inline)
+            logger.info("[FIREBASE] Usando credencial inline (env JSON). project_id=%s client_email=%s",
+                        info.get("project_id"), info.get("client_email"))
+            cred = credentials.Certificate(info)
             firebase_admin.initialize_app(cred)
             return
 
