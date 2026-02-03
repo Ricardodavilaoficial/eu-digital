@@ -22,6 +22,35 @@ import unicodedata
 from typing import Any, Dict, Optional, Tuple
 
 
+
+# ==========================================================
+# Firestore client (credencial consistente)
+# - Evita 403 "Missing or insufficient permissions" quando o client pega credencial errada (ADC).
+# - Preferimos o client do firebase_admin (mesma credencial do backend).
+# ==========================================================
+def _fs_client():
+    try:
+        import firebase_admin  # type: ignore
+        from firebase_admin import firestore as fb_firestore  # type: ignore
+        # Se ainda não inicializou, tenta inicializar via FIREBASE_SERVICE_ACCOUNT_JSON
+        if not getattr(firebase_admin, "_apps", None):
+            try:
+                from firebase_admin import credentials  # type: ignore
+                sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+                if sa_json and sa_json.strip():
+                    info = json.loads(sa_json)
+                    cred = credentials.Certificate(info)
+                    firebase_admin.initialize_app(cred, {"projectId": info.get("project_id")})
+            except Exception:
+                # best-effort: se falhar, seguimos e deixamos o SDK tentar ADC
+                pass
+        return fb_firestore.client()
+    except Exception:
+        from google.cloud import firestore  # type: ignore
+        return firestore.Client()
+
+
+
 # ==========================================================
 # Limites de custo / sessão (cinturão de excesso)
 # ==========================================================
@@ -475,7 +504,7 @@ def _merge_platform_pricing_into_kb(kb: Dict[str, Any]) -> Dict[str, Any]:
         # busca doc canônico
         try:
             from google.cloud import firestore  # type: ignore
-            client = firestore.Client()
+            client = _fs_client()
         except Exception:
             return kb
 
@@ -540,7 +569,7 @@ def _get_sales_kb() -> Dict[str, Any]:
     try:
         # Lazy import para não quebrar em ambientes sem Firestore libs
         from google.cloud import firestore  # type: ignore
-        client = firestore.Client()
+        client = _fs_client()
         doc = client.collection("platform_kb").document("sales").get()
         if doc and doc.exists:
             kb = doc.to_dict() or {}
@@ -609,7 +638,7 @@ def _get_doc_fields(doc_path: str, field_paths: list, *, ttl_seconds: int = 180)
     out: Dict[str, Any] = {}
     try:
         from google.cloud import firestore  # type: ignore
-        client = firestore.Client()
+        client = _fs_client()
         parts = [p for p in doc_path.split("/") if p]
         if len(parts) < 2:
             return {}
@@ -1302,7 +1331,7 @@ def _fs_cache_get(doc_id: str) -> Optional[Dict[str, Any]]:
         if not doc_id:
             return None
         from google.cloud import firestore  # type: ignore
-        client = firestore.Client()
+        client = _fs_client()
         ref = client.collection(PLATFORM_RESPONSE_CACHE_COLLECTION).document(doc_id)
         doc = ref.get()
         if not doc or not doc.exists:
@@ -1326,7 +1355,7 @@ def _fs_cache_set(doc_id: str, payload: Dict[str, Any], *, ttl_seconds: int) -> 
         if not doc_id or not isinstance(payload, dict):
             return
         from google.cloud import firestore  # type: ignore
-        client = firestore.Client()
+        client = _fs_client()
         exp = _now_epoch() + int(ttl_seconds or 0)
         obj = dict(payload)
         obj["expiresAt"] = int(exp)
@@ -1364,7 +1393,7 @@ def _load_alias_config_and_enabled_items() -> Tuple[Dict[str, Any], list]:
     items: list = []
     try:
         from google.cloud import firestore  # type: ignore
-        client = firestore.Client()
+        client = _fs_client()
         parts = [p for p in PLATFORM_ALIAS_DOC.split("/") if p]
         if len(parts) >= 2:
             doc = client.collection(parts[0]).document(parts[1]).get()
@@ -1569,7 +1598,7 @@ def _alias_autolearn_update(text_in: str, *, intent: str, next_step: str, confid
             dangerous = True
 
         from google.cloud import firestore  # type: ignore
-        client = firestore.Client()
+        client = _fs_client()
         parts = [p for p in PLATFORM_ALIAS_DOC.split("/") if p]
         if len(parts) < 2:
             return
