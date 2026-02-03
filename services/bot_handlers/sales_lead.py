@@ -29,25 +29,21 @@ from typing import Any, Dict, Optional, Tuple
 # - Preferimos o client do firebase_admin (mesma credencial do backend).
 # ==========================================================
 def _fs_client():
+    """Firestore client canônico: sempre via firebase_admin.
+    - Determinístico em Render e Cloud Run.
+    - Evita ADC (GOOGLE_APPLICATION_CREDENTIALS) apontar para projeto errado.
+    """
     try:
-        import firebase_admin  # type: ignore
+        from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
+        ensure_firebase_admin()
         from firebase_admin import firestore as fb_firestore  # type: ignore
-        # Se ainda não inicializou, tenta inicializar via FIREBASE_SERVICE_ACCOUNT_JSON
-        if not getattr(firebase_admin, "_apps", None):
-            try:
-                from firebase_admin import credentials  # type: ignore
-                sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "")
-                if sa_json and sa_json.strip():
-                    info = json.loads(sa_json)
-                    cred = credentials.Certificate(info)
-                    firebase_admin.initialize_app(cred, {"projectId": info.get("project_id")})
-            except Exception:
-                # best-effort: se falhar, seguimos e deixamos o SDK tentar ADC
-                pass
         return fb_firestore.client()
     except Exception:
-        from google.cloud import firestore  # type: ignore
-        return firestore.Client()
+        # Fallback EXPLÍCITO apenas para dev/local, se você realmente quiser.
+        if str(os.getenv("ALLOW_FIRESTORE_ADC", "")).strip().lower() in ("1", "true", "yes"):
+            from google.cloud import firestore  # type: ignore
+            return firestore.Client()
+        raise
 
 
 
@@ -3762,7 +3758,7 @@ def _ai_sales_answer(
     try:
         wa_key = str(state.get("wa_key") or state.get("__wa_key") or "").strip()
         if wa_key and firestore:
-            fs = firestore.Client()
+            fs = _fs_client()
             _est_tokens_in = len(prompt) // 4 if prompt else 0
             _est_tokens_out = len(reply_text) // 4 if reply_text else 0
 
@@ -3885,7 +3881,7 @@ def _ai_pitch(name: str, segment: str, user_text: str, state: Optional[Dict[str,
         state = state or {}
         wa_key = str(state.get("wa_key") or state.get("__wa_key") or "").strip()
         if wa_key and firestore:
-            fs = firestore.Client()
+            fs = _fs_client()
             _prompt_chars = len(system or "") + len("\n".join(user_lines) if user_lines else "")
             _est_tokens_in = _prompt_chars // 4 if _prompt_chars else 0
             _est_tokens_out = len(out) // 4 if out else 0

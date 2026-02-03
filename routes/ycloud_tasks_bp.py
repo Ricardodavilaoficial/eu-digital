@@ -118,8 +118,21 @@ def _upload_audio_bytes_to_signed_url(*, b: bytes, audio_debug: dict, tag: str =
 
 
 def _db():
-    project_id = (os.getenv("FIREBASE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "").strip() or None
-    return firestore.Client(project=project_id)
+    """Firestore client canônico: sempre via firebase_admin.
+    - Determinístico em Render e Cloud Run.
+    - Evita ADC (GOOGLE_APPLICATION_CREDENTIALS) apontar para projeto errado.
+    """
+    try:
+        from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
+        ensure_firebase_admin()
+        from firebase_admin import firestore as admin_fs  # type: ignore
+        return admin_fs.client()
+    except Exception:
+        # Fallback EXPLÍCITO apenas para dev/local, se você realmente quiser.
+        if str(os.getenv("ALLOW_FIRESTORE_ADC", "")).strip().lower() in ("1", "true", "yes"):
+            project_id = (os.getenv("FIREBASE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "").strip() or None
+            return firestore.Client(project=project_id)
+        raise
 
 
 def _db_admin():
