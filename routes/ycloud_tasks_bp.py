@@ -947,6 +947,9 @@ def _idempotency_once(event_key: str, ttl_seconds: int = 86400) -> bool:
     return True
 
 @ycloud_tasks_bp.route("/tasks/ycloud-inbound", methods=["GET", "POST"])
+# Compat: algumas configurações de Cloud Tasks/blueprint acabam chamando com path duplicado
+# Ex.: POST /tasks/ycloud-inbound/tasks/ycloud-inbound (vimos 405 em produção)
+@ycloud_tasks_bp.route("/tasks/ycloud-inbound/tasks/ycloud-inbound", methods=["GET", "POST"])
 def ycloud_inbound_worker():
     """
     Cloud Tasks worker (YCloud inbound).
