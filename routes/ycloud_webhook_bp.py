@@ -14,8 +14,6 @@ import logging
 from flask import Blueprint, request, jsonify
 
 from services.phone_utils import digits_only as _digits_only_c, phone_variants_br as _phone_variants_c
-from google.cloud import firestore  # type: ignore
-
 from services.firebase_admin_init import ensure_firebase_admin
 from providers.ycloud import send_text as ycloud_send_text
 
@@ -37,14 +35,16 @@ def ycloud_ping():
 
 def _db():
     ensure_firebase_admin()
-    return firestore.Client()
+    from firebase_admin import firestore as admin_fs  # type: ignore
+    return admin_fs.client()
 
 def _voice_status_ref(uid: str):
     # Single source of truth
     return _db().collection('profissionais').document(uid).collection('voz').document('whatsapp')
 
 def _now_ts():
-    return firestore.SERVER_TIMESTAMP  # type: ignore
+    from firebase_admin import firestore as admin_fs  # type: ignore
+    return admin_fs.SERVER_TIMESTAMP  # type: ignore
 
 # ============================================================
 # DEDUPE simples (não responder duas vezes)

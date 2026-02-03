@@ -1106,6 +1106,24 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     except Exception:
         logger.exception("[tasks] firestore_smoke_write_failed eventKey=%s", str(event_key or "")[:160])
 
+
+    # PROVA DE VIDA (coleções esperadas): grava SEMPRE um log inbound determinístico
+    # Assim você enxerga no console do Firestore mesmo que o resto do fluxo caia em fallback.
+    try:
+        _wamid0 = str((payload or {}).get("wamid") or "")
+        _msg_type0 = str((payload or {}).get("msgType") or (payload or {}).get("messageType") or "")
+        _doc0 = _sha1_id(event_key or _wamid0 or str(time.time()))
+        _db().collection("platform_wa_logs").document(_doc0).set({
+            "createdAt": _fs_admin().SERVER_TIMESTAMP,
+            "eventKey": event_key,
+            "wamid": _wamid0[:180],
+            "msgType": _msg_type0[:60],
+            "service": "ycloud_inbound_worker",
+        }, merge=True)
+        logger.info("[tasks] wa_log_inbound ok docId=%s wamid=%s eventKey=%s", _doc0, _wamid0, event_key)
+    except Exception:
+        logger.warning("[tasks] wa_log_inbound_failed eventKey=%s", str(event_key or "")[:160], exc_info=True)
+
     if not event_key or not isinstance(payload, dict):
         logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "BAD_REQUEST_MISSING_EVENTKEY_OR_PAYLOAD", event_key, _wamid)
         return jsonify({"ok": False, "error": "bad_request"}), 400
