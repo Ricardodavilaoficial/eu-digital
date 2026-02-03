@@ -2577,6 +2577,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     except Exception:
                         pass
 
+                                        # docId determinístico pra auditoria (e evita duplicar por retry)
+                    _doc_id = _sha1_id(event_key or wamid or str(time.time()))
                     payload_out = {
                         "createdAt": firestore.SERVER_TIMESTAMP,
                         "from": from_e164,
@@ -2584,39 +2586,17 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         "wamid": wamid,
                         "msgType": msg_type,
                         "route": "sales" if not uid else "customer",
-                        "replyText": (reply_text or "")[:900],
-                        "audioUrl": (audio_url or "")[:500],
-                        "audioDebug": (audio_debug or {}),
-                        "spokenText": (tts_text_final_used or "")[:900],
+                        "replyText": (reply_text or "")[:4000],
+                        "audioUrl": (audio_url or ""),
                         "eventKey": event_key,
                         "sentOk": bool(_sent_ok),
-                        "sentVia": str(_channel or "")[:40],
+                        "sentVia": str(_channel or ""),
                     }
-                    # Observabilidade (opcional): entendimento IA-first (depth/risk/intent/confidence)
-                    if isinstance(understanding, dict) and understanding:
-                        payload_out["understanding"] = understanding
-                    
-                    # Auditoria de override (worker NÃO decide)
-                    try:
-                        if isinstance(wa_out, dict):
-                            if wa_out.get("intentAI") and wa_out.get("intentFinal"):
-                                payload_out["aiDecision"] = {
-                                    "intentAI": wa_out.get("intentAI"),
-                                    "intentFinal": wa_out.get("intentFinal"),
-                                    "overrideReason": wa_out.get("overrideReason") or "",
-                                }
-                    except Exception:
-                        pass
-                    if isinstance(_extra, dict) and _extra:
+                    if _extra:
                         payload_out.update(_extra)
-                    # add() returns (update_time, doc_ref) in google-cloud-firestore
-                    res = _db().collection("platform_wa_outbox_logs").add(payload_out)
-                    try:
-                        doc_ref = res[1] if isinstance(res, (list, tuple)) and len(res) > 1 else None
-                        doc_id = getattr(doc_ref, "id", "") if doc_ref else ""
-                    except Exception:
-                        doc_id = ""
-                    logger.info("[tasks] outbox_immediate ok=%s via=%s docId=%s wamid=%s", bool(_sent_ok), _channel, doc_id, wamid)
+                    _db().collection("platform_wa_outbox_logs").document(_doc_id).set(payload_out, merge=True)
+                    logger.info("[tasks] outbox_immediate ok=%s via=%s docId=%s wamid=%s eventKey=%s",
+                                bool(_sent_ok), str(_channel or ""), _doc_id, wamid, event_key)
                 except Exception:
                     logger.warning("[tasks] outbox_immediate_failed via=%s wamid=%s", str(_channel or ""), wamid, exc_info=True)
 
