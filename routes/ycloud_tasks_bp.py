@@ -122,17 +122,10 @@ def _db():
     - Determinístico em Render e Cloud Run.
     - Evita ADC (GOOGLE_APPLICATION_CREDENTIALS) apontar para projeto errado.
     """
-    try:
-        from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
-        ensure_firebase_admin()
-        from firebase_admin import firestore as admin_fs  # type: ignore
-        return admin_fs.client()
-    except Exception:
-        # Fallback EXPLÍCITO apenas para dev/local, se você realmente quiser.
-        if str(os.getenv("ALLOW_FIRESTORE_ADC", "")).strip().lower() in ("1", "true", "yes"):
-            project_id = (os.getenv("FIREBASE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT") or "").strip() or None
-            return firestore.Client(project=project_id)
-        raise
+    from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
+    ensure_firebase_admin()
+    from firebase_admin import firestore as admin_fs  # type: ignore
+    return admin_fs.client()
 
 
 def _db_admin():

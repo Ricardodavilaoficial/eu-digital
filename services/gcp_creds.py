@@ -29,16 +29,10 @@ def _inline_creds() -> Tuple[Optional[service_account.Credentials], Optional[str
     project = info.get("project_id")
     return creds, project
 
-def get_firestore_client():
-    from google.cloud import firestore
-    if _gac_file():
-        # ADC via arquivo (Secret File)
-        return firestore.Client()
-    if _mode() == "adc_or_inline":
-        creds, project = _inline_creds()
-        if creds:
-            return firestore.Client(project=project, credentials=creds)
-    raise RuntimeError("ADC not configured for Firestore (set GOOGLE_APPLICATION_CREDENTIALS or use adc_or_inline).")
+def get_firestore_client(project: Optional[str] = None):
+    # Firestore deve ser via firebase-admin (FIREBASE_SERVICE_ACCOUNT_JSON).
+    # Este módulo existe para credenciais GCP (GCS/Tasks), não para Firestore.
+    raise RuntimeError("firestore_via_adc_disabled_use_firebase_admin")
 
 def get_storage_client():
     from google.cloud import storage

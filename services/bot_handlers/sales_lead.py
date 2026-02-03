@@ -39,11 +39,7 @@ def _fs_client():
         from firebase_admin import firestore as fb_firestore  # type: ignore
         return fb_firestore.client()
     except Exception:
-        # Fallback EXPLÍCITO apenas para dev/local, se você realmente quiser.
-        if str(os.getenv("ALLOW_FIRESTORE_ADC", "")).strip().lower() in ("1", "true", "yes"):
-            from google.cloud import firestore  # type: ignore
-            return firestore.Client()
-        raise
+        raise RuntimeError("firestore_client_failed_firebase_admin_required")
 
 
 
