@@ -1060,6 +1060,26 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     def _try_log_outbox_immediate(*args, **kwargs):
         return None
 
+    # OUTBOX (determinístico): sempre grava 1 doc do envio (sem depender de _try_log_outbox_immediate)
+    def _wa_log_outbox_deterministic(*, route: str, to_e164: str, reply_text: str, sent_ok: bool) -> None:
+        try:
+            _doc_out = _sha1_id(f"{event_key}:out:{to_e164}:{int(time.time())}")
+            _db().collection("platform_wa_outbox_logs").document(_doc_out).set({
+                "createdAt": _fs_admin().SERVER_TIMESTAMP,
+                "eventKey": event_key,
+                "wamid": str(wamid or "")[:180],
+                "to": str(to_e164 or "")[:40],
+                "route": str(route or "")[:80],
+                "msgType": str(msg_type or "")[:40],
+                "chars": int(len(reply_text or "")),
+                "sent_ok": bool(sent_ok),
+                "service": "ycloud_inbound_worker",
+            }, merge=True)
+            logger.info("[tasks] wa_log_outbox ok docId=%s to=%s sent_ok=%s", _doc_out, to_e164, bool(sent_ok))
+        except Exception:
+            logger.warning("[tasks] wa_log_outbox_failed eventKey=%s", str(event_key or "")[:160], exc_info=True)
+
+
     # Helper sempre disponível (evita NameError se fallback rodar antes do bloco "normal")
     def _clean_url_weirdness(s: str) -> str:
         t = (s or "").strip()
@@ -2751,6 +2771,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                                 )
                             _ok3, _ = send_text(from_e164, _rt)
+                            try:
+                                _wa_log_outbox_deterministic(route="send_text_audio_plus_text_link", to_e164=from_e164, reply_text=(_rt or ""), sent_ok=bool(_ok3))
+                            except Exception:
+                                pass
                             sent_ok = sent_ok or _ok3
                     except Exception:
                         logger.exception("[tasks] lead: falha send_text (audio_plus_text_link)")
@@ -2764,6 +2788,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     if (_rt2 or "").strip():
                         logger.info("[outbound] send_text (inbound_text_default) to=%s chars=%d", from_e164, len(_rt2))
                         _okT, _ = send_text(from_e164, _rt2)
+                        try:
+                            _wa_log_outbox_deterministic(route="send_text_inbound_text_default", to_e164=from_e164, reply_text=(_rt2 or ""), sent_ok=bool(_okT))
+                        except Exception:
+                            pass
                         sent_ok = sent_ok or bool(_okT)
                         if _okT:
                             _try_log_outbox_immediate(True, "send_text_inbound_text_default")
@@ -2776,6 +2804,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     _rt2 = _clean_url_weirdness(reply_text)
                     logger.info("[outbound] send_text (prefersText) to=%s chars=%d", from_e164, len(_rt2 or ""))
                     _okP, _ = send_text(from_e164, _rt2)
+                    try:
+                        _wa_log_outbox_deterministic(route="send_text_prefersText", to_e164=from_e164, reply_text=(_rt2 or ""), sent_ok=bool(_okP))
+                    except Exception:
+                        pass
                     sent_ok = sent_ok or bool(_okP)
                     if _okP:
                         _try_log_outbox_immediate(True, "send_text_prefersText")
@@ -2816,6 +2848,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             _rtL = (_rtL.rstrip() + "\n\nwww.meirobo.com.br").strip()
                         if _rtL:
                             _okL, _ = send_text(from_e164, _rtL)
+                            try:
+                                _wa_log_outbox_deterministic(route="send_text_force_link", to_e164=from_e164, reply_text=(_rtL or ""), sent_ok=bool(_okL))
+                            except Exception:
+                                pass
                             sent_ok = sent_ok or bool(_okL)
                             try:
                                 _try_log_outbox_immediate(True, "send_audio_then_text_send_link")
@@ -2864,6 +2900,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                                     )
                                 _okT2, _ = send_text(from_e164, _rt)
+                                try:
+                                    _wa_log_outbox_deterministic(route="send_text_close_after_audio", to_e164=from_e164, reply_text=(_rt or ""), sent_ok=bool(_okT2))
+                                except Exception:
+                                    pass
                                 sent_ok = sent_ok or bool(_okT2)
                                 try:
                                     _try_log_outbox_immediate(True, "send_audio_then_text_close")
@@ -3012,6 +3052,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 if _st:
                     logger.info("[outbound] send_text (fellthrough_fallback) to=%s chars=%d", from_e164, len(_rt_final))
                     _okF, _ = _st(from_e164, _clean_url_weirdness(_rt_final))
+                    try:
+                        _wa_log_outbox_deterministic(route="send_text_fellthrough", to_e164=from_e164, reply_text=(_rt_final or ""), sent_ok=bool(_okF))
+                    except Exception:
+                        pass
                     sent_ok = sent_ok or bool(_okF)
                     if _okF:
                         _try_log_outbox_immediate(True, "send_text_fellthrough")
