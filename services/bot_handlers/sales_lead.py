@@ -904,6 +904,33 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
         fields = base_fields + ["commercial_positioning", "product_boundaries", "plans.difference"]
         return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
 
+
+    if i == "AGENDA":
+        # Agenda (vendas): responde direto + 1 micro-exemplo + 1 pergunta opcional
+        t = (user_text or "").lower()
+        prefix = f"{nm}, " if nm else ""
+        scene = _get("value_in_action_blocks.scheduling_scene")
+        scene_line = ""
+        if isinstance(scene, dict):
+            sc = scene.get("scene") or scene.get("micro_scene") or scene.get("text") or ""
+            if isinstance(sc, list):
+                scene_line = " → ".join([str(x).strip() for x in sc if str(x).strip()])[:380]
+            else:
+                scene_line = str(sc).strip()[:380]
+        elif isinstance(scene, list):
+            scene_line = " → ".join([str(x).strip() for x in scene if str(x).strip()])[:380]
+        elif isinstance(scene, str):
+            scene_line = scene.strip()[:380]
+        if not scene_line:
+            scene_line = "O cliente pede horário no WhatsApp, o robô sugere opções, confirma e manda lembrete."
+        line1 = (prefix + "sobre agenda:").strip()
+        line2 = scene_line
+        # pergunta só se ajudar a avançar (1 detalhe)
+        line3 = ""
+        if not any(w in t for w in ("horário marcado", "horario marcado", "por ordem", "fila")):
+            line3 = "Você atende com horário marcado ou por ordem de chegada?"
+        return ("\n".join([x for x in (line1, line2, line3) if x]).strip(), "NONE")
+
     if i == "OPERATIONAL":
         fields = base_fields + [
             # Direção de fala + regras de vendedor (vem do teu Firestore)
@@ -1058,12 +1085,19 @@ def _compose_box_reply(
         s1 = _pick_one(steps) if isinstance(steps, list) else ""
         s2 = str(steps[1]).strip() if isinstance(steps, list) and len(steps) >= 2 else ""
         prefix = f"{nm}, " if nm else ""
-        line1 = (prefix + blurb).strip()
+        greet = ""
+        t = (user_text or "").lower()
+        if any(x in t for x in ("bom dia", "boa tarde", "boa noite", "feliz", "tudo bem", "oi", "olá", "ola")):
+            if nm:
+                greet = f"Oi {nm}! Feliz 2026 pra você também 😄"
+            else:
+                greet = "Oi! Feliz 2026 pra você também 😄"
+        line1 = (((prefix if not greet else "") + blurb).strip())
         line2 = "Como funciona (bem direto):" if (s1 or s2) else ""
         line3 = (f"• {s1}" if s1 else "")
         line4 = (f"• {s2}" if s2 else "")
         line5 = "Quer que eu te mostre um exemplo prático de agenda ou de orçamento?"
-        return ("\n".join([x for x in (line1, line2, line3, line4, line5) if x]).strip(), "NONE")
+        return ("\n".join([x for x in (greet, line1, line2, line3, line4, line5) if x]).strip(), "NONE")
 
     if i == "DIFF":
         pos = str(_get("commercial_positioning") or "").strip()
@@ -4100,7 +4134,10 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             st["understand_confidence"] = "high"
             st["plan_intent"] = "ACTIVATE"
             st["plan_next_step"] = "SEND_LINK"
-            return f"Criar conta / começar agora: {SITE_URL}"
+            nm = (st.get("name") or "").strip()
+            if nm:
+                return f"{nm}, fechado — vou te mandar o link aqui na conversa."
+            return "Fechado — vou te mandar o link aqui na conversa."
     except Exception:
         pass
 
