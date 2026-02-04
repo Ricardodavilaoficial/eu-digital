@@ -3,19 +3,15 @@
 
 import logging
 
-try:
-    from google.cloud import firestore  # requer google-cloud-firestore no requirements
-except Exception as e:
-    firestore = None
-    logging.warning("[voice_metadata] Firestore SDK indisponível: %s", e)
+from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
+from firebase_admin import firestore as fb_firestore  # type: ignore
 
 def _get_db():
-    if firestore is None:
-        return None
     try:
-        return firestore.Client()
+        ensure_firebase_admin()
+        return fb_firestore.client()
     except Exception as e:
-        logging.warning("[voice_metadata] Firestore Client falhou: %s", e)
+        logging.warning("[voice_metadata] Firestore indisponível: %s", e)
         return None
 
 def record_last_voice_url(uid: str, url: str, mime: str, bytes_len: int, duration_sec: int) -> None:
@@ -39,7 +35,7 @@ def record_last_voice_url(uid: str, url: str, mime: str, bytes_len: int, duratio
                 "mime": mime,
                 "bytes": int(bytes_len or 0),
                 "duration_sec": int(duration_sec or 0),
-                "updatedAt": firestore.SERVER_TIMESTAMP,
+                "updatedAt": fb_firestore.SERVER_TIMESTAMP,
             }
         }, merge=True)
         logging.info("[voice_metadata] Persistido vozClonada p/ uid=%s", uid)

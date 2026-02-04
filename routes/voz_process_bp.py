@@ -9,7 +9,9 @@ from typing import Optional
 
 import requests
 from flask import Blueprint, request, jsonify
-from google.cloud import storage, firestore
+from google.cloud import storage
+from services.firebase_admin_init import ensure_firebase_admin
+from firebase_admin import firestore as fb_firestore  # type: ignore
 
 # -----------------------------------------------------------------------------
 # Blueprint (export principal)
@@ -34,7 +36,13 @@ SIGNED_SECS = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900"))
 # -----------------------------------------------------------------------------
 # Clients
 # -----------------------------------------------------------------------------
-db = firestore.Client(project=GCP_PROJECT) if GCP_PROJECT else firestore.Client()
+def _db():
+    """Firestore canônico: sempre via firebase-admin (determinístico em Render + Cloud Run)."""
+    ensure_firebase_admin()
+    return fb_firestore.client()
+
+
+db = _db()
 gcs = storage.Client(project=GCP_PROJECT) if GCP_PROJECT else storage.Client()
 bucket = gcs.bucket(BUCKET)
 
@@ -164,7 +172,7 @@ def _save_ready(uid: str, voice_id: str, url: str, object_path: Optional[str] = 
             "voiceId": voice_id,
             "arquivoUrl": url,
             "object_path": object_path,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
+            "updatedAt": fb_firestore.SERVER_TIMESTAMP,
         }
     }
     # Fonte canônica: profissionais/{uid}
@@ -185,7 +193,7 @@ def _save_pending(uid: str, url: Optional[str], object_path: Optional[str] = Non
             "provider": "elevenlabs",
             "arquivoUrl": url,
             "object_path": object_path,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
+            "updatedAt": fb_firestore.SERVER_TIMESTAMP,
         }
     }
     # Fonte canônica: profissionais/{uid}
@@ -297,4 +305,3 @@ def process_voz():
 # Retrocompatibilidade: alguns app.py importam "bp"
 # -----------------------------------------------------------------------------
 bp = voz_process_bp  # <— alias para não quebrar import antigo
-

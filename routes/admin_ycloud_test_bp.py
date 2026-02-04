@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
+from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
+from firebase_admin import firestore as fb_firestore  # type: ignore
+
 import os
 from typing import Any, Dict, Optional
 
 from flask import Blueprint, request, jsonify
-from google.cloud import firestore  # type: ignore
-
-from services.firebase_admin_init import ensure_firebase_admin
 from services.auth import get_uid_from_bearer  # type: ignore
 
 from providers.ycloud import send_text, send_template  # usa o provider que você acabou de preencher
@@ -19,11 +19,12 @@ from providers.ycloud import send_text, send_template  # usa o provider que voc�
 admin_ycloud_test_bp = Blueprint("admin_ycloud_test_bp", __name__)
 
 def _db():
+    """Firestore canônico: sempre via firebase-admin."""
     ensure_firebase_admin()
-    return firestore.Client()
+    return fb_firestore.client()
 
 def _now_ts():
-    return firestore.SERVER_TIMESTAMP  # type: ignore
+    return fb_firestore.SERVER_TIMESTAMP
 
 def _is_admin(uid: str) -> bool:
     allow = set(

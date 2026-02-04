@@ -1060,11 +1060,93 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     def _try_log_outbox_immediate(*args, **kwargs):
         return None
 
+
+    # OUTBOX "rico enxuto": campos úteis, sem payload gigante (best-effort)
+    def _trim(_s: object, _n: int) -> str:
+        try:
+            s = str(_s or "")
+        except Exception:
+            return ""
+        s = s.strip()
+        if not s:
+            return ""
+        return s[:_n]
+
+    def _outbox_rich_enxuto(*, _sent_via: str, _reply_text: str) -> dict:
+        out: dict = {}
+        try:
+            # route_hint vem do worker (ex.: sales_lead/sales/support etc.)
+            try:
+                out["route_hint"] = _trim(route_hint, 80)  # type: ignore[name-defined]
+            except Exception:
+                pass
+
+            # reply/spoken (cortados)
+            out["replyText"] = _trim(_reply_text, 600)
+            try:
+                out["spokenText"] = _trim(spoken_text, 600)  # type: ignore[name-defined]
+            except Exception:
+                out["spokenText"] = _trim(_reply_text, 600)
+
+            out["sentVia"] = _trim(_sent_via, 80)
+
+            # understanding (curto)
+            try:
+                if isinstance(understanding, dict):  # type: ignore[name-defined]
+                    out["understanding"] = {
+                        "intent": _trim(understanding.get("intent"), 40),
+                        "next_step": _trim(understanding.get("next_step"), 40),
+                        "confidence": _trim(understanding.get("confidence"), 16),
+                        "depth": _trim(understanding.get("depth"), 16),
+                        "risk": _trim(understanding.get("risk"), 80),
+                        "source": _trim(understanding.get("source"), 40),
+                    }
+            except Exception:
+                pass
+
+            # STT/TTS (a partir do audio_debug, se houver)
+            try:
+                if isinstance(audio_debug, dict):  # type: ignore[name-defined]
+                    stt0 = audio_debug.get("stt")
+                    if isinstance(stt0, dict):
+                        out["stt"] = {
+                            "ok": bool(stt0.get("ok")),
+                            "confidence": stt0.get("confidence", 0),
+                            "transcriptLen": stt0.get("transcriptLen", 0),
+                            "preview": _trim(stt0.get("preview"), 240),
+                            "error": _trim(stt0.get("error") or stt0.get("reason"), 240),
+                        }
+                    tts0 = audio_debug.get("tts") or audio_debug.get("ttsSales") or audio_debug.get("ttsAckSend")
+                    if isinstance(tts0, dict):
+                        out["tts"] = {
+                            "ok": bool(tts0.get("ok")),
+                            "mode": _trim(tts0.get("mode"), 40),
+                            "ct": _trim(tts0.get("ct"), 40),
+                            "bytes": int(tts0.get("bytes") or 0),
+                            "reason": _trim(tts0.get("reason") or tts0.get("error"), 240),
+                        }
+            except Exception:
+                pass
+
+            # waOutMeta (enxuto)
+            try:
+                out["waOutMeta"] = {
+                    "prefersText": bool(prefers_text),  # type: ignore[name-defined]
+                    "planNextStep": _trim(plan_next_step, 40),  # type: ignore[name-defined]
+                    "intentFinal": _trim(intent_final, 40),  # type: ignore[name-defined]
+                    "hasAudioUrl": bool(audio_url),  # type: ignore[name-defined]
+                }
+            except Exception:
+                pass
+        except Exception:
+            return {}
+        return out
+
     # OUTBOX (determinístico): sempre grava 1 doc do envio (sem depender de _try_log_outbox_immediate)
     def _wa_log_outbox_deterministic(*, route: str, to_e164: str, reply_text: str, sent_ok: bool) -> None:
         try:
             _doc_out = _sha1_id(f"{event_key}:out:{to_e164}:{int(time.time())}")
-            _db().collection("platform_wa_outbox_logs").document(_doc_out).set({
+            payload_out = {
                 "createdAt": _fs_admin().SERVER_TIMESTAMP,
                 "eventKey": event_key,
                 "wamid": str(wamid or "")[:180],
@@ -1074,7 +1156,12 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 "chars": int(len(reply_text or "")),
                 "sent_ok": bool(sent_ok),
                 "service": "ycloud_inbound_worker",
-            }, merge=True)
+            }
+            try:
+                payload_out.update(_outbox_rich_enxuto(_sent_via=str(route or ""), _reply_text=str(reply_text or "")))
+            except Exception:
+                pass
+            _db().collection("platform_wa_outbox_logs").document(_doc_out).set(payload_out, merge=True)
             logger.info("[tasks] wa_log_outbox ok docId=%s to=%s sent_ok=%s", _doc_out, to_e164, bool(sent_ok))
         except Exception:
             logger.warning("[tasks] wa_log_outbox_failed eventKey=%s", str(event_key or "")[:160], exc_info=True)

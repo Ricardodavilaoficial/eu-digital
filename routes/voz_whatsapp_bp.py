@@ -10,8 +10,7 @@ from typing import Any, Dict, Optional
 
 from flask import Blueprint, request, jsonify
 from firebase_admin import auth as fb_auth
-from google.cloud import firestore  # type: ignore
-
+from firebase_admin import firestore as fb_firestore  # type: ignore
 from services.firebase_admin_init import ensure_firebase_admin
 
 from services.voice_wa_link import (
@@ -36,10 +35,12 @@ from services.wa_send import send_template
 voz_whatsapp_bp = Blueprint("voz_whatsapp_bp", __name__)
 
 def _db():
-    return firestore.Client()
+    """Firestore canônico: sempre via firebase-admin."""
+    ensure_firebase_admin()
+    return fb_firestore.client()
 
 def _now_ts():
-    return firestore.SERVER_TIMESTAMP  # type: ignore
+    return fb_firestore.SERVER_TIMESTAMP
 
 def _get_profile_telefone_candidates(uid: str) -> list[str]:
     """Busca possíveis telefones do MEI no Firestore (por UID).
@@ -383,6 +384,3 @@ def voice_wa_webhook():
         _status_set_failed(uid, "download_or_storage_failed")
         _log(uid, payload, note="failed")
         return jsonify({"ok": True}), 200
-
-
-

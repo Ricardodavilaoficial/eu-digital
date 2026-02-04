@@ -17,10 +17,8 @@ from typing import Optional, Dict, Any
 
 import requests
 
-try:
-    from google.cloud import firestore
-except Exception:
-    firestore = None  # type: ignore
+from services.firebase_admin_init import ensure_firebase_admin
+from firebase_admin import firestore as fb_firestore  # type: ignore
 
 # Importa helpers internas do processador (sem HTTP)
 # Ajuste o import conforme seu layout (no seu repo parece "routes/...")
@@ -32,13 +30,13 @@ except Exception:
 
 
 def _db():
-    if firestore is None:
-        return None
-    # Reusa o mesmo project/client do módulo voz_process_bp quando possível
+    """Firestore canônico: sempre via firebase-admin."""
+    ensure_firebase_admin()
+    # Reusa o mesmo client do módulo voz_process_bp quando possível
     try:
         return vp.db  # type: ignore
     except Exception:
-        return firestore.Client()  # type: ignore
+        return fb_firestore.client()  # type: ignore
 
 
 def _get_prof_doc(uid: str) -> Optional[Dict[str, Any]]:
@@ -78,8 +76,9 @@ def _try_lock(uid: str, ttl_seconds: int = 600) -> bool:
         )
 
         now = int(time.time())
+        from firebase_admin import firestore as fb_firestore  # type: ignore
         payload = {
-            "createdAt": firestore.SERVER_TIMESTAMP,  # type: ignore
+            "createdAt": fb_firestore.SERVER_TIMESTAMP,
             "expiresAtEpoch": now + int(ttl_seconds),
         }
 
@@ -103,7 +102,7 @@ def _try_lock(uid: str, ttl_seconds: int = 600) -> bool:
             if exp and exp < int(time.time()):
                 snap.reference.set(
                     {
-                        "createdAt": firestore.SERVER_TIMESTAMP,  # type: ignore
+                        "createdAt": fb_firestore.SERVER_TIMESTAMP,
                         "expiresAtEpoch": int(time.time()) + int(ttl_seconds),
                     },
                     merge=False,

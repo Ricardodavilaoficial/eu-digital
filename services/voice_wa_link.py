@@ -17,12 +17,14 @@ import string
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from google.cloud import firestore  # type: ignore
+from services.firebase_admin_init import ensure_firebase_admin
 
 from services.phone_utils import normalize_e164_br, phone_variants_br
 
 def _db():
-    return firestore.Client()
+    """Firestore canônico: sempre via firebase-admin."""
+    ensure_firebase_admin()
+    return fb_firestore.client()
 
 def _now():
     return datetime.now(timezone.utc)
@@ -35,11 +37,15 @@ def save_link_code(uid: str, code: str, ttl_seconds: int = 3600) -> None:
     code = (code or "").strip().upper()
     if not code:
         raise ValueError("empty_code")
+
+    ensure_firebase_admin()
+    from firebase_admin import firestore as fb_firestore  # type: ignore
+
     expires_at = _now() + timedelta(seconds=int(ttl_seconds or 3600))
     doc = {
         "uid": uid,
         "code": code,
-        "createdAt": firestore.SERVER_TIMESTAMP,  # type: ignore
+        "createdAt": fb_firestore.SERVER_TIMESTAMP,
         "expiresAt": expires_at,
         "ttlSeconds": int(ttl_seconds or 3600),
     }
@@ -75,12 +81,16 @@ def upsert_sender_link(from_e164: str, uid: str, ttl_seconds: int = 3600, method
     if not variants:
         raise ValueError("empty_sender")
     canon = variants[0]
+
+    ensure_firebase_admin()
+    from firebase_admin import firestore as fb_firestore  # type: ignore
+
     expires_at = _now() + timedelta(seconds=int(ttl_seconds or 3600))
     doc = {
         "uid": uid,
         "fromE164": canon,
         "method": method,
-        "createdAt": firestore.SERVER_TIMESTAMP,  # type: ignore
+        "createdAt": fb_firestore.SERVER_TIMESTAMP,
         "expiresAt": expires_at,
         "ttlSeconds": int(ttl_seconds or 3600),
     }
@@ -130,7 +140,3 @@ def sender_allowed(from_e164: str) -> bool:
         if p:
             allowed.add(p)
     return normalize_e164_br(from_e164) in allowed
-
-
-
-
