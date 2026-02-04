@@ -1895,12 +1895,12 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
         # ==========================================================
         # GUARD (produto): SEND_LINK => texto com link SEMPRE
-        # - Se prefersText=true e planNextStep=SEND_LINK, o link não pode "sumir"
-        # - Mesmo quando entrou áudio e a resposta também é áudio.
+        # - Se planNextStep=SEND_LINK, manda link por texto mesmo quando a trilha principal é áudio.
+        # - Mantém rastreio/auditoria: outbox + deliveryMode=site_link.
         # ==========================================================
         force_send_link_text = False
         try:
-            if bool(prefers_text) and str(plan_next_step or "").strip().upper() == "SEND_LINK":
+            if str(plan_next_step or "").strip().upper() == "SEND_LINK":
                 force_send_link_text = True
                 _rt0 = (reply_text or "").strip()
                 # garante link canônico (sem https obrigatório)
