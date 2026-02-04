@@ -1732,7 +1732,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             audio_debug = dict(audio_debug or {})
                             audio_debug["waOutMeta"] = {
                                 "route": str(wa_out.get("route") or "")[:80],
-                                "hasAudioUrl": bool((wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()),
+                                "hasAudioUrl": bool(str((wa_out.get("audioUrl") or wa_out.get("audio_url") or "")).strip()),
                                 "prefersText": bool(wa_out.get("prefersText")),
                                 "displayName": str(
                                     wa_out.get("displayName")
@@ -1770,6 +1770,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         # Default seguro: se algum caminho não setar allow_audio, não quebra o worker
         allow_audio = True
 
+        has_audio = False
         display_name = ""
         tts_text_from_bot = ""
         allow_sales_demo = False
@@ -1795,6 +1796,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             except Exception:
                 pass
             audio_url = (wa_out.get("audioUrl") or wa_out.get("audio_url") or "").strip()
+            if audio_url:
+                has_audio = True
             wa_audio_debug = wa_out.get("audioDebug") or {}
             if isinstance(wa_audio_debug, dict):
                 # merge: preserva o que o worker já tinha + adiciona o do wa_bot
@@ -1909,7 +1912,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
         # SENTINELA: prova que gerou (ou não) conteúdo
         logger.info("[tasks] computed reply chars=%d prefers_text=%s has_audio=%s",
-                    len((reply_text or "").strip()), bool(prefers_text), bool(audio_url))
+                    len((reply_text or "").strip()), bool(prefers_text), bool(has_audio))
 
 
         # Sentinela curta IA-first (não quebra nada; ajuda diagnóstico sem Firestore)
