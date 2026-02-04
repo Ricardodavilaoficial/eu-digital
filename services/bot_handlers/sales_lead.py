@@ -3957,17 +3957,21 @@ def _ai_sales_answer(
         pass
 
 
-    # Nome (produto): se temos nome e a IA não usou, injeta 1 vocativo no início (só nos primeiros turnos)
+    # Nome (produto): NÃO injetar nome no texto por padrão.
+    # Motivo: o nome deve ser aplicado pelo worker só no ÁUDIO (gate), quando a IA sinaliza via nameUse.
+    # Feature flag para reativar em emergência: SALES_INJECT_NAME_IN_TEXT=1
     try:
-        turns = int(state.get("turns") or 0) if isinstance(state, dict) else 0
-        nm = (name or "").strip()
-        if nm and name_use in ("none", "") and turns <= 3:
-            low = (reply_text or "").lower()
-            if nm.lower() not in low:
-                reply_text = f"{nm}, " + (reply_text or "").lstrip()
-                name_use = "greet"
+        if str(os.environ.get("SALES_INJECT_NAME_IN_TEXT", "0") or "0").strip().lower() in ("1", "true", "yes"):
+            turns = int(state.get("turns") or 0) if isinstance(state, dict) else 0
+            nm = (name or "").strip()
+            if nm and name_use in ("none", "") and turns <= 3:
+                low = (reply_text or "").lower()
+                if nm.lower() not in low:
+                    reply_text = f"{nm}, " + (reply_text or "").lstrip()
+                    name_use = "greet"
     except Exception:
         pass
+
 
 
     # 1) Evita “metralhadora” de perguntas genéricas no final
@@ -4460,6 +4464,21 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             "depth": str(st.get("depth") or "deep").strip(),
         }
 
+        # Sinal leve para o worker (IA pede; código autoriza no áudio).
+        # - IA não deve escrever o nome no texto.
+        try:
+            _name_use_out = str(st.get("last_name_use") or "none").strip().lower()
+        except Exception:
+            _name_use_out = "none"
+        try:
+            _lead_name_out = str((st.get("name") or st.get("lead_name") or "")).strip()
+        except Exception:
+            _lead_name_out = ""
+        try:
+            und["name_use"] = _name_use_out
+        except Exception:
+            pass
+
         return {
             "replyText": rt,
             "spokenText": _speechify_for_tts(rt),
@@ -4468,6 +4487,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             # Campos auxiliares (não quebram nada se o worker ignorar)
             "planIntent": str(st.get("plan_intent") or und["intent"]),
             "planNextStep": und["next_step"],
+            "nameUse": _name_use_out,
+            "leadName": _lead_name_out,
             "kbDoc": "platform_kb/sales",
             "kbVersion": str(st.get("kb_version") or ""),
             "kbLoaded": bool(st.get("kb_loaded") is True),
