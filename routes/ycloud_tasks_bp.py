@@ -1090,6 +1090,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
             out["sentVia"] = _trim(_sent_via, 80)
 
+            # audioUrl (se existir) — enxuto e útil pra auditoria
+            try:
+                out["audioUrl"] = _trim(audio_url, 300)  # type: ignore[name-defined]
+            except Exception:
+                pass
+
+
             # understanding (curto)
             try:
                 if isinstance(understanding, dict):  # type: ignore[name-defined]
@@ -1134,7 +1141,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     "prefersText": bool(prefers_text),  # type: ignore[name-defined]
                     "planNextStep": _trim(plan_next_step, 40),  # type: ignore[name-defined]
                     "intentFinal": _trim(intent_final, 40),  # type: ignore[name-defined]
-                    "hasAudioUrl": bool(audio_url),  # type: ignore[name-defined]
+                    "hasAudioUrl": bool(str(audio_url or "").strip()),  # type: ignore[name-defined]
                 }
             except Exception:
                 pass
@@ -2620,7 +2627,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 if isinstance(j, dict) and j.get("ok") is True and (j.get("audioUrl") or ""):
                                     audio_url = (j.get("audioUrl") or "").strip()
                                     audio_debug = dict(audio_debug or {})
-                                    audio_debug["tts"] = {"ok": True, "mode": "json_audioUrl"}
+                                    _ct = (rr.headers.get("content-type") or "").lower()[:40]
+
+                                    _blen = int(len(rr.content or b"") or 0)
+
+                                    audio_debug["tts"] = {"ok": True, "mode": "json_audioUrl", "ct": _ct, "bytes": _blen}
                                 else:
                                     raise ValueError("json_missing_audioUrl")
                             except Exception:
