@@ -66,6 +66,88 @@ _LAST_SALES_NAME_SPOKEN_AT: Dict[str, float] = {}
 # Memória em-processo para "spice" (saudação do Firestore) com cadência
 _LAST_SPICE_AT = {}          # wa_key -> epoch seconds
 _LAST_SPICE_TEXT = {}        # wa_key -> last greeting used
+
+# ==========================================================
+# UX: gate de uso do nome (IA sinaliza; código autoriza)
+# - IA deve sinalizar em understanding: name_use = empathy|clarify|confirm|none
+# - Código aplica com gap + anti-repetição e registra no speaker_state
+# ==========================================================
+_SALES_NAME_MIN_GAP_SECONDS = int(os.environ.get("SALES_NAME_MIN_GAP_SECONDS", str(_SUPPORT_NAME_MIN_GAP_SECONDS)) or str(_SUPPORT_NAME_MIN_GAP_SECONDS))
+
+def _norm_name_token(n: str) -> str:
+    try:
+        t = str(n or "").strip()
+    except Exception:
+        return ""
+    if not t:
+        return ""
+    # usa só o primeiro nome (mais natural no áudio)
+    return t.split()[0][:24]
+
+def _get_last_name_used_epoch(wa_key: str) -> float:
+    if not wa_key:
+        return 0.0
+    try:
+        # cache em memória (mais barato)
+        v = _LAST_NAME_SPOKEN_AT.get(wa_key)  # type: ignore[name-defined]
+        if isinstance(v, (int, float)) and v:
+            return float(v)
+    except Exception:
+        pass
+    # fallback: lê speaker_state (best-effort)
+    try:
+        snap = _speaker_db().collection(_SPEAKER_COLL).document(wa_key).get()
+        data = snap.to_dict() or {}
+        v = data.get("lastNameUsedAtEpoch") or 0.0
+        return float(v or 0.0)
+    except Exception:
+        return 0.0
+
+def _mark_name_used(wa_key: str, name_use: str) -> None:
+    if not wa_key:
+        return
+    now = time.time()
+    try:
+        _LAST_NAME_SPOKEN_AT[wa_key] = now  # type: ignore[name-defined]
+    except Exception:
+        pass
+    try:
+        _speaker_db().collection(_SPEAKER_COLL).document(wa_key).set({
+            "lastNameUsedAt": _fs_admin().SERVER_TIMESTAMP,  # type: ignore[name-defined]
+            "lastNameUsedAtEpoch": now,
+            "lastNameUse": str(name_use or "")[:20],
+        }, merge=True)
+    except Exception:
+        pass
+
+def _maybe_name_prefix(*, wa_key: str, display_name: str, base_text: str, understanding: dict) -> str:
+    """Aplica nome no começo (raramente) conforme sinal da IA + regras mecânicas."""
+    try:
+        name_use = str((understanding or {}).get("name_use") or (understanding or {}).get("nameUse") or "").strip().lower()
+    except Exception:
+        name_use = ""
+    if name_use in ("", "none", "0", "false"):
+        return base_text
+    nm = _norm_name_token(display_name)
+    if not nm:
+        return base_text
+    t = (base_text or "").strip()
+    if not t:
+        return base_text
+    # não duplica se nome já está no texto
+    try:
+        if re.search(r"\b" + re.escape(nm) + r"\b", t, flags=re.IGNORECASE):
+            return base_text
+    except Exception:
+        pass
+    # gap + anti-consecutivo
+    last = _get_last_name_used_epoch(wa_key)
+    gap = float(_SALES_NAME_MIN_GAP_SECONDS or 0)
+    if last and gap and (time.time() - last) < gap:
+        return base_text
+    _mark_name_used(wa_key, name_use)
+    return (f"{nm}, {t}").strip()
+
 ycloud_tasks_bp = Blueprint("ycloud_tasks_bp", __name__)
 
 
@@ -2601,6 +2683,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                         # 🔒 Blindagem final: nunca começar com "Fala!"
                         tts_text = re.sub(r"^(fala+[\s,!\.\-–—]*)", "", (tts_text or "").strip(), flags=re.IGNORECASE).strip() or "Oi 🙂"
+                        # UX: nome só quando a IA pedir e o gate autorizar (evita 'metralhadora de nome')
+                        try:
+                            tts_text = _maybe_name_prefix(wa_key=str(wa_key or ""), display_name=str(display_name or ""), base_text=str(tts_text or ""), understanding=(understanding if isinstance(understanding, dict) else {}))
+                        except Exception:
+                            pass
                         tts_text_final_used = tts_text
 
                         rr = _call_tts(tts_text)
@@ -2857,26 +2944,14 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 # texto com link (reply completo)
                 if send_text:
                     try:
-                        _rt = (reply_text or "").strip()
-                        if _rt:
-                            if ("http://" not in _rt.lower()) and ("https://" not in _rt.lower()):
-                                _rt = (
-
-                                    _rt.replace("www.https://", "https://")
-
-                                       .replace("www.http://", "http://")
-
-                                       .replace("www.meirobo.com.br", "https://www.meirobo.com.br")
-
-                                       .replace("meirobo.com.br", "https://www.meirobo.com.br")
-
-                                )
-                            _ok3, _ = send_text(from_e164, _rt)
-                            try:
-                                _wa_log_outbox_deterministic(route="send_text_audio_plus_text_link", to_e164=from_e164, reply_text=(_rt or ""), sent_ok=bool(_ok3))
-                            except Exception:
-                                pass
-                            sent_ok = sent_ok or _ok3
+                        # Regra de UX: quando houver áudio, o texto é só ação (CTA) — nunca eco do áudio
+                        _rt = "https://www.meirobo.com.br"
+                        _ok3, _ = send_text(from_e164, _rt)
+                        try:
+                            _wa_log_outbox_deterministic(route="send_text_audio_plus_text_link", to_e164=from_e164, reply_text=(_rt or ""), sent_ok=bool(_ok3))
+                        except Exception:
+                            pass
+                        sent_ok = sent_ok or _ok3
                     except Exception:
                         logger.exception("[tasks] lead: falha send_text (audio_plus_text_link)")
 
@@ -2944,9 +3019,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 # ==========================================================
                 try:
                     if force_send_link_text and send_text:
-                        _rtL = (reply_text or "").strip()
-                        if _rtL and ("www.meirobo.com.br" not in _rtL.lower()):
-                            _rtL = (_rtL.rstrip() + "\n\nwww.meirobo.com.br").strip()
+                        # Regra de UX: quando houver áudio, o texto é só CTA fixo (clicável)
+                        _rtL = "https://www.meirobo.com.br"
                         if _rtL:
                             _okL, _ = send_text(from_e164, _rtL)
                             try:
