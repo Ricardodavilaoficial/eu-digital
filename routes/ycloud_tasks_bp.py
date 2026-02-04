@@ -2467,14 +2467,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             # Regra de produto: nome só de vez em quando.
                             name_to_use = ""
                             if tts_name and wa_key_effective:
-                                # VENDAS: não injeta nome no worker (conteúdo é do wa_bot)
-                                if not bool(uid):
-                                    name_to_use = ""
-                                else:
-                                    last = float(_LAST_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
-                                    if (time.time() - last) >= float(_SUPPORT_NAME_MIN_GAP_SECONDS):
-                                        name_to_use = tts_name
-                                        _LAST_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+                                # VENDAS (lead/uid vazio): aqui o worker é quem fala o institucional,
+                                # então pode usar o nome (com gap) sem custo extra.
+                                # SUPORTE/CLIENTE (uid presente): idem, com gap.
+                                last = float(_LAST_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
+                                if (time.time() - last) >= float(_SUPPORT_NAME_MIN_GAP_SECONDS):
+                                    name_to_use = tts_name
+                                    _LAST_NAME_SPOKEN_AT[wa_key_effective] = time.time()
 
                             # 1) Se for conceitual e houver kbContext: gera fala humana a partir do CONTEXTO (não lê artigo)
                             concept_generated = False
