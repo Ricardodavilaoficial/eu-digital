@@ -3060,6 +3060,14 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     wom["displayName"] = str(display_name or _dn or "").strip()[:40]
                     wom["source"] = str(audio_debug.get("source") or _src).strip()[:80]
 
+                    # hasAudioUrl/audioUrl: garantir coerência com o áudio final gerado/enviado
+                    try:
+                        wom["hasAudioUrl"] = bool(str(audio_url or "").strip())
+                        if str(audio_url or "").strip():
+                            wom["audioUrl"] = str(audio_url).strip()[:300]
+                    except Exception:
+                        pass
+
                     # (opcional) planner/meta para acabar com achismo
                     if plan_next_step:
                         wom["planNextStep"] = str(plan_next_step)[:40]
