@@ -906,10 +906,60 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
 
     if i == "OPERATIONAL":
         fields = base_fields + [
+            # Direção de fala + regras de vendedor (vem do teu Firestore)
+            "behavior_rules",
+            "brand_guardrails",
+            "discovery_policy",
+            "depth_policy",
+            "operational_capabilities",
+            "operational_flows",
+            "operational_value_scenarios",
             "value_in_action_blocks.scheduling_scene",
             "value_in_action_blocks.services_quote_scene",
             "value_in_action_blocks.formal_quote_email_scene",
             "segment_pills.servicos.micro_scene",
+        ]
+        if seg:
+            fields.append(f"segment_pills.{seg}.micro_scene")
+            fields.append(f"segments.{seg}.one_question")
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    if i == "AGENDA":
+        fields = base_fields + [
+            "behavior_rules",
+            "brand_guardrails",
+            "operational_capabilities.scheduling_practice",
+            "operational_flows.agenda_do_dia",
+            "operational_flows.agendamento_completo",
+            "value_in_action_blocks.scheduling_scene",
+            "process_facts.dashboard_agenda",
+            "process_facts.daily_email_digest",
+        ]
+        if seg:
+            fields.append(f"segment_pills.{seg}.micro_scene")
+            fields.append(f"segments.{seg}.one_question")
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    if i == "QUOTE":
+        fields = base_fields + [
+            "behavior_rules",
+            "brand_guardrails",
+            "operational_flows.orcamento_com_validacao",
+            "operational_capabilities.quotes_practice",
+            "value_in_action_blocks.services_quote_scene",
+            "value_in_action_blocks.formal_quote_email_scene",
+        ]
+        if seg:
+            fields.append(f"segment_pills.{seg}.micro_scene")
+            fields.append(f"segments.{seg}.one_question")
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    if i == "CONTACTS":
+        fields = base_fields + [
+            "behavior_rules",
+            "brand_guardrails",
+            "operational_capabilities.services_practice",
+            "operational_value_scenarios.whatsapp_organizado_sem_bagunça",
         ]
         if seg:
             fields.append(f"segment_pills.{seg}.micro_scene")
@@ -4191,22 +4241,49 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     except Exception:
         pass
 
-    # Último recurso: só marca fallback_site se nenhum source "soberano" já foi definido.
-    if not str(st.get("understand_source") or "").strip():
-        st["understand_source"] = "fallback_site"
-        st["understand_intent"] = "WHAT_IS"
-        st["understand_confidence"] = "low"
-        st["plan_intent"] = "WHAT_IS"
-        st["plan_next_step"] = "SEND_LINK"
-    else:
-        # Mantém o source existente (ex.: box_decider) e só garante ação/intent úteis.
-        st["understand_intent"] = str(st.get("understand_intent") or st.get("plan_intent") or "WHAT_IS").strip().upper()
-        st["plan_intent"] = str(st.get("plan_intent") or "WHAT_IS").strip().upper()
-        st["plan_next_step"] = str(st.get("plan_next_step") or "SEND_LINK").strip().upper()
-    return _clip(
-        f"Consigo te explicar por aqui, mas pra ver tudo certinho (voz, preço e como funciona), entra no site: {SITE_URL}",
-        SALES_MAX_CHARS_REPLY,
-    )
+    # fallback final — NUNCA "jogar pro site" como corpo da resposta.
+    # A IA pode pedir SEND_LINK, mas o corpo precisa trazer valor antes (2–4 frases).
+    try:
+        if not str(st.get("understand_source") or "").strip():
+            st["understand_source"] = "fallback_box"
+            st["understand_intent"] = "WHAT_IS"
+            st["understand_confidence"] = "low"
+            st["plan_intent"] = "WHAT_IS"
+            st["plan_next_step"] = "NONE"
+        else:
+            st["understand_intent"] = str(st.get("understand_intent") or st.get("plan_intent") or "WHAT_IS").strip().upper()
+            st["plan_intent"] = str(st.get("plan_intent") or "WHAT_IS").strip().upper()
+            st["plan_next_step"] = str(st.get("plan_next_step") or "NONE").strip().upper()
+
+        intent_u = str(st.get("plan_intent") or "WHAT_IS").strip().upper()
+        name = str(st.get("name") or st.get("lead_name") or "").strip()
+        segment = str(st.get("segment") or "").strip()
+        kb_slice = _kb_slice_for_box(intent_u if intent_u else "WHAT_IS", segment=segment) or {}
+        prices = _get_display_prices(ttl_seconds=180) or {}
+        body, suggested = _compose_box_reply(
+            box_intent=intent_u,
+            box_data=kb_slice,
+            prices=prices,
+            user_text=text_in,
+            name=name,
+            segment=segment,
+        )
+        body = (body or "").strip() or _fallback_min_reply(name=name)
+
+        # CTA só se for ação pedida (ou sugerida) — e sempre no fim.
+        ns = str(st.get("plan_next_step") or suggested or "NONE").strip().upper()
+        if ns == "SEND_LINK":
+            st["plan_next_step"] = "SEND_LINK"
+            body = (body + f"\n\nSe fizer sentido, o próximo passo é criar a conta no site: {SITE_URL}").strip()
+        else:
+            st["plan_next_step"] = "NONE"
+
+        return _clip(body, SALES_MAX_CHARS_REPLY)
+    except Exception:
+        # Último-último fallback: humano e curto, sem empurrar link.
+        st["understand_source"] = str(st.get("understand_source") or "fallback_min")
+        st["plan_next_step"] = "NONE"
+        return _clip(_fallback_min_reply(name=str(st.get("name") or st.get("lead_name") or "").strip()), SALES_MAX_CHARS_REPLY)
 
 def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     ctx = ctx or {}
