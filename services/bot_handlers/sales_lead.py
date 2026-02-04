@@ -938,7 +938,7 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
         if not any(w in t for w in ("horário marcado", "horario marcado", "por ordem", "fila")):
             line3 = "Você atende com horário marcado ou por ordem de chegada?"
         _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
-        _txt = _compose_sales_reply(intent=i, confidence="", stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
+        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
         return (_txt, "NONE")
 
     if i == "OPERATIONAL":
@@ -1056,7 +1056,7 @@ def _compose_sales_reply(
     # --------------------------------------------------
     # 1) OPENING POLICY — nunca responder seco a saudação
     # --------------------------------------------------
-    if has_greeting and intent in ("WHAT_IS", "UNKNOWN"):
+    if has_greeting and (intent in ("WHAT_IS", "UNKNOWN") or (confidence or "").strip().lower() == "low"):
         opening = (
             "Oi! Que bom falar com você 😄 "
             "Eu sou o MEI Robô — organizo o WhatsApp do teu negócio "
@@ -1070,6 +1070,18 @@ def _compose_sales_reply(
         )
 
         return f"{opening} {ask_name}".strip()
+
+    # --------------------------------------------------
+    # 1.5) Low confidence — nunca responder com “frasezinha”
+    # --------------------------------------------------
+    if (confidence or "").strip().lower() == "low":
+        if display_name:
+            return (
+                f"{display_name}, peguei a ideia. Só pra eu te orientar certo: você quer usar mais pra agenda, pedidos ou orçamento?"
+            )
+        return (
+            "Show. Só me diz uma coisa rapidinho: você quer usar mais pra agenda, pedidos ou orçamento?"
+        )
 
     # --------------------------------------------------
     # 2) Intents CORE nunca caem em qualifier genérico
@@ -1114,6 +1126,7 @@ def _compose_sales_reply(
 def _compose_box_reply(
     *,
     box_intent: str,
+    confidence: str,
     box_data: Dict[str, Any],
     prices: Dict[str, str],
     user_text: str,
@@ -1148,7 +1161,7 @@ def _compose_box_reply(
             line2 = f"{MEI_ROBO_CADASTRO_URL}"
             line3 = "Obs: ativação só com CNPJ."
             _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
-        _txt = _compose_sales_reply(intent=i, confidence="", stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
+        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
         return (_txt, "SEND_LINK")
 
         prefix = f"{nm}, " if nm else ""
@@ -1190,7 +1203,7 @@ def _compose_box_reply(
         line4 = (f"• {s2}" if s2 else "")
         line5 = "Quer que eu te mostre um exemplo prático de agenda ou de orçamento?"
         _txt = "\n".join([x for x in (greet, line1, line2, line3, line4, line5) if x]).strip()
-        _txt = _compose_sales_reply(intent=i, confidence="", stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
+        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
         return (_txt, "NONE")
 
     if i == "DIFF":
@@ -1411,6 +1424,7 @@ def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
     prices = _get_display_prices(ttl_seconds=180) or {}
     reply, next_step = _compose_box_reply(
         box_intent=intent,
+        confidence=str(st.get("understand_confidence") or ""),
         box_data=kb_slice,
         prices=prices,
         user_text=user_text,
@@ -4395,6 +4409,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         prices = _get_display_prices(ttl_seconds=180) or {}
         body, suggested = _compose_box_reply(
             box_intent=intent_u,
+            confidence=str(st.get("understand_confidence") or ""),
             box_data=kb_slice,
             prices=prices,
             user_text=text_in,
