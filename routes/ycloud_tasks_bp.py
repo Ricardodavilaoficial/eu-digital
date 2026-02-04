@@ -1920,12 +1920,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         try:
             if isinstance(understanding, dict) and understanding:
                 logger.info(
-                    "[tasks] ia_first intent=%s conf=%s risk=%s depth=%s next=%s",
+                    "[tasks] ia_first intent=%s conf=%s risk=%s depth=%s next=%s source=%s",
                     str(understanding.get("intent") or ""),
                     str(understanding.get("confidence") or ""),
                     str(understanding.get("risk") or ""),
                     str(understanding.get("depth") or ""),
                     str(understanding.get("next_step") or ""),
+                    str(understanding.get("source") or ""),
                 )
         except Exception:
             pass
@@ -3115,6 +3116,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     "audioUrl": (audio_url or "")[:300],
                     "audioDebug": audio_debug,
                     "understanding": understanding if isinstance(understanding, dict) else {},
+                    "iaSource": str(((understanding or {}).get("source") if isinstance(understanding, dict) else "") or "")[:40],
+                    "iaSovereign": bool(str(((understanding or {}).get("source") if isinstance(understanding, dict) else "") or "") == "box_decider"),
+                    "fallbackReason": (str(((understanding or {}).get("source") if isinstance(understanding, dict) else "") or "")[:40]
+                                       if str(((understanding or {}).get("source") if isinstance(understanding, dict) else "") or "") != "box_decider"
+                                       else ""),
                     "spokenText": (tts_text_final_used or "")[:600],
                     "eventKey": event_key,
                     "sentOk": bool(sent_ok),
