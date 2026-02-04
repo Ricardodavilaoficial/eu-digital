@@ -800,6 +800,7 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
         "Responda SOMENTE JSON válido.\n\n"
         "Escolha UMA intenção (caixa) por turno:\n"
         "PRICE, VOICE, AGENDA, CONTACTS, QUOTE, WHAT_IS, OPERATIONAL, DIFF, ACTIVATE_SEND_LINK, TRUST, OTHER.\n\n"
+        "Dica: se falar de \"marcar horário\", \"agenda\", \"ligam/telefone\", \"procedimento\", é AGENDA.\n"
         "Regras:\n"
         "- Se estiver ambíguo e faltar dado essencial: needs_clarification=true e faça UMA pergunta curta.\n"
         "- Se a pergunta for objetiva, responda direto (needs_clarification=false).\n"
@@ -852,7 +853,14 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
 def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
     i = (intent or "OTHER").strip().upper()
     seg = (segment or "").strip().lower()
-    base_fields = ["tone_rules", "value_props"]
+    base_fields = [
+        "tone_rules",
+        "behavior_rules",
+        "brand_guardrails",
+        "closing_guidance",
+        "closing_styles",
+        "value_props",
+    ]
 
     if i == "PRICE":
         fields = base_fields + ["sales_pills.cta_one_liners"]
@@ -4059,12 +4067,14 @@ def _ai_pitch(name: str, segment: str, user_text: str, state: Optional[Dict[str,
 
     system = (
         "Você é o MEI Robô institucional de VENDAS no WhatsApp.\n"
-        "Escreva uma resposta humana, curta e objetiva.\n"
+        "Escreva uma resposta humana, vendedora e clara (sem soar robótico).\n"
         "Regras:\n"
-        "- 2 a 5 linhas.\n"
-        "- 1 pergunta no final.\n"
+        "- Preferir 4 a 8 linhas (ou ~250 a 650 caracteres quando fizer sentido).\n"
+        "- Sempre 1 pergunta no final.\n"
+        "- Se tiver nome do contato, use no começo (ex.: \"Rosália, ...\").\n"
+        "- Sempre agradecer/acolher (1 frase) antes de entrar no assunto.\n"
+        "- Para áudio: frases curtas e fáceis de ouvir; detalhes podem ir no texto (link pode ir no texto).\n"
         "- Sem bastidores técnicos.\n"
-        "- Sem textão.\n"
         "- Evite frases prontas.\n"
     )
 
