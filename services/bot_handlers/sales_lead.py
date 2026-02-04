@@ -929,7 +929,9 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
         line3 = ""
         if not any(w in t for w in ("horário marcado", "horario marcado", "por ordem", "fila")):
             line3 = "Você atende com horário marcado ou por ordem de chegada?"
-        return ("\n".join([x for x in (line1, line2, line3) if x]).strip(), "NONE")
+        _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
+        _txt = _compose_sales_reply(intent=i, confidence="", stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
+        return (_txt, "NONE")
 
     if i == "OPERATIONAL":
         fields = base_fields + [
@@ -1021,6 +1023,86 @@ def _pick_one(arr: Any) -> str:
     return ""
 
 
+def _compose_sales_reply(
+    *,
+    intent: str,
+    confidence: str,
+    stt_text: str,
+    reply_text: str,
+    kb_context: dict,
+    display_name: str | None = None,
+    name_recently_used: bool = False,
+):
+    """
+    Ajuste de comportamento vendedor (pós-intent):
+    - IA decide intent / next_step antes.
+    - Aqui garantimos resposta humana, rica e condutiva.
+    """
+
+    stt_lc = (stt_text or "").lower()
+    has_greeting = any(
+        k in stt_lc
+        for k in ("bom dia", "boa tarde", "boa noite", "oi", "olá", "tudo bem", "feliz")
+    )
+
+    # --------------------------------------------------
+    # 1) OPENING POLICY — nunca responder seco a saudação
+    # --------------------------------------------------
+    if has_greeting and intent in ("WHAT_IS", "UNKNOWN"):
+        opening = (
+            "Oi! Que bom falar com você 😄 "
+            "Eu sou o MEI Robô — organizo o WhatsApp do teu negócio "
+            "pra você atender clientes, agenda e pedidos sem correria."
+        )
+
+        ask_name = (
+            "Como posso te chamar?"
+            if not display_name
+            else f"{display_name}, quer que eu te mostre como funciona na prática?"
+        )
+
+        return f"{opening} {ask_name}".strip()
+
+    # --------------------------------------------------
+    # 2) Intents CORE nunca caem em qualifier genérico
+    # --------------------------------------------------
+    if intent == "AGENDA":
+        base = (
+            "Na agenda, o cliente marca direto pelo WhatsApp "
+            "e você recebe tudo organizado, sem troca de mensagens."
+        )
+        follow = "Quer usar mais pra serviços com hora marcada ou visitas?"
+        return f"{base} {follow}"
+
+    if intent == "PRICE":
+        # reply_text já vem com preço do cérebro + Firestore
+        benefit = "Isso já inclui atendimento automático e organização das conversas."
+        return f"{reply_text.strip()} {benefit}"
+
+    if intent == "WHAT_IS":
+        base = reply_text.strip()
+        enrich = (
+            "Na prática, ele responde clientes, organiza pedidos e agenda "
+            "enquanto você foca no trabalho."
+        )
+        return f"{base} {enrich}"
+
+    # --------------------------------------------------
+    # 3) Guardrail — resposta curta demais = enriquecer
+    # --------------------------------------------------
+    if reply_text and len(reply_text.strip()) < 80:
+        tail = "Quer que eu te dê um exemplo real de como isso funciona no dia a dia?"
+        return f"{reply_text.strip()} {tail}"
+
+    # --------------------------------------------------
+    # 4) Uso do nome (uma vez, sem insistir)
+    # --------------------------------------------------
+    if display_name and not name_recently_used:
+        return f"{display_name}, {reply_text.strip()}"
+
+    return reply_text
+
+
 def _compose_box_reply(
     *,
     box_intent: str,
@@ -1057,7 +1139,9 @@ def _compose_box_reply(
             line1 = "É assinatura mensal (paga). Os valores certinhos ficam no site."
             line2 = f"{MEI_ROBO_CADASTRO_URL}"
             line3 = "Obs: ativação só com CNPJ."
-            return ("\n".join([x for x in (line1, line2, line3) if x]).strip(), "SEND_LINK")
+            _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
+        _txt = _compose_sales_reply(intent=i, confidence="", stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
+        return (_txt, "SEND_LINK")
 
         prefix = f"{nm}, " if nm else ""
         line1 = f"{prefix}hoje é {starter}/mês (Starter) ou {plus}/mês (Starter+).".strip()
@@ -1097,7 +1181,9 @@ def _compose_box_reply(
         line3 = (f"• {s1}" if s1 else "")
         line4 = (f"• {s2}" if s2 else "")
         line5 = "Quer que eu te mostre um exemplo prático de agenda ou de orçamento?"
-        return ("\n".join([x for x in (greet, line1, line2, line3, line4, line5) if x]).strip(), "NONE")
+        _txt = "\n".join([x for x in (greet, line1, line2, line3, line4, line5) if x]).strip()
+        _txt = _compose_sales_reply(intent=i, confidence="", stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
+        return (_txt, "NONE")
 
     if i == "DIFF":
         pos = str(_get("commercial_positioning") or "").strip()
