@@ -1196,6 +1196,17 @@ def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
             "Pra seguir sem confusão, o próximo passo é direto pelo site:\\nwww.meirobo.com.br",
             "A partir daqui, o melhor caminho é pelo site mesmo:\\nwww.meirobo.com.br",
         ]
+
+        # Budget guard HARD: não é "fallback burro" — é política de custo/loop.
+        # Mantém rastreabilidade clara no Firestore.
+        try:
+            st["understand_source"] = "budget_guard"
+            st["understand_intent"] = str(intent or "OTHER").strip().upper()
+            st["understand_confidence"] = "low"
+            st["plan_intent"] = str(intent or "OTHER").strip().upper()
+            st["plan_next_step"] = "SEND_LINK"
+        except Exception:
+            pass
         try:
             idx = int(st.get("fallback_idx") or 0) % len(msgs)
             st["fallback_idx"] = idx + 1
@@ -3998,6 +4009,9 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     # Pedido direto de link/site: não pode cair em OTHER (resposta curta)
     try:
         if _is_link_request(text_in):
+            st["understand_source"] = "policy_link_request"
+            st["understand_intent"] = "ACTIVATE"
+            st["understand_confidence"] = "high"
             st["plan_intent"] = "ACTIVATE"
             st["plan_next_step"] = "SEND_LINK"
             return f"Criar conta / começar agora: {SITE_URL}"
@@ -4141,11 +4155,18 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     except Exception:
         pass
 
-    st["understand_source"] = "fallback_site"
-    st["understand_intent"] = "WHAT_IS"
-    st["understand_confidence"] = "low"
-    st["plan_intent"] = "WHAT_IS"
-    st["plan_next_step"] = "SEND_LINK"
+    # Último recurso: só marca fallback_site se nenhum source "soberano" já foi definido.
+    if not str(st.get("understand_source") or "").strip():
+        st["understand_source"] = "fallback_site"
+        st["understand_intent"] = "WHAT_IS"
+        st["understand_confidence"] = "low"
+        st["plan_intent"] = "WHAT_IS"
+        st["plan_next_step"] = "SEND_LINK"
+    else:
+        # Mantém o source existente (ex.: box_decider) e só garante ação/intent úteis.
+        st["understand_intent"] = str(st.get("understand_intent") or st.get("plan_intent") or "WHAT_IS").strip().upper()
+        st["plan_intent"] = str(st.get("plan_intent") or "WHAT_IS").strip().upper()
+        st["plan_next_step"] = str(st.get("plan_next_step") or "SEND_LINK").strip().upper()
     return _clip(
         f"Consigo te explicar por aqui, mas pra ver tudo certinho (voz, preço e como funciona), entra no site: {SITE_URL}",
         SALES_MAX_CHARS_REPLY,
@@ -4186,6 +4207,9 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             # Campos auxiliares (não quebram nada se o worker ignorar)
             "planIntent": str(st.get("plan_intent") or und["intent"]),
             "planNextStep": und["next_step"],
+            "kbDoc": "platform_kb/sales",
+            "kbVersion": str(st.get("kb_version") or ""),
+            "kbLoaded": bool(st.get("kb_loaded") is True),
         }
 
     # ==========================================================

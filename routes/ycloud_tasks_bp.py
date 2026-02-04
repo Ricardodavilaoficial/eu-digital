@@ -3105,6 +3105,19 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             })
             # log leve (auditoria). Precisa ocorrer antes do return.
             try:
+                # IA soberana: separa "decisão" de "forma de entrega".
+                # - SEND_LINK pode ser uma ação decidida (não é fallback).
+                # - Fallback só quando a fonte é realmente fallback/erro.
+                try:
+                    _ia_src = str(((understanding or {}).get("source") if isinstance(understanding, dict) else "") or "").strip()
+                except Exception:
+                    _ia_src = ""
+                _ia_src_l = (_ia_src or "").strip().lower()
+                _ia_sov = bool(_ia_src) and (not _ia_src_l.startswith("fallback_")) and (_ia_src_l not in ("worker_fallback_from_wa_out", "sales_lead_exception_fallback", "no_sender"))
+                try:
+                    _ia_next = str(((understanding or {}).get("next_step") if isinstance(understanding, dict) else "") or "").strip().upper()
+                except Exception:
+                    _ia_next = ""
                 _db().collection("platform_wa_outbox_logs").add({
                     "createdAt": _fs_admin().SERVER_TIMESTAMP,
                     "from": from_e164,
@@ -3116,11 +3129,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     "audioUrl": (audio_url or "")[:300],
                     "audioDebug": audio_debug,
                     "understanding": understanding if isinstance(understanding, dict) else {},
-                    "iaSource": str(((understanding or {}).get("source") if isinstance(understanding, dict) else "") or "")[:40],
-                    "iaSovereign": bool(str(((understanding or {}).get("source") if isinstance(understanding, dict) else "") or "") == "box_decider"),
-                    "fallbackReason": (str(((understanding or {}).get("source") if isinstance(understanding, dict) else "") or "")[:40]
-                                       if str(((understanding or {}).get("source") if isinstance(understanding, dict) else "") or "") != "box_decider"
-                                       else ""),
+                    "iaSource": (_ia_src or "")[:40],
+                    "iaSovereign": bool(_ia_sov),
+                    "fallbackReason": ((_ia_src or "")[:40] if not _ia_sov else ""),
+                    "action": (_ia_next or "")[:40],
+                    "deliveryMode": ("site_link" if (_ia_next == "SEND_LINK") else ""),
                     "spokenText": (tts_text_final_used or "")[:600],
                     "eventKey": event_key,
                     "sentOk": bool(sent_ok),
