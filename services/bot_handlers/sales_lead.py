@@ -724,6 +724,9 @@ def _smalltalk_bridge(text: str) -> str:
 _BOX_INTENTS = (
     "PRICE",
     "VOICE",
+    "AGENDA",
+    "CONTACTS",
+    "QUOTE",
     "WHAT_IS",
     "OPERATIONAL",
     "DIFF",
@@ -796,7 +799,7 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
         "Você é o DECIDER de VENDAS do MEI Robô (WhatsApp, pt-BR).\n"
         "Responda SOMENTE JSON válido.\n\n"
         "Escolha UMA intenção (caixa) por turno:\n"
-        "PRICE, VOICE, WHAT_IS, OPERATIONAL, DIFF, ACTIVATE_SEND_LINK, TRUST, OTHER.\n\n"
+        "PRICE, VOICE, AGENDA, CONTACTS, QUOTE, WHAT_IS, OPERATIONAL, DIFF, ACTIVATE_SEND_LINK, TRUST, OTHER.\n\n"
         "Regras:\n"
         "- Se estiver ambíguo e faltar dado essencial: needs_clarification=true e faça UMA pergunta curta.\n"
         "- Se a pergunta for objetiva, responda direto (needs_clarification=false).\n"
@@ -3498,6 +3501,15 @@ def _select_kb_blocks_by_intent(intent_final: str) -> list:
     if intent == "OPERATIONAL":
         return ["segment_pills", "operational_capabilities"]
 
+    if intent == "AGENDA":
+        return ["segment_pills", "operational_capabilities", "process_facts"]
+
+    if intent == "CONTACTS":
+        return ["operational_capabilities", "process_facts"]
+
+    if intent == "QUOTE":
+        return ["operational_capabilities", "pricing_facts", "process_facts"]
+
     if intent == "ACTIVATE":
         return ["closing_guidance", "pricing_facts"]
 
@@ -3643,7 +3655,7 @@ def _ai_sales_answer(
     prompt = (
         f"{brand_block}{discovery_block}{identity_block}Você é o MEI Robô – Vendas, atendendo leads no WhatsApp (pt-BR).\n"
         "Use o conteúdo do Firestore (platform_kb/sales) como REPERTÓRIO de identidade, nunca como script.\n"
-        "Nada deve soar decorado, técnico ou robótico.\n\n"
+        "Nada deve soar decorado, técnico ou robótico.\nResponda SOMENTE JSON válido (sem markdown), seguindo o schema pedido.\n\n"
         "Fale com energia positiva (vibrante na medida), como um vendedor humano, sem soar forçado.\n\n"
         "IMPORTANTE:\n"
         "- Se is_first_contact=yes, agradeça o contato em 1 frase curta e humana e já responda a dúvida; sem formalidade.\n"
@@ -3656,6 +3668,17 @@ def _ai_sales_answer(
         "- se a mensagem é teste/ironia/resistência consciente: acompanhe como humano e siga, sem puxar pra formulário\n"
         "Use behavior_rules, tone_rules, closing_guidance, sales_audio_modes e conversation_limits para DECIDIR.\n"
         "Não siga regras mecânicas do tipo 'use nome no turno X'.\n\n"
+        "POLÍTICA DE NOME (produto):\n"
+        "- Se você já sabe o nome do lead (campo name), use 1 vez de forma natural em respostas iniciais (ex.: \"Rosália, ...\") para empatia e prova técnica.\n"
+        "- Se não souber o nome, você pode perguntar de forma leve, MAS sem travar: responda a dúvida e no final peça o nome em 1 frase.\n"
+        "- Não repita o nome em toda mensagem.\n\n"
+        "POLÍTICA DE LINK/CTA:\n"
+        "- Link é CTA, não é resposta.\n"
+        "- Se você for citar o site, antes entregue 2–4 frases úteis (explicação + micro-exemplo + benefício) e só então coloque o link em linha separada.\n"
+        "- Não use \"entra no site\" como fuga quando a pergunta é simples.\n\n"
+        "FORMATO DE SAÍDA (JSON):\n"
+        "- Sempre responda como JSON: {\"replyText\":\"...\",\"nameUse\":\"greet|ask|none\"}\n"
+        "- nameUse=greet quando você usou o nome; ask quando pediu o nome; none quando não usou.\n\n"
         "- Não se apresente do nada (sem 'meu nome é...'). EXCEÇÃO: se o lead perguntar se é humano/bot/quem está falando, responda 1 frase curta e honesta sobre ser assistente virtual do MEI Robô e volte pro valor.\n"
         f"depth_policy_ref: {depth_policy or '—'}\n"
         "TAMANHO:\n"
@@ -3739,6 +3762,19 @@ def _ai_sales_answer(
                 pass
     except Exception:
         # fallback: mantém texto bruto
+        pass
+
+
+    # Nome (produto): se temos nome e a IA não usou, injeta 1 vocativo no início (só nos primeiros turnos)
+    try:
+        turns = int(state.get("turns") or 0) if isinstance(state, dict) else 0
+        nm = (name or "").strip()
+        if nm and name_use in ("none", "") and turns <= 3:
+            low = (reply_text or "").lower()
+            if nm.lower() not in low:
+                reply_text = f"{nm}, " + (reply_text or "").lstrip()
+                name_use = "greet"
+    except Exception:
         pass
 
 
