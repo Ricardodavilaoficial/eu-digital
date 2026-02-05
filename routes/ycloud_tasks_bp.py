@@ -1902,6 +1902,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         policies_applied = []
         # Observabilidade IA-first (não muda comportamento): entendimento/custo/risco
         understanding = {}
+        name_use = ""
         if isinstance(wa_out, dict):
             reply_text = (
                 wa_out.get("replyText")
@@ -1998,8 +1999,135 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
 
 
-            # A2: propaga _debug do handler para facilitar auditoria (planner/composer/fallback/worker)
-            spoken_text = (wa_out.get("spokenText") or "").strip()
+            
+
+
+            # name_use: preferir campo direto (novo) e cair para understanding.*
+
+
+
+            try:
+
+
+
+                name_use = str(
+
+
+
+                    wa_out.get("nameUse")
+
+
+
+                    or wa_out.get("name_use")
+
+
+
+                    or (understanding.get("name_use") if isinstance(understanding, dict) else "")
+
+
+
+                    or ""
+
+
+
+                ).strip().lower()
+
+
+
+            except Exception:
+
+
+
+                name_use = ""
+
+# A2: propaga _debug do handler para facilitar auditoria (planner/composer/fallback/worker)
+            # ==========================================================
+            # spokenText final (base para TTS)
+            # - Prioridade: tts_text_from_bot (já "speechified") -> spokenText -> reply_text
+            # ==========================================================
+            spoken_text = ""
+            try:
+                spoken_text = (
+                    (tts_text_from_bot or "").strip()
+                    or str(wa_out.get("spokenText") or "").strip()
+                    or (reply_text or "").strip()
+                )
+            except Exception:
+                spoken_text = (reply_text or "").strip()
+
+            # ==========================================================
+
+            # UX: micro-empatia curta no ÁUDIO (sem script, sem textão)
+
+            # - Só quando faz sentido comercial:
+
+            #   a) fechamento (SEND_LINK) ou
+
+            #   b) confidence=high em intents "quentes"
+
+            # - Não duplica se já começou com validação/saudação.
+
+            # ==========================================================
+
+            try:
+
+                conf = ""
+
+                intent_u = ""
+
+                if isinstance(understanding, dict):
+
+                    conf = str(understanding.get("confidence") or "").strip().lower()
+
+                    intent_u = str(understanding.get("intent") or "").strip().upper()
+
+            
+
+                hot_intents = {"PRICE", "AGENDA", "WHAT_IS", "OPERATIONAL"}
+
+                should_spice = (
+
+                    str(plan_next_step or "").strip().upper() == "SEND_LINK"
+
+                    or (conf == "high" and intent_u in hot_intents)
+
+                )
+
+            
+
+                if should_spice and spoken_text:
+
+                    low0 = spoken_text[:60].lower()
+
+                    already_warm = any(
+
+                        k in low0
+
+                        for k in (
+
+                            "perfeito", "fechado", "boa", "ótimo", "top", "show",
+
+                            "entendi", "beleza", "claro", "massa", "tranquilo",
+
+                            "bom dia", "boa tarde", "boa noite", "oi"
+
+                        )
+
+                    )
+
+                    if not already_warm:
+
+                        # 1 frase curta e humana (sem telemarketing)
+
+                        prefix = "Fechado. " if str(plan_next_step or "").strip().upper() == "SEND_LINK" else "Perfeito — entendi. "
+
+                        spoken_text = prefix + spoken_text.lstrip()
+
+            except Exception:
+
+                pass
+
+
             dbg = wa_out.get("_debug") if isinstance(wa_out, dict) else None
 
             # marca quem gerou (planner/composer/fallback/worker etc.)
