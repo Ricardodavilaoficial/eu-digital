@@ -899,27 +899,6 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
         return payload
 
 
-    if i == "AGENDA":
-        # Resposta operacional direta (sem “cardápio”) quando intent é AGENDA.
-        # Puxa do Firestore quando existir; senão usa fallback bom.
-        scene = str(_get("value_in_action_blocks.scheduling_scene") or "").strip()
-        caps = str(_get("operational_capabilities") or "").strip()
-        rules = str(_get("behavior_rules") or "").strip()
-
-        line1 = (
-            scene
-            or "Na agenda, o cliente chama no WhatsApp e o robô já guia: pega nome, serviço e horário, confirma e te manda tudo organizado."
-        )
-        # Mantém curto: 1 complemento útil se existir
-        line2 = (caps or rules or "").strip()
-        # Pergunta objetiva (setup) — sem menu
-        line3 = "Você atende com horário marcado ou por ordem de chegada?"
-
-        _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
-        _txt = _maybe_prefix_name_in_text(_txt, nm)
-        # Mesmo com flag OFF, já fica sem nome por padrão.
-        return (_txt, "NONE")
-
     if i == "ACTIVATE_SEND_LINK":
         fields = base_fields + [
             "process_facts.sla_setup",
@@ -959,35 +938,6 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
         fields = base_fields + ["commercial_positioning", "product_boundaries", "plans.difference"]
         return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
 
-
-    if i == "AGENDA":
-        # Agenda (vendas): responde direto + 1 micro-exemplo + 1 pergunta opcional
-        t = (user_text or "").lower()
-        prefix = ""  # sem nome no texto (apenas no áudio)
-
-        scene = _get("value_in_action_blocks.scheduling_scene")
-        scene_line = ""
-        if isinstance(scene, dict):
-            sc = scene.get("scene") or scene.get("micro_scene") or scene.get("text") or ""
-            if isinstance(sc, list):
-                scene_line = " → ".join([str(x).strip() for x in sc if str(x).strip()])[:380]
-            else:
-                scene_line = str(sc).strip()[:380]
-        elif isinstance(scene, list):
-            scene_line = " → ".join([str(x).strip() for x in scene if str(x).strip()])[:380]
-        elif isinstance(scene, str):
-            scene_line = scene.strip()[:380]
-        if not scene_line:
-            scene_line = "O cliente pede horário no WhatsApp, o robô sugere opções, confirma e manda lembrete."
-        line1 = (prefix + "sobre agenda:").strip()
-        line2 = scene_line
-        # pergunta só se ajudar a avançar (1 detalhe)
-        line3 = ""
-        if not any(w in t for w in ("horário marcado", "horario marcado", "por ordem", "fila")):
-            line3 = "Você atende com horário marcado ou por ordem de chegada?"
-        _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
-        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
-        return (_txt, "NONE")
 
     if i == "OPERATIONAL":
         fields = base_fields + [
