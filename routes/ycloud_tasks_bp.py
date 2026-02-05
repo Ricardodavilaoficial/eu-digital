@@ -1266,6 +1266,54 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 }
             except Exception:
                 pass
+
+            # deliveryMode (como entregamos: áudio/texto)
+            try:
+                _has_audio = bool(str(audio_url or "").strip())  # type: ignore[name-defined]
+                _send_link = False
+                try:
+                    _send_link = bool(force_send_link_text)  # type: ignore[name-defined]
+                except Exception:
+                    _send_link = (str(plan_next_step or "").strip().upper() == "SEND_LINK")  # type: ignore[name-defined]
+                if _has_audio and _send_link:
+                    out["deliveryMode"] = "audio_plus_text_link"
+                elif _has_audio:
+                    out["deliveryMode"] = "audio_only"
+                else:
+                    out["deliveryMode"] = "text_only"
+            except Exception:
+                pass
+
+            # aiMeta (Firestore-first do sales_lead): copia metadados leves pro outbox
+            try:
+                _wo = wa_out if isinstance(wa_out, dict) else {}  # type: ignore[name-defined]
+                # Suporta também quando vier agrupado (aiMeta)
+                _am = _wo.get("aiMeta") if isinstance(_wo.get("aiMeta"), dict) else {}
+                def _g(key: str, default: str = "") -> str:
+                    v = _wo.get(key, _am.get(key) if isinstance(_am, dict) else default)
+                    return _trim(v, 240)
+                def _gb(key: str) -> bool:
+                    v = _wo.get(key, _am.get(key) if isinstance(_am, dict) else None)
+                    return bool(v)
+                def _gl(key: str) -> list:
+                    v = _wo.get(key, _am.get(key) if isinstance(_am, dict) else None)
+                    return v if isinstance(v, list) else []
+                out["aiMeta"] = {
+                    "iaSource": _g("iaSource", ""),
+                    "kbDocPath": _g("kbDocPath", ""),
+                    "kbContractId": _g("kbContractId", ""),
+                    "kbUsed": _gb("kbUsed"),
+                    "kbRequiredOk": _gb("kbRequiredOk"),
+                    "kbMissReason": _g("kbMissReason", ""),
+                    "kbMissingFields": _gl("kbMissingFields"),
+                    "kbExampleUsed": _g("kbExampleUsed", ""),
+                    "spokenSource": _g("spokenSource", ""),
+                    "replyTextRole": _g("replyTextRole", ""),
+                    "spokenTextRole": _g("spokenTextRole", ""),
+                    "funnelMoment": _g("funnelMoment", ""),
+                }
+            except Exception:
+                pass
         except Exception:
             return {}
         return out
@@ -2824,6 +2872,25 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 "nameUsed": (locals().get("name_used") or locals().get("name_to_use") or ""),
                                 "len": len(tts_text or ""),
                                 "preview": (tts_text or "")[:140],
+                                # Como estamos entregando (ajuda a auditar "áudio vs texto")
+                                "deliveryMode": ("audio_plus_text_link" if bool(locals().get("force_send_link_text")) else "audio_only"),
+                                # Firestore-first: espelha metadados do wa_out (quando existir)
+                                "aiMeta": {
+                                    "kbUsed": bool((wa_out or {}).get("kbUsed")) if isinstance(wa_out, dict) else False,
+                                    "kbContractId": str((wa_out or {}).get("kbContractId") or "")[:80] if isinstance(wa_out, dict) else "",
+                                    "kbMissReason": str((wa_out or {}).get("kbMissReason") or "")[:80] if isinstance(wa_out, dict) else "",
+                                    "kbRequiredOk": bool((wa_out or {}).get("kbRequiredOk")) if isinstance(wa_out, dict) else False,
+                                    "kbDocPath": str((wa_out or {}).get("kbDocPath") or "")[:160] if isinstance(wa_out, dict) else "",
+                                    "kbSliceFields": (list((wa_out or {}).get("kbSliceFields") or [])[:20] if isinstance(wa_out, dict) else []),
+                                    "kbSliceSizeChars": int((wa_out or {}).get("kbSliceSizeChars") or 0) if isinstance(wa_out, dict) else 0,
+                                    "kbMissingFields": (list((wa_out or {}).get("kbMissingFields") or [])[:20] if isinstance(wa_out, dict) else []),
+                                    "iaSource": str((wa_out or {}).get("iaSource") or "")[:80] if isinstance(wa_out, dict) else "",
+                                    "replyTextRole": str((wa_out or {}).get("replyTextRole") or "")[:40] if isinstance(wa_out, dict) else "",
+                                    "spokenTextRole": str((wa_out or {}).get("spokenTextRole") or "")[:40] if isinstance(wa_out, dict) else "",
+                                    "kbExampleUsed": str((wa_out or {}).get("kbExampleUsed") or "")[:120] if isinstance(wa_out, dict) else "",
+                                    "spokenSource": str((wa_out or {}).get("spokenSource") or "")[:60] if isinstance(wa_out, dict) else "",
+                                    "funnelMoment": str((wa_out or {}).get("funnelMoment") or "")[:40] if isinstance(wa_out, dict) else "",
+                                },
                             }
     # Corte para evitar 413
                             if tts_text and len(tts_text) > _SUPPORT_TTS_MAX_CHARS:
