@@ -1147,6 +1147,24 @@ def _compose_box_reply(
             cur = cur.get(p)
         return cur
 
+    if i == "AGENDA":
+        # Resposta operacional direta (sem cardápio) quando intent é AGENDA.
+        # Puxa do Firestore quando existir; senão usa fallback bom.
+        scene = str(_get("value_in_action_blocks.scheduling_scene") or "").strip()
+        caps = str(_get("operational_capabilities") or "").strip()
+        rules = str(_get("behavior_rules") or "").strip()
+
+        line1 = (
+            scene
+            or "Funciona assim: o cliente chama no WhatsApp, o robô pergunta o serviço, dia e horário, confirma e te manda tudo organizadinho."
+        )
+        line2 = (caps or rules or "").strip()
+        line3 = "No teu caso é mais horário marcado ou atendimento por ordem?"
+
+        _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
+        # Texto não leva nome por padrão (nome é do ÁUDIO via gate).
+        return (_txt, "NONE")
+
     if i == "PRICE":
         starter = (prices.get("starter") or "").strip()
         plus = (prices.get("starter_plus") or "").strip()
