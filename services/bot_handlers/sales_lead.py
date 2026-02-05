@@ -1147,23 +1147,70 @@ def _compose_box_reply(
             cur = cur.get(p)
         return cur
 
+    def _scene_to_lines(val: Any) -> Tuple[str, str, str]:
+        """
+        Normaliza value_in_action_blocks.scheduling_scene:
+        Pode ser dict {scene:[], optional_questions:[], next_step_hint:""}
+        ou string/list.
+        Retorna (line1, line2, line3) já “faláveis”.
+        """
+        line1 = ""
+        line2 = ""
+        line3 = ""
+
+        if isinstance(val, dict):
+            # 1) scene: lista de passos
+            sc = val.get("scene") or val.get("micro_scene") or val.get("steps") or val.get("text") or ""
+            if isinstance(sc, list):
+                sc_items = [str(x).strip() for x in sc if str(x).strip()]
+                if sc_items:
+                    # 1 frase curta (não vira texto gigante)
+                    line1 = sc_items[0]
+                    if len(sc_items) >= 2:
+                        line2 = sc_items[1]
+            elif isinstance(sc, str):
+                line1 = sc.strip()
+
+            # 2) next_step_hint
+            nsh = val.get("next_step_hint") or val.get("hint") or ""
+            if isinstance(nsh, str) and nsh.strip():
+                # vira complemento curto
+                if not line2:
+                    line2 = nsh.strip()
+                else:
+                    # se já tem line2, joga no fim
+                    line2 = (line2 + " " + nsh.strip()).strip()
+
+            # 3) pergunta opcional
+            oq = val.get("optional_questions") or []
+            if isinstance(oq, list):
+                oq_items = [str(x).strip() for x in oq if str(x).strip()]
+                if oq_items:
+                    line3 = oq_items[0]
+
+        elif isinstance(val, list):
+            items = [str(x).strip() for x in val if str(x).strip()]
+            if items:
+                line1 = items[0]
+                if len(items) >= 2:
+                    line2 = items[1]
+        elif isinstance(val, str):
+            line1 = val.strip()
+
+        # Fallback bom (nunca devolve dict)
+        if not line1:
+            line1 = "Funciona assim: o cliente chama no WhatsApp, o robô pergunta o serviço, dia e horário, confirma e te manda tudo organizadinho."
+        if not line3:
+            line3 = "No teu caso é mais horário marcado ou atendimento por ordem?"
+        return (line1.strip(), line2.strip(), line3.strip())
+
     if i == "AGENDA":
-        # Resposta operacional direta (sem cardápio) quando intent é AGENDA.
-        # Puxa do Firestore quando existir; senão usa fallback bom.
-        scene = str(_get("value_in_action_blocks.scheduling_scene") or "").strip()
-        caps = str(_get("operational_capabilities") or "").strip()
-        rules = str(_get("behavior_rules") or "").strip()
-
-        line1 = (
-            scene
-            or "Funciona assim: o cliente chama no WhatsApp, o robô pergunta o serviço, dia e horário, confirma e te manda tudo organizadinho."
-        )
-        line2 = (caps or rules or "").strip()
-        line3 = "No teu caso é mais horário marcado ou atendimento por ordem?"
-
-        _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
+        scene_val = _get("value_in_action_blocks.scheduling_scene")
+        l1, l2, l3 = _scene_to_lines(scene_val)
         # Texto não leva nome por padrão (nome é do ÁUDIO via gate).
+        _txt = "\n".join([x for x in (l1, l2, l3) if x]).strip()
         return (_txt, "NONE")
+
 
     if i == "PRICE":
         starter = (prices.get("starter") or "").strip()
