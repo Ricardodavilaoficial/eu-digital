@@ -1072,7 +1072,7 @@ def _compose_sales_reply(
     # --------------------------------------------------
     if has_greeting and (intent in ("WHAT_IS", "UNKNOWN") or (confidence or "").strip().lower() == "low"):
         opening = (
-            "Oi! Que bom falar com você 😄 "
+            "Oi! Legal falar contigo 😄 "
             "Eu sou o MEI Robô — organizo o WhatsApp do teu negócio "
             "pra você atender clientes, agenda e pedidos sem correria."
         )
@@ -2806,6 +2806,25 @@ def _upsert_lead_from_state(wa_key: str, st: dict) -> None:
     except Exception:
         pass
     turns = int(st.get("turns") or 0)
+
+
+    # ==========================================================
+    # REGRA DE PRODUTO — 1º turno com nome => greet automático
+    # - Apenas no primeiro turno
+    # - Apenas se houver nome detectado ou já conhecido
+    # - Não injeta nome no texto
+    # ==========================================================
+    try:
+        if turns == 0:
+            lead_name = (
+                (st.get("display_name") or "").strip()
+                or (st.get("lead_name") or "").strip()
+            )
+            if lead_name:
+                st["last_name_use"] = "greet"
+                st["lead_name"] = lead_name
+    except Exception:
+        pass
 
 
     # Não persiste nome lixo (evita poluir lead/profile/index)

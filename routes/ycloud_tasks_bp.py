@@ -148,6 +148,45 @@ def _maybe_name_prefix(*, wa_key: str, display_name: str, base_text: str, unders
     _mark_name_used(wa_key, name_use)
     return (f"{nm}, {t}").strip()
 
+def _maybe_apply_name_to_tts(
+    *,
+    text: str,
+    name_use: str,
+    contact_name: str | None,
+    speaker_state,
+    now_ts: float,
+    min_gap_seconds: int = 120,
+):
+    """Aplica nome no áudio (TTS) apenas quando a IA sinaliza, com gate de cadência."""
+    try:
+        nu = str(name_use or "").strip().lower()
+    except Exception:
+        nu = ""
+    if not text or not contact_name or nu == "none":
+        return text, ""
+
+    try:
+        last = float((speaker_state or {}).get("last_name_used_at") or 0.0)
+    except Exception:
+        last = 0.0
+    if (now_ts - last) < float(min_gap_seconds or 0):
+        return text, ""
+
+    try:
+        if str(contact_name).lower() in str(text).lower():
+            return text, ""
+    except Exception:
+        pass
+
+    prefixed = f"{contact_name}, {str(text).lstrip()}"
+    try:
+        if isinstance(speaker_state, dict):
+            speaker_state["last_name_used_at"] = now_ts
+    except Exception:
+        pass
+    return prefixed, str(contact_name or "").strip()
+
+
 ycloud_tasks_bp = Blueprint("ycloud_tasks_bp", __name__)
 
 
@@ -1532,6 +1571,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         tts_text_final_used = ""  # texto final que foi pro TTS
         wa_out = None
 
+        speaker_state = {}  # cache local p/ gate de nome no TTS
+
         try:
             # Firebase Admin (Firestore) — harden Cloud Run
             try:
@@ -2169,6 +2210,12 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         try:
                             sp = _speaker_db().collection(_SPEAKER_COLL).document(wa_key_effective).get()
                             spd = sp.to_dict() or {}
+                            speaker_state = dict(spd or {})
+                            # compat p/ gate local do nome
+                            try:
+                                speaker_state["last_name_used_at"] = float(speaker_state.get("lastNameUsedAtEpoch") or speaker_state.get("last_name_used_at") or 0.0)
+                            except Exception:
+                                pass
                             audio_debug["speakerStateProbe_get"] = {
                                 "waKey": wa_key_effective,
                                 "docExists": bool(sp.exists),
@@ -2650,7 +2697,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             # Probe ANTES do corte (para debug)
                             audio_debug = dict(audio_debug or {})
                             audio_debug["ttsTextProbe"] = {
-                                "nameUsed": (locals().get("name_to_use") or ""),
+                                "nameUsed": (locals().get("name_used") or locals().get("name_to_use") or ""),
                                 "len": len(tts_text or ""),
                                 "preview": (tts_text or "")[:140],
                             }
@@ -2690,6 +2737,26 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         # UX: nome só quando a IA pedir e o gate autorizar (evita 'metralhadora de nome')
                         try:
                             tts_text = _maybe_name_prefix(wa_key=str(wa_key or ""), display_name=str(display_name or ""), base_text=str(tts_text or ""), understanding=(understanding if isinstance(understanding, dict) else {}))
+                        except Exception:
+                            pass
+
+                        # UX (VENDAS): aplicar nome no ÁUDIO quando a IA sinaliza via wa_out.nameUse, com gate de cadência (mesmo sem uid)
+                        try:
+                            tts_text_base = str(tts_text or "")
+                            tts_text, name_used = _maybe_apply_name_to_tts(
+                                text=tts_text_base,
+                                name_use=str((wa_out or {}).get("nameUse") or "none"),
+                                contact_name=str((wa_out or {}).get("leadName") or (wa_out or {}).get("displayName") or (display_name or "")).strip() or None,
+                                speaker_state=speaker_state,
+                                now_ts=time.time(),
+                                min_gap_seconds=int(_SALES_NAME_MIN_GAP_SECONDS or 120),
+                            )
+                            # persist best-effort (mantém cadência entre requests)
+                            if name_used and wa_key:
+                                try:
+                                    _mark_name_used(str(wa_key or ""), str((wa_out or {}).get("nameUse") or ""))
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
                         tts_text_final_used = tts_text
