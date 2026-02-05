@@ -2025,10 +2025,6 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         try:
             if str(plan_next_step or "").strip().upper() == "SEND_LINK":
                 force_send_link_text = True
-                _rt0 = (reply_text or "").strip()
-                # garante link canônico (sem https obrigatório)
-                if ("www.meirobo.com.br" not in _rt0.lower()):
-                    reply_text = (_rt0.rstrip() + "\n\nwww.meirobo.com.br").strip() if _rt0 else "www.meirobo.com.br"
         except Exception:
             force_send_link_text = False
 
@@ -2743,10 +2739,16 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         # UX (VENDAS): aplicar nome no ÁUDIO quando a IA sinaliza via wa_out.nameUse, com gate de cadência (mesmo sem uid)
                         try:
                             tts_text_base = str(tts_text or "")
+                            _under = (understanding if isinstance(understanding, dict) else {})
+                            _name_use_signal = str((wa_out or {}).get("nameUse") or _under.get("name_use") or "none").strip().lower()
+                            _contact_name = (
+                                str((wa_out or {}).get("leadName") or (wa_out or {}).get("displayName") or (display_name or "")).strip()
+                                or str((speaker_state or {}).get("displayName") or "").strip()
+                            ) or None
                             tts_text, name_used = _maybe_apply_name_to_tts(
                                 text=tts_text_base,
-                                name_use=str((wa_out or {}).get("nameUse") or "none"),
-                                contact_name=str((wa_out or {}).get("leadName") or (wa_out or {}).get("displayName") or (display_name or "")).strip() or None,
+                                name_use=_name_use_signal,
+                                contact_name=_contact_name,
                                 speaker_state=speaker_state,
                                 now_ts=time.time(),
                                 min_gap_seconds=int(_SALES_NAME_MIN_GAP_SECONDS or 120),
