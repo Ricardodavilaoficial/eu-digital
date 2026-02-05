@@ -963,7 +963,8 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
     if i == "AGENDA":
         # Agenda (vendas): responde direto + 1 micro-exemplo + 1 pergunta opcional
         t = (user_text or "").lower()
-        prefix = f"{nm}, " if nm else ""
+        prefix = ""  # sem nome no texto (apenas no áudio)
+
         scene = _get("value_in_action_blocks.scheduling_scene")
         scene_line = ""
         if isinstance(scene, dict):
@@ -1110,11 +1111,8 @@ def _compose_sales_reply(
             "pra você atender clientes, agenda e pedidos sem correria."
         )
 
-        ask_name = (
-            "Como posso te chamar?"
-            if not display_name
-            else f"{display_name}, quer que eu te mostre como funciona na prática?"
-        )
+        # Texto NÃO deve incluir o nome por padrão (nome é aplicado só no ÁUDIO pelo worker).
+        ask_name = "Como posso te chamar?" if not display_name else "Quer que eu te mostre como funciona na prática?"
 
         return f"{opening} {ask_name}".strip()
 
@@ -1123,8 +1121,9 @@ def _compose_sales_reply(
     # --------------------------------------------------
     if (confidence or "").strip().lower() == "low":
         if display_name:
+            # Sem nome no texto; o gate do áudio decide.
             return (
-                f"{display_name}, peguei a ideia. Só pra eu te orientar certo: você quer usar mais pra agenda, pedidos ou orçamento?"
+                "Peguei a ideia. Só pra eu te orientar certo: você quer usar mais pra agenda, pedidos ou orçamento?"
             )
         return (
             "Show. Só me diz uma coisa rapidinho: você quer usar mais pra agenda, pedidos ou orçamento?"
@@ -1135,11 +1134,14 @@ def _compose_sales_reply(
     # --------------------------------------------------
     if intent == "AGENDA":
         base = (
-            "Na agenda, o cliente marca direto pelo WhatsApp "
-            "e você recebe tudo organizado, sem troca de mensagens."
+            "Funciona assim: o cliente chama no WhatsApp, o robô pergunta o serviço, dia e horário "
+            "e já te entrega o agendamento confirmadinho."
         )
-        follow = "Quer usar mais pra serviços com hora marcada ou visitas?"
-        return f"{base} {follow}"
+        extra = (
+            "Se o cliente ligar, você só fala “me chama no WhatsApp” e o robô assume dali."
+        )
+        follow = "No teu caso é mais horário marcado ou atendimento por ordem?"
+        return " ".join([x for x in (base, extra, follow) if x]).strip()
 
     if intent == "PRICE":
         # reply_text já vem com preço do cérebro + Firestore
@@ -1164,8 +1166,9 @@ def _compose_sales_reply(
     # --------------------------------------------------
     # 4) Uso do nome (uma vez, sem insistir)
     # --------------------------------------------------
-    if display_name and not name_recently_used:
-        return f"{display_name}, {reply_text.strip()}"
+    # Sem nome no texto por padrão (nome é aplicado só no ÁUDIO pelo worker).
+    if False:
+        pass
 
     return reply_text
 
@@ -1211,7 +1214,8 @@ def _compose_box_reply(
         _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
         return (_txt, "SEND_LINK")
 
-        prefix = f"{nm}, " if nm else ""
+        prefix = ""  # sem nome no texto (apenas no áudio)
+
         line1 = f"{prefix}hoje é {starter}/mês (Starter) ou {plus}/mês (Starter+).".strip()
         line2 = "A diferença é só a memória."
         line3 = "Obs: ativação só com CNPJ."
@@ -1237,12 +1241,14 @@ def _compose_box_reply(
             steps = _get("sales_pills.how_it_works")
         s1 = _pick_one(steps) if isinstance(steps, list) else ""
         s2 = str(steps[1]).strip() if isinstance(steps, list) and len(steps) >= 2 else ""
-        prefix = f"{nm}, " if nm else ""
+        prefix = ""  # sem nome no texto (apenas no áudio)
+
         greet = ""
         t = (user_text or "").lower()
         if any(x in t for x in ("bom dia", "boa tarde", "boa noite", "feliz", "tudo bem", "oi", "olá", "ola")):
             if nm:
-                greet = f"Oi {nm}! Feliz 2026 pra você também 😄"
+                greet = "Oi! Feliz 2026 pra você também 😄"
+
             else:
                 greet = "Oi! Feliz 2026 pra você também 😄"
         line1 = (((prefix if not greet else "") + blurb).strip())
@@ -1259,7 +1265,8 @@ def _compose_box_reply(
         bounds = _get("product_boundaries")
         one_bound = _pick_one(bounds) if isinstance(bounds, list) else ""
         diff = str(_get("plans.difference") or "").strip()
-        prefix = f"{nm}, " if nm else ""
+        prefix = ""  # sem nome no texto (apenas no áudio)
+
         line1 = (prefix + (pos or "A diferença é bem simples: o plano muda a memória disponível.")).strip()
         line2 = (diff or "").strip()
         line3 = (one_bound or "").strip()
@@ -1298,7 +1305,8 @@ def _compose_box_reply(
         if seg:
             q = str(_get(f"segments.{seg.lower()}.one_question") or "").strip()
 
-        prefix = f"{nm}, " if nm else ""
+        prefix = ""  # sem nome no texto (apenas no áudio)
+
         line1 = (prefix + "na prática fica assim:").strip()
         line2 = scene_line or seg_ms
         line3 = "Se quiser, eu te explico com um exemplo bem do teu tipo de negócio em 1 pergunta."
@@ -1309,7 +1317,8 @@ def _compose_box_reply(
         how = str(_get("voice_pill.how_it_works") or "Você grava a voz na configuração e o robô passa a responder em áudio com ela.").strip()
         bounds = str(_get("voice_pill.boundaries") or "Sem inventar coisas e sem prometer milagre — é voz, não mágica 😄").strip()
         nxt = str(_get("voice_pill.next_step") or "Quer que eu te mande o link pra criar a conta e ver o passo-a-passo?").strip()
-        prefix = f"{nm}, " if nm else ""
+        prefix = ""  # sem nome no texto (apenas no áudio)
+
         return ("\n".join([x for x in ((prefix + yes).strip(), how, bounds, nxt) if x]).strip(), "NONE")
 
     if i == "TRUST":
@@ -4259,7 +4268,7 @@ def _soft_close_message(kb: Dict[str, Any], name: str = "") -> str:
         site = "www.meirobo.com.br"
 
     nm = (name or "").strip()
-    prefix = f"{nm}, " if nm else ""
+    prefix = ""  # sem nome no texto (apenas no áudio)
 
     # Se o Firestore trouxer um limite/guia, usa (sem copiar textão).
     try:
