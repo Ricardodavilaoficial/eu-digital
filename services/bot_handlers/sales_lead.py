@@ -53,6 +53,33 @@ MAX_OTHER_STREAK = 3
 
 
 
+
+
+_SALES_INJECT_NAME_IN_TEXT = str(os.getenv("SALES_INJECT_NAME_IN_TEXT", "0")).strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
+def _maybe_prefix_name_in_text(text: str, name: str) -> str:
+    """Nome no TEXTO é desligado por padrão.
+    Motivo: o nome deve ser aplicado pelo worker só no ÁUDIO (gate), quando a IA sinaliza via nameUse/name_use.
+    Feature flag de emergência: SALES_INJECT_NAME_IN_TEXT=1
+    """
+    try:
+        if not _SALES_INJECT_NAME_IN_TEXT:
+            return text
+        nm = (name or "").strip()
+        if not nm or not text:
+            return text
+        low = text.lower()
+        if nm.lower() in low:
+            return text
+        return f"{nm}, " + text.lstrip()
+    except Exception:
+        return text
+
 # ==========================================================
 # Regra de produto (VENDAS institucional): teto por contato
 # - 15..18 mensagens "inteligentes" por contato (hard cap = 18)
@@ -156,12 +183,10 @@ OPENING_ASK_NAME = (
 
 # Fallback humano mínimo (nunca vazio; sem marketing longo)
 def _fallback_min_reply(name: str = "") -> str:
-    name = (name or "").strip()
-    if name:
-        return f"{name}, perfeito. Você quer falar de pedidos, agenda, orçamento ou só conhecer?"
-    return "Beleza. Me diz teu nome e o que você quer resolver: pedidos, agenda, orçamento ou só entender como funciona?"
-
-
+    # Texto nunca recebe nome por padrão (nome é do ÁUDIO via worker/gate).
+    # Mantemos flag de emergência para reativar prefixo no texto se precisar.
+    base = "Perfeito. Você quer falar de pedidos, agenda, orçamento ou só conhecer?"
+    return _maybe_prefix_name_in_text(base, name)
 
 def _composer_mode() -> str:
     """Modo do composer (separa decisão de fala).
@@ -873,6 +898,28 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
         _fs_cache_set(ck, {"kind": "kb_slice", "intent": i, "payload": payload}, ttl_seconds=int(os.getenv("SALES_KB_SLICE_CACHE_TTL_SECONDS", "600") or "600"))
         return payload
 
+
+    if i == "AGENDA":
+        # Resposta operacional direta (sem “cardápio”) quando intent é AGENDA.
+        # Puxa do Firestore quando existir; senão usa fallback bom.
+        scene = str(_get("value_in_action_blocks.scheduling_scene") or "").strip()
+        caps = str(_get("operational_capabilities") or "").strip()
+        rules = str(_get("behavior_rules") or "").strip()
+
+        line1 = (
+            scene
+            or "Na agenda, o cliente chama no WhatsApp e o robô já guia: pega nome, serviço e horário, confirma e te manda tudo organizado."
+        )
+        # Mantém curto: 1 complemento útil se existir
+        line2 = (caps or rules or "").strip()
+        # Pergunta objetiva (setup) — sem menu
+        line3 = "Você atende com horário marcado ou por ordem de chegada?"
+
+        _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
+        _txt = _maybe_prefix_name_in_text(_txt, nm)
+        # Mesmo com flag OFF, já fica sem nome por padrão.
+        return (_txt, "NONE")
+
     if i == "ACTIVATE_SEND_LINK":
         fields = base_fields + [
             "process_facts.sla_setup",
@@ -1175,12 +1222,13 @@ def _compose_box_reply(
         sla = str(_get("process_facts.sla_setup") or "até 7 dias úteis").strip()
         can_now = str(_get("process_facts.can_prepare_now") or "").strip()
         cta = _pick_one(_get("cta_variations") or []) or _pick_one(_get("sales_pills.cta_one_liners") or [])
-        prefix = f"{nm}, " if nm else ""
-        line1 = f"{prefix}fechado — é por aqui pra assinar e começar: {MEI_ROBO_CADASTRO_URL}".strip()
+        line1 = f"Fechado — é por aqui pra assinar e começar: {MEI_ROBO_CADASTRO_URL}".strip()
         line2 = f"Prazo: {sla}.".strip()
         line3 = can_now
         line4 = (cta or "").strip()
-        return ("\n".join([x for x in (line1, line2, line3, line4) if x]).strip(), "SEND_LINK")
+        _txt = "\n".join([x for x in (line1, line2, line3, line4) if x]).strip()
+        _txt = _maybe_prefix_name_in_text(_txt, nm)
+        return (_txt, "SEND_LINK")
 
     if i == "WHAT_IS":
         blurb = str(_get("sales_pills.identity_blurb") or "").strip() or "Eu organizo o WhatsApp do teu negócio e tiro o caos do atendimento."
@@ -1272,15 +1320,16 @@ def _compose_box_reply(
             conf = ""
         bounds = _get("product_boundaries")
         one_bound = _pick_one(bounds) if isinstance(bounds, list) else ""
-        prefix = f"{nm}, " if nm else ""
-        line1 = (prefix + (conf or "Não é golpe 🙂 É uma plataforma pra organizar teu atendimento no WhatsApp.")).strip()
+        line1 = (conf or "Não é golpe 🙂 É uma plataforma pra organizar teu atendimento no WhatsApp.").strip()
         line2 = (one_bound or "").strip()
         line3 = "Se quiser, eu te mando o link oficial pra você ver tudo por você mesmo."
         line4 = MEI_ROBO_CADASTRO_URL
-        return ("\n".join([x for x in (line1, line2, line3, line4) if x]).strip(), "SEND_LINK")
-
-    prefix = f"{nm}, " if nm else ""
-    return ((prefix + "me diz só o que você quer resolver primeiro: preço, voz, ou um exemplo prático?").strip(), "NONE")
+        _txt = "\n".join([x for x in (line1, line2, line3, line4) if x]).strip()
+        _txt = _maybe_prefix_name_in_text(_txt, nm)
+        return (_txt, "SEND_LINK")
+    _txt = "Me diz só o que você quer resolver primeiro: preço, voz, ou um exemplo prático?"
+    _txt = _maybe_prefix_name_in_text(_txt, nm)
+    return (_txt.strip(), "NONE")
 
 
 def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:

@@ -2188,16 +2188,20 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     audio_debug["nameOverrideProbe_get_err"] = str(e)[:120]
                     override = ""
 
-                if override:
-                    reply_text_before_override = reply_text
-                    reply_text = _apply_name_override(reply_text, override)
-                    audio_debug = dict(audio_debug or {})
-                    audio_debug["nameOverride"] = {"applied": True, "name": override}
 
+                # ==========================================================
+                # Name override (produto): APENAS para display_name / contexto
+                # - NÃO modificar reply_text aqui.
+                # - Uso do nome é decidido pela IA (name_use) + gate no áudio.
+                # ==========================================================
+                try:
+                    if override:
+                        nm = str(override).strip()
+                        if nm:
+                            display_name = nm
+                except Exception:
+                    pass
 
-                    # mantém display_name consistente (para TTS/ack/meta)
-                    if override and not (display_name or "").strip():
-                        display_name = str(override).strip()
 
                 # fallback final: se ainda não temos display_name, tenta speakerState diretamente
                 try:
