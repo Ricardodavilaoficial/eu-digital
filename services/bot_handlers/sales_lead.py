@@ -1020,14 +1020,30 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
 
 
 def _pick_one(arr: Any) -> str:
+    """Escolhe 1 string válida de uma lista, evitando vazar dict/list/JSON cru.
+    Aceita:
+    - str
+    - dict com um campo textual conhecido (text/line/value/msg)
+    Ignora qualquer outro tipo.
+    """
     if not isinstance(arr, list) or not arr:
         return ""
+
+    def _as_text(v: Any) -> str:
+        if isinstance(v, str):
+            return v.strip()
+        if isinstance(v, dict):
+            for k in ("text", "line", "value", "msg"):
+                vv = v.get(k)
+                if isinstance(vv, str) and vv.strip():
+                    return vv.strip()
+        return ""
+
     for x in arr:
-        s = str(x or "").strip()
+        s = _as_text(x)
         if s:
             return s
     return ""
-
 
 def _compose_sales_reply(
     *,
@@ -3280,7 +3296,10 @@ def _economic_reply(
         policies.append("depth:economic")
 
         nm = (name or "").strip()
-        head = f"{nm}, sim —" if nm else "Sim —"
+        head = "Sim —"
+        # IA sinaliza (nameUse) e o worker decide se usa nome no ÁUDIO (gate por cadência).
+        if nm and str(st.get("last_name_use") or "none").strip().lower() in ("", "none"):
+            st["last_name_use"] = "greet"
 
         txt = (
             f"{head} o MEI Robô pode responder em áudio com a voz do próprio profissional, "
@@ -4322,8 +4341,8 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             st["plan_intent"] = "ACTIVATE"
             st["plan_next_step"] = "SEND_LINK"
             nm = (st.get("name") or "").strip()
-            if nm:
-                return f"{nm}, fechado — vou te mandar o link aqui na conversa."
+            if nm and str(st.get("last_name_use") or "none").strip().lower() in ("", "none"):
+                st["last_name_use"] = "greet"
             return "Fechado — vou te mandar o link aqui na conversa."
     except Exception:
         pass
@@ -4350,8 +4369,8 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                 # Se o alias for SEND_LINK, não cola URL aqui: generate_reply garante link no texto.
                 if a_ns == "SEND_LINK":
                     nm = (st.get("name") or "").strip()
-                    if nm:
-                        return f"{nm}, fechado — vou te mandar o link aqui na conversa."
+                    if nm and str(st.get("last_name_use") or "none").strip().lower() in ("", "none"):
+                        st["last_name_use"] = "greet"
                     return "Fechado — vou te mandar o link aqui na conversa."
 
                 # Caso conceitual (ex.: VOICE): usa caminho econômico (sem IA geradora)
@@ -4421,8 +4440,8 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                 # Para casos óbvios de SEND_LINK: responde curto e deixa o link pro final
                 if cns == "SEND_LINK":
                     nm = (st.get("name") or "").strip()
-                    if nm:
-                        return f"{nm}, fechado — vou te mandar o link aqui na conversa."
+                    if nm and str(st.get("last_name_use") or "none").strip().lower() in ("", "none"):
+                        st["last_name_use"] = "greet"
                     return "Fechado — vou te mandar o link aqui na conversa."
     except Exception:
         pass
