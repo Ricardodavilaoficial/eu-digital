@@ -1030,11 +1030,13 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
         return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
 
     if i in ("PROCESS", "SLA"):
-        # Processo / SLA: sempre responder com clareza (sem "entra no site").
+        # Processo / SLA: precisa de fatos do processo (prazo, preparo, cobrança, etc.)
         fields = base_fields + [
             "commercial_positioning",
             "process_facts.sla_setup",
             "process_facts.can_prepare_now",
+            "process_facts.billing_model",
+            "process_facts.no_free_trial",
         ]
         return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
 
@@ -1584,6 +1586,38 @@ def _compose_box_reply(
         line4 = (cta or "").strip()
         _txt = "\n".join([x for x in (line1, line2, line3, line4) if x]).strip()
         _txt = _maybe_prefix_name_in_text(_txt, nm)
+        return (_txt, "SEND_LINK")
+
+
+    if i == "SLA":
+        # SLA: responder o prazo (fato) + 1 pergunta prática (se precisar)
+        sla = str(_get("process_facts.sla_setup") or "").strip()
+        can_now = str(_get("process_facts.can_prepare_now") or "").strip()
+        if not sla:
+            sla = "até 7 dias úteis para número virtual + configuração concluída"
+        line1 = f"Hoje o prazo é {sla}."
+        line2 = (can_now or "").strip()
+        line3 = "Se quiser, eu te mando o link pra criar a conta e já deixar tudo pronto."
+        _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
+        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
+        return (_txt, "SEND_LINK")
+
+    if i == "PROCESS":
+        # PROCESS: explicar caminho (sem triagem genérica) e ancorar em fatos do KB
+        billing = str(_get("process_facts.billing_model") or "").strip()
+        sla = str(_get("process_facts.sla_setup") or "").strip()
+        can_now = str(_get("process_facts.can_prepare_now") or "").strip()
+        if not billing:
+            billing = "assinatura mensal (paga)"
+        if not sla:
+            sla = "até 7 dias úteis para número virtual + configuração concluída"
+        line1 = f"É {billing}."
+        line2 = "O fluxo é: criar a conta → preencher o básico (serviços/rotina) → ativação."
+        line3 = f"Depois disso, o WhatsApp fica pronto em {sla}."
+        line4 = (can_now or "").strip()
+        line5 = "Quer que eu te mande o link pra você já começar por lá?"
+        _txt = "\n".join([x for x in (line1, line2, line3, line4, line5) if x]).strip()
+        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
         return (_txt, "SEND_LINK")
 
     if i == "WHAT_IS":
