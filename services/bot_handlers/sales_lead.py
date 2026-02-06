@@ -93,21 +93,16 @@ def _speechify_for_tts(text: str) -> str:
     """
     Ajustes mínimos pra TTS falar bem, sem destruir conteúdo.
     IMPORTANTE: aplicar só no texto falado (spoken/tts), nunca no replyText.
-
-    Refinos (VENDAS institucional):
-    - Ritmo: frases mais curtas e pausas naturais (quebras de linha).
-    - Evita leitura "corrida": quebra em sentenças quando o texto é longo.
-    - Mantém determinístico e barato (regex simples).
     """
     try:
         s = str(text or "").strip()
         if not s:
             return ""
 
-        # Remove bullets visuais (TTS costuma ler "bolinha")
+        # Remove bullets visuais (TTS costuma falar "bolinha" ou truncar ritmo)
         s = s.replace("•", "").replace("·", "")
 
-        # URLs: não ler inteiro (link vai por texto separado pelo worker)
+        # URLs: não ler inteiro no áudio (o link vai no texto do worker)
         s = re.sub(r"https?://\S+", "o link tá na mensagem", s)
 
         # HH:MM -> "H horas" / "H e MM"
@@ -119,25 +114,22 @@ def _speechify_for_tts(text: str) -> str:
             return f"{hh} e {mm:02d}"
         s = re.sub(r"\b(\d{1,2}):(\d{2})\b", _hhmm, s)
 
-        # Data: 01/02/2026 -> "1 de 2 de 2026"
+        # Data BR simples dd/mm/aaaa -> "dd de mm de aaaa" (sem nomes de mês)
         s = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", r"\1 de \2 de \3", s)
 
         # Dinheiro: "R$ 89,00" -> "89 reais"
         s = re.sub(r"R\$\s*(\d+)(?:[.,](\d{2}))?", r"\1 reais", s)
 
-        # Setas / "->" viram pausa natural
+        # Setas e "->" viram pausa natural
         s = s.replace("→", ". ").replace("->", ". ")
 
         # Normaliza espaços
         s = re.sub(r"[ \t]+", " ", s).strip()
 
-        # Ritmo: se estiver longo, quebra em pausas (no máximo 6 linhas)
+        # Ritmo (VENDAS): se estiver longo, quebra em pausas (no máximo 6 linhas)
         if len(s) >= 140:
-            # Quebra após pontuação comum
             s = re.sub(r"([.!?])\s+", r"\1\n", s)
             s = re.sub(r"(:)\s+", r"\1\n", s)
-
-            # Evita excesso de quebras
             parts = [p.strip() for p in s.split("\n") if p.strip()]
             if len(parts) > 6:
                 parts = parts[:6]
@@ -146,7 +138,6 @@ def _speechify_for_tts(text: str) -> str:
         return s.strip()
     except Exception:
         return text
-
 
 
 # --- Sales usage logger (lightweight, best-effort) ---
@@ -1281,17 +1272,16 @@ def _compose_sales_reply(
     name_recently_used: bool = False,
 ):
     """
-    Humanização vendedora (pós-intent), Firestore-first.
-    - NÃO cria intents, NÃO muda o pipeline, NÃO duplica lógica do worker.
-    - Ajusta só a composição final do texto (replyText) para soar humano/vendedor.
-    - Nome NÃO entra no texto (por padrão): o gate do áudio decide.
+    Ajuste de comportamento vendedor (pós-intent):
+    - IA decide intent / next_step antes.
+    - Aqui garantimos resposta humana, rica e condutiva.
     """
 
     i = (intent or "OTHER").strip().upper()
     conf = (confidence or "").strip().lower()
-    stt = (stt_text or "").strip()
-    stt_lc = stt.lower()
+    stt_lc = (stt_text or "").lower().strip()
 
+    # Getter leve (dot path), sem depender de libs
     def _get(path: str, default: Any = "") -> Any:
         try:
             cur: Any = kb_context
@@ -1305,12 +1295,14 @@ def _compose_sales_reply(
         except Exception:
             return default
 
-    def _pick(arr: Any) -> str:
-        return _pick_one(arr) if isinstance(arr, list) else ""
+    has_greeting = any(
+        k in stt_lc
+        for k in ("bom dia", "boa tarde", "boa noite", "oi", "olá", "tudo bem", "feliz")
+    )
 
-    # ---------------------------------------------
-    # 0) Empatia condicional (1 linha, no máximo)
-    # ---------------------------------------------
+    # --------------------------------------------------
+    # 0) Empatia condicional (1 linha, só quando disparar trigger)
+    # --------------------------------------------------
     empathy_line = ""
     try:
         triggers = _get("empathy_triggers", []) or []
@@ -1320,242 +1312,175 @@ def _compose_sales_reply(
     except Exception:
         pass
 
-    # ---------------------------------------------
-    # 1) Opener leve (tone_spark), com cadência
-    # ---------------------------------------------
+    # --------------------------------------------------
+    # 0.5) Opener (tone_spark) — tempero, não base
+    # --------------------------------------------------
     opener = ""
     try:
         spark = _get("tone_spark", {}) or {}
-        enabled = bool(spark.get("enabled")) if isinstance(spark, dict) else False
-        do_not = spark.get("do_not_use_intents") if isinstance(spark, dict) else []
-        if enabled and (not isinstance(do_not, list) or i not in [str(x).strip().upper() for x in do_not]):
-            openers = spark.get("openers") if isinstance(spark, dict) else []
-            opener = _pick(openers) or ""
+        if isinstance(spark, dict) and bool(spark.get("enabled")):
+            do_not = spark.get("do_not_use_intents") or []
+            blocked = isinstance(do_not, list) and i in [str(x).strip().upper() for x in do_not]
+            if not blocked:
+                opener = _pick_one(spark.get("openers") or [])
     except Exception:
         opener = ""
 
-    if conf == "low":
-        opener = opener or "Tranquilo. Vou direto ao ponto."
+    # --------------------------------------------------
+    # 1) OPENING POLICY — nunca responder seco a saudação
+    # --------------------------------------------------
+    if has_greeting and (i in ("WHAT_IS", "UNKNOWN") or conf == "low"):
+        opening = (
+            "Oi! Legal falar contigo 😄 "
+            "Eu sou o MEI Robô — organizo o WhatsApp do teu negócio "
+            "pra você atender clientes, agenda e pedidos sem correria."
+        )
 
-    # ---------------------------------------------
-    # 2) Cenário prático (1 por resposta, no máximo)
-    # ---------------------------------------------
+        # Texto NÃO deve incluir o nome por padrão (nome é aplicado só no ÁUDIO pelo worker).
+        ask_name = "Como posso te chamar?" if not display_name else "Quer que eu te mostre como funciona na prática?"
+
+        return f"{opening} {ask_name}".strip()
+
+    # --------------------------------------------------
+    # 1.5) Low confidence — nunca responder com “frasezinha”
+    # --------------------------------------------------
+    if conf == "low":
+        if display_name:
+            # Sem nome no texto; o gate do áudio decide.
+            return (
+                "Peguei a ideia. Só pra eu te orientar certo: você quer usar mais pra agenda, pedidos ou orçamento?"
+            )
+        return (
+            "Show. Só me diz uma coisa rapidinho: você quer usar mais pra agenda, pedidos ou orçamento?"
+        )
+
+    # --------------------------------------------------
+    # 2) Intents CORE nunca caem em qualifier genérico
+    # --------------------------------------------------
+    if i == "AGENDA":
+        base = (
+            "Funciona assim: o cliente chama no WhatsApp, o robô pergunta o serviço, dia e horário "
+            "e já te entrega o agendamento confirmadinho."
+        )
+        extra = (
+            "Se o cliente ligar, você só fala “me chama no WhatsApp” e o robô assume dali."
+        )
+        follow = "No teu caso é mais horário marcado ou atendimento por ordem?"
+        core = " ".join([x for x in (base, extra, follow) if x]).strip()
+        parts = [p for p in (opener, empathy_line, core) if p]
+        return "\n".join(parts).strip()
+
+    if i == "PRICE":
+        # reply_text já vem com preço do cérebro + Firestore
+        benefit = "Isso já inclui atendimento automático e organização das conversas."
+        core = f"{reply_text.strip()} {benefit}".strip()
+        parts = [p for p in (opener, empathy_line, core) if p]
+        # Cenário curtinho como ancoragem (policy: preço direto + 1 cenário curto)
+        try:
+            scenarios = _get("operational_value_scenarios", {}) or {}
+            idx = _get("scenario_index.for_intent_price", []) or []
+            if isinstance(scenarios, dict) and isinstance(idx, list) and idx:
+                k = str(idx[0]).strip()
+                sline = str(scenarios.get(k) or "").strip()
+                if sline:
+                    if len(sline) > 180:
+                        sline = sline[:180].rstrip() + "…"
+                    parts.append(sline)
+        except Exception:
+            pass
+        # Closer vendedor (sem empurrar)
+        closer = ""
+        try:
+            closer = _pick_one(_get("tone_spark.closers", []) or []) or ""
+            if not closer:
+                cs = _get("closing_styles", {}) or {}
+                if isinstance(cs, dict):
+                    closer = str(cs.get("suave") or "").strip()
+        except Exception:
+            closer = ""
+        if closer:
+            parts.append(closer)
+        out = "\n".join([x for x in parts if x]).strip()
+        return out
+
+    if i == "WHAT_IS":
+        base = reply_text.strip()
+        enrich = (
+            "Na prática, ele responde clientes, organiza pedidos e agenda "
+            "enquanto você foca no trabalho."
+        )
+        core = f"{base} {enrich}".strip()
+        parts = [p for p in (opener, empathy_line, core) if p]
+        # Closer leve (opcional)
+        closer = _pick_one(_get("tone_spark.closers", []) or []) or ""
+        if closer:
+            parts.append(closer)
+        out = "\n".join([x for x in parts if x]).strip()
+        return out
+
+    # --------------------------------------------------
+    # 3) Guardrail — resposta curta demais = enriquecer
+    # --------------------------------------------------
+    if reply_text and len(reply_text.strip()) < 80:
+        tail = "Quer que eu te dê um exemplo real de como isso funciona no dia a dia?"
+        core = f"{reply_text.strip()} {tail}".strip()
+        parts = [p for p in (opener, empathy_line, core) if p]
+        return "\n".join(parts).strip()
+
+    # --------------------------------------------------
+    # 4) Uso do nome (uma vez, sem insistir)
+    # --------------------------------------------------
+    # Sem nome no texto por padrão (nome é aplicado só no ÁUDIO pelo worker).
+    if False:
+        pass
+
+    # --------------------------------------------------
+    # 5) Cenário (1 por resposta, no máximo) + fechamento
+    # --------------------------------------------------
     scenario_line = ""
     try:
-        idx = _get("scenario_index", {}) or {}
         scenarios = _get("operational_value_scenarios", {}) or {}
-        key_candidates: list[str] = []
-        if isinstance(idx, dict):
-            if i in ("OPERATIONAL", "AGENDA"):
-                key_candidates = idx.get("for_intent_operational_flow") or []
-            elif i in ("PRICE", "PLANS", "DIFF"):
-                key_candidates = idx.get("for_intent_price") or []
-            elif i in ("TRUST",):
-                key_candidates = idx.get("for_intent_trust") or []
-        if not key_candidates and isinstance(scenarios, dict):
-            if i in ("OPERATIONAL", "AGENDA"):
-                key_candidates = ["agenda_sem_interrupcao"]
-            elif i in ("PRICE", "PLANS", "DIFF"):
-                key_candidates = ["preco_com_seguranca_sem_chute"]
-        if isinstance(key_candidates, list) and key_candidates:
-            k = str(key_candidates[0]).strip()
-            if isinstance(scenarios, dict) and k and isinstance(scenarios.get(k), str):
-                scenario_line = str(scenarios.get(k) or "").strip()
+        idx = _get("scenario_index.for_intent_operational_flow", []) or []
+        if i in ("OPERATIONAL", "AGENDA") and isinstance(scenarios, dict) and isinstance(idx, list) and idx:
+            k = str(idx[0]).strip()
+            scenario_line = str(scenarios.get(k) or "").strip()
     except Exception:
         scenario_line = ""
 
-    if scenario_line:
-        if len(scenario_line) > 180:
-            m = re.search(r"^(.{50,180}?)[.!?]\s", scenario_line)
-            if m:
-                scenario_line = (m.group(1) + ".").strip()
-            else:
-                scenario_line = scenario_line[:180].rstrip() + "…"
-
-    # ---------------------------------------------
-    # 3) Base reply (já vem Firestore-first do cérebro)
-    # ---------------------------------------------
-    base = (reply_text or "").strip()
-
-    if conf == "low":
-        return "Show. Só me diz uma coisa rapidinho: você quer usar mais pra agenda, pedidos ou orçamento?"
-
-    # ---------------------------------------------
-    # 4) Intent guidelines (pós-forma, sem reescrever tudo)
-    # ---------------------------------------------
-    try:
-        g = str(_get(f"intent_guidelines.{i}", "") or "").strip()
-        if "Sem pergunta" in g or "Sem pergunta." in g:
-            if base.endswith("?"):
-                base = base.rstrip("?").rstrip() + "."
-    except Exception:
-        pass
-
-    # ---------------------------------------------
-    # 5) Closing (benefício + próximo passo + tchau)
-    # ---------------------------------------------
     closer = ""
     try:
-        spark = _get("tone_spark", {}) or {}
-        if isinstance(spark, dict):
-            closer = _pick(spark.get("closers") or []) or ""
+        closer = _pick_one(_get("tone_spark.closers", []) or []) or ""
         if not closer:
             cs = _get("closing_styles", {}) or {}
             if isinstance(cs, dict):
                 closer = str(cs.get("suave") or "").strip()
         if not closer:
-            closer = _pick(_get("closing_guidance") or [])
+            closer = _pick_one(_get("closing_guidance", []) or []) or ""
     except Exception:
         closer = ""
 
-    if i in ("ACTIVATE", "ACTIVATE_SEND_LINK"):
-        if closer.endswith("?"):
-            closer = closer.rstrip("?").rstrip() + "."
-
-    # ---------------------------------------------
-    # 6) Composição final
-    # ---------------------------------------------
-    parts: list[str] = []
-    if opener:
-        parts.append(opener.strip())
-    if empathy_line:
-        parts.append(empathy_line.strip())
-    if base:
-        parts.append(base)
-    if scenario_line and i not in ("SLA", "PROCESS"):
+    parts = [p for p in (opener, empathy_line, reply_text.strip()) if p]
+    if scenario_line and i not in ("PROCESS", "SLA"):
+        if len(scenario_line) > 180:
+            scenario_line = scenario_line[:180].rstrip() + "…"
         parts.append(scenario_line)
-    if closer and i not in ("UNKNOWN",):
-        low_base = (base or "").lower()
-        if (closer.lower()[:20] not in low_base) and (SITE_URL.lower() not in (closer.lower())):
-            parts.append(closer.strip())
+    if closer and (closer.lower() not in (reply_text or "").lower()):
+        # Hard close: não terminar com pergunta em ACTIVATE/PROCESS
+        if i in ("ACTIVATE", "ACTIVATE_SEND_LINK", "PROCESS") and closer.endswith("?"):
+            closer = closer.rstrip("?").rstrip() + "."
+        parts.append(closer)
 
-    out = "\n".join([p for p in parts if p]).strip()
+    out = "\n".join([x for x in parts if x]).strip()
 
+    # 2–5 linhas (tone_rules): corta excesso sem destruir o núcleo
     try:
-        tone_rules = _get("tone_rules", []) or []
-        wants_short = any("2" in str(x) and "5" in str(x) and "lin" in str(x).lower() for x in (tone_rules if isinstance(tone_rules, list) else []))
-        if wants_short:
-            out_lines = [x.strip() for x in out.split("\n") if x.strip()]
-            if len(out_lines) > 5:
-                out_lines = out_lines[:5]
-                out = "\n".join(out_lines).strip()
+        lines = [x.strip() for x in out.split("\n") if x.strip()]
+        if len(lines) > 5:
+            out = "\n".join(lines[:5]).strip()
     except Exception:
         pass
 
-    if out and len(out) < 90 and i not in ("ACTIVATE", "ACTIVATE_SEND_LINK", "PRICE"):
-        out = (out + "\n" + "Quer que eu te mostre isso aplicado no teu tipo de negócio em 2 linhas?").strip()
-
     return out
-
-
-
-# ==========================================================
-# Contrato do slice (DIFF 2): campos mínimos obrigatórios por intent
-# - Mantém Firestore-first "de verdade": sem KB suficiente, não pode sair resposta "bonita".
-# - Economia: só valida presença/valor; não aumenta o slice nem chama IA extra.
-# ==========================================================
-def _kb_contract_required_groups(intent: str, *, segment: str = "") -> list[tuple[str, ...]]:
-    """Retorna grupos de caminhos (dot paths) que devem estar presentes no slice.
-
-    Cada tupla é um grupo "OU": basta 1 caminho do grupo estar preenchido.
-    """
-    i = (intent or "OTHER").strip().upper()
-    seg = (segment or "").strip().lower()
-
-    # Base: 1 regra + 1 fechamento + 1 proposta de valor
-    base_groups: list[tuple[str, ...]] = [
-        ("behavior_rules",),
-        ("closing_guidance",),
-        ("value_props",),
-    ]
-
-    if i == "WHAT_IS":
-        return base_groups + [
-            ("sales_pills.identity_blurb", "identity_positioning"),
-            ("sales_pills.how_it_works_3steps", "sales_pills.how_it_works"),
-            ("value_in_action_blocks.scheduling_scene", "value_in_action_blocks.services_quote_scene"),
-        ]
-
-    if i == "PRICE":
-        return base_groups + [
-            ("pricing_behavior", "sales_pills.pricing_blurb", "pricing_facts"),
-            ("sales_pills.cta_one_liners",),
-        ]
-
-    if i == "DIFF":
-        return base_groups + [
-            ("plans.difference",),
-            ("commercial_positioning",),
-        ]
-
-    if i in ("OPERATIONAL", "AGENDA"):
-        groups = base_groups + [
-            ("depth_policy", "discovery_policy"),
-            ("value_in_action_blocks.scheduling_scene",),
-        ]
-        if seg:
-            groups.append((f"segment_pills.{seg}.micro_scene", "segment_pills.servicos.micro_scene"))
-        return groups
-
-    if i in ("QUOTE",):
-        groups = base_groups + [
-            ("value_in_action_blocks.services_quote_scene",),
-            ("operational_capabilities.quotes_practice", "operational_flows.orcamento_com_validacao"),
-        ]
-        if seg:
-            groups.append((f"segment_pills.{seg}.micro_scene", "segment_pills.servicos.micro_scene"))
-        return groups
-
-    if i in ("CONTACTS",):
-        groups = base_groups + [
-            ("operational_value_scenarios.whatsapp_organizado_sem_bagunça",),
-            ("operational_capabilities.services_practice",),
-        ]
-        if seg:
-            groups.append((f"segment_pills.{seg}.micro_scene", "segment_pills.servicos.micro_scene"))
-        return groups
-
-    if i == "VOICE":
-        return base_groups + [
-            ("voice_pill.short_yes", "voice_positioning.core"),
-            ("voice_pill.next_step",),
-        ]
-
-    if i in ("PROCESS", "SLA"):
-        return base_groups + [
-            ("commercial_positioning",),
-            ("process_facts.sla_setup",),
-        ]
-
-    if i == "ACTIVATE":
-        return base_groups + [
-            ("commercial_positioning",),
-            ("intent_guidelines.ACTIVATE",),
-            ("process_facts.can_prepare_now", "process_facts.sla_setup"),
-        ]
-
-    if i == "PLANS":
-        return base_groups + [
-            ("commercial_positioning",),
-            ("pricing_behavior", "sales_pills.pricing_blurb", "pricing_facts"),
-            ("cta_variations", "sales_pills.cta_one_liners"),
-        ]
-
-    if i == "TRUST":
-        return base_groups + [
-            ("ethical_guidelines",),
-            ("objections.confianca",),
-        ]
-
-    if i == "ACTIVATE_SEND_LINK":
-        return base_groups + [
-            ("process_facts.sla_setup",),
-            ("intent_guidelines.ACTIVATE",),
-            ("cta_variations", "sales_pills.cta_one_liners"),
-        ]
-
-    # default: pelo menos o núcleo
-    return base_groups
 
 
 def _kb_get_by_path(data: Any, path: str) -> Any:
@@ -5336,13 +5261,6 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         # ==========================================================
         ai_meta = {
             "iaSource": str(st.get("understand_source") or und.get("source") or "").strip(),
-            "kbDocPath": str(st.get("kb_doc_path") or "platform_kb/sales").strip(),
-            "kbSliceFields": list(st.get("kb_slice_fields") or []),
-            "kbSliceSizeChars": int(st.get("kb_slice_size_chars") or 0),
-            "kbContractId": str(st.get("kb_contract_id") or "").strip(),
-            "kbRequiredOk": bool(st.get("kb_required_ok") is True),
-            "kbMissReason": str(st.get("kb_miss_reason") or "").strip(),
-            "kbMissingFields": list(st.get("kb_missing_fields") or []),
             "kbUsed": bool(st.get("kb_used") is True),
             "kbExampleUsed": str(st.get("kb_example_used") or "").strip(),
             "spokenSource": str(st.get("spoken_source") or spoken_src).strip(),
@@ -5365,15 +5283,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             "kbVersion": str(st.get("kb_version") or ""),
             "kbLoaded": bool(st.get("kb_loaded") is True),
             # Telemetria canônica (worker/outbox lê daqui)
-            "aiMeta": ai_meta,
             # Mirrors "flat" (opcional, mas ajuda debug e compat)
-            "kbDocPath": ai_meta.get("kbDocPath", ""),
-            "kbContractId": ai_meta.get("kbContractId", ""),
-            "kbSliceFields": ai_meta.get("kbSliceFields", []),
-            "kbSliceSizeChars": ai_meta.get("kbSliceSizeChars", 0),
-            "kbRequiredOk": ai_meta.get("kbRequiredOk", False),
-            "kbMissReason": ai_meta.get("kbMissReason", ""),
-            "kbMissingFields": ai_meta.get("kbMissingFields", []),
             "kbUsed": ai_meta.get("kbUsed", False),
             "kbExampleUsed": ai_meta.get("kbExampleUsed", ""),            
 
@@ -5382,25 +5292,12 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             # - Não altera comportamento; só expõe metadados para logs/probes.
             # ==========================================================
             "iaSource": str(st.get("understand_source") or und.get("source") or "").strip(),
-            "kbDocPath": str(st.get("kb_doc_path") or "platform_kb/sales").strip(),
-            "kbSliceFields": list(st.get("kb_slice_fields") or []),
-            "kbSliceSizeChars": int(st.get("kb_slice_size_chars") or 0),
-            "kbContractId": str(st.get("kb_contract_id") or "").strip(),
-            "kbRequiredOk": st.get("kb_required_ok"),
-            "kbMissReason": str(st.get("kb_miss_reason") or "").strip(),
-            "kbMissingFields": list(st.get("kb_missing_fields") or []),
             "kbUsed": bool(st.get("kb_used") is True),
             "kbExampleUsed": str(st.get("kb_example_used") or "").strip(),
             "spokenSource": str(st.get("spoken_source") or spoken_src).strip(),
             "replyTextRole": str(st.get("reply_text_role") or "audit_text").strip(),
             "spokenTextRole": str(st.get("spoken_text_role") or spoken_role).strip(),
             "funnelMoment": str(st.get("funnel_moment") or "").strip(),
-
-            # ==========================================================
-            # Compat (worker): espelhar metadados também dentro de aiMeta
-            # (mantém os top-level para não quebrar nada)
-            # ==========================================================
-            "aiMeta": ai_meta,
         }
 
     # ==========================================================
