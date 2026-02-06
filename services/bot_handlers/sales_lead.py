@@ -4887,47 +4887,42 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
 
         # ==========================================================
-        # Firestore-first (telemetria INELÁSTICA):
-        # - nunca deixar aiMeta "vazio"
-        # - defaults SEM try (pra não sumir em exceção silenciosa)
+        # Firestore-first (telemetria INELÁSTICA)
+        # - aiMeta NUNCA pode sair vazio
+        # - sem try/except "pass" que apaga evidência
         # ==========================================================
-        intent_u = (intent_u if intent_u else "WHAT_IS").strip().upper()
+        iu = (intent_u if intent_u else "WHAT_IS").strip().upper()
         st["kb_doc_path"] = "platform_kb/sales"
-        st["kb_contract_id"] = f"{intent_u}:v1"
-        st.setdefault("kb_slice_fields", [])
-        st.setdefault("kb_slice_size_chars", 0)
-        st.setdefault("kb_required_ok", False)
-        st.setdefault("kb_miss_reason", "")
-        st.setdefault("kb_missing_fields", [])
-        st.setdefault("kb_used", False)
-
-        # tenta resolver campos do contrato (se falhar, mantém defaults)
+        st["kb_contract_id"] = f"{iu}:v1"
+        st["kb_slice_fields"] = []
         try:
-            st["kb_slice_fields"] = _kb_slice_fields_for_intent(intent_u, segment=segment)
+            st["kb_slice_fields"] = list(_kb_slice_fields_for_intent(iu, segment=segment) or [])
         except Exception:
-            st["kb_slice_fields"] = list(st.get("kb_slice_fields") or [])
+            st["kb_slice_fields"] = []
+        st["kb_slice_size_chars"] = 0
+        st["kb_loaded"] = False
+        st["kb_required_ok"] = False
+        st["kb_miss_reason"] = ""
+        st["kb_missing_fields"] = []
+        st["kb_used"] = False
 
-        kb_slice = _kb_slice_for_box(intent_u, segment=segment) or {}
+        kb_slice = _kb_slice_for_box(iu, segment=segment) or {}
 
-        # Observabilidade: tamanho aproximado e sinal de carregamento (robusto)
+        # tamanho aproximado + loaded
         try:
-            st["kb_slice_size_chars"] = len(json.dumps(kb_slice, ensure_ascii=False, sort_keys=True))
+            st["kb_slice_size_chars"] = int(len(json.dumps(kb_slice, ensure_ascii=False, sort_keys=True)))
         except Exception:
-            st["kb_slice_size_chars"] = len(str(kb_slice or ""))
+            st["kb_slice_size_chars"] = int(len(str(kb_slice or "")))
         st["kb_loaded"] = bool(kb_slice)
-        prices = _get_display_prices(ttl_seconds=180) or {}
 
-        # ==========================================================
-        # Contrato mínimo (por intent) — SEM "pass" silencioso
-        # ==========================================================
-        _cf = list(st.get("kb_slice_fields") or [])
-        if not kb_slice:
+        # contrato mínimo por intent (se falhar, registra o motivo)
+        if not bool(kb_slice):
             st["kb_required_ok"] = False
             st["kb_miss_reason"] = "empty_slice"
-            st["kb_missing_fields"] = _cf
+            st["kb_missing_fields"] = list(st.get("kb_slice_fields") or [])
         else:
             try:
-                miss = _kb_contract_missing_groups(kb_slice, intent_u, segment=segment)
+                miss = _kb_contract_missing_groups(kb_slice, iu, segment=segment)
                 if miss:
                     st["kb_required_ok"] = False
                     st["kb_miss_reason"] = "missing_required"
@@ -4939,9 +4934,12 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             except Exception:
                 st["kb_required_ok"] = False
                 st["kb_miss_reason"] = "contract_exception"
-                st["kb_missing_fields"] = _cf
+                st["kb_missing_fields"] = list(st.get("kb_slice_fields") or [])
 
-        # Observabilidade: marca fonte e exemplo quando KB ok
+        st["kb_used"] = bool(kb_slice) and bool(st.get("kb_required_ok") is True)
+        prices = _get_display_prices(ttl_seconds=180) or {}
+
+# Observabilidade: marca fonte e exemplo quando KB ok
         try:
             st["kb_used"] = bool(kb_slice) and bool(st.get("kb_required_ok"))
             if st["kb_used"] and intent_u == "WHAT_IS" and _kb_path_has_value(kb_slice, "value_in_action_blocks.scheduling_scene"):
