@@ -4885,35 +4885,49 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         name = str(st.get("name") or st.get("lead_name") or "").strip()
         segment = str(st.get("segment") or "").strip()
 
-        # Observabilidade: registre o contrato do slice (campos exatos) antes de carregar.
-        # (DIFF 0) — não muda comportamento.
+
+        # ==========================================================
+        # Firestore-first (telemetria INELÁSTICA):
+        # - nunca deixar aiMeta "vazio"
+        # - defaults SEM try (pra não sumir em exceção silenciosa)
+        # ==========================================================
+        intent_u = (intent_u if intent_u else "WHAT_IS").strip().upper()
+        st["kb_doc_path"] = "platform_kb/sales"
+        st["kb_contract_id"] = f"{intent_u}:v1"
+        st.setdefault("kb_slice_fields", [])
+        st.setdefault("kb_slice_size_chars", 0)
+        st.setdefault("kb_required_ok", False)
+        st.setdefault("kb_miss_reason", "")
+        st.setdefault("kb_missing_fields", [])
+        st.setdefault("kb_used", False)
+
+        # tenta resolver campos do contrato (se falhar, mantém defaults)
         try:
-            st["kb_doc_path"] = "platform_kb/sales"
-            st["kb_slice_fields"] = _kb_slice_fields_for_intent(intent_u if intent_u else "WHAT_IS", segment=segment)
-            st["kb_contract_id"] = f"{(intent_u if intent_u else 'WHAT_IS').strip().upper()}:v1"
+            st["kb_slice_fields"] = _kb_slice_fields_for_intent(intent_u, segment=segment)
         except Exception:
-            pass
-        kb_slice = _kb_slice_for_box(intent_u if intent_u else "WHAT_IS", segment=segment) or {}
-        
-        # Observabilidade: tamanho aproximado e sinal de carregamento.
+            st["kb_slice_fields"] = list(st.get("kb_slice_fields") or [])
+
+        kb_slice = _kb_slice_for_box(intent_u, segment=segment) or {}
+
+        # Observabilidade: tamanho aproximado e sinal de carregamento (robusto)
         try:
             st["kb_slice_size_chars"] = len(json.dumps(kb_slice, ensure_ascii=False, sort_keys=True))
-            st["kb_loaded"] = bool(kb_slice)
         except Exception:
-            pass
+            st["kb_slice_size_chars"] = len(str(kb_slice or ""))
+        st["kb_loaded"] = bool(kb_slice)
         prices = _get_display_prices(ttl_seconds=180) or {}
-        # Observabilidade: "KB obrigatório" (contrato do slice)
-        # - Não muda o comportamento do reply; só registra se o slice veio ou não.
-        # - Usado para caçar respostas "sem alma" que saíram sem Firestore.
-        try:
-            _cf = st.get("kb_slice_fields") or _kb_slice_fields_for_intent(intent_u if intent_u else "WHAT_IS", segment=segment)
-            if not kb_slice:
-                st["kb_required_ok"] = False
-                st["kb_miss_reason"] = "empty_slice"
-                st["kb_missing_fields"] = list(_cf or [])
-            else:
-                # DIFF 2: valida "mínimos obrigatórios" (contrato) por intent
-                miss = _kb_contract_missing_groups(kb_slice, intent_u if intent_u else "WHAT_IS", segment=segment)
+
+        # ==========================================================
+        # Contrato mínimo (por intent) — SEM "pass" silencioso
+        # ==========================================================
+        _cf = list(st.get("kb_slice_fields") or [])
+        if not kb_slice:
+            st["kb_required_ok"] = False
+            st["kb_miss_reason"] = "empty_slice"
+            st["kb_missing_fields"] = _cf
+        else:
+            try:
+                miss = _kb_contract_missing_groups(kb_slice, intent_u, segment=segment)
                 if miss:
                     st["kb_required_ok"] = False
                     st["kb_miss_reason"] = "missing_required"
@@ -4922,12 +4936,12 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                     st["kb_required_ok"] = True
                     st["kb_miss_reason"] = ""
                     st["kb_missing_fields"] = []
-        except Exception:
-            pass
+            except Exception:
+                st["kb_required_ok"] = False
+                st["kb_miss_reason"] = "contract_exception"
+                st["kb_missing_fields"] = _cf
 
-
-        # Observabilidade (DIFF 0): uso de KB neste turno.
-        # Regra: kbUsed só pode ser True quando o contrato passou (kb_required_ok).
+        # Observabilidade: marca fonte e exemplo quando KB ok
         try:
             st["kb_used"] = bool(kb_slice) and bool(st.get("kb_required_ok"))
             if st["kb_used"] and intent_u == "WHAT_IS" and _kb_path_has_value(kb_slice, "value_in_action_blocks.scheduling_scene"):
@@ -4937,11 +4951,22 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
             st["spoken_text_role"] = "tts_script"
         except Exception:
             pass
-        # DIFF 2: se o contrato falhar, não pode sair resposta "bonita".
-        # Mantém fallback mínimo (1 pergunta prática) + log de kb_miss.
+
         if not bool(st.get("kb_required_ok")):
-            body = _fallback_min_reply(name=name, user_text=text_in)
-            suggested = "NONE"
+            # Fallback honesto + 1 pergunta prática (POR INTENT) — sem triagem genérica
+            iu = intent_u
+            if iu == "PROCESS":
+                body = "Posso te responder certinho — você quer saber do PRAZO pra ficar ativo no WhatsApp, ou do passo-a-passo de cadastro/ativação?"
+                suggested = "ASK_CLARIFY"
+            elif iu == "PRICE":
+                body = "Pra eu te indicar o plano certo: é só você atendendo (1 número) ou tem mais gente junto no WhatsApp?"
+                suggested = "ASK_CLARIFY"
+            elif iu == "VOICE":
+                body = "Sobre a voz: você quer ver COMO envia o áudio pra treinar, ou quer entender os limites (o que pode e o que não pode)?"
+                suggested = "ASK_CLARIFY"
+            else:
+                body = _fallback_min_reply(name=name, user_text=text_in)
+                suggested = "NONE"
             # Observabilidade: fallback por KB miss/contrato
             try:
                 st["kb_used"] = False
@@ -4952,6 +4977,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                 pass
         else:
             body, suggested = _compose_box_reply(
+
                 box_intent=intent_u,
                 confidence=str(st.get("understand_confidence") or ""),
                 box_data=kb_slice,
