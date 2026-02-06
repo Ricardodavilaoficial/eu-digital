@@ -987,6 +987,8 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
             "sales_pills.how_it_works",
             "identity_positioning",
             "value_in_action_blocks.scheduling_scene",
+            # Preferir texto “falável” quando existir na KB (evita “scene/next_step_hint” cru)
+            "value_in_action_blocks.scheduling_scene_text",
         ]
         # cache mínimo (Firestore) — evita reler sempre se estiver quente
         ck = _kb_slice_cache_key(i, segment)
@@ -1616,11 +1618,35 @@ def _compose_box_reply(
         return (line1.strip(), line2.strip(), line3.strip())
 
     if i == "AGENDA":
-        scene_val = _get("value_in_action_blocks.scheduling_scene")
-        l1, l2, l3 = _scene_to_lines(scene_val)
-        # Texto não leva nome por padrão (nome é do ÁUDIO via gate).
-        _txt = "\n".join([x for x in (l1, l2, l3) if x]).strip()
-        return (_txt, "NONE")
+        # AGENDA (vendedor humano):
+        # - 1 abertura curta (tone_spark)
+        # - 1 micro-exemplo prático (KB)
+        # - 1 pergunta curta (qualificação leve)
+        opener = _pick_one(_get("tone_spark.openers") or [])
+
+        # Preferir texto pronto “falável”; fallback para prática/fluxo
+        agenda_text = (
+            str(_get("value_in_action_blocks.scheduling_scene_text") or "").strip()
+            or str(_get("operational_capabilities.scheduling_practice") or "").strip()
+            or str(_get("operational_flows.agendamento_completo") or "").strip()
+        )
+
+        # 1 ancoragem curta (benefício)
+        anchor = "Fica tudo registrado por escrito e você não precisa ficar caçando conversa."
+
+        # 1 pergunta curta (segmento se tiver; senão genérica)
+        seg_q = ""
+        try:
+            if seg:
+                seg_q = _pick_one(_get(f"segments.{seg}.one_question") or [])
+        except Exception:
+            seg_q = ""
+        if not seg_q:
+            seg_q = "No teu caso é mais horário marcado ou por ordem?"
+
+        parts = [x for x in (opener, agenda_text, anchor, seg_q) if str(x or "").strip()]
+        return (" ".join(parts).strip(), "NONE")
+
 
 
     if i == "PRICE":
@@ -1928,6 +1954,18 @@ def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
             return msgs[idx]
         except Exception:
             return msgs[0]
+
+    # ==========================================================
+    # GUARD (produto): evitar SEND_LINK prematuro
+    # - Se o lead NÃO pediu link/site/assinar explicitamente, não manda link "do nada"
+    # - Mantém SEND_LINK para intents naturalmente de fechamento (ACTIVATE/PRICE/PROCESS/SLA)
+    # ==========================================================
+    try:
+        if ns == "SEND_LINK" and intent in ("AGENDA", "OPERATIONAL", "WHAT_IS"):
+            if not _is_link_request(user_text):
+                ns = "NONE"
+    except Exception:
+        pass
 
     st["understand_source"] = "box_decider"
     st["plan_intent"] = intent
@@ -2585,7 +2623,8 @@ def _spokenize_v1(
     # evita "cara de template" SEM quebrar horário (06:30)
     # troca ":" por ". " somente quando não estiver entre dígitos
     t = re.sub(r"(?<!\d):(?!\d)", ". ", t)
-    t = t.replace("—", ". ").replace("–", ". ")
+        # "—" como pausa (vírgula) soa mais humano do que virar “ponto” no TTS
+    t = t.replace("—", ", ").replace("–", ", ")
     t = t.replace("…", ". ")
     t = _flatten_scene_arrows(t)
     t = re.sub(r"\s*\.\s*", ". ", t).strip()
