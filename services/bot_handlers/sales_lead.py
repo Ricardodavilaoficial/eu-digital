@@ -4981,9 +4981,54 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         except Exception:
             pass
 
+        # ==========================================================
+        # Spoken composer (determinístico, barato)
+        # - Por padrão: spokenizer v1 (se habilitado)
+        # - Fallback: speechify_for_tts(replyText)
+        # ==========================================================
+        spoken_txt = ""
+        spoken_src = "speechify(replyText)"
+        spoken_role = "tts_script"
+        try:
+            turns = int(st.get("turns") or 0) if isinstance(st, dict) else 0
+        except Exception:
+            turns = 0
+        try:
+            has_url = bool(_RE_URL.search(rt)) if rt else False
+        except Exception:
+            has_url = False
+
+        try:
+            if _spokenizer_should_run():
+                spoken_txt = _spokenize_v1(
+                    reply_text=rt,
+                    intent_final=str(und.get("intent") or "OTHER"),
+                    prefers_text=bool(prefers_text),
+                    has_url=bool(has_url),
+                    lead_name=str(_lead_name_out or ""),
+                    turns=int(turns or 0),
+                )
+                spoken_src = "spokenizer_v1"
+                spoken_role = "spokenizer_v1"
+            else:
+                spoken_txt = _speechify_for_tts(rt)
+                spoken_src = "speechify(replyText)"
+                spoken_role = "tts_script"
+        except Exception:
+            spoken_txt = _speechify_for_tts(rt)
+            spoken_src = "speechify(replyText)"
+            spoken_role = "tts_script"
+
+        # carimba no state p/ observabilidade + payload final
+        try:
+            st["spoken_source"] = spoken_src
+            st["spoken_text_role"] = spoken_role
+        except Exception:
+            pass
+
         return {
             "replyText": rt,
-            "spokenText": _speechify_for_tts(rt),
+            "spokenText": spoken_txt,
             "prefersText": bool(prefers_text),
             "understanding": und,
             # Campos auxiliares (não quebram nada se o worker ignorar)
@@ -5010,9 +5055,9 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             "kbMissingFields": list(st.get("kb_missing_fields") or []),
             "kbUsed": bool(st.get("kb_used") is True),
             "kbExampleUsed": str(st.get("kb_example_used") or "").strip(),
-            "spokenSource": str(st.get("spoken_source") or "speechify(replyText)").strip(),
+            "spokenSource": str(st.get("spoken_source") or spoken_src).strip(),
             "replyTextRole": str(st.get("reply_text_role") or "audit_text").strip(),
-            "spokenTextRole": str(st.get("spoken_text_role") or "tts_script").strip(),
+            "spokenTextRole": str(st.get("spoken_text_role") or spoken_role).strip(),
             "funnelMoment": str(st.get("funnel_moment") or "").strip(),
         }
 
