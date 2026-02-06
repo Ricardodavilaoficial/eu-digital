@@ -93,9 +93,22 @@ def _speechify_for_tts(text: str) -> str:
     """
     Ajustes mínimos pra TTS falar bem, sem destruir conteúdo.
     IMPORTANTE: aplicar só no texto falado (spoken/tts), nunca no replyText.
+
+    Refinos (VENDAS institucional):
+    - Ritmo: frases mais curtas e pausas naturais (quebras de linha).
+    - Evita leitura "corrida": quebra em sentenças quando o texto é longo.
+    - Mantém determinístico e barato (regex simples).
     """
     try:
-        s = str(text or "")
+        s = str(text or "").strip()
+        if not s:
+            return ""
+
+        # Remove bullets visuais (TTS costuma ler "bolinha")
+        s = s.replace("•", "").replace("·", "")
+
+        # URLs: não ler inteiro (link vai por texto separado pelo worker)
+        s = re.sub(r"https?://\S+", "o link tá na mensagem", s)
 
         # HH:MM -> "H horas" / "H e MM"
         def _hhmm(m):
@@ -106,16 +119,33 @@ def _speechify_for_tts(text: str) -> str:
             return f"{hh} e {mm:02d}"
         s = re.sub(r"\b(\d{1,2}):(\d{2})\b", _hhmm, s)
 
-        # Data BR simples dd/mm/aaaa -> "dd de mm de aaaa" (sem nomes de mês)
+        # Data: 01/02/2026 -> "1 de 2 de 2026"
         s = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", r"\1 de \2 de \3", s)
 
         # Dinheiro: "R$ 89,00" -> "89 reais"
         s = re.sub(r"R\$\s*(\d+)(?:[.,](\d{2}))?", r"\1 reais", s)
 
-        return s
+        # Setas / "->" viram pausa natural
+        s = s.replace("→", ". ").replace("->", ". ")
+
+        # Normaliza espaços
+        s = re.sub(r"[ \t]+", " ", s).strip()
+
+        # Ritmo: se estiver longo, quebra em pausas (no máximo 6 linhas)
+        if len(s) >= 140:
+            # Quebra após pontuação comum
+            s = re.sub(r"([.!?])\s+", r"\1\n", s)
+            s = re.sub(r"(:)\s+", r"\1\n", s)
+
+            # Evita excesso de quebras
+            parts = [p.strip() for p in s.split("\n") if p.strip()]
+            if len(parts) > 6:
+                parts = parts[:6]
+            s = "\n".join(parts)
+
+        return s.strip()
     except Exception:
         return text
-
 
 
 
@@ -1251,87 +1281,172 @@ def _compose_sales_reply(
     name_recently_used: bool = False,
 ):
     """
-    Ajuste de comportamento vendedor (pós-intent):
-    - IA decide intent / next_step antes.
-    - Aqui garantimos resposta humana, rica e condutiva.
+    Humanização vendedora (pós-intent), Firestore-first.
+    - NÃO cria intents, NÃO muda o pipeline, NÃO duplica lógica do worker.
+    - Ajusta só a composição final do texto (replyText) para soar humano/vendedor.
+    - Nome NÃO entra no texto (por padrão): o gate do áudio decide.
     """
 
-    stt_lc = (stt_text or "").lower()
-    has_greeting = any(
-        k in stt_lc
-        for k in ("bom dia", "boa tarde", "boa noite", "oi", "olá", "tudo bem", "feliz")
-    )
+    i = (intent or "OTHER").strip().upper()
+    conf = (confidence or "").strip().lower()
+    stt = (stt_text or "").strip()
+    stt_lc = stt.lower()
 
-    # --------------------------------------------------
-    # 1) OPENING POLICY — nunca responder seco a saudação
-    # --------------------------------------------------
-    if has_greeting and (intent in ("WHAT_IS", "UNKNOWN") or (confidence or "").strip().lower() == "low"):
-        opening = (
-            "Oi! Legal falar contigo 😄 "
-            "Eu sou o MEI Robô — organizo o WhatsApp do teu negócio "
-            "pra você atender clientes, agenda e pedidos sem correria."
-        )
+    def _get(path: str, default: Any = "") -> Any:
+        try:
+            cur: Any = kb_context
+            for p in (path or "").split("."):
+                if not p:
+                    continue
+                if not isinstance(cur, dict):
+                    return default
+                cur = cur.get(p)
+            return cur if cur is not None else default
+        except Exception:
+            return default
 
-        # Texto NÃO deve incluir o nome por padrão (nome é aplicado só no ÁUDIO pelo worker).
-        ask_name = "Como posso te chamar?" if not display_name else "Quer que eu te mostre como funciona na prática?"
+    def _pick(arr: Any) -> str:
+        return _pick_one(arr) if isinstance(arr, list) else ""
 
-        return f"{opening} {ask_name}".strip()
-
-    # --------------------------------------------------
-    # 1.5) Low confidence — nunca responder com “frasezinha”
-    # --------------------------------------------------
-    if (confidence or "").strip().lower() == "low":
-        if display_name:
-            # Sem nome no texto; o gate do áudio decide.
-            return (
-                "Peguei a ideia. Só pra eu te orientar certo: você quer usar mais pra agenda, pedidos ou orçamento?"
-            )
-        return (
-            "Show. Só me diz uma coisa rapidinho: você quer usar mais pra agenda, pedidos ou orçamento?"
-        )
-
-    # --------------------------------------------------
-    # 2) Intents CORE nunca caem em qualifier genérico
-    # --------------------------------------------------
-    if intent == "AGENDA":
-        base = (
-            "Funciona assim: o cliente chama no WhatsApp, o robô pergunta o serviço, dia e horário "
-            "e já te entrega o agendamento confirmadinho."
-        )
-        extra = (
-            "Se o cliente ligar, você só fala “me chama no WhatsApp” e o robô assume dali."
-        )
-        follow = "No teu caso é mais horário marcado ou atendimento por ordem?"
-        return " ".join([x for x in (base, extra, follow) if x]).strip()
-
-    if intent == "PRICE":
-        # reply_text já vem com preço do cérebro + Firestore
-        benefit = "Isso já inclui atendimento automático e organização das conversas."
-        return f"{reply_text.strip()} {benefit}"
-
-    if intent == "WHAT_IS":
-        base = reply_text.strip()
-        enrich = (
-            "Na prática, ele responde clientes, organiza pedidos e agenda "
-            "enquanto você foca no trabalho."
-        )
-        return f"{base} {enrich}"
-
-    # --------------------------------------------------
-    # 3) Guardrail — resposta curta demais = enriquecer
-    # --------------------------------------------------
-    if reply_text and len(reply_text.strip()) < 80:
-        tail = "Quer que eu te dê um exemplo real de como isso funciona no dia a dia?"
-        return f"{reply_text.strip()} {tail}"
-
-    # --------------------------------------------------
-    # 4) Uso do nome (uma vez, sem insistir)
-    # --------------------------------------------------
-    # Sem nome no texto por padrão (nome é aplicado só no ÁUDIO pelo worker).
-    if False:
+    # ---------------------------------------------
+    # 0) Empatia condicional (1 linha, no máximo)
+    # ---------------------------------------------
+    empathy_line = ""
+    try:
+        triggers = _get("empathy_triggers", []) or []
+        if isinstance(triggers, list) and triggers:
+            if any(str(t).strip().lower() in stt_lc for t in triggers[:12]):
+                empathy_line = "Entendi. Isso aí no WhatsApp cansa mesmo — bora deixar simples."
+    except Exception:
         pass
 
-    return reply_text
+    # ---------------------------------------------
+    # 1) Opener leve (tone_spark), com cadência
+    # ---------------------------------------------
+    opener = ""
+    try:
+        spark = _get("tone_spark", {}) or {}
+        enabled = bool(spark.get("enabled")) if isinstance(spark, dict) else False
+        do_not = spark.get("do_not_use_intents") if isinstance(spark, dict) else []
+        if enabled and (not isinstance(do_not, list) or i not in [str(x).strip().upper() for x in do_not]):
+            openers = spark.get("openers") if isinstance(spark, dict) else []
+            opener = _pick(openers) or ""
+    except Exception:
+        opener = ""
+
+    if conf == "low":
+        opener = opener or "Tranquilo. Vou direto ao ponto."
+
+    # ---------------------------------------------
+    # 2) Cenário prático (1 por resposta, no máximo)
+    # ---------------------------------------------
+    scenario_line = ""
+    try:
+        idx = _get("scenario_index", {}) or {}
+        scenarios = _get("operational_value_scenarios", {}) or {}
+        key_candidates: list[str] = []
+        if isinstance(idx, dict):
+            if i in ("OPERATIONAL", "AGENDA"):
+                key_candidates = idx.get("for_intent_operational_flow") or []
+            elif i in ("PRICE", "PLANS", "DIFF"):
+                key_candidates = idx.get("for_intent_price") or []
+            elif i in ("TRUST",):
+                key_candidates = idx.get("for_intent_trust") or []
+        if not key_candidates and isinstance(scenarios, dict):
+            if i in ("OPERATIONAL", "AGENDA"):
+                key_candidates = ["agenda_sem_interrupcao"]
+            elif i in ("PRICE", "PLANS", "DIFF"):
+                key_candidates = ["preco_com_seguranca_sem_chute"]
+        if isinstance(key_candidates, list) and key_candidates:
+            k = str(key_candidates[0]).strip()
+            if isinstance(scenarios, dict) and k and isinstance(scenarios.get(k), str):
+                scenario_line = str(scenarios.get(k) or "").strip()
+    except Exception:
+        scenario_line = ""
+
+    if scenario_line:
+        if len(scenario_line) > 180:
+            m = re.search(r"^(.{50,180}?)[.!?]\s", scenario_line)
+            if m:
+                scenario_line = (m.group(1) + ".").strip()
+            else:
+                scenario_line = scenario_line[:180].rstrip() + "…"
+
+    # ---------------------------------------------
+    # 3) Base reply (já vem Firestore-first do cérebro)
+    # ---------------------------------------------
+    base = (reply_text or "").strip()
+
+    if conf == "low":
+        return "Show. Só me diz uma coisa rapidinho: você quer usar mais pra agenda, pedidos ou orçamento?"
+
+    # ---------------------------------------------
+    # 4) Intent guidelines (pós-forma, sem reescrever tudo)
+    # ---------------------------------------------
+    try:
+        g = str(_get(f"intent_guidelines.{i}", "") or "").strip()
+        if "Sem pergunta" in g or "Sem pergunta." in g:
+            if base.endswith("?"):
+                base = base.rstrip("?").rstrip() + "."
+    except Exception:
+        pass
+
+    # ---------------------------------------------
+    # 5) Closing (benefício + próximo passo + tchau)
+    # ---------------------------------------------
+    closer = ""
+    try:
+        spark = _get("tone_spark", {}) or {}
+        if isinstance(spark, dict):
+            closer = _pick(spark.get("closers") or []) or ""
+        if not closer:
+            cs = _get("closing_styles", {}) or {}
+            if isinstance(cs, dict):
+                closer = str(cs.get("suave") or "").strip()
+        if not closer:
+            closer = _pick(_get("closing_guidance") or [])
+    except Exception:
+        closer = ""
+
+    if i in ("ACTIVATE", "ACTIVATE_SEND_LINK"):
+        if closer.endswith("?"):
+            closer = closer.rstrip("?").rstrip() + "."
+
+    # ---------------------------------------------
+    # 6) Composição final
+    # ---------------------------------------------
+    parts: list[str] = []
+    if opener:
+        parts.append(opener.strip())
+    if empathy_line:
+        parts.append(empathy_line.strip())
+    if base:
+        parts.append(base)
+    if scenario_line and i not in ("SLA", "PROCESS"):
+        parts.append(scenario_line)
+    if closer and i not in ("UNKNOWN",):
+        low_base = (base or "").lower()
+        if (closer.lower()[:20] not in low_base) and (SITE_URL.lower() not in (closer.lower())):
+            parts.append(closer.strip())
+
+    out = "\n".join([p for p in parts if p]).strip()
+
+    try:
+        tone_rules = _get("tone_rules", []) or []
+        wants_short = any("2" in str(x) and "5" in str(x) and "lin" in str(x).lower() for x in (tone_rules if isinstance(tone_rules, list) else []))
+        if wants_short:
+            out_lines = [x.strip() for x in out.split("\n") if x.strip()]
+            if len(out_lines) > 5:
+                out_lines = out_lines[:5]
+                out = "\n".join(out_lines).strip()
+    except Exception:
+        pass
+
+    if out and len(out) < 90 and i not in ("ACTIVATE", "ACTIVATE_SEND_LINK", "PRICE"):
+        out = (out + "\n" + "Quer que eu te mostre isso aplicado no teu tipo de negócio em 2 linhas?").strip()
+
+    return out
+
 
 
 # ==========================================================
