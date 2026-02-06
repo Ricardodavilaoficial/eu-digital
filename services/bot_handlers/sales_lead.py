@@ -182,10 +182,14 @@ OPENING_ASK_NAME = (
 )
 
 # Fallback humano mínimo (nunca vazio; sem marketing longo)
-def _fallback_min_reply(name: str = "") -> str:
+def _fallback_min_reply(name: str = "", user_text: str = "") -> str:
     # Texto nunca recebe nome por padrão (nome é do ÁUDIO via worker/gate).
     # Mantemos flag de emergência para reativar prefixo no texto se precisar.
-    base = "Perfeito. Você quer falar de pedidos, agenda, orçamento ou só conhecer?"
+    ut = (user_text or "").strip().lower()
+    if any(k in ut for k in ("quanto tempo", "demora", "quando", "fica pronto", "ativ", "funcion")):
+        base = "Entendi. É sobre em quanto tempo o WhatsApp fica ativo depois que você contrata, ou é sobre pagamento/cadastro?"
+    else:
+        base = "Perfeito. Você quer falar de pedidos, agenda, orçamento ou só conhecer?"
     return _maybe_prefix_name_in_text(base, name)
 
 def _composer_mode() -> str:
@@ -4885,7 +4889,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         # DIFF 2: se o contrato falhar, não pode sair resposta "bonita".
         # Mantém fallback mínimo (1 pergunta prática) + log de kb_miss.
         if not bool(st.get("kb_required_ok")):
-            body = _fallback_min_reply(name=name)
+            body = _fallback_min_reply(name=name, user_text=text_in)
             suggested = "NONE"
             # Observabilidade: fallback por KB miss/contrato
             try:
@@ -4905,7 +4909,7 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
                 name=name,
                 segment=segment,
             )
-            body = (body or "").strip() or _fallback_min_reply(name=name)
+            body = (body or "").strip() or _fallback_min_reply(name=name, user_text=text_in)
 
             # Observabilidade: resposta composta com KB ok
             try:

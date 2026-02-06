@@ -1944,6 +1944,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         has_audio = False
         display_name = ""
         tts_text_from_bot = ""
+        tts_text_from_bot_source = ""
         allow_sales_demo = False
         plan_next_step = ""
         intent_final = ""
@@ -1984,12 +1985,17 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # prefers_text já setado acima
             # display_name vem do handler (leadName/nameToSay) ou de displayName (compat)
             display_name = ((wa_out.get("displayName") or "") or (wa_out.get("leadName") or "") or (wa_out.get("nameToSay") or "")).strip()
-            tts_text_from_bot = str(
-                wa_out.get("ttsText")
-                or wa_out.get("spokenText")
-                or wa_out.get("tts_text")
-                or ""
-            ).strip()
+            _spoken_from_bot = str(wa_out.get("spokenText") or "").strip()
+            _tts_from_bot = str(wa_out.get("ttsText") or wa_out.get("tts_text") or "").strip()
+            if _spoken_from_bot:
+                tts_text_from_bot = _spoken_from_bot
+                tts_text_from_bot_source = "spokenText"
+            elif _tts_from_bot:
+                tts_text_from_bot = _tts_from_bot
+                tts_text_from_bot_source = "ttsText"
+            else:
+                tts_text_from_bot = ""
+                tts_text_from_bot_source = ""
             allow_sales_demo = bool(wa_out.get("allowSalesDemo"))
             # Se o handler não manda "understanding", construímos a partir do que ele já manda:
             # planIntent/planNextStep/decisionDebug (sales_lead.py já devolve isso)
@@ -2709,6 +2715,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         # - SUPORTE: mantém teu pipeline atual (persona support + concept + rewrite)
                         # - VENDAS (uid vazio): fala curta com micro-exemplo + tom vendedor humano (IA)
                         tts_text = reply_text
+                        tts_script_source = "replyText"
                         try:
                             is_sales = not bool(uid)
                             support_persona = {}
@@ -2718,6 +2725,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 # Ele apenas fala o que veio do wa_bot (ttsText/spokenText) ou, na falta, o reply_text.
                                 if tts_text_from_bot:
                                     tts_text = tts_text_from_bot
+                                    tts_script_source = (tts_text_from_bot_source or "from_bot")
                                     audio_debug = dict(audio_debug or {})
                                     audio_debug["ttsSales"] = {
                                         "ok": True,
@@ -2726,6 +2734,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                     }
                                 else:
                                     tts_text = reply_text
+                                    tts_script_source = "replyText"
                                     audio_debug = dict(audio_debug or {})
                                     audio_debug["ttsSales"] = {
                                         "ok": True,
@@ -2868,28 +2877,30 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                             # Probe ANTES do corte (para debug)
                             audio_debug = dict(audio_debug or {})
+                            _ai_meta = (wa_out.get("aiMeta") if isinstance(wa_out, dict) else {}) or {}
                             audio_debug["ttsTextProbe"] = {
                                 "nameUsed": (locals().get("name_used") or locals().get("name_to_use") or ""),
                                 "len": len(tts_text or ""),
                                 "preview": (tts_text or "")[:140],
+                                "ttsScriptSource": str(locals().get("tts_script_source") or ""),
                                 # Como estamos entregando (ajuda a auditar "áudio vs texto")
                                 "deliveryMode": ("audio_plus_text_link" if bool(locals().get("force_send_link_text")) else "audio_only"),
                                 # Firestore-first: espelha metadados do wa_out (quando existir)
                                 "aiMeta": {
-                                    "kbUsed": bool((wa_out or {}).get("kbUsed")) if isinstance(wa_out, dict) else False,
-                                    "kbContractId": str((wa_out or {}).get("kbContractId") or "")[:80] if isinstance(wa_out, dict) else "",
-                                    "kbMissReason": str((wa_out or {}).get("kbMissReason") or "")[:80] if isinstance(wa_out, dict) else "",
-                                    "kbRequiredOk": bool((wa_out or {}).get("kbRequiredOk")) if isinstance(wa_out, dict) else False,
-                                    "kbDocPath": str((wa_out or {}).get("kbDocPath") or "")[:160] if isinstance(wa_out, dict) else "",
-                                    "kbSliceFields": (list((wa_out or {}).get("kbSliceFields") or [])[:20] if isinstance(wa_out, dict) else []),
-                                    "kbSliceSizeChars": int((wa_out or {}).get("kbSliceSizeChars") or 0) if isinstance(wa_out, dict) else 0,
-                                    "kbMissingFields": (list((wa_out or {}).get("kbMissingFields") or [])[:20] if isinstance(wa_out, dict) else []),
-                                    "iaSource": str((wa_out or {}).get("iaSource") or "")[:80] if isinstance(wa_out, dict) else "",
-                                    "replyTextRole": str((wa_out or {}).get("replyTextRole") or "")[:40] if isinstance(wa_out, dict) else "",
-                                    "spokenTextRole": str((wa_out or {}).get("spokenTextRole") or "")[:40] if isinstance(wa_out, dict) else "",
-                                    "kbExampleUsed": str((wa_out or {}).get("kbExampleUsed") or "")[:120] if isinstance(wa_out, dict) else "",
-                                    "spokenSource": str((wa_out or {}).get("spokenSource") or "")[:60] if isinstance(wa_out, dict) else "",
-                                    "funnelMoment": str((wa_out or {}).get("funnelMoment") or "")[:40] if isinstance(wa_out, dict) else "",
+                                    "kbUsed": bool(((wa_out or {}).get("kbUsed") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbUsed")),
+                                    "kbContractId": str((((wa_out or {}).get("kbContractId") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbContractId") or ""))[:80],
+                                    "kbMissReason": str((((wa_out or {}).get("kbMissReason") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbMissReason") or ""))[:80],
+                                    "kbRequiredOk": bool(((wa_out or {}).get("kbRequiredOk") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbRequiredOk")),
+                                    "kbDocPath": str((((wa_out or {}).get("kbDocPath") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbDocPath") or ""))[:160],
+                                    "kbSliceFields": (list((((wa_out or {}).get("kbSliceFields") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbSliceFields") or []))[:20]),
+                                    "kbSliceSizeChars": int((((wa_out or {}).get("kbSliceSizeChars") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbSliceSizeChars") or 0)),
+                                    "kbMissingFields": (list((((wa_out or {}).get("kbMissingFields") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbMissingFields") or []))[:20]),
+                                    "iaSource": str((((wa_out or {}).get("iaSource") if isinstance(wa_out, dict) else None) or _ai_meta.get("iaSource") or ""))[:80],
+                                    "replyTextRole": str((((wa_out or {}).get("replyTextRole") if isinstance(wa_out, dict) else None) or _ai_meta.get("replyTextRole") or ""))[:40],
+                                    "spokenTextRole": str((((wa_out or {}).get("spokenTextRole") if isinstance(wa_out, dict) else None) or _ai_meta.get("spokenTextRole") or ""))[:40],
+                                    "kbExampleUsed": str((((wa_out or {}).get("kbExampleUsed") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbExampleUsed") or ""))[:120],
+                                    "spokenSource": str((((wa_out or {}).get("spokenSource") if isinstance(wa_out, dict) else None) or _ai_meta.get("spokenSource") or ""))[:60],
+                                    "funnelMoment": str((((wa_out or {}).get("funnelMoment") if isinstance(wa_out, dict) else None) or _ai_meta.get("funnelMoment") or ""))[:40],
                                 },
                             }
     # Corte para evitar 413
