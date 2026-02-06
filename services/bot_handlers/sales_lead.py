@@ -5183,7 +5183,18 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             "kbDoc": "platform_kb/sales",
             "kbVersion": str(st.get("kb_version") or ""),
             "kbLoaded": bool(st.get("kb_loaded") is True),
+            # Telemetria canônica (worker/outbox lê daqui)
             "aiMeta": ai_meta,
+            # Mirrors "flat" (opcional, mas ajuda debug e compat)
+            "kbDocPath": ai_meta.get("kbDocPath", ""),
+            "kbContractId": ai_meta.get("kbContractId", ""),
+            "kbSliceFields": ai_meta.get("kbSliceFields", []),
+            "kbSliceSizeChars": ai_meta.get("kbSliceSizeChars", 0),
+            "kbRequiredOk": ai_meta.get("kbRequiredOk", False),
+            "kbMissReason": ai_meta.get("kbMissReason", ""),
+            "kbMissingFields": ai_meta.get("kbMissingFields", []),
+            "kbUsed": ai_meta.get("kbUsed", False),
+            "kbExampleUsed": ai_meta.get("kbExampleUsed", ""),            
 
             # ==========================================================
             # Observabilidade (DIFF 0): rastreio Firestore-first

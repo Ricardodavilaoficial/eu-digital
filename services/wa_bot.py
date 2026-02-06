@@ -296,7 +296,11 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                     "prefersText","nameToSay","ttsText","spokenText","nameUse",
                     # IA-first / observabilidade (worker lê isso p/ ia_first + outbox)
                     "understanding","intentFinal","planNextStep","decisionDebug","policiesApplied",
-                    "planIntent","planNextStepRaw","aiPlan","traceId"
+                    "planIntent","planNextStepRaw","aiPlan","traceId",
+                    # 🔎 Telemetria KB/contrato (não quebra nada se o worker ignorar)
+                    "aiMeta",
+                    "kbDocPath","kbContractId","kbSliceSizeChars","kbSliceFields",
+                    "kbRequiredOk","kbMissReason","kbMissingFields","kbUsed","kbExampleUsed"
                 ):
                     if k in reply_obj:
                         out[k] = reply_obj.get(k)
