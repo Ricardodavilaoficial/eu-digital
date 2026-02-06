@@ -5183,7 +5183,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             "kbDoc": "platform_kb/sales",
             "kbVersion": str(st.get("kb_version") or ""),
             "kbLoaded": bool(st.get("kb_loaded") is True),
-
+            "aiMeta": ai_meta,
 
             # ==========================================================
             # Observabilidade (DIFF 0): rastreio Firestore-first
