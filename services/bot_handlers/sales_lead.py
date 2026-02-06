@@ -924,6 +924,7 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
             "sales_pills.how_it_works_3steps",
             "sales_pills.how_it_works",
             "identity_positioning",
+            "value_in_action_blocks.scheduling_scene",
         ]
         # cache mínimo (Firestore) — evita reler sempre se estiver quente
         ck = _kb_slice_cache_key(i, segment)
@@ -1011,12 +1012,163 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
         ]
         return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
 
+    if i in ("PROCESS", "SLA"):
+        # Processo / SLA: sempre responder com clareza (sem "entra no site").
+        fields = base_fields + [
+            "commercial_positioning",
+            "process_facts.sla_setup",
+            "process_facts.can_prepare_now",
+        ]
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    if i == "ACTIVATE":
+        # Ativação: como começa + o que precisa (sem prometer mágica)
+        fields = base_fields + [
+            "commercial_positioning",
+            "intent_guidelines.ACTIVATE",
+            "process_facts.can_prepare_now",
+        ]
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+    if i == "PLANS":
+        # Planos: visão geral + CTA curto + posicionamento
+        fields = base_fields + [
+            "commercial_positioning",
+            "pricing_behavior",
+            "sales_pills.pricing_blurb",
+            "sales_pills.cta_one_liners",
+        ]
+        return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
     if i == "TRUST":
         fields = base_fields + ["ethical_guidelines", "product_boundaries", "objections.confianca"]
         return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
 
     fields = base_fields + ["sales_pills.identity_blurb", "sales_pills.how_it_works_3steps", "sales_pills.how_it_works"]
     return _get_doc_fields("platform_kb/sales", fields, ttl_seconds=300)
+
+
+# ==========================================================
+# Observabilidade (DIFF 0): metadados do slice
+# - Não altera comportamento, só registra o que já escolhemos carregar.
+# - Importante para auditar "Firestore-first" em produção.
+# ==========================================================
+def _kb_slice_fields_for_intent(intent: str, *, segment: str = "") -> list[str]:
+    """Replica a lista de campos do slice (por intent) sem ler Firestore.
+
+    Usado apenas para logging/auditoria.
+    """
+    i = (intent or "OTHER").strip().upper()
+    seg = (segment or "").strip().lower()
+    base_fields = [
+        "tone_rules",
+        "behavior_rules",
+        "brand_guardrails",
+        "closing_guidance",
+        "closing_styles",
+        "value_props",
+    ]
+
+    if i == "PRICE":
+        return base_fields + ["sales_pills.cta_one_liners"]
+
+    if i == "ACTIVATE_SEND_LINK":
+        return base_fields + [
+            "process_facts.sla_setup",
+            "process_facts.can_prepare_now",
+            "process_facts.no_free_trial",
+            "intent_guidelines.ACTIVATE",
+            "closing_behaviors",
+            "cta_variations",
+            "sales_pills.cta_one_liners",
+        ]
+
+    if i == "WHAT_IS":
+        return base_fields + [
+            "sales_pills.identity_blurb",
+            "sales_pills.how_it_works_3steps",
+            "sales_pills.how_it_works",
+            "identity_positioning",
+            "value_in_action_blocks.scheduling_scene",
+        ]
+
+    if i == "DIFF":
+        return base_fields + ["commercial_positioning", "product_boundaries", "plans.difference"]
+
+    if i == "OPERATIONAL":
+        fields = base_fields + [
+            "behavior_rules",
+            "brand_guardrails",
+            "discovery_policy",
+            "depth_policy",
+            "operational_capabilities",
+            "operational_flows",
+            "operational_value_scenarios",
+            "value_in_action_blocks.scheduling_scene",
+            "value_in_action_blocks.services_quote_scene",
+            "value_in_action_blocks.formal_quote_email_scene",
+            "segment_pills.servicos.micro_scene",
+        ]
+        if seg:
+            fields.append(f"segment_pills.{seg}.micro_scene")
+            fields.append(f"segments.{seg}.one_question")
+        return fields
+
+    if i == "AGENDA":
+        fields = base_fields + [
+            "behavior_rules",
+            "brand_guardrails",
+            "operational_capabilities.scheduling_practice",
+            "operational_flows.agenda_do_dia",
+            "operational_flows.agendamento_completo",
+            "value_in_action_blocks.scheduling_scene",
+            "process_facts.dashboard_agenda",
+            "process_facts.daily_email_digest",
+        ]
+        if seg:
+            fields.append(f"segment_pills.{seg}.micro_scene")
+            fields.append(f"segments.{seg}.one_question")
+        return fields
+
+    if i == "QUOTE":
+        fields = base_fields + [
+            "behavior_rules",
+            "brand_guardrails",
+            "operational_flows.orcamento_com_validacao",
+            "operational_capabilities.quotes_practice",
+            "value_in_action_blocks.services_quote_scene",
+            "value_in_action_blocks.formal_quote_email_scene",
+        ]
+        if seg:
+            fields.append(f"segment_pills.{seg}.micro_scene")
+            fields.append(f"segments.{seg}.one_question")
+        return fields
+
+    if i == "CONTACTS":
+        fields = base_fields + [
+            "behavior_rules",
+            "brand_guardrails",
+            "operational_capabilities.services_practice",
+            "operational_value_scenarios.whatsapp_organizado_sem_bagunça",
+        ]
+        if seg:
+            fields.append(f"segment_pills.{seg}.micro_scene")
+            fields.append(f"segments.{seg}.one_question")
+        return fields
+
+    if i == "VOICE":
+        return base_fields + [
+            "voice_pill.short_yes",
+            "voice_pill.how_it_works",
+            "voice_pill.boundaries",
+            "voice_pill.next_step",
+            "voice_positioning.core",
+        ]
+
+    if i == "TRUST":
+        return base_fields + ["ethical_guidelines", "product_boundaries", "objections.confianca"]
+
+    return base_fields + ["sales_pills.identity_blurb", "sales_pills.how_it_works_3steps", "sales_pills.how_it_works"]
 
 
 def _pick_one(arr: Any) -> str:
@@ -1138,6 +1290,158 @@ def _compose_sales_reply(
 
     return reply_text
 
+
+# ==========================================================
+# Contrato do slice (DIFF 2): campos mínimos obrigatórios por intent
+# - Mantém Firestore-first "de verdade": sem KB suficiente, não pode sair resposta "bonita".
+# - Economia: só valida presença/valor; não aumenta o slice nem chama IA extra.
+# ==========================================================
+def _kb_contract_required_groups(intent: str, *, segment: str = "") -> list[tuple[str, ...]]:
+    """Retorna grupos de caminhos (dot paths) que devem estar presentes no slice.
+
+    Cada tupla é um grupo "OU": basta 1 caminho do grupo estar preenchido.
+    """
+    i = (intent or "OTHER").strip().upper()
+    seg = (segment or "").strip().lower()
+
+    # Base: 1 regra + 1 fechamento + 1 proposta de valor
+    base_groups: list[tuple[str, ...]] = [
+        ("behavior_rules",),
+        ("closing_guidance",),
+        ("value_props",),
+    ]
+
+    if i == "WHAT_IS":
+        return base_groups + [
+            ("sales_pills.identity_blurb", "identity_positioning"),
+            ("sales_pills.how_it_works_3steps", "sales_pills.how_it_works"),
+            ("value_in_action_blocks.scheduling_scene", "value_in_action_blocks.services_quote_scene"),
+        ]
+
+    if i == "PRICE":
+        return base_groups + [
+            ("pricing_behavior", "sales_pills.pricing_blurb", "pricing_facts"),
+            ("sales_pills.cta_one_liners",),
+        ]
+
+    if i == "DIFF":
+        return base_groups + [
+            ("plans.difference",),
+            ("commercial_positioning",),
+        ]
+
+    if i in ("OPERATIONAL", "AGENDA"):
+        groups = base_groups + [
+            ("depth_policy", "discovery_policy"),
+            ("value_in_action_blocks.scheduling_scene",),
+        ]
+        if seg:
+            groups.append((f"segment_pills.{seg}.micro_scene", "segment_pills.servicos.micro_scene"))
+        return groups
+
+    if i in ("QUOTE",):
+        groups = base_groups + [
+            ("value_in_action_blocks.services_quote_scene",),
+            ("operational_capabilities.quotes_practice", "operational_flows.orcamento_com_validacao"),
+        ]
+        if seg:
+            groups.append((f"segment_pills.{seg}.micro_scene", "segment_pills.servicos.micro_scene"))
+        return groups
+
+    if i in ("CONTACTS",):
+        groups = base_groups + [
+            ("operational_value_scenarios.whatsapp_organizado_sem_bagunça",),
+            ("operational_capabilities.services_practice",),
+        ]
+        if seg:
+            groups.append((f"segment_pills.{seg}.micro_scene", "segment_pills.servicos.micro_scene"))
+        return groups
+
+    if i == "VOICE":
+        return base_groups + [
+            ("voice_pill.short_yes", "voice_positioning.core"),
+            ("voice_pill.next_step",),
+        ]
+
+    if i in ("PROCESS", "SLA"):
+        return base_groups + [
+            ("commercial_positioning",),
+            ("process_facts.sla_setup",),
+        ]
+
+    if i == "ACTIVATE":
+        return base_groups + [
+            ("commercial_positioning",),
+            ("intent_guidelines.ACTIVATE",),
+            ("process_facts.can_prepare_now", "process_facts.sla_setup"),
+        ]
+
+    if i == "PLANS":
+        return base_groups + [
+            ("commercial_positioning",),
+            ("pricing_behavior", "sales_pills.pricing_blurb", "pricing_facts"),
+            ("cta_variations", "sales_pills.cta_one_liners"),
+        ]
+
+    if i == "TRUST":
+        return base_groups + [
+            ("ethical_guidelines",),
+            ("objections.confianca",),
+        ]
+
+    if i == "ACTIVATE_SEND_LINK":
+        return base_groups + [
+            ("process_facts.sla_setup",),
+            ("intent_guidelines.ACTIVATE",),
+            ("cta_variations", "sales_pills.cta_one_liners"),
+        ]
+
+    # default: pelo menos o núcleo
+    return base_groups
+
+
+def _kb_get_by_path(data: Any, path: str) -> Any:
+    """Acessa dot path em dicts. Best-effort."""
+    try:
+        cur: Any = data
+        for part in (path or "").split("."):
+            if not part:
+                continue
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(part)
+        return cur
+    except Exception:
+        return None
+
+
+def _kb_path_has_value(kb_slice: Dict[str, Any], path: str) -> bool:
+    """Define 'valor presente' de forma barata (sem heurística pesada)."""
+    v = _kb_get_by_path(kb_slice or {}, path)
+    if v is None:
+        return False
+    if isinstance(v, str):
+        return bool(v.strip())
+    if isinstance(v, (list, tuple)):
+        return any(bool(str(x).strip()) for x in v[:5])
+    if isinstance(v, dict):
+        return bool(v)
+    return True
+
+
+def _kb_contract_missing_groups(kb_slice: Dict[str, Any], intent: str, *, segment: str = "") -> list[str]:
+    """Retorna lista de grupos (string) que falharam no contrato."""
+    missing: list[str] = []
+    groups = _kb_contract_required_groups(intent, segment=segment)
+    for g in groups:
+        ok = False
+        for p in g:
+            if _kb_path_has_value(kb_slice, p):
+                ok = True
+                break
+        if not ok:
+            missing.append("|".join(list(g)))
+    return missing
 
 def _compose_box_reply(
     *,
@@ -1286,8 +1590,13 @@ def _compose_box_reply(
         line2 = "Como funciona (bem direto):" if (s1 or s2) else ""
         line3 = (f"• {s1}" if s1 else "")
         line4 = (f"• {s2}" if s2 else "")
-        line5 = "Quer que eu te mostre um exemplo prático de agenda ou de orçamento?"
-        _txt = "\n".join([x for x in (greet, line1, line2, line3, line4, line5) if x]).strip()
+        # Exemplo prático (Firestore): 1 micro-cena curta para não ficar "robótico".
+        scene_val = _get("value_in_action_blocks.scheduling_scene")
+        dl1, dl2, _dq = _scene_to_lines(scene_val)
+        demo1 = (f"Exemplo rápido (agenda):\n• {dl1}").strip() if dl1 else ""
+        demo2 = (f"• {dl2}").strip() if dl2 else ""
+        line5 = "Quer que eu te mostre também um exemplo de orçamento, ou você quer ver como fica a agenda?"
+        _txt = "\n".join([x for x in (greet, line1, line2, line3, line4, demo1, demo2, line5) if x]).strip()
         _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
         return (_txt, "NONE")
 
@@ -4520,21 +4829,103 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         intent_u = str(st.get("plan_intent") or "WHAT_IS").strip().upper()
         name = str(st.get("name") or st.get("lead_name") or "").strip()
         segment = str(st.get("segment") or "").strip()
+
+        # Observabilidade: registre o contrato do slice (campos exatos) antes de carregar.
+        # (DIFF 0) — não muda comportamento.
+        try:
+            st["kb_doc_path"] = "platform_kb/sales"
+            st["kb_slice_fields"] = _kb_slice_fields_for_intent(intent_u if intent_u else "WHAT_IS", segment=segment)
+            st["kb_contract_id"] = f"{(intent_u if intent_u else 'WHAT_IS').strip().upper()}:v1"
+        except Exception:
+            pass
         kb_slice = _kb_slice_for_box(intent_u if intent_u else "WHAT_IS", segment=segment) or {}
+        
+        # Observabilidade: tamanho aproximado e sinal de carregamento.
+        try:
+            st["kb_slice_size_chars"] = len(json.dumps(kb_slice, ensure_ascii=False, sort_keys=True))
+            st["kb_loaded"] = bool(kb_slice)
+        except Exception:
+            pass
         prices = _get_display_prices(ttl_seconds=180) or {}
-        body, suggested = _compose_box_reply(
-            box_intent=intent_u,
-            confidence=str(st.get("understand_confidence") or ""),
-            box_data=kb_slice,
-            prices=prices,
-            user_text=text_in,
-            name=name,
-            segment=segment,
-        )
-        body = (body or "").strip() or _fallback_min_reply(name=name)
+        # Observabilidade: "KB obrigatório" (contrato do slice)
+        # - Não muda o comportamento do reply; só registra se o slice veio ou não.
+        # - Usado para caçar respostas "sem alma" que saíram sem Firestore.
+        try:
+            _cf = st.get("kb_slice_fields") or _kb_slice_fields_for_intent(intent_u if intent_u else "WHAT_IS", segment=segment)
+            if not kb_slice:
+                st["kb_required_ok"] = False
+                st["kb_miss_reason"] = "empty_slice"
+                st["kb_missing_fields"] = list(_cf or [])
+            else:
+                # DIFF 2: valida "mínimos obrigatórios" (contrato) por intent
+                miss = _kb_contract_missing_groups(kb_slice, intent_u if intent_u else "WHAT_IS", segment=segment)
+                if miss:
+                    st["kb_required_ok"] = False
+                    st["kb_miss_reason"] = "missing_required"
+                    st["kb_missing_fields"] = list(miss or [])
+                else:
+                    st["kb_required_ok"] = True
+                    st["kb_miss_reason"] = ""
+                    st["kb_missing_fields"] = []
+        except Exception:
+            pass
+
+
+        # Observabilidade (DIFF 0): uso de KB neste turno.
+        # Regra: kbUsed só pode ser True quando o contrato passou (kb_required_ok).
+        try:
+            st["kb_used"] = bool(kb_slice) and bool(st.get("kb_required_ok"))
+            if st["kb_used"] and intent_u == "WHAT_IS" and _kb_path_has_value(kb_slice, "value_in_action_blocks.scheduling_scene"):
+                st["kb_example_used"] = "value_in_action_blocks.scheduling_scene"
+            st["spoken_source"] = "speechify(replyText)"
+            st["reply_text_role"] = "audit_text"
+            st["spoken_text_role"] = "tts_script"
+        except Exception:
+            pass
+        # DIFF 2: se o contrato falhar, não pode sair resposta "bonita".
+        # Mantém fallback mínimo (1 pergunta prática) + log de kb_miss.
+        if not bool(st.get("kb_required_ok")):
+            body = _fallback_min_reply(name=name)
+            suggested = "NONE"
+            # Observabilidade: fallback por KB miss/contrato
+            try:
+                st["kb_used"] = False
+                st["spoken_source"] = "fallback_min_reply"
+                st["reply_text_role"] = "fallback_text"
+                st["spoken_text_role"] = "fallback_tts_script"
+            except Exception:
+                pass
+        else:
+            body, suggested = _compose_box_reply(
+                box_intent=intent_u,
+                confidence=str(st.get("understand_confidence") or ""),
+                box_data=kb_slice,
+                prices=prices,
+                user_text=text_in,
+                name=name,
+                segment=segment,
+            )
+            body = (body or "").strip() or _fallback_min_reply(name=name)
+
+            # Observabilidade: resposta composta com KB ok
+            try:
+                st["spoken_source"] = "compose_box_reply"
+            except Exception:
+                pass
 
         # CTA só se for ação pedida (ou sugerida) — e sempre no fim.
         ns = str(st.get("plan_next_step") or suggested or "NONE").strip().upper()
+
+        # Observabilidade (DIFF 0): momento do funil (heurística barata; sem IA).
+        try:
+            if ns == "SEND_LINK" or intent_u in ("ACTIVATE_SEND_LINK",):
+                st["funnel_moment"] = "CLOSING"
+            elif intent_u in ("PRICE", "DIFF", "VOICE"):
+                st["funnel_moment"] = "EVALUATION"
+            else:
+                st["funnel_moment"] = "CURIOSITY"
+        except Exception:
+            pass
         if ns == "SEND_LINK":
             st["plan_next_step"] = "SEND_LINK"
             body = (body + f"\n\nSe fizer sentido, o próximo passo é criar a conta no site: {SITE_URL}").strip()
@@ -4603,6 +4994,26 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             "kbDoc": "platform_kb/sales",
             "kbVersion": str(st.get("kb_version") or ""),
             "kbLoaded": bool(st.get("kb_loaded") is True),
+
+
+            # ==========================================================
+            # Observabilidade (DIFF 0): rastreio Firestore-first
+            # - Não altera comportamento; só expõe metadados para logs/probes.
+            # ==========================================================
+            "iaSource": str(st.get("understand_source") or und.get("source") or "").strip(),
+            "kbDocPath": str(st.get("kb_doc_path") or "platform_kb/sales").strip(),
+            "kbSliceFields": list(st.get("kb_slice_fields") or []),
+            "kbSliceSizeChars": int(st.get("kb_slice_size_chars") or 0),
+            "kbContractId": str(st.get("kb_contract_id") or "").strip(),
+            "kbRequiredOk": st.get("kb_required_ok"),
+            "kbMissReason": str(st.get("kb_miss_reason") or "").strip(),
+            "kbMissingFields": list(st.get("kb_missing_fields") or []),
+            "kbUsed": bool(st.get("kb_used") is True),
+            "kbExampleUsed": str(st.get("kb_example_used") or "").strip(),
+            "spokenSource": str(st.get("spoken_source") or "speechify(replyText)").strip(),
+            "replyTextRole": str(st.get("reply_text_role") or "audit_text").strip(),
+            "spokenTextRole": str(st.get("spoken_text_role") or "tts_script").strip(),
+            "funnelMoment": str(st.get("funnel_moment") or "").strip(),
         }
 
     # ==========================================================
