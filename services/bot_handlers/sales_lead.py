@@ -759,6 +759,7 @@ _BOX_INTENTS = (
     "WHAT_IS",
     "OPERATIONAL",
     "DIFF",
+    "PROCESS",
     "ACTIVATE_SEND_LINK",
     "TRUST",
     "OTHER",
@@ -818,17 +819,27 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
             intent = "WHAT_IS"
         elif cheap in ("OPERATIONAL",):
             intent = "OPERATIONAL"
+        elif cheap in ("PROCESS",):
+            intent = "PROCESS"
         elif cheap in ("ACTIVATE",):
             intent = "ACTIVATE_SEND_LINK"
         out = {"intent": intent, "confidence": 0.65, "needs_clarification": False, "clarifying_question": "", "next_step": ("SEND_LINK" if intent == "ACTIVATE_SEND_LINK" else "NONE")}
         _box_decider_cache_set(t, out)
         return out
 
+    # Firestore-first: regras extras do decider vindas do KB (sem deploy)
+    kb_rules = ""
+    try:
+        kb = _get_sales_kb() or {}
+        kb_rules = str(kb.get("box_decider_rules") or "").strip()
+    except Exception:
+        kb_rules = ""
+
     system = (
         "Você é o DECIDER de VENDAS do MEI Robô (WhatsApp, pt-BR).\n"
         "Responda SOMENTE JSON válido.\n\n"
         "Escolha UMA intenção (caixa) por turno:\n"
-        "PRICE, VOICE, AGENDA, CONTACTS, QUOTE, WHAT_IS, OPERATIONAL, DIFF, ACTIVATE_SEND_LINK, TRUST, OTHER.\n\n"
+        "PRICE, VOICE, AGENDA, CONTACTS, QUOTE, WHAT_IS, OPERATIONAL, DIFF, PROCESS, ACTIVATE_SEND_LINK, TRUST, OTHER.\n\n"
         "Dica: se falar de \"marcar horário\", \"agenda\", \"ligam/telefone\", \"procedimento\", é AGENDA.\n"
         "Regras:\n"
         "- Se estiver ambíguo e faltar dado essencial: needs_clarification=true e faça UMA pergunta curta.\n"
@@ -837,6 +848,8 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
         "- next_step: SEND_LINK ou NONE.\n\n"
         "Schema: {\"intent\":...,\"confidence\":0.0,\"needs_clarification\":true|false,\"clarifying_question\":\"\",\"next_step\":\"SEND_LINK|NONE\"}"
     )
+    if kb_rules:
+        system = system + "\n\n" + kb_rules
 
     user = f"MENSAGEM={t}"
     raw = (_openai_chat(
@@ -2667,6 +2680,10 @@ def _intent_cheap(t: str) -> str:
     Ordem importa: primeiro casos operacionais/fechamento/preço.
     """
     t = _norm(t)
+
+    # Prazo / tempo / demora (ativação/processo)
+    if any(k in t for k in ("quanto tempo", "em quanto tempo", "demora", "prazo", "leva quanto", "leva qto", "tempo de", "em quantos dias", "em quantas horas", "quanto demora", "quanto tempo leva", "qual prazo")):
+        return "PROCESS"
 
     # Fechamento / ativação
     if any(k in t for k in ("vou assinar", "quero assinar", "assinatura", "assinar", "quero contratar", "contratar", "ativar", "ativação", "passo a passo", "procedimento")):
