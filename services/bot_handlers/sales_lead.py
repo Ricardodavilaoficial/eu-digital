@@ -5018,6 +5018,11 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             spoken_txt = _speechify_for_tts(rt)
             spoken_src = "speechify(replyText)"
             spoken_role = "tts_script"
+        # Sanitiza fala (pontuação/aberturas ruins) e carimba observabilidade
+        try:
+            spoken_txt = _sanitize_spoken(spoken_txt)
+        except Exception:
+            pass
 
         # carimba no state p/ observabilidade + payload final
         try:
@@ -5059,6 +5064,27 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             "replyTextRole": str(st.get("reply_text_role") or "audit_text").strip(),
             "spokenTextRole": str(st.get("spoken_text_role") or spoken_role).strip(),
             "funnelMoment": str(st.get("funnel_moment") or "").strip(),
+
+            # ==========================================================
+            # Compat (worker): espelhar metadados também dentro de aiMeta
+            # (mantém os top-level para não quebrar nada)
+            # ==========================================================
+            "aiMeta": {
+                "funnelMoment": str(st.get("funnel_moment") or "").strip(),
+                "iaSource": str(st.get("understand_source") or und.get("source") or "").strip(),
+                "kbContractId": str(st.get("kb_contract_id") or "").strip(),
+                "kbDocPath": str(st.get("kb_doc_path") or "platform_kb/sales").strip(),
+                "kbExampleUsed": str(st.get("kb_example_used") or "").strip(),
+                "kbMissReason": str(st.get("kb_miss_reason") or "").strip(),
+                "kbMissingFields": list(st.get("kb_missing_fields") or []),
+                "kbRequiredOk": bool(st.get("kb_required_ok") is True),
+                "kbSliceFields": list(st.get("kb_slice_fields") or []),
+                "kbSliceSizeChars": int(st.get("kb_slice_size_chars") or 0),
+                "kbUsed": bool(st.get("kb_used") is True),
+                "replyTextRole": str(st.get("reply_text_role") or "audit_text").strip(),
+                "spokenSource": str(st.get("spoken_source") or spoken_src).strip(),
+                "spokenTextRole": str(st.get("spoken_text_role") or spoken_role).strip(),
+            },
         }
 
     # ==========================================================
