@@ -1590,7 +1590,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     _db().collection("platform_wa_outbox_logs").add({
                         "createdAt": _fs_admin().SERVER_TIMESTAMP,
                         "from": from_e164,
-                        "to": to_e164,
+                        "to": from_e164,
                         "wamid": wamid,
                         "msgType": msg_type,
                         "route": "voice_ingest",
@@ -2876,8 +2876,30 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 pass
 
                             # Probe ANTES do corte (para debug)
+                            # - Firestore-first: tenta wa_out top-level; fallback para wa_out.aiMeta; e por último understanding
+                            _wo = wa_out if isinstance(wa_out, dict) else {}
+                            _am = {}
+                            try:
+                                if isinstance(_wo.get("aiMeta"), dict):
+                                    _am = _wo.get("aiMeta") or {}
+                            except Exception:
+                                _am = {}
+                            def _meta_get(key: str, default=None):
+                                try:
+                                    v = _wo.get(key, None) if isinstance(_wo, dict) else None
+                                    if (v is None or v == "" or v == []):
+                                        v = _am.get(key, None) if isinstance(_am, dict) else None
+                                    # fallback mínimo para iaSource via understanding (quando wa_out não trouxer)
+                                    if (v is None or v == "") and key == "iaSource":
+                                        try:
+                                            if isinstance(understanding, dict):
+                                                v = understanding.get("source") or understanding.get("iaSource")
+                                        except Exception:
+                                            pass
+                                    return default if v is None else v
+                                except Exception:
+                                    return default
                             audio_debug = dict(audio_debug or {})
-                            _ai_meta = (wa_out.get("aiMeta") if isinstance(wa_out, dict) else {}) or {}
                             audio_debug["ttsTextProbe"] = {
                                 "nameUsed": (locals().get("name_used") or locals().get("name_to_use") or ""),
                                 "len": len(tts_text or ""),
@@ -2887,20 +2909,20 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 "deliveryMode": ("audio_plus_text_link" if bool(locals().get("force_send_link_text")) else "audio_only"),
                                 # Firestore-first: espelha metadados do wa_out (quando existir)
                                 "aiMeta": {
-                                    "kbUsed": bool(((wa_out or {}).get("kbUsed") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbUsed")),
-                                    "kbContractId": str((((wa_out or {}).get("kbContractId") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbContractId") or ""))[:80],
-                                    "kbMissReason": str((((wa_out or {}).get("kbMissReason") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbMissReason") or ""))[:80],
-                                    "kbRequiredOk": bool(((wa_out or {}).get("kbRequiredOk") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbRequiredOk")),
-                                    "kbDocPath": str((((wa_out or {}).get("kbDocPath") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbDocPath") or ""))[:160],
-                                    "kbSliceFields": (list((((wa_out or {}).get("kbSliceFields") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbSliceFields") or []))[:20]),
-                                    "kbSliceSizeChars": int((((wa_out or {}).get("kbSliceSizeChars") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbSliceSizeChars") or 0)),
-                                    "kbMissingFields": (list((((wa_out or {}).get("kbMissingFields") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbMissingFields") or []))[:20]),
-                                    "iaSource": str((((wa_out or {}).get("iaSource") if isinstance(wa_out, dict) else None) or _ai_meta.get("iaSource") or ""))[:80],
-                                    "replyTextRole": str((((wa_out or {}).get("replyTextRole") if isinstance(wa_out, dict) else None) or _ai_meta.get("replyTextRole") or ""))[:40],
-                                    "spokenTextRole": str((((wa_out or {}).get("spokenTextRole") if isinstance(wa_out, dict) else None) or _ai_meta.get("spokenTextRole") or ""))[:40],
-                                    "kbExampleUsed": str((((wa_out or {}).get("kbExampleUsed") if isinstance(wa_out, dict) else None) or _ai_meta.get("kbExampleUsed") or ""))[:120],
-                                    "spokenSource": str((((wa_out or {}).get("spokenSource") if isinstance(wa_out, dict) else None) or _ai_meta.get("spokenSource") or ""))[:60],
-                                    "funnelMoment": str((((wa_out or {}).get("funnelMoment") if isinstance(wa_out, dict) else None) or _ai_meta.get("funnelMoment") or ""))[:40],
+                                    "kbUsed": bool(_meta_get("kbUsed", False)),
+                                    "kbContractId": str(_meta_get("kbContractId", "") or "")[:80],
+                                    "kbMissReason": str(_meta_get("kbMissReason", "") or "")[:80],
+                                    "kbRequiredOk": bool(_meta_get("kbRequiredOk", False)),
+                                    "kbDocPath": str(_meta_get("kbDocPath", "") or "")[:160],
+                                    "kbSliceFields": (list(_meta_get("kbSliceFields", []) or [])[:20]),
+                                    "kbSliceSizeChars": int(_meta_get("kbSliceSizeChars", 0) or 0),
+                                    "kbMissingFields": (list(_meta_get("kbMissingFields", []) or [])[:20]),
+                                    "iaSource": str(_meta_get("iaSource", "") or "")[:80],
+                                    "replyTextRole": str(_meta_get("replyTextRole", "") or "")[:40],
+                                    "spokenTextRole": str(_meta_get("spokenTextRole", "") or "")[:40],
+                                    "kbExampleUsed": str(_meta_get("kbExampleUsed", "") or "")[:120],
+                                    "spokenSource": str(_meta_get("spokenSource", "") or "")[:60],
+                                    "funnelMoment": str(_meta_get("funnelMoment", "") or "")[:40],
                                 },
                             }
     # Corte para evitar 413
@@ -3111,7 +3133,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     payload_out = {
                         "createdAt": _fs_admin().SERVER_TIMESTAMP,
                         "from": from_e164,
-                        "to": to_e164,
+                        "to": from_e164,
                         "wamid": wamid,
                         "msgType": msg_type,
                         "route": "sales" if not uid else "customer",
@@ -3439,22 +3461,27 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 pass
 
             # ==========================================================
-            # Auditoria: alinhamento explícito entre replyText e spokenText (TTS)
-            # ==========================================================
-            spoken_source = "replyText_pipeline"
-            if wa_kind == "conceptual" and kb_context:
-                spoken_source = "kbContext_concept"
-
+            # Auditoria: alinhado com o que realmente foi falado (principalmente em VENDAS, onde usamos spokenText do bot)
+            _wo = wa_out if isinstance(wa_out, dict) else {}
+            _am = _wo.get("aiMeta") if isinstance(_wo.get("aiMeta"), dict) else {}
+            def _a(key: str, default: str = "") -> str:
+                v = ""
+                try:
+                    v = str(_wo.get(key) or "").strip()
+                    if not v and isinstance(_am, dict):
+                        v = str(_am.get(key) or "").strip()
+                except Exception:
+                    v = ""
+                return v or default
             audio_debug = dict(audio_debug or {})
-            audio_debug.setdefault("auditAlignment", {})
-            audio_debug["auditAlignment"].update({
-                "replyTextRole": "canonical_base",
-                "spokenTextRole": "spoken_source_of_truth",
-                "spokenSource": spoken_source,
+            audio_debug["auditAlignment"] = {
+                "note": ("Áudio veio do spokenText do bot (VENDAS)." if (is_sales and _SALES_TTS_MODE == "on" and bool(tts_text_from_bot)) else "Áudio é versão otimizada para fala do replyText (ou do kbContext quando conceptual)."),
+                "spokenSource": _a("spokenSource", "replyText_pipeline"),
+                "replyTextRole": _a("replyTextRole", ""),
+                "spokenTextRole": _a("spokenTextRole", ""),
                 "replyTextSha1": _sha1(reply_text),
                 "spokenTextSha1": _sha1(tts_text_final_used),
-                "note": "Áudio é versão otimizada para fala do replyText (ou do kbContext quando conceptual).",
-            })
+            }
             # log leve (auditoria). Precisa ocorrer antes do return.
             try:
                 # IA soberana: separa "decisão" de "forma de entrega".
@@ -3473,7 +3500,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 _db().collection("platform_wa_outbox_logs").add({
                     "createdAt": _fs_admin().SERVER_TIMESTAMP,
                     "from": from_e164,
-                    "to": to_e164,
+                    "to": from_e164,
                     "wamid": wamid,
                     "msgType": msg_type,
                     "route": "sales" if not uid else "customer",
