@@ -192,6 +192,30 @@ def _fallback_min_reply(name: str = "", user_text: str = "") -> str:
         base = "Perfeito. Você quer falar de pedidos, agenda, orçamento ou só conhecer?"
     return _maybe_prefix_name_in_text(base, name)
 
+
+def _fallback_by_intent(intent: str, *, name: str = "", user_text: str = "") -> str:
+    """Fallback honesto + 1 pergunta prática (por intent).
+
+    Usado quando a KB faltar ou o contrato mínimo não fechar.
+    Regra: nunca cair em "menu" genérico.
+    """
+    i = (intent or "OTHER").strip().upper()
+
+    if i in ("PROCESS", "SLA", "ACTIVATE", "ACTIVATE_SEND_LINK"):
+        base = "Entendi. É sobre em quanto tempo o WhatsApp fica ativo depois que você contrata, ou é sobre pagamento/cadastro?"
+    elif i in ("PRICE", "PLANS", "DIFF"):
+        base = "Fechado. Você quer que eu te diga o plano ideal pelo teu uso: vai ser mais agenda, pedidos ou orçamento?"
+    elif i in ("VOICE",):
+        base = "Beleza. Você quer entender como funciona a voz na prática, ou prefere só saber o passo a passo de envio do áudio?"
+    elif i in ("OPERATIONAL",):
+        base = "Perfeito. No teu caso é mais agenda (horários) ou mais pedidos/orçamentos no WhatsApp?"
+    else:
+        base = _fallback_min_reply(name=name, user_text=user_text)
+        return _maybe_prefix_name_in_text(base, name)
+
+    return _maybe_prefix_name_in_text(base, name)
+
+
 def _composer_mode() -> str:
     """Modo do composer (separa decisão de fala).
 
@@ -1448,6 +1472,14 @@ def _kb_path_has_value(kb_slice: Dict[str, Any], path: str) -> bool:
     return True
 
 
+
+def _kb_contract_id(intent: str, *, segment: str = "") -> str:
+    """ID estável do contrato mínimo de KB por intent (para logs/auditoria)."""
+    i = (intent or "OTHER").strip().upper()
+    seg = (segment or "").strip().lower()
+    return f"sales_kb_contract:{seg}:{i}:v1"
+
+
 def _kb_contract_missing_groups(kb_slice: Dict[str, Any], intent: str, *, segment: str = "") -> list[str]:
     """Retorna lista de grupos (string) que falharam no contrato."""
     missing: list[str] = []
@@ -1870,6 +1902,40 @@ def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
         return q
 
     kb_slice = _kb_slice_for_box(intent if intent != "OTHER" else "OTHER", segment=segment) or {}
+    # ==========================
+    # Firestore-first (KB): carrega slice + valida contrato mínimo por intent
+    # ==========================
+    try:
+        st["kb_doc_path"] = "platform_kb/sales"
+        st["kb_slice_fields"] = _kb_slice_fields_for_intent(intent, segment=segment)
+        st["kb_slice_size_chars"] = int(len(json.dumps(kb_slice, ensure_ascii=False))) if kb_slice else 0
+
+        # contrato mínimo: deve fechar antes de sair resposta "boa"
+        missing_groups = _kb_contract_missing_groups(kb_slice, intent, segment=segment) if kb_slice else list(st.get("kb_slice_fields") or [])
+        missing_flat: list[str] = []
+        try:
+            for g in (missing_groups or []):
+                if isinstance(g, (list, tuple)):
+                    missing_flat.extend([str(x) for x in g])
+                else:
+                    missing_flat.append(str(g))
+        except Exception:
+            missing_flat = []
+
+        st["kb_contract_id"] = _kb_contract_id(intent, segment=segment)
+        st["kb_required_ok"] = (len(missing_groups or []) == 0)
+        st["kb_missing_fields"] = missing_flat
+        st["kb_miss_reason"] = "" if st["kb_required_ok"] else "contract_missing"
+        st["kb_used"] = bool(st["kb_required_ok"] and bool(kb_slice))
+
+        # Se contrato falhar, cai em fallback específico por intent (1 pergunta prática)
+        if not bool(st["kb_required_ok"]):
+            fb = _fallback_by_intent(intent, name=name or "", user_text=user_text or "")
+            return fb
+    except Exception:
+        # não quebra fluxo; apenas deixa rastreável
+        st["kb_miss_reason"] = str(st.get("kb_miss_reason") or "kb_probe_failed")
+
     prices = _get_display_prices(ttl_seconds=180) or {}
     reply, next_step = _compose_box_reply(
         box_intent=intent,
