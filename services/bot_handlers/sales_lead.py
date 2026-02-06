@@ -5008,6 +5008,8 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
                     s = (s + " O link tá na mensagem.").strip()
             return _speechify_for_tts(s)
 
+        spoken = _compose_spoken(rt)
+
         spoken_txt = ""
         spoken_src = "speechify(replyText)"
         spoken_role = "tts_script"
@@ -5057,6 +5059,12 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         except Exception:
             pass
 
+        # Mantém compat: spoken segue o texto sanitizado
+        try:
+            spoken = spoken_txt
+        except Exception:
+            pass
+
         # carimba no state p/ observabilidade + payload final
         try:
             st["spoken_source"] = spoken_src
@@ -5085,7 +5093,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
         return {
             "replyText": rt,
-            "spokenText": spoken_txt,
+            "spokenText": spoken,
             "prefersText": bool(prefers_text),
             "understanding": und,
             # Campos auxiliares (não quebram nada se o worker ignorar)
