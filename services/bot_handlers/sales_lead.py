@@ -4986,6 +4986,28 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         # - Por padrão: spokenizer v1 (se habilitado)
         # - Fallback: speechify_for_tts(replyText)
         # ==========================================================
+        def _compose_spoken(rt_in: str) -> str:
+            s = (rt_in or "").strip()
+            if not s:
+                return ""
+            # Se tiver URL, não ler URL no áudio
+            has_url_local = False
+            try:
+                has_url_local = bool(_RE_URL.search(s))
+            except Exception:
+                has_url_local = ("http://" in s.lower()) or ("https://" in s.lower()) or ("www." in s.lower())
+            if has_url_local:
+                try:
+                    s = _RE_URL.sub("", s).strip()
+                except Exception:
+                    pass
+                ns = str(und.get("next_step") or "").strip().upper()
+                if ns == "SEND_LINK" or bool(prefers_text):
+                    if s and not s.endswith((".", "!", "?")):
+                        s = s + "."
+                    s = (s + " O link tá na mensagem.").strip()
+            return _speechify_for_tts(s)
+
         spoken_txt = ""
         spoken_src = "speechify(replyText)"
         spoken_role = "tts_script"
@@ -4998,8 +5020,19 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
         except Exception:
             has_url = False
 
+        # Se há link a mandar, força fala curta sem URL (áudio não vira "leitura de link")
         try:
-            if _spokenizer_should_run():
+            ns = str(und.get("next_step") or "").strip().upper()
+            if bool(has_url) and (ns == "SEND_LINK" or bool(prefers_text)):
+                spoken_txt = _compose_spoken(rt)
+                spoken_src = "compose_spoken"
+                spoken_role = "spoken_source_of_truth"
+        except Exception:
+            pass
+
+
+        try:
+            if _spokenizer_should_run() and not spoken_txt:
                 spoken_txt = _spokenize_v1(
                     reply_text=rt,
                     intent_final=str(und.get("intent") or "OTHER"),
@@ -5030,6 +5063,25 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             st["spoken_text_role"] = spoken_role
         except Exception:
             pass
+
+        # aiMeta (payload final): worker/outbox/probe podem auditar daqui
+        # ==========================================================
+        ai_meta = {
+            "iaSource": str(st.get("understand_source") or und.get("source") or "").strip(),
+            "kbDocPath": str(st.get("kb_doc_path") or "platform_kb/sales").strip(),
+            "kbSliceFields": list(st.get("kb_slice_fields") or []),
+            "kbSliceSizeChars": int(st.get("kb_slice_size_chars") or 0),
+            "kbContractId": str(st.get("kb_contract_id") or "").strip(),
+            "kbRequiredOk": bool(st.get("kb_required_ok") is True),
+            "kbMissReason": str(st.get("kb_miss_reason") or "").strip(),
+            "kbMissingFields": list(st.get("kb_missing_fields") or []),
+            "kbUsed": bool(st.get("kb_used") is True),
+            "kbExampleUsed": str(st.get("kb_example_used") or "").strip(),
+            "spokenSource": str(st.get("spoken_source") or spoken_src).strip(),
+            "replyTextRole": str(st.get("reply_text_role") or "audit_text").strip(),
+            "spokenTextRole": str(st.get("spoken_text_role") or spoken_role).strip(),
+            "funnelMoment": str(st.get("funnel_moment") or "").strip(),
+        }
 
         return {
             "replyText": rt,
@@ -5069,22 +5121,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             # Compat (worker): espelhar metadados também dentro de aiMeta
             # (mantém os top-level para não quebrar nada)
             # ==========================================================
-            "aiMeta": {
-                "funnelMoment": str(st.get("funnel_moment") or "").strip(),
-                "iaSource": str(st.get("understand_source") or und.get("source") or "").strip(),
-                "kbContractId": str(st.get("kb_contract_id") or "").strip(),
-                "kbDocPath": str(st.get("kb_doc_path") or "platform_kb/sales").strip(),
-                "kbExampleUsed": str(st.get("kb_example_used") or "").strip(),
-                "kbMissReason": str(st.get("kb_miss_reason") or "").strip(),
-                "kbMissingFields": list(st.get("kb_missing_fields") or []),
-                "kbRequiredOk": bool(st.get("kb_required_ok") is True),
-                "kbSliceFields": list(st.get("kb_slice_fields") or []),
-                "kbSliceSizeChars": int(st.get("kb_slice_size_chars") or 0),
-                "kbUsed": bool(st.get("kb_used") is True),
-                "replyTextRole": str(st.get("reply_text_role") or "audit_text").strip(),
-                "spokenSource": str(st.get("spoken_source") or spoken_src).strip(),
-                "spokenTextRole": str(st.get("spoken_text_role") or spoken_role).strip(),
-            },
+            "aiMeta": ai_meta,
         }
 
     # ==========================================================
