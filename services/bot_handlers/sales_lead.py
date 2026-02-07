@@ -2604,6 +2604,7 @@ def _spokenize_v1(
     has_url: bool,
     lead_name: str,
     turns: int,
+    max_chars_override: Optional[int] = None,
 ) -> str:
     """
     Spokenizer v1 (determinístico e barato):
@@ -2669,10 +2670,28 @@ def _spokenize_v1(
     # limite (evita fala longa demais no áudio)
     try:
         max_chars = int(os.getenv("SPOKENIZER_MAX_CHARS", "520") or "520")
+        try:
+            if max_chars_override is not None:
+                max_chars = min(max_chars, int(max_chars_override))
+        except Exception:
+            pass
     except Exception:
         max_chars = 520
+
     if max_chars > 0 and len(out) > max_chars:
-        out = out[:max_chars].rstrip(" ,;:-") + "."
+        # Corta bonito por frase pra evitar áudio truncado pelo worker.
+        parts = re.split(r"(?<=[\.\!\?])\s+", out.strip())
+        acc = ""
+        for p in parts:
+            cand = (acc + (" " if acc else "") + p).strip()
+            if len(cand) <= max_chars:
+                acc = cand
+            else:
+                break
+        out = acc.strip() if acc.strip() else (out[: max_chars - 1].rstrip() + "…")
+
+    # Limpeza: evita espaço antes de pontuação (impacta pronúncia)
+    out = re.sub(r"\s+([,.;:!?])", r"\1", out)
 
     return out.strip()
 
@@ -4876,6 +4895,14 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
         if nm:
             st["name"] = nm
             st["lead_name"] = nm
+            # Sinaliza para o worker que pode usar o nome no ÁUDIO (gate decide).
+            # Evita repetir: só nos primeiros turnos.
+            try:
+                turns = int(st.get("turns") or 0)
+            except Exception:
+                turns = 0
+            if turns <= 3 and not str(st.get("last_name_use") or "").strip():
+                st["last_name_use"] = "greet"
     except Exception:
         pass
 
@@ -5278,6 +5305,19 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
         try:
             if _spokenizer_should_run() and not spoken_txt:
+                try:
+                    _i = str(und.get("intent") or "OTHER").strip().upper()
+                    if _i in ("AGENDA", "OPERATIONAL", "PROCESS"):
+                        _spoken_max = int(os.getenv("SALES_SPOKEN_MAX_CHARS_OPERATIONAL", "260"))
+                    elif _i in ("ACTIVATE", "SLA"):
+                        _spoken_max = int(os.getenv("SALES_SPOKEN_MAX_CHARS_ACTIVATE", "220"))
+                    elif _i in ("WHAT_IS",):
+                        _spoken_max = int(os.getenv("SALES_SPOKEN_MAX_CHARS_WHAT_IS", "230"))
+                    else:
+                        _spoken_max = int(os.getenv("SALES_SPOKEN_MAX_CHARS_DEFAULT", "240"))
+                except Exception:
+                    _spoken_max = 240
+
                 spoken_txt = _spokenize_v1(
                     reply_text=rt,
                     intent_final=str(und.get("intent") or "OTHER"),
@@ -5285,6 +5325,7 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
                     has_url=bool(has_url),
                     lead_name=str(_lead_name_out or ""),
                     turns=int(turns or 0),
+                    max_chars_override=_spoken_max,
                 )
                 spoken_src = "spokenizer_v1"
                 spoken_role = "spokenizer_v1"
@@ -5332,30 +5373,29 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
             "spokenText": spoken,
             "prefersText": bool(prefers_text),
             "understanding": und,
+
             # Campos auxiliares (não quebram nada se o worker ignorar)
-            "planIntent": str(st.get("plan_intent") or und["intent"]),
-            "planNextStep": und["next_step"],
+            "planIntent": str(st.get("plan_intent") or und.get("intent") or ""),
+            "planNextStep": str(und.get("next_step") or ""),
             "nameUse": _name_use_out,
             "leadName": _lead_name_out,
             "kbDoc": "platform_kb/sales",
             "kbVersion": str(st.get("kb_version") or ""),
             "kbLoaded": bool(st.get("kb_loaded") is True),
-            # Telemetria canônica (worker/outbox lê daqui)
-            # Mirrors "flat" (opcional, mas ajuda debug e compat)
-            "kbUsed": ai_meta.get("kbUsed", False),
-            "kbExampleUsed": ai_meta.get("kbExampleUsed", ""),            
 
-            # ==========================================================
-            # Observabilidade (DIFF 0): rastreio Firestore-first
-            # - Não altera comportamento; só expõe metadados para logs/probes.
-            # ==========================================================
-            "iaSource": str(st.get("understand_source") or und.get("source") or "").strip(),
-            "kbUsed": bool(st.get("kb_used") is True),
-            "kbExampleUsed": str(st.get("kb_example_used") or "").strip(),
-            "spokenSource": str(st.get("spoken_source") or spoken_src).strip(),
-            "replyTextRole": str(st.get("reply_text_role") or "audit_text").strip(),
-            "spokenTextRole": str(st.get("spoken_text_role") or spoken_role).strip(),
-            "funnelMoment": str(st.get("funnel_moment") or "").strip(),
+            # Telemetria canônica (worker/outbox lê daqui)
+            "aiMeta": ai_meta,
+
+            # Mirrors "flat" (opcional, mas ajuda debug e compat)
+            "kbDocPath": ai_meta.get("kbDocPath", ""),
+            "kbContractId": ai_meta.get("kbContractId", ""),
+            "kbSliceFields": ai_meta.get("kbSliceFields", []),
+            "kbSliceSizeChars": ai_meta.get("kbSliceSizeChars", 0),
+            "kbRequiredOk": ai_meta.get("kbRequiredOk", False),
+            "kbMissReason": ai_meta.get("kbMissReason", ""),
+            "kbMissingFields": ai_meta.get("kbMissingFields", []),
+            "kbUsed": ai_meta.get("kbUsed", False),
+            "kbExampleUsed": ai_meta.get("kbExampleUsed", ""),
         }
 
     # ==========================================================
