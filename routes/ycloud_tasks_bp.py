@@ -3019,35 +3019,36 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         tts_text = re.sub(r"^(fala+[\s,!\.\-–—]*)", "", (tts_text or "").strip(), flags=re.IGNORECASE).strip() or "Oi 🙂"
                         
                         # ----------------------------------------------------------
-                        # Nome no ÁUDIO (gate): IA sinaliza via nameUse; código decide.
-                        # Texto NÃO leva nome por padrão.
-                        # ----------------------------------------------------------
-                        name_used = False
-                        try:
-                            if tts_text and wa_key_effective:
-                                tts_text, name_used = _maybe_name_prefix(
-                                    tts_text=str(tts_text or ""),
-                                    name_use=str(name_use or "none"),
-                                    display_name=str(display_name or ""),
-                                    wa_key_effective=str(wa_key_effective or ""),
-                                )
-                        except Exception:
-                            name_used = False
+                        # UX: nome no ÁUDIO deve ser aplicado APENAS pelo gate de VENDAS abaixo
+                        # (evita prefixo duplo e mantém cadência consistente)
 
-                        # (opcional) debug leve do TTS
+                        # UX (VENDAS): aplicar nome no ÁUDIO quando a IA sinaliza via wa_out.nameUse, com gate de cadência (mesmo sem uid)
                         try:
-                            if isinstance(ttsTextProbe, dict):
-                                ttsTextProbe["nameUsed"] = bool(name_used)
-                                ttsTextProbe["nameUse"] = str(name_use or "none")
-                                ttsTextProbe["leadName"] = str(display_name or "")
+                            tts_text_base = str(tts_text or "")
+                            _under = (understanding if isinstance(understanding, dict) else {})
+                            _name_use_signal = str((wa_out or {}).get("nameUse") or _under.get("name_use") or "none").strip().lower()
+                            _contact_name = str(display_name or "").strip() or None
+                            tts_text, name_used = _maybe_apply_name_to_tts(
+                                text=tts_text_base,
+                                name_use=_name_use_signal,
+                                contact_name=_contact_name,
+                                speaker_state=speaker_state,
+                                now_ts=time.time(),
+                                min_gap_seconds=int(_SALES_NAME_MIN_GAP_SECONDS or 120),
+                            )
+                            try:
+                                if isinstance(ttsTextProbe, dict):
+                                    ttsTextProbe["nameUsed"] = bool(name_used)
+                                    ttsTextProbe["nameUse"] = str(_name_use_signal or "none")
+                                    ttsTextProbe["leadName"] = str(_contact_name or "")
+                            except Exception:
+                                pass
                         except Exception:
                             pass
 
-                        except Exception:
-                            pass
                         tts_text_final_used = tts_text
 
-                        rr = _call_tts(tts_text)
+                        rr = _call_tts(tts_text_final_used)
 
                         # Retry automático se bater 413 (texto ainda grande pro endpoint)
                         if rr.status_code == 413:
