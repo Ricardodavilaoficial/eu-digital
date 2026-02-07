@@ -126,6 +126,10 @@ def _speechify_for_tts(text: str) -> str:
         # Setas / "->" viram pausa natural
         s = s.replace("→", ". ").replace("->", ". ")
 
+        # Pontos e vírgulas / reticências: pausas mais humanas
+        s = s.replace(";", ". ")
+        s = s.replace("...", "…")
+
         # Normaliza espaços
         s = re.sub(r"[ \t]+", " ", s).strip()
 
@@ -351,6 +355,34 @@ def _compose_from_plan(
 
     if not txt:
         txt = _fallback_min_reply(name)
+
+    # ==========================================================
+    # Social ACK (IA decide; código só dá cadência)
+    # - evita "frase pronta": IA escreve a linha
+    # - evita spam: no mínimo 3 turnos entre ACKs
+    # ==========================================================
+    try:
+        sal = str(plan.get("social_ack_line") or "").strip()
+    except Exception:
+        sal = ""
+    if sal:
+        try:
+            turns = int(state.get("turns") or 0) if isinstance(state, dict) else 0
+        except Exception:
+            turns = 0
+        try:
+            last_t = int(state.get("last_social_ack_turn") or 0) if isinstance(state, dict) else 0
+        except Exception:
+            last_t = 0
+        # gap de turnos (barato e suficiente)
+        if (turns - last_t) >= 3:
+            low = (txt or "").lower()
+            if sal.lower() not in low:
+                txt = (sal + "\n" + txt).strip()
+            if isinstance(state, dict):
+                state["last_social_ack_turn"] = int(turns)
+                state["last_social_ack_text"] = sal
+
 
     # Injeta micro-cena (sem inventar), apenas se a resposta não veio em formato de fluxo
     if scene_text:
@@ -902,7 +934,14 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
         "- Se a pergunta for objetiva, responda direto (needs_clarification=false).\n"
         "- confidence deve ser número de 0 a 1.\n"
         "- next_step: SEND_LINK ou NONE.\n\n"
-        "Schema: {\"intent\":...,\"confidence\":0.0,\"needs_clarification\":true|false,\"clarifying_question\":\"\",\"next_step\":\"SEND_LINK|NONE\"}"
+        "- social_ack: none|contact|thanks|praise|holiday (opcional)\n"
+        "- social_ack_line: 1 frase curta (<=70 chars), sem pergunta (opcional)\n"
+        "\n"
+        "Se o lead fizer gesto social (agradecer, elogiar, desejar boas festas, ou \"valeu\"):\n"
+        "- preencha social_ack e escreva social_ack_line curta e humana.\n"
+        "- não faça textão; no máximo 1 frase.\n"
+        "- não coloque pergunta nessa linha.\n\n"
+        "Schema: {\"intent\":...,\"confidence\":0.0,\"needs_clarification\":true|false,\"clarifying_question\":\"\",\"next_step\":\"SEND_LINK|NONE\",\"social_ack\":\"none|contact|thanks|praise|holiday\",\"social_ack_line\":\"...\"}"
     )
     if kb_rules:
         system = system + "\n\n" + kb_rules
@@ -934,12 +973,31 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
         ns = str(obj.get("next_step") or "NONE").strip().upper()
         if ns not in ("SEND_LINK", "NONE"):
             ns = "NONE"
+
+        # social ACK (best-effort; opcional)
+        try:
+            sa = str(obj.get("social_ack") or "none").strip().lower()
+        except Exception:
+            sa = "none"
+        if sa not in ("none", "contact", "thanks", "praise", "holiday"):
+            sa = "none"
+        try:
+            sal = str(obj.get("social_ack_line") or "").strip()
+        except Exception:
+            sal = ""
+        # 1 frase só, curta, sem quebras
+        if sal:
+            sal = sal.replace("\\r", " ").replace("\\n", " ").strip()
+            if len(sal) > 70:
+                sal = sal[:70].rstrip() + "…"
         out = {
             "intent": intent,
             "confidence": conf_f,
             "needs_clarification": needs,
             "clarifying_question": q,
             "next_step": ns,
+            "social_ack": sa,
+            "social_ack_line": sal,
         }
     except Exception:
         out = {"intent": "OTHER", "confidence": 0.45, "needs_clarification": False, "clarifying_question": "", "next_step": "NONE"}
@@ -1325,6 +1383,21 @@ def _compose_sales_reply(
     except Exception:
         pass
 
+    # Empatia mínima (fallback) — evita resposta “correta porém fria”
+    # Só em intents operacionais, sem mexer em PRICE/WHAT_IS/ACTIVATE.
+    # Determinístico e barato (sem random de verdade): escolhe pelo “peso” do texto.
+    try:
+        if (not empathy_line) and i in ("OPERATIONAL", "AGENDA", "PROCESS"):
+            opts = [
+                "Boa pergunta. Vou te explicar bem direto e sem enrolação.",
+                "Entendi. Bora deixar isso simples e prático.",
+                "Perfeito — vou te mostrar como fica no dia a dia, sem firula.",
+            ]
+            w = sum(ord(c) for c in (stt_text or "")) % max(1, len(opts))
+            empathy_line = opts[int(w)]
+    except Exception:
+        pass
+
     # --------------------------------------------------
     # 0.5) Opener (tone_spark) — tempero, não base
     # --------------------------------------------------
@@ -1338,6 +1411,29 @@ def _compose_sales_reply(
                 opener = _pick_one(spark.get("openers") or [])
     except Exception:
         opener = ""
+
+    # --------------------------------------------------
+    # 0.6) Humor leve (vendedor do bem) — 1 toque no máximo
+    # - Só quando a conversa está andando (conf != low)
+    # - Nunca em PRICE puro (não “zoar” preço) nem em ACTIVATE/PROCESS (fluxo)
+    # - Determinístico e barato (sem chamar IA)
+    # --------------------------------------------------
+    humor_line = ""
+    try:
+        if conf in ("high", "mid") and i not in ("PRICE", "ACTIVATE", "ACTIVATE_SEND_LINK", "PROCESS", "SLA"):
+            pool = _get("tone_spark.humor_one_liners", []) or _get("humor_one_liners", []) or []
+            if not isinstance(pool, list):
+                pool = []
+            # fallback seguro (curto, sem palhaçada)
+            if not pool:
+                pool = ["Sem menu maluco nem robô engessado 😄"]
+            w = (sum(ord(c) for c in (stt_text or "")) + 7) % max(1, len(pool))
+            humor_line = str(pool[int(w)] or "").strip()
+            # trava: humor só se for realmente curto
+            if humor_line and len(humor_line) > 70:
+                humor_line = humor_line[:70].rstrip() + "…"
+    except Exception:
+        humor_line = ""
 
     # --------------------------------------------------
     # 1) OPENING POLICY — nunca responder seco a saudação
@@ -1380,14 +1476,14 @@ def _compose_sales_reply(
         )
         follow = "No teu caso é mais horário marcado ou atendimento por ordem?"
         core = " ".join([x for x in (base, extra, follow) if x]).strip()
-        parts = [p for p in (opener, empathy_line, core) if p]
+        parts = [p for p in (opener, empathy_line, humor_line, core) if p]
         return "\n".join(parts).strip()
 
     if i == "PRICE":
         # reply_text já vem com preço do cérebro + Firestore
         benefit = "Isso já inclui atendimento automático e organização das conversas."
         core = f"{reply_text.strip()} {benefit}".strip()
-        parts = [p for p in (opener, empathy_line, core) if p]
+        parts = [p for p in (opener, empathy_line, humor_line, core) if p]
         # Cenário curtinho como ancoragem (policy: preço direto + 1 cenário curto)
         try:
             scenarios = _get("operational_value_scenarios", {}) or {}
@@ -1423,7 +1519,7 @@ def _compose_sales_reply(
             "enquanto você foca no trabalho."
         )
         core = f"{base} {enrich}".strip()
-        parts = [p for p in (opener, empathy_line, core) if p]
+        parts = [p for p in (opener, empathy_line, humor_line, core) if p]
         # Closer leve (opcional)
         closer = _pick_one(_get("tone_spark.closers", []) or []) or ""
         if closer:
@@ -1437,7 +1533,7 @@ def _compose_sales_reply(
     if reply_text and len(reply_text.strip()) < 80:
         tail = "Quer que eu te dê um exemplo real de como isso funciona no dia a dia?"
         core = f"{reply_text.strip()} {tail}".strip()
-        parts = [p for p in (opener, empathy_line, core) if p]
+        parts = [p for p in (opener, empathy_line, humor_line, core) if p]
         return "\n".join(parts).strip()
 
     # --------------------------------------------------
@@ -1472,7 +1568,7 @@ def _compose_sales_reply(
     except Exception:
         closer = ""
 
-    parts = [p for p in (opener, empathy_line, reply_text.strip()) if p]
+    parts = [p for p in (opener, empathy_line, humor_line, reply_text.strip()) if p]
     if scenario_line and i not in ("PROCESS", "SLA"):
         if len(scenario_line) > 180:
             scenario_line = scenario_line[:180].rstrip() + "…"
@@ -1818,7 +1914,9 @@ def _compose_box_reply(
         line1 = (prefix + "na prática fica assim:").strip()
         line2 = scene_line or seg_ms
         line3 = "Se quiser, eu te explico com um exemplo bem do teu tipo de negócio em 1 pergunta."
-        return ("\n".join([x for x in (line1, line2, line3) if x]).strip(), "NONE")
+        # Vibração de vendedor (leve): transmite “isso resolve o dia a dia”
+        line_vibra = "Isso costuma reduzir bem a correria e evita desencontro com cliente."
+        return ("\n".join([x for x in (line1, line2, line3, line_vibra) if x]).strip(), "NONE")
 
     if i == "VOICE":
         yes = str(_get("voice_pill.short_yes") or "Sim." ).strip()
@@ -2623,8 +2721,8 @@ def _spokenize_v1(
     if prefers_text:
         nm = (lead_name or "").strip()
         if nm:
-            return f"Fechado, {nm}. Te mandei por escrito o link e o caminho pra seguir."
-        return "Fechado. Te mandei por escrito o link e o caminho pra seguir."
+            return f"Fechado, {nm}. Tá aí no texto o link e o caminho. Se travar em algo, me chama."
+        return "Fechado. Tá aí no texto o link e o caminho. Se travar em algo, me chama."
 
     # Se has_url=True sem prefers_text, seguimos e só limpamos o link da fala.
 
@@ -2645,7 +2743,8 @@ def _spokenize_v1(
     t = re.sub(r"(?<!\d):(?!\d)", ". ", t)
         # "—" como pausa (vírgula) soa mais humano do que virar “ponto” no TTS
     t = t.replace("—", ", ").replace("–", ", ")
-    t = t.replace("…", ". ")
+    # Mantém reticências como pausa (mais humano) e normaliza "..." para "…"
+    t = t.replace("...", "…")
     t = _flatten_scene_arrows(t)
     t = re.sub(r"\s*\.\s*", ". ", t).strip()
     t = re.sub(r"\s+", " ", t).strip()
