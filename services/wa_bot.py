@@ -34,6 +34,13 @@ NLU_MODE = os.getenv("NLU_MODE", "legacy").strip().lower()  # "v1" | "legacy"
 DEMO_MODE = os.getenv("DEMO_MODE", "0").strip() in ("1", "true", "True")
 SUPPORT_V2 = os.getenv("SUPPORT_V2", "0").strip() in ("1", "true", "True")
 
+# ==========================================================
+# Conversational Front (IA inicial com hard cap)
+# ==========================================================
+CONVERSATIONAL_FRONT = os.getenv("CONVERSATIONAL_FRONT", "false").strip().lower() in ("1","true","yes","on")
+MAX_AI_TURNS = int(os.getenv("MAX_AI_TURNS", "5") or 5)
+POST5_AI_ENABLED = os.getenv("POST5_AI_ENABLED", "true").strip().lower() in ("1","true","yes","on")
+
 # -------------------------------------------------------------------
 # Legacy deve ser "lazy": só importa quando realmente for necessário
 # -------------------------------------------------------------------
@@ -269,6 +276,66 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
     # 1) LEAD / VENDAS (uid ausente)
     if not uid:
+        # ----------------------------------------------------------
+        # 🎯 GATE ÚNICO — Conversational Front (até MAX_AI_TURNS)
+        # ----------------------------------------------------------
+        try:
+            if CONVERSATIONAL_FRONT:
+                # leitura segura do contador (fail-safe => cai no legacy)
+                ai_turns = 999
+                wa_key = (ctx.get("waKey") or ctx.get("wa_key") or ctx.get("from_e164") or "").strip()
+                try:
+                    from services.speaker_state import get_speaker_state  # type: ignore
+                    st = get_speaker_state(wa_key) if wa_key else {}
+                    ai_turns = int(st.get("ai_turns") or 0)
+                except Exception:
+                    ai_turns = 999
+
+                if ai_turns < MAX_AI_TURNS:
+                    try:
+                        from services.conversational_front import handle as _front_handle  # type: ignore
+
+                        front_out = _front_handle(
+                            user_text=text or "",
+                            state_summary={
+                                "ai_turns": ai_turns,
+                                "is_lead": True,
+                                "name_hint": ctx.get("displayName") or ctx.get("leadName") or "",
+                            },
+                        ) or {}
+
+                        # incrementa contador SOMENTE se o front rodou
+                        try:
+                            from services.speaker_state import bump_ai_turns  # type: ignore
+                            if wa_key:
+                                bump_ai_turns(wa_key)
+                        except Exception:
+                            pass
+
+                        # saída compatível com o worker
+                        out = {
+                            "ok": True,
+                            "route": "conversational_front",
+                            "replyText": str(front_out.get("replyText") or "").strip(),
+                            "prefersText": bool(front_out.get("prefersText", True)),
+                            "understanding": front_out.get("understanding") or {},
+                            "planNextStep": front_out.get("nextStep") or "NONE",
+                            "nameUse": front_out.get("nameUse") or "none",
+                            "ttsOwner": "worker",
+                        }
+
+                        # guard: texto vazio nunca passa
+                        if out["replyText"]:
+                            return out
+                    except Exception:
+                        # qualquer falha cai para o módulo B
+                        pass
+        except Exception:
+            pass
+
+        # ----------------------------------------------------------
+        # ⬇️ Módulo B (atual): sales_lead (modo econômico)
+        # ----------------------------------------------------------
         try:
             from services.bot_handlers import sales_lead
             reply_obj = sales_lead.generate_reply(text=text, ctx=ctx)
