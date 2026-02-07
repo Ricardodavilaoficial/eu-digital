@@ -884,6 +884,36 @@ def _box_decider_cache_set(text: str, val: Dict[str, Any]) -> None:
         pass
 
 
+
+def _detect_social_gesture(t: str) -> Dict[str, str]:
+    """
+    Detector BARATO (não é NLU) só para garantir ACK humano quando a IA não sinaliza.
+    Não lista datas/feriados: usa respostas universais.
+    Retorna: {"kind": "none|thanks|praise|holiday", "line": "..."}
+    """
+    try:
+        s = (t or "").strip().lower()
+    except Exception:
+        return {"kind": "none", "line": ""}
+    if not s:
+        return {"kind": "none", "line": ""}
+
+    # votos/saudações (universal)
+    if any(k in s for k in ("feliz ", "boas festas", "bom ano", "ano novo", "boas", "parabéns", "parabens")):
+        return {"kind": "holiday", "line": "Igualmente! 🎉"}
+
+    # agradecimento
+    if any(k in s for k in ("obrigad", "valeu", "agradec")):
+        return {"kind": "thanks", "line": "Valeu mesmo! 😊"}
+
+    # elogio
+    if any(k in s for k in ("top", "show", "muito bom", "massa", "curti", "gostei", "legal demais")):
+        return {"kind": "praise", "line": "Que bom! 😊"}
+
+    return {"kind": "none", "line": ""}
+
+
+
 def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
     """Decider econômico: escolhe 1 caixa e (quando necessário) 1 pergunta."""
     t = (user_text or "").strip()
@@ -934,11 +964,11 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
         "- Se a pergunta for objetiva, responda direto (needs_clarification=false).\n"
         "- confidence deve ser número de 0 a 1.\n"
         "- next_step: SEND_LINK ou NONE.\n\n"
-        "- social_ack: none|contact|thanks|praise|holiday (opcional)\n"
-        "- social_ack_line: 1 frase curta (<=70 chars), sem pergunta (opcional)\n"
+        "- social_ack: none|contact|thanks|praise|holiday (obrigatório quando houver gesto social)\n"
+        "- social_ack_line: 1 frase curta (<=70 chars), sem pergunta (obrigatória quando houver gesto social)\n"
         "\n"
         "Se o lead fizer gesto social (agradecer, elogiar, mandar votos/saudações, ou \"valeu\"):\n"
-        "- preencha social_ack e escreva social_ack_line curta e humana.\n"
+        "- SEMPRE preencha social_ack e escreva social_ack_line curta e humana.\n"
         "- social_ack_line é OBRIGATÓRIA nesses casos.\n"
         "- exemplos de votos (não exaustivo): \"feliz 2026\", \"boas festas\", \"feliz ano\".\n"
         "- não faça textão; no máximo 1 frase.\n"
@@ -1010,6 +1040,29 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
             sal = sal.replace("\\r", " ").replace("\\n", " ").strip()
             if len(sal) > 70:
                 sal = sal[:70].rstrip() + "…"
+
+
+        # ==========================================================
+        # GARANTIA (produto): gesto social => 1 ACK humano sempre
+        # - Preferência: IA sinaliza via social_ack_line
+        # - Fallback: 1 linha universal (sem lista de datas)
+        # ==========================================================
+        if not sal or sa == "none":
+            det = _detect_social_gesture(t)
+            if det.get("kind") and det.get("kind") != "none":
+                # se a IA não marcou, a gente marca (barato) e deixa a composição prefixar
+                if sa == "none":
+                    sa = det["kind"]
+                if not sal:
+                    sal = det.get("line") or ""
+                # Gratitude alinhada (melhor para logs/política)
+                if gr == "NONE":
+                    if sa == "thanks":
+                        gr = "THANKS"
+                    elif sa == "praise":
+                        gr = "PRAISE"
+                    elif sa == "holiday":
+                        gr = "HOLIDAY"
         out = {
             "intent": intent,
             "confidence": conf_f,
