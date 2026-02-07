@@ -292,6 +292,20 @@ def _build_front_kb_snapshot(topic: str) -> str:
         if txt:
             kit_blocks.append(f"[{title}]\n{txt}".strip())
 
+
+    # tone_spark (openers/closers) — opcional, mas útil para "vida" controlada
+    try:
+        ts = kb.get("tone_spark") or {}
+        if isinstance(ts, dict):
+            op = _safe_str(ts.get("openers"))
+            cl = _safe_str(ts.get("closers"))
+            if op:
+                kit_blocks.append(f"[SPARK OPENERS]\n{op}".strip())
+            if cl:
+                kit_blocks.append(f"[SPARK CLOSERS]\n{cl}".strip())
+    except Exception:
+        pass
+
     kit_base = "\n\n".join([b for b in kit_blocks if b]).strip()
 
     # BLOCO DO TÓPICO
