@@ -4590,10 +4590,19 @@ def _ai_sales_answer(
         f"fatos_do_produto (não negociar; não inventar): {json.dumps(process_facts, ensure_ascii=False, separators=(',',':'))}\n"
         f"repertório_firestore (base, não copie): {json.dumps(rep, ensure_ascii=False, separators=(',', ':'))}\n"
     )
+    # Operacional pode precisar de um pouco mais de tokens pra explicar o "fluxo fechado"
+    # sem virar palestra. Mantém custo sob controle: só aplica nesses intent_hints.
+    _max_tokens = SALES_ANSWER_MAX_TOKENS
+    try:
+        ih_local = str(intent_hint or "").strip().upper()
+        if ih_local in ("OPERATIONAL_FLOW", "OPERATIONAL", "AGENDA", "PROCESS"):
+            _max_tokens = int(os.getenv("SALES_ANSWER_MAX_TOKENS_OPERATIONAL", str(SALES_ANSWER_MAX_TOKENS)) or str(SALES_ANSWER_MAX_TOKENS))
+    except Exception:
+        _max_tokens = SALES_ANSWER_MAX_TOKENS
 
     raw = (_openai_chat(
             prompt,
-            max_tokens=SALES_ANSWER_MAX_TOKENS,
+            max_tokens=_max_tokens,
             temperature=0.35,
             response_format={"type": "json_object"},
         ) or "").strip()
@@ -5308,7 +5317,16 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
                 try:
                     _i = str(und.get("intent") or "OTHER").strip().upper()
                     if _i in ("AGENDA", "OPERATIONAL", "PROCESS"):
+                        # Operacional precisa de mais "respiro" no áudio.
+                        # Mantém custo sob controle: default continua curto, mas se a IA sinalizar depth=deep,
+                        # liberamos um pouco mais para não cortar a explicação no meio.
                         _spoken_max = int(os.getenv("SALES_SPOKEN_MAX_CHARS_OPERATIONAL", "260"))
+                        try:
+                            _depth = str(und.get("depth") or "").strip().lower()
+                        except Exception:
+                            _depth = ""
+                        if _depth == "deep":
+                            _spoken_max = int(os.getenv("SALES_SPOKEN_MAX_CHARS_OPERATIONAL_DEEP", "420"))
                     elif _i in ("ACTIVATE", "SLA"):
                         _spoken_max = int(os.getenv("SALES_SPOKEN_MAX_CHARS_ACTIVATE", "220"))
                     elif _i in ("WHAT_IS",):
