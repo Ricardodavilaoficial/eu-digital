@@ -120,11 +120,22 @@ def _speechify_for_tts(text: str) -> str:
         # Dinheiro: "R$ 89,00" -> "89 reais"
         s = re.sub(r"R\$\s*(\d+)(?:[.,](\d{2}))?", r"\1 reais", s)
 
-        # Setas e "->" viram pausa natural
+        # Travessão vira pausa (mais humano no TTS)
+        s = s.replace("—", ", ").replace("–", ", ")
+
+        # Setas / "->" viram pausa natural
         s = s.replace("→", ". ").replace("->", ". ")
 
         # Normaliza espaços
         s = re.sub(r"[ \t]+", " ", s).strip()
+
+
+        # Pontuação: remove espaços antes de vírgula/ponto/interrogação etc.
+        s = re.sub(r"\s+,", ",", s)
+        s = re.sub(r"\s+\.", ".", s)
+        s = re.sub(r"\s+([!?])", r"\1", s)
+        s = re.sub(r"\s+:", ":", s)
+        s = re.sub(r"\s{2,}", " ", s).strip()
 
         # Ritmo (VENDAS): se estiver longo, quebra em pausas (no máximo 6 linhas)
         if len(s) >= 140:
@@ -1624,6 +1635,9 @@ def _compose_box_reply(
         # - 1 pergunta curta (qualificação leve)
         opener = _pick_one(_get("tone_spark.openers") or [])
 
+        if not opener:
+            opener = "Tranquilo. Vou direto ao ponto."
+
         # Preferir texto pronto “falável”; fallback para prática/fluxo
         agenda_text = (
             str(_get("value_in_action_blocks.scheduling_scene_text") or "").strip()
@@ -1632,7 +1646,7 @@ def _compose_box_reply(
         )
 
         # 1 ancoragem curta (benefício)
-        anchor = "Fica tudo registrado por escrito e você não precisa ficar caçando conversa."
+        anchor = "Fica tudo registrado por escrito, sem você ficar caçando conversa."
 
         # 1 pergunta curta (segmento se tiver; senão genérica)
         seg_q = ""
@@ -1644,7 +1658,10 @@ def _compose_box_reply(
         if not seg_q:
             seg_q = "No teu caso é mais horário marcado ou por ordem?"
 
-        parts = [x for x in (opener, agenda_text, anchor, seg_q) if str(x or "").strip()]
+        # Ordem pensada pro áudio:
+        # - opener + anchor + pergunta vêm cedo (não podem ser cortados pelo shorten)
+        # - bloco mais longo vem depois
+        parts = [x for x in (opener, anchor, seg_q, agenda_text) if str(x or "").strip()]
         return (" ".join(parts).strip(), "NONE")
 
 
@@ -1727,14 +1744,16 @@ def _compose_box_reply(
         s2 = str(steps[1]).strip() if isinstance(steps, list) and len(steps) >= 2 else ""
         prefix = ""  # sem nome no texto (apenas no áudio)
 
+        opener = _pick_one(_get("tone_spark.openers") or [])
+        if opener:
+            opener = opener.strip()
+        else:
+            opener = "Oi! Legal falar contigo 😄"
+
         greet = ""
         t = (user_text or "").lower()
         if any(x in t for x in ("bom dia", "boa tarde", "boa noite", "feliz", "tudo bem", "oi", "olá", "ola")):
-            if nm:
-                greet = "Oi! Feliz 2026 pra você também 😄"
-
-            else:
-                greet = "Oi! Feliz 2026 pra você também 😄"
+            greet = opener
         line1 = (((prefix if not greet else "") + blurb).strip())
         line2 = "Como funciona (bem direto):" if (s1 or s2) else ""
         line3 = (f"• {s1}" if s1 else "")
