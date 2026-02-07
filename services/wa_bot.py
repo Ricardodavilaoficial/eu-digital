@@ -485,15 +485,28 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
         # ----------------------------------------------------------
         try:
             if CONVERSATIONAL_FRONT:
-                # leitura segura do contador (fail-safe => cai no legacy)
-                ai_turns = 999
+                # leitura segura do contador
+                # fail-safe: se não conseguir ler estado, assume 0 (ENTRA no front),
+                # porque o hard cap é garantido pelo MAX_AI_TURNS + bump (best-effort).
+                ai_turns = 0
                 wa_key = (ctx.get("waKey") or ctx.get("wa_key") or ctx.get("from_e164") or "").strip()
                 try:
                     from services.speaker_state import get_speaker_state  # type: ignore
                     st = get_speaker_state(wa_key) if wa_key else {}
                     ai_turns = int(st.get("ai_turns") or 0)
                 except Exception:
-                    ai_turns = 999
+                    ai_turns = 0
+
+                try:
+                    logging.info(
+                        "[WA_BOT][FRONT_GATE] enabled=%s waKey=%s ai_turns=%s max=%s",
+                        bool(CONVERSATIONAL_FRONT),
+                        (wa_key or "")[:32],
+                        ai_turns,
+                        MAX_AI_TURNS,
+                    )
+                except Exception:
+                    pass
 
                 if ai_turns < MAX_AI_TURNS:
                     try:
