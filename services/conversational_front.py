@@ -151,14 +151,23 @@ Responda em JSON estrito no formato:
         )
 
         raw = resp.choices[0].message.content.strip()
-
         # -----------------------------
         # Parse seguro do JSON
         # -----------------------------
         import json
+        import re
 
-        data = json.loads(raw)
+        # Alguns modelos devolvem JSON com texto extra ou em bloco ```json ...```.
+        # Extraímos o primeiro objeto { ... } para reduzir fallback por parse.
+        raw_json = raw
+        try:
+            m = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+            if m:
+                raw_json = m.group(0)
+        except Exception:
+            raw_json = raw
 
+        data = json.loads(raw_json)
         reply_text = str(data.get("replyText") or "").strip()
         understanding = data.get("understanding") or {}
         topic = str(understanding.get("topic") or "OTHER").upper()
@@ -175,24 +184,31 @@ Responda em JSON estrito no formato:
             "replyText": reply_text[:FRONT_REPLY_MAX_CHARS].rstrip(),
             "understanding": {
                 "topic": topic,
+                # Harmoniza com o resto do pipeline (sales_lead/outbox)
+                "intent": topic,
                 "confidence": confidence,
             },
             "nextStep": next_step,
             "shouldEnd": should_end,
             "nameUse": name_use,
             "prefersText": True,
+            # Auditoria: quem respondeu
+            "replySource": "front",
+            # Probe leve do snapshot (ajuda a ver se o front "passou fome")
+            "kbSnapshotSizeChars": len(kb_snapshot or ""),
         }
 
         # -----------------------------
         # Observabilidade leve
         # -----------------------------
         logging.info(
-            "[CONVERSATIONAL_FRONT] ai_turns=%s topic=%s confidence=%s nextStep=%s shouldEnd=%s",
+            "[CONVERSATIONAL_FRONT] ai_turns=%s topic=%s confidence=%s nextStep=%s shouldEnd=%s kbChars=%s",
             ai_turns,
             topic,
             confidence,
             next_step,
             should_end,
+            len(kb_snapshot or ""),
         )
 
         return out
