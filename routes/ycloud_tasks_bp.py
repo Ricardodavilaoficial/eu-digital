@@ -62,6 +62,27 @@ _LAST_NAME_SPOKEN_AT: Dict[str, float] = {}
 # Memória em-processo para VENDAS (cadência separada: fechamento pode repetir nome sem esperar 10min)
 _LAST_SALES_NAME_SPOKEN_AT: Dict[str, float] = {}
 
+# Memória em-processo para CTA do site (evita spam de link a cada áudio)
+_LAST_SALES_SITE_CTA_AT: Dict[str, float] = {}
+
+
+def _strip_leading_name_prefix(text: str, name: str) -> tuple[str, bool]:
+    """Remove prefixo 'Nome,' no início (case-insensitive)."""
+    try:
+        t = (text or "").strip()
+        nm = (name or "").strip()
+        if not t or not nm:
+            return text, False
+        # Aceita: "Nome, ..." | "Nome - ..." | "Nome — ..."
+        pat = r"^\s*" + re.escape(nm) + r"\s*([,\-–—:])\s*"
+        if re.match(pat, t, flags=re.IGNORECASE):
+            t2 = re.sub(pat, "", t, count=1, flags=re.IGNORECASE).lstrip()
+            return t2, True
+        return text, False
+    except Exception:
+        return text, False
+
+
 # ==========================================================
 # UX: gate de uso do nome no ÁUDIO (IA sinaliza; código autoriza)
 # - Texto NÃO leva nome por padrão (produto).
@@ -1964,6 +1985,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 "route": str(wa_out.get("route") or "")[:80],
                                 "hasAudioUrl": bool(str((wa_out.get("audioUrl") or wa_out.get("audio_url") or "")).strip()),
                                 "prefersText": bool(wa_out.get("prefersText")),
+                                "replySource": str(wa_out.get("replySource") or wa_out.get("reply_source") or "")[:40],
+                                "kbSnapshotSizeChars": int(wa_out.get("kbSnapshotSizeChars") or 0) if isinstance(wa_out, dict) else 0,
                                 "displayName": str(
                                     wa_out.get("displayName")
                                     or wa_out.get("leadName")
@@ -2167,6 +2190,18 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 )
             except Exception:
                 spoken_text = (reply_text or "").strip()
+
+            # UX (produto): em VENDAS, o nome NÃO deve vir "colado" no spokenText do bot.
+            # A IA só sinaliza via name_use; o worker decide (gate) se aplica no áudio.
+            try:
+                if (not bool(uid)) and spoken_text and display_name:
+                    _st2, _removed = _strip_leading_name_prefix(spoken_text, str(display_name))
+                    if _removed:
+                        spoken_text = _st2
+                        if isinstance(audio_debug, dict):
+                            audio_debug["namePrefixStripped"] = True
+            except Exception:
+                pass
 
             # ==========================================================
 
@@ -2839,14 +2874,45 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                             # Regra de produto: nome só de vez em quando.
                             name_to_use = ""
-                            if tts_name and wa_key_effective:
-                                # VENDAS (lead/uid vazio): aqui o worker é quem fala o institucional,
-                                # então pode usar o nome (com gap) sem custo extra.
-                                # SUPORTE/CLIENTE (uid presente): idem, com gap.
-                                last = float(_LAST_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
-                                if (time.time() - last) >= float(_SUPPORT_NAME_MIN_GAP_SECONDS):
-                                    name_to_use = tts_name
-                                    _LAST_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+                            name_used = ""  # para telemetria (ttsTextProbe.nameUsed)
+
+                            try:
+                                # IA sugere via name_use; nunca escreva nome no texto do bot.
+                                _name_use = ""
+                                try:
+                                    if isinstance(understanding, dict):
+                                        _name_use = str(understanding.get("name_use") or understanding.get("nameUse") or "").strip().lower()
+                                except Exception:
+                                    _name_use = ""
+                                if not _name_use:
+                                    try:
+                                        _name_use = str(wa_out.get("nameUse") or "").strip().lower()
+                                    except Exception:
+                                        _name_use = ""
+
+                                if is_sales:
+                                    # VENDAS (lead/uid vazio): só usa nome se IA pediu e respeita gap específico.
+                                    if tts_name and wa_key_effective and _name_use and _name_use != "none":
+                                        try:
+                                            gap = int(os.getenv("SALES_NAME_SPOKEN_MIN_GAP_SECONDS", "360") or "360")
+                                        except Exception:
+                                            gap = 360
+                                        now = time.time()
+                                        last = float(_LAST_SALES_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
+                                        if (now - last) >= float(gap):
+                                            name_to_use = tts_name
+                                            name_used = tts_name
+                                            _LAST_SALES_NAME_SPOKEN_AT[wa_key_effective] = now
+                                else:
+                                    # SUPORTE/CLIENTE (uid presente): usa gap padrão do suporte.
+                                    if tts_name and wa_key_effective:
+                                        last = float(_LAST_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
+                                        if (time.time() - last) >= float(_SUPPORT_NAME_MIN_GAP_SECONDS):
+                                            name_to_use = tts_name
+                                            name_used = tts_name
+                                            _LAST_NAME_SPOKEN_AT[wa_key_effective] = time.time()
+                            except Exception:
+                                pass
 
                             # 1) Se for conceitual e houver kbContext: gera fala humana a partir do CONTEXTO (não lê artigo)
                             concept_generated = False
@@ -3423,6 +3489,29 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 pass
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text (send_link_after_audio)")
+
+
+                # UX (produto): quando houver ÁUDIO em VENDAS, sempre mandar 1 CTA simples por TEXTO
+                # (clicável) — mas com cadência, pra não virar spam.
+                try:
+                    if (not force_send_link_text) and (not bool(uid)) and send_text:
+                        try:
+                            gap_cta = int(os.getenv("SALES_SITE_CTA_MIN_GAP_SECONDS", "600") or "600")
+                        except Exception:
+                            gap_cta = 600
+                        now = time.time()
+                        last_cta = float(_LAST_SALES_SITE_CTA_AT.get(wa_key_effective) or 0.0)
+                        if (now - last_cta) >= float(gap_cta):
+                            _rtC = "https://www.meirobo.com.br"
+                            _okC, _ = send_text(from_e164, _rtC)
+                            try:
+                                _wa_log_outbox_deterministic(route="send_text_site_cta", to_e164=from_e164, reply_text=(_rtC or ""), sent_ok=bool(_okC))
+                            except Exception:
+                                pass
+                            sent_ok = sent_ok or bool(_okC)
+                            _LAST_SALES_SITE_CTA_AT[wa_key_effective] = now
+                except Exception:
+                    pass
 
 
                 # Pacote 2 (regra): se foi "decisão de assinar" por ÁUDIO, manda TEXTO com link também,
