@@ -2984,18 +2984,37 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                     "funnelMoment": str(_meta_get("funnelMoment", "") or "")[:40],
                                 },
                             }
-    # Corte para evitar 413
-                            if tts_text and len(tts_text) > _SUPPORT_TTS_MAX_CHARS:
+                            # ==========================================================
+                            # TTS cut policy (VENDAS): permitir áudio mais longo só em operacional
+                            # - Mantém o resto igual
+                            # - Evita cortar explicação no meio
+                            # ==========================================================
+                            _tts_max = _SUPPORT_TTS_MAX_CHARS
+                            try:
+                                _u = (understanding if isinstance(understanding, dict) else {}) or {}
+                                _i = str(_u.get("intent") or "").strip().upper()
+                                _d = str(_u.get("depth") or "").strip().lower()
+                                # Só para VENDAS + intent operacional
+                                if str(route_hint or "").strip().lower() in ("sales", "sales_lead") and _i in ("AGENDA", "OPERATIONAL", "PROCESS"):
+                                    # Default operacional
+                                    _tts_max = int(os.getenv("SALES_TTS_MAX_CHARS_OPERATIONAL", str(_SUPPORT_TTS_MAX_CHARS)) or str(_SUPPORT_TTS_MAX_CHARS))
+                                    # Se IA marcou deep, libera um pouco mais
+                                    if _d == "deep":
+                                        _tts_max = int(os.getenv("SALES_TTS_MAX_CHARS_OPERATIONAL_DEEP", str(_tts_max)) or str(_tts_max))
+                            except Exception:
+                                _tts_max = _SUPPORT_TTS_MAX_CHARS
+
+                            # Corte para evitar 413 (usa política acima)
+                            if tts_text and len(tts_text) > _tts_max:
                                 before = tts_text
-                                tts_text = _shorten_for_speech(tts_text, _SUPPORT_TTS_MAX_CHARS)
+                                tts_text = _shorten_for_speech(tts_text, _tts_max)
                                 audio_debug = dict(audio_debug or {})
                                 audio_debug["ttsInputShorten"] = {
                                     "applied": True,
-                                    "maxChars": _SUPPORT_TTS_MAX_CHARS,
+                                    "maxChars": _tts_max,
                                     "beforeLen": len(before),
                                     "afterLen": len(tts_text),
                                 }
-
                             # Probe FINAL (texto REAL falado)
                             audio_debug = dict(audio_debug or {})
                             audio_debug["ttsTextFinal"] = {
@@ -3027,7 +3046,19 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             tts_text_base = str(tts_text or "")
                             _under = (understanding if isinstance(understanding, dict) else {})
                             _name_use_signal = str((wa_out or {}).get("nameUse") or _under.get("name_use") or "none").strip().lower()
-                            _contact_name = str(display_name or "").strip() or None
+                            _contact_name = (
+                                str((wa_out or {}).get("leadName") or (wa_out or {}).get("displayName") or (display_name or "")).strip()
+                                or str((speaker_state or {}).get("displayName") or "").strip()
+                            ) or None
+
+                            # Se a pessoa acabou de se identificar (triggered), usamos o nome 1x (empatia).
+                            # Mantém IA soberana no geral; isso é só um “cumprimento humano” pós-identificação.
+                            try:
+                                speakerAI = (audio_debug or {}).get("speakerAI") if isinstance(audio_debug, dict) else {}
+                                if (_name_use_signal in ("", "none")) and bool((speakerAI or {}).get("triggered")) and _contact_name:
+                                    _name_use_signal = "greet"
+                            except Exception:
+                                pass
                             tts_text, name_used = _maybe_apply_name_to_tts(
                                 text=tts_text_base,
                                 name_use=_name_use_signal,
