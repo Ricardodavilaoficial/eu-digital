@@ -937,8 +937,10 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
         "- social_ack: none|contact|thanks|praise|holiday (opcional)\n"
         "- social_ack_line: 1 frase curta (<=70 chars), sem pergunta (opcional)\n"
         "\n"
-        "Se o lead fizer gesto social (agradecer, elogiar, desejar boas festas, ou \"valeu\"):\n"
+        "Se o lead fizer gesto social (agradecer, elogiar, mandar votos/saudações, ou \"valeu\"):\n"
         "- preencha social_ack e escreva social_ack_line curta e humana.\n"
+        "- social_ack_line é OBRIGATÓRIA nesses casos.\n"
+        "- exemplos de votos (não exaustivo): \"feliz 2026\", \"boas festas\", \"feliz ano\".\n"
         "- não faça textão; no máximo 1 frase.\n"
         "- não coloque pergunta nessa linha.\n\n"
         "Além disso, sinalize gratidão quando o usuário agradecer/elogiar/mandar votos (sem criar nova intent):\n- gratitude: NONE | THANKS | PRAISE | HOLIDAY\n\nSchema: {\"intent\":...,\"confidence\":0.0,\"needs_clarification\":true|false,\"clarifying_question\":\"\",\"next_step\":\"SEND_LINK|NONE\",\"gratitude\":\"NONE|THANKS|PRAISE|HOLIDAY\",\"social_ack\":\"none|contact|thanks|praise|holiday\",\"social_ack_line\":\"...\"}"
@@ -5010,6 +5012,42 @@ def _should_soft_close(st: Dict[str, Any], *, has_name: bool, has_segment: bool)
     # Se até aqui não coletou o mínimo, ou já é muita conversa, fecha suave
     return slots < SALES_MIN_ADVANCE_SLOTS or turns >= SALES_MAX_FREE_TURNS
 
+def _is_internal_policy_text(s: str) -> bool:
+    """Heurística barata para evitar vazar texto interno do KB (playbook) no áudio."""
+    try:
+        t = re.sub(r"\s+", " ", str(s or "")).strip().lower()
+    except Exception:
+        return True
+    if not t:
+        return True
+    bad = (
+        "micro-exemplo",
+        "próximo passo",
+        "proximo passo",
+        "sempre com direção",
+        "sempre com direcao",
+        "lead",
+        "aprofund",
+        "resuma e devolv",
+    )
+    if any(b in t for b in bad):
+        return True
+    if re.search(r"\b1\b\s*(micro|passo|\)|\-|\.)", t):
+        return True
+    return False
+
+
+def _is_social_gesture_cheap(text: str) -> bool:
+    """Só para NÃO acionar soft-close em cima de elogio/agradecimento/votos.
+    A resposta em si deve vir da IA (social_ack_line).
+    """
+    try:
+        t = (text or "").lower()
+    except Exception:
+        return False
+    keys = ("obrigad", "valeu", "parab", "show", "top", "feliz ", "boas festas", "bom ano")
+    return any(k in t for k in keys)
+
 
 
 def _soft_close_message(kb: Dict[str, Any], name: str = "") -> str:
@@ -5033,7 +5071,7 @@ def _soft_close_message(kb: Dict[str, Any], name: str = "") -> str:
     except Exception:
         limits = ""
 
-    if limits:
+    if limits and (not _is_internal_policy_text(limits)):
         # pega 1 linha “falável”
         one = re.sub(r"\s+", " ", limits).strip()
         one = one[:180].rstrip(" ,;:-") + "."
@@ -5141,7 +5179,15 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
     # Anti-curioso infinito: se já estourou turnos sem avançar, fecha gentil e aponta pro site.
     has_name = bool((name or "").strip())
     has_segment = bool((segment or "").strip())
-    if _should_soft_close(st, has_name=has_name, has_segment=has_segment):
+    should_close = _should_soft_close(st, has_name=has_name, has_segment=has_segment)
+    if should_close and _is_social_gesture_cheap(text_in):
+        # Gesto social não deve virar "EXIT" automático; deixa a IA responder humano.
+        should_close = False
+        try:
+            st["policiesApplied"] = list(set((st.get("policiesApplied") or []) + ["no_soft_close_social"]))
+        except Exception:
+            pass
+    if should_close:
         st["stage"] = "EXIT"
         st["plan_intent"] = "EXIT"
         st["plan_next_step"] = "EXIT"
@@ -5371,6 +5417,15 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     text_in = (text or "").strip() or "Lead enviou um áudio."
     from_e164 = str(ctx.get("from_e164") or ctx.get("from") or "").strip()
 
+    # Nome do lead (quando o worker já sabe / Firestore override):
+    # - texto NÃO leva nome; só ajuda a IA e o gate do ÁUDIO.
+    ctx_display_name = str(ctx.get("display_name") or ctx.get("displayName") or "").strip()
+    if ctx_display_name and len(ctx_display_name) > 1:
+        try:
+            ctx["display_name"] = ctx_display_name
+        except Exception:
+            pass
+
     # Helper: monta saída canônica SEMPRE
     def _mk_out(reply_text: str, st: Dict[str, Any]) -> Dict[str, Any]:
         rt = (reply_text or "").strip() or f"Infos completas aqui: {SITE_URL}"
@@ -5594,6 +5649,21 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     st, wa_key = _load_state(from_e164)
     if isinstance(st, dict):
         st["wa_key"] = wa_key
+        # Se o worker já sabe o nome (display_name), aproveita como contexto.
+        # Isso NÃO injeta nome no texto; só ajuda a IA e o gate do ÁUDIO.
+        try:
+            _dn = str(ctx.get("display_name") or "").strip()
+        except Exception:
+            _dn = ""
+        if _dn and not str(st.get("name") or st.get("lead_name") or "").strip():
+            st["name"] = _dn
+            st["lead_name"] = _dn
+            try:
+                turns0 = int(st.get("turns") or 0)
+            except Exception:
+                turns0 = 0
+            if turns0 <= 3 and str(st.get("last_name_use") or "none").strip().lower() in ("", "none"):
+                st["last_name_use"] = "greet"
 
     # hard-stop se o contato já foi encerrado
     if bool(st.get("closed")):
