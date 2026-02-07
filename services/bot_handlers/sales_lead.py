@@ -888,7 +888,7 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
     """Decider econômico: escolhe 1 caixa e (quando necessário) 1 pergunta."""
     t = (user_text or "").strip()
     if not t:
-        return {"intent": "OTHER", "confidence": 0.3, "needs_clarification": False, "clarifying_question": "", "next_step": "NONE"}
+        return {"intent": "OTHER", "confidence": 0.3, "needs_clarification": False, "clarifying_question": "", "next_step": "NONE", "gratitude": "NONE"}
 
     cached = _box_decider_cache_get(t)
     if isinstance(cached, dict) and str(cached.get("intent") or "").strip():
@@ -911,7 +911,7 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
             intent = "PROCESS"
         elif cheap in ("ACTIVATE",):
             intent = "ACTIVATE_SEND_LINK"
-        out = {"intent": intent, "confidence": 0.65, "needs_clarification": False, "clarifying_question": "", "next_step": ("SEND_LINK" if intent == "ACTIVATE_SEND_LINK" else "NONE")}
+        out = {"intent": intent, "confidence": 0.65, "needs_clarification": False, "clarifying_question": "", "next_step": ("SEND_LINK" if intent == "ACTIVATE_SEND_LINK" else "NONE"), "gratitude": "NONE"}
         _box_decider_cache_set(t, out)
         return out
 
@@ -941,7 +941,7 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
         "- preencha social_ack e escreva social_ack_line curta e humana.\n"
         "- não faça textão; no máximo 1 frase.\n"
         "- não coloque pergunta nessa linha.\n\n"
-        "Schema: {\"intent\":...,\"confidence\":0.0,\"needs_clarification\":true|false,\"clarifying_question\":\"\",\"next_step\":\"SEND_LINK|NONE\",\"social_ack\":\"none|contact|thanks|praise|holiday\",\"social_ack_line\":\"...\"}"
+        "Além disso, sinalize gratidão quando o usuário agradecer/elogiar/mandar votos (sem criar nova intent):\n- gratitude: NONE | THANKS | PRAISE | HOLIDAY\n\nSchema: {\"intent\":...,\"confidence\":0.0,\"needs_clarification\":true|false,\"clarifying_question\":\"\",\"next_step\":\"SEND_LINK|NONE\",\"gratitude\":\"NONE|THANKS|PRAISE|HOLIDAY\",\"social_ack\":\"none|contact|thanks|praise|holiday\",\"social_ack_line\":\"...\"}"
     )
     if kb_rules:
         system = system + "\n\n" + kb_rules
@@ -974,6 +974,24 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
         if ns not in ("SEND_LINK", "NONE"):
             ns = "NONE"
 
+        gr = str(obj.get("gratitude") or "").strip().upper()
+        if not gr:
+            try:
+                sa_tmp = str(obj.get("social_ack") or "").strip().lower()
+            except Exception:
+                sa_tmp = ""
+            if sa_tmp == "thanks":
+                gr = "THANKS"
+            elif sa_tmp == "praise":
+                gr = "PRAISE"
+            elif sa_tmp == "holiday":
+                gr = "HOLIDAY"
+            else:
+                gr = "NONE"
+        if gr not in ("NONE", "THANKS", "PRAISE", "HOLIDAY"):
+            gr = "NONE"
+
+
         # social ACK (best-effort; opcional)
         try:
             sa = str(obj.get("social_ack") or "none").strip().lower()
@@ -996,11 +1014,12 @@ def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
             "needs_clarification": needs,
             "clarifying_question": q,
             "next_step": ns,
+            "gratitude": gr,
             "social_ack": sa,
             "social_ack_line": sal,
         }
     except Exception:
-        out = {"intent": "OTHER", "confidence": 0.45, "needs_clarification": False, "clarifying_question": "", "next_step": "NONE"}
+        out = {"intent": "OTHER", "confidence": 0.45, "needs_clarification": False, "clarifying_question": "", "next_step": "NONE", "gratitude": "NONE"}
 
     _box_decider_cache_set(t, out)
     return out
@@ -1341,6 +1360,7 @@ def _compose_sales_reply(
     kb_context: dict,
     display_name: str | None = None,
     name_recently_used: bool = False,
+    gratitude: str = "NONE",
 ):
     """
     Ajuste de comportamento vendedor (pós-intent):
@@ -1351,6 +1371,7 @@ def _compose_sales_reply(
     i = (intent or "OTHER").strip().upper()
     conf = (confidence or "").strip().lower()
     stt_lc = (stt_text or "").lower().strip()
+    gr = (gratitude or "NONE").strip().upper()
 
     # Getter leve (dot path), sem depender de libs
     def _get(path: str, default: Any = "") -> Any:
@@ -1399,6 +1420,22 @@ def _compose_sales_reply(
         pass
 
     # --------------------------------------------------
+    # 0.25) Gratidão natural (IA sinaliza; 1 linha curta)
+    # - Sem nome no texto (nome é só no ÁUDIO via gate do worker)
+    # - Barato: só adiciona alguns caracteres
+    # --------------------------------------------------
+    gratitude_line = ""
+    try:
+        if gr == "HOLIDAY":
+            gratitude_line = "Igualmente! 🙌"
+        elif gr == "PRAISE":
+            gratitude_line = "Valeu! 😄"
+        elif gr == "THANKS":
+            gratitude_line = "Tamo junto — valeu por chamar. 👊"
+    except Exception:
+        gratitude_line = ""
+
+    # --------------------------------------------------
     # 0.5) Opener (tone_spark) — tempero, não base
     # --------------------------------------------------
     opener = ""
@@ -1444,6 +1481,8 @@ def _compose_sales_reply(
             "Eu sou o MEI Robô — organizo o WhatsApp do teu negócio "
             "pra você atender clientes, agenda e pedidos sem correria."
         )
+        if gratitude_line:
+            opening = (gratitude_line + " " + opening).strip()
 
         # Texto NÃO deve incluir o nome por padrão (nome é aplicado só no ÁUDIO pelo worker).
         ask_name = "Como posso te chamar?" if not display_name else "Quer que eu te mostre como funciona na prática?"
@@ -1456,12 +1495,13 @@ def _compose_sales_reply(
     if conf == "low":
         if display_name:
             # Sem nome no texto; o gate do áudio decide.
-            return (
+            base = (
                 "Peguei a ideia. Só pra eu te orientar certo: você quer usar mais pra agenda, pedidos ou orçamento?"
             )
-        return (
-            "Show. Só me diz uma coisa rapidinho: você quer usar mais pra agenda, pedidos ou orçamento?"
-        )
+            return (f"{gratitude_line} {base}".strip() if gratitude_line else base)
+        base2 = "Show. Só me diz uma coisa rapidinho: você quer usar mais pra agenda, pedidos ou orçamento?"
+        return (f"{gratitude_line} {base2}".strip() if gratitude_line else base2)
+
 
     # --------------------------------------------------
     # 2) Intents CORE nunca caem em qualifier genérico
@@ -1476,14 +1516,14 @@ def _compose_sales_reply(
         )
         follow = "No teu caso é mais horário marcado ou atendimento por ordem?"
         core = " ".join([x for x in (base, extra, follow) if x]).strip()
-        parts = [p for p in (opener, empathy_line, humor_line, core) if p]
+        parts = [p for p in (gratitude_line, opener, empathy_line, humor_line, core) if p]
         return "\n".join(parts).strip()
 
     if i == "PRICE":
         # reply_text já vem com preço do cérebro + Firestore
         benefit = "Isso já inclui atendimento automático e organização das conversas."
         core = f"{reply_text.strip()} {benefit}".strip()
-        parts = [p for p in (opener, empathy_line, humor_line, core) if p]
+        parts = [p for p in (gratitude_line, opener, empathy_line, humor_line, core) if p]
         # Cenário curtinho como ancoragem (policy: preço direto + 1 cenário curto)
         try:
             scenarios = _get("operational_value_scenarios", {}) or {}
@@ -1519,7 +1559,7 @@ def _compose_sales_reply(
             "enquanto você foca no trabalho."
         )
         core = f"{base} {enrich}".strip()
-        parts = [p for p in (opener, empathy_line, humor_line, core) if p]
+        parts = [p for p in (gratitude_line, opener, empathy_line, humor_line, core) if p]
         # Closer leve (opcional)
         closer = _pick_one(_get("tone_spark.closers", []) or []) or ""
         if closer:
@@ -1533,7 +1573,7 @@ def _compose_sales_reply(
     if reply_text and len(reply_text.strip()) < 80:
         tail = "Quer que eu te dê um exemplo real de como isso funciona no dia a dia?"
         core = f"{reply_text.strip()} {tail}".strip()
-        parts = [p for p in (opener, empathy_line, humor_line, core) if p]
+        parts = [p for p in (gratitude_line, opener, empathy_line, humor_line, core) if p]
         return "\n".join(parts).strip()
 
     # --------------------------------------------------
@@ -1568,7 +1608,7 @@ def _compose_sales_reply(
     except Exception:
         closer = ""
 
-    parts = [p for p in (opener, empathy_line, humor_line, reply_text.strip()) if p]
+    parts = [p for p in (gratitude_line, opener, empathy_line, humor_line, reply_text.strip()) if p]
     if scenario_line and i not in ("PROCESS", "SLA"):
         if len(scenario_line) > 180:
             scenario_line = scenario_line[:180].rstrip() + "…"
@@ -1652,6 +1692,7 @@ def _compose_box_reply(
     user_text: str,
     name: str,
     segment: str,
+    gratitude: str = "NONE",
 ) -> Tuple[str, str]:
     i = (box_intent or "OTHER").strip().upper()
     nm = (name or "").strip()
@@ -1776,7 +1817,7 @@ def _compose_box_reply(
             line2 = f"{MEI_ROBO_CADASTRO_URL}"
             line3 = "Obs: ativação só com CNPJ."
             _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
-        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
+        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False, gratitude=gratitude)
         return (_txt, "SEND_LINK")
 
         prefix = ""  # sem nome no texto (apenas no áudio)
@@ -1810,7 +1851,7 @@ def _compose_box_reply(
         line2 = (can_now or "").strip()
         line3 = "Se quiser, eu te mando o link pra criar a conta e já deixar tudo pronto."
         _txt = "\n".join([x for x in (line1, line2, line3) if x]).strip()
-        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
+        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False, gratitude=gratitude)
         return (_txt, "SEND_LINK")
 
     if i == "PROCESS":
@@ -1828,7 +1869,7 @@ def _compose_box_reply(
         line4 = (can_now or "").strip()
         line5 = "Quer que eu te mande o link pra você já começar por lá?"
         _txt = "\n".join([x for x in (line1, line2, line3, line4, line5) if x]).strip()
-        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
+        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False, gratitude=gratitude)
         return (_txt, "SEND_LINK")
 
     if i == "WHAT_IS":
@@ -1861,7 +1902,7 @@ def _compose_box_reply(
         demo2 = (f"• {dl2}").strip() if dl2 else ""
         line5 = "Quer que eu te mostre também um exemplo de orçamento, ou você quer ver como fica a agenda?"
         _txt = "\n".join([x for x in (greet, line1, line2, line3, line4, demo1, demo2, line5) if x]).strip()
-        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False)
+        _txt = _compose_sales_reply(intent=i, confidence=confidence, stt_text=user_text, reply_text=_txt, kb_context=box_data, display_name=(nm or None), name_recently_used=False, gratitude=gratitude)
         return (_txt, "NONE")
 
     if i == "DIFF":
@@ -1990,6 +2031,10 @@ def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
     needs = bool(dec.get("needs_clarification"))
     q = str(dec.get("clarifying_question") or "").strip()
     ns = str(dec.get("next_step") or "NONE").strip().upper()
+    try:
+        st["gratitude"] = str(dec.get("gratitude") or "NONE").strip().upper()
+    except Exception:
+        st["gratitude"] = "NONE"
 
     # ==========================================================
     # Pergunta esclarecedora (regra atualizada):
@@ -2140,6 +2185,7 @@ def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
         user_text=user_text,
         name=name,
         segment=segment,
+        gratitude=str(st.get("gratitude") or "NONE"),
     )
     reply = (reply or "").strip()
     if not reply:
@@ -4855,8 +4901,11 @@ def _ai_pitch(name: str, segment: str, user_text: str, state: Optional[Dict[str,
         "Regras:\n"
         "- Preferir 4 a 8 linhas (ou ~250 a 650 caracteres quando fizer sentido).\n"
         "- Sempre 1 pergunta no final.\n"
-        "- Se tiver nome do contato, use no começo (ex.: \"Rosália, ...\").\n"
-        "- Sempre agradecer/acolher (1 frase) antes de entrar no assunto.\n"
+        "- NÃO escreva o nome do lead no TEXTO (replyText). Nome é aplicado só no ÁUDIO via worker/gate.\n"
+        "- Acolhimento/gratidão (humano, sem soar decorado):\n"
+        "  - Se for primeiro contato: 1 frase curta de agradecimento/acolhida e já entra no assunto.\n"
+        "  - Se o lead elogiar, agradecer, ou desejar boas-festas (ano-novo, natal, páscoa etc.): retribua com 1 frase curta e natural.\n"
+        "  - Fora isso, não repita 'obrigado' em toda mensagem.\n"
         "- Para áudio: frases curtas e fáceis de ouvir; detalhes podem ir no texto (link pode ir no texto).\n"
         "- Sem bastidores técnicos.\n"
         "- Evite frases prontas.\n"
