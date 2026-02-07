@@ -41,6 +41,13 @@ CONVERSATIONAL_FRONT = os.getenv("CONVERSATIONAL_FRONT", "false").strip().lower(
 MAX_AI_TURNS = int(os.getenv("MAX_AI_TURNS", "5") or 5)
 POST5_AI_ENABLED = os.getenv("POST5_AI_ENABLED", "true").strip().lower() in ("1","true","yes","on")
 
+# ==========================================================
+# Front KB Snapshot (compacto, com teto)
+# - Firestore é fonte da verdade
+# - O front NÃO consulta Firestore
+# ==========================================================
+FRONT_KB_MAX_CHARS = int(os.getenv("FRONT_KB_MAX_CHARS", "2500") or 2500)
+
 # -------------------------------------------------------------------
 # Legacy deve ser "lazy": só importa quando realmente for necessário
 # -------------------------------------------------------------------
@@ -175,6 +182,203 @@ def _log_sales_lead_fallback(ctx: Optional[Dict[str, Any]], *, reason: str, err:
         # nunca quebrar por log
         pass
 
+
+
+# ==========================================================
+# Front KB Snapshot (v1): montagem compacta a partir do Firestore
+# - Sem "Firestore bruto": só campos selecionados
+# - Sem NLP pesado no código: apenas hint determinístico de tópico
+# - Prioridade de corte:
+#   1) Guardrails + Pitch (KIT_BASE)
+#   2) Bloco do tópico
+#   3) Feature catalog (o que sobrar)
+# ==========================================================
+
+def _front_topic_hint(user_text: str) -> str:
+    """
+    Hint determinístico e barato (não é NLU/planejador):
+    só ajuda a escolher qual bloco do snapshot incluir.
+    """
+    try:
+        t = (user_text or "").lower()
+        if any(k in t for k in ("agenda", "agendar", "horário", "horario", "marcar", "marcação", "marcacao")):
+            return "AGENDA"
+        if any(k in t for k in ("preço", "preco", "valor", "plano", "planos", "quanto custa", "mensal", "assinatura")):
+            return "PRECO"
+        if any(k in t for k in ("orçamento", "orcamento", "contratar", "ativar", "assinar", "fechar", "como funciona", "quero o mei robô")):
+            return "ORCAMENTO"
+        if any(k in t for k in ("voz", "áudio", "audio", "audios", "ptt", "fala", "responder por voz")):
+            return "VOZ"
+        if any(k in t for k in ("oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "valeu", "obrigado", "obrigada")):
+            return "SOCIAL"
+        return "OTHER"
+    except Exception:
+        return "OTHER"
+
+
+def _safe_str(x: Any) -> str:
+    try:
+        if x is None:
+            return ""
+        if isinstance(x, str):
+            return x.strip()
+        # listas/dicts viram texto compacto (sem dump gigante)
+        if isinstance(x, list):
+            parts = []
+            for it in x[:24]:
+                s = _safe_str(it)
+                if s:
+                    parts.append(s)
+            return "\n".join(parts).strip()
+        if isinstance(x, dict):
+            # tenta preservar ordem “humana”
+            parts = []
+            for k, v in list(x.items())[:40]:
+                vs = _safe_str(v)
+                if vs:
+                    parts.append(f"- {k}: {vs}")
+            return "\n".join(parts).strip()
+        return str(x).strip()
+    except Exception:
+        return ""
+
+
+def _fetch_front_kb_sources() -> Dict[str, Any]:
+    """
+    Busca poucas fontes canônicas no Firestore (curtas):
+    - platform_kb/sales
+    - platform_pricing/current
+    Retorna dicts (vazios se falhar).
+    """
+    out: Dict[str, Any] = {"kb": {}, "pricing": {}}
+    try:
+        from firebase_admin import firestore  # type: ignore
+        db = firestore.client()
+        try:
+            snap = db.collection("platform_kb").document("sales").get()
+            out["kb"] = (snap.to_dict() or {}) if snap else {}
+        except Exception:
+            out["kb"] = {}
+        try:
+            snap2 = db.collection("platform_pricing").document("current").get()
+            out["pricing"] = (snap2.to_dict() or {}) if snap2 else {}
+        except Exception:
+            out["pricing"] = {}
+    except Exception:
+        # sem Firestore? snapshot vazio (front ainda funciona, só fica mais “simpático”)
+        pass
+    return out
+
+
+def _build_front_kb_snapshot(topic: str) -> str:
+    """
+    Monta snapshot textual compacto com teto de chars.
+    """
+    src = _fetch_front_kb_sources()
+    kb = src.get("kb") or {}
+    pr = src.get("pricing") or {}
+
+    # KIT_BASE (sempre)
+    kit_blocks = []
+    for key, title in (
+        ("tone_rules", "TOM (tone_rules)"),
+        ("behavior_rules", "REGRAS DE VENDEDOR (behavior_rules)"),
+        ("brand_guardrails", "GUARDRAILS (brand_guardrails)"),
+        ("product_pitch", "PITCH OFICIAL (product_pitch)"),
+        ("closing_guidance", "FECHAMENTO (closing_guidance)"),
+        ("operational_capabilities", "CAPACIDADES (operational_capabilities)"),
+    ):
+        txt = _safe_str(kb.get(key))
+        if txt:
+            kit_blocks.append(f"[{title}]\n{txt}".strip())
+
+    kit_base = "\n\n".join([b for b in kit_blocks if b]).strip()
+
+    # BLOCO DO TÓPICO
+    topic = (topic or "OTHER").strip().upper()
+    topic_block = ""
+    try:
+        via = kb.get("value_in_action_blocks") or {}
+        if topic == "AGENDA":
+            ttxt = _safe_str(via.get("scheduling_scene"))
+            if ttxt:
+                topic_block = f"[AGENDA]\n{ttxt}".strip()
+        elif topic == "ORCAMENTO":
+            ttxt = _safe_str(via.get("services_quote_scene"))
+            if ttxt:
+                topic_block = f"[ORÇAMENTO]\n{ttxt}".strip()
+        elif topic == "PRECO":
+            # pricing pode ser objeto grande — tentamos extrair só “resumo”
+            ptxt = _safe_str(pr.get("summary") or pr.get("text") or pr.get("public_summary") or pr.get("plans"))
+            if not ptxt:
+                ptxt = _safe_str(kb.get("pricing") or kb.get("pricing_summary"))
+            if ptxt:
+                topic_block = f"[PREÇOS]\n{ptxt}".strip()
+        elif topic == "VOZ":
+            vtxt = _safe_str(kb.get("voice_pill") or kb.get("voice") or kb.get("voice_rules"))
+            if vtxt:
+                topic_block = f"[VOZ]\n{vtxt}".strip()
+        else:
+            topic_block = ""  # SOCIAL/OTHER: sem extra
+    except Exception:
+        topic_block = ""
+
+    # FEATURE CATALOG (opcional, filtrado por tópico)
+    feat_block = ""
+    try:
+        feats = kb.get("feature_catalog") or kb.get("features") or []
+        if isinstance(feats, list) and feats:
+            # filtro por tags simples
+            tkey = topic.lower()
+            picked = []
+            for f in feats[:120]:
+                if not isinstance(f, dict):
+                    continue
+                fid = _safe_str(f.get("id") or f.get("key") or "")
+                desc = _safe_str(f.get("desc") or f.get("description") or "")
+                tags = f.get("tags") or f.get("topics") or []
+                tags_lc = [str(x).lower() for x in tags] if isinstance(tags, list) else [str(tags).lower()]
+                if topic in ("SOCIAL","OTHER"):
+                    # social/other: não entope; só 2 itens “gerais”
+                    if "core" in tags_lc or "geral" in tags_lc or "general" in tags_lc:
+                        picked.append((fid, desc))
+                else:
+                    if tkey in tags_lc or topic.lower() in tags_lc:
+                        picked.append((fid, desc))
+                if len(picked) >= 6:
+                    break
+            if picked:
+                lines = []
+                for fid, desc in picked:
+                    if fid and desc:
+                        lines.append(f"- {fid}: {desc}")
+                    elif fid:
+                        lines.append(f"- {fid}")
+                    elif desc:
+                        lines.append(f"- {desc}")
+                feat_block = "[FEATURES]\n" + "\n".join(lines)
+    except Exception:
+        feat_block = ""
+
+    # Montagem com prioridade + corte
+    # 1) Guardrails + Pitch (KIT_BASE)
+    parts = []
+    if kit_base:
+        parts.append(kit_base)
+    # 2) Bloco do tópico
+    if topic_block:
+        parts.append(topic_block)
+    # 3) Features (o que sobrar)
+    if feat_block:
+        parts.append(feat_block)
+
+    snapshot = ("\n\n".join([p for p in parts if p]).strip()) if parts else ""
+    if not snapshot:
+        return ""
+
+    # Corte rígido final
+    return snapshot[:FRONT_KB_MAX_CHARS]
+
 # ==========================================================
 # ✅ PATCH ÚNICO: substituir completamente reply_to_text(...)
 # ==========================================================
@@ -295,14 +499,30 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                     try:
                         from services.conversational_front import handle as _front_handle  # type: ignore
 
-                        front_out = _front_handle(
-                            user_text=text or "",
-                            state_summary={
-                                "ai_turns": ai_turns,
-                                "is_lead": True,
-                                "name_hint": ctx.get("displayName") or ctx.get("leadName") or "",
-                            },
-                        ) or {}
+                        # Monta KB Snapshot compacto (Firestore->wa_bot) com teto.
+                        topic_hint = _front_topic_hint(text or "")
+                        kb_snapshot = _build_front_kb_snapshot(topic_hint)
+
+                        state_summary = {
+                            "ai_turns": ai_turns,
+                            "is_lead": True,
+                            "name_hint": ctx.get("displayName") or ctx.get("leadName") or "",
+                        }
+
+                        # Compat: se o front aceitar kb_snapshot como arg, usamos.
+                        # Se não aceitar (TypeError), injeta no state_summary.
+                        try:
+                            front_out = _front_handle(
+                                user_text=text or "",
+                                state_summary=state_summary,
+                                kb_snapshot=kb_snapshot,
+                            ) or {}
+                        except TypeError:
+                            state_summary["kb_snapshot"] = kb_snapshot
+                            front_out = _front_handle(
+                                user_text=text or "",
+                                state_summary=state_summary,
+                            ) or {}
 
                         # incrementa contador SOMENTE se o front rodou
                         try:
@@ -313,18 +533,30 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             pass
 
                         # saída compatível com o worker
+                        und = front_out.get("understanding") or {}
+                        # espelha nextStep/shouldEnd dentro de understanding também (tolerante)
+                        try:
+                            if isinstance(und, dict):
+                                und.setdefault("nextStep", front_out.get("nextStep") or front_out.get("next_step") or front_out.get("planNextStep") or "NONE")
+                                und.setdefault("shouldEnd", bool(front_out.get("shouldEnd")))
+                                und.setdefault("topicHint", topic_hint)
+                        except Exception:
+                            pass
+
                         out = {
                             "ok": True,
                             "route": "conversational_front",
                             "replyText": str(front_out.get("replyText") or "").strip(),
                             "prefersText": bool(front_out.get("prefersText", True)),
-                            "understanding": front_out.get("understanding") or {},
+                            "understanding": und,
                             "planNextStep": front_out.get("nextStep") or "NONE",
                             "nameUse": front_out.get("nameUse") or "none",
                             "ttsOwner": "worker",
+                            # Telemetria leve (ignorada se o worker não usar)
+                            "kbSnapshotSizeChars": len(kb_snapshot or ""),
                         }
 
-                        # guard: texto vazio nunca passa
+                        # guard: texto vazio nunca passa nunca passa
                         if out["replyText"]:
                             return out
                     except Exception:

@@ -29,7 +29,9 @@ from openai import OpenAI
 # -----------------------------
 MODEL = "gpt-4o-mini"
 TEMPERATURE = 0.5
-MAX_TOKENS = 260  # resposta humana, sem textão infinito
+FRONT_ANSWER_MAX_TOKENS = int(os.getenv("FRONT_ANSWER_MAX_TOKENS", "260") or 260)  # saída do modelo
+FRONT_KB_MAX_CHARS = int(os.getenv("FRONT_KB_MAX_CHARS", "2500") or 2500)          # entrada (snapshot)
+FRONT_REPLY_MAX_CHARS = int(os.getenv("FRONT_REPLY_MAX_CHARS", "900") or 900)      # corte final (anti-textão)
 
 _client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
@@ -62,6 +64,8 @@ Regras IMPORTANTES:
 - Quando a confiança for BAIXA, faça APENAS 1 pergunta prática.
 - Nada de listas longas ou menus artificiais.
 - Pode explicar melhor quando a intenção estiver clara.
+- Use o KB Snapshot como fonte da verdade do produto. Se não estiver no snapshot, NÃO invente.
+- Respostas: diretas, consultivas, com humor leve quando couber. Sem textão.
 
 Tópicos possíveis (escolha 1):
 AGENDA, PRECO, ORCAMENTO, VOZ, SOCIAL, OTHER
@@ -83,7 +87,7 @@ Fechamento:
 # -----------------------------
 # Função principal
 # -----------------------------
-def handle(*, user_text: str, state_summary: Dict[str, Any]) -> Dict[str, Any]:
+def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = "") -> Dict[str, Any]:
     """
     Entrada:
       - user_text: texto do usuário
@@ -102,6 +106,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any]) -> Dict[str, Any]:
 
     ai_turns = int(state_summary.get("ai_turns") or 0)
 
+    kb_snapshot = (kb_snapshot or "").strip()
+    if kb_snapshot:
+        kb_snapshot = kb_snapshot[:FRONT_KB_MAX_CHARS]
+
     # Mensagens curtas para controle de custo
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -112,6 +120,11 @@ Mensagem do usuário:
 \"\"\"{user_text}\"\"\"
 
 Turno atual: {ai_turns}
+
+KB Snapshot (fonte da verdade, compacto; não invente fora disso):
+\"\"\"
+{kb_snapshot}
+\"\"\"
 
 Responda em JSON estrito no formato:
 
@@ -133,7 +146,7 @@ Responda em JSON estrito no formato:
         resp = _client.chat.completions.create(
             model=MODEL,
             temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
+            max_tokens=FRONT_ANSWER_MAX_TOKENS,
             messages=messages,
         )
 
@@ -159,7 +172,7 @@ Responda em JSON estrito no formato:
         name_use = data.get("nameUse") or "none"
 
         out = {
-            "replyText": reply_text,
+            "replyText": reply_text[:FRONT_REPLY_MAX_CHARS].rstrip(),
             "understanding": {
                 "topic": topic,
                 "confidence": confidence,
