@@ -62,6 +62,65 @@ _LAST_NAME_SPOKEN_AT: Dict[str, float] = {}
 # Memória em-processo para VENDAS (cadência separada: fechamento pode repetir nome sem esperar 10min)
 _LAST_SALES_NAME_SPOKEN_AT: Dict[str, float] = {}
 
+# ==========================================================
+# UX: gate de uso do nome no ÁUDIO (IA sinaliza; código autoriza)
+# - Texto NÃO leva nome por padrão (produto).
+# - Áudio pode levar nome com cadência (sem “Roberto, Roberto…”).
+# ==========================================================
+_LAST_NAME_TEXT_USED: Dict[str, str] = {}   # wa_key -> "roberto" (lower)
+
+def _maybe_name_prefix(
+    *,
+    tts_text: str,
+    name_use: str,
+    display_name: str,
+    wa_key_effective: str,
+) -> tuple[str, bool]:
+    """
+    Retorna (tts_text_com_prefixo, name_used).
+    Regras:
+    - Só aplica se IA pediu (name_use != 'none')
+    - Só aplica se tiver display_name e wa_key_effective
+    - Cadência por gap (env) + evita repetir nome já usado
+    - Não aplica se o nome já estiver no texto
+    """
+    try:
+        if not tts_text or not wa_key_effective:
+            return tts_text, False
+        nm = (display_name or "").strip()
+        if not nm:
+            return tts_text, False
+        nu = (name_use or "").strip().lower()
+        if not nu or nu == "none":
+            return tts_text, False
+
+        low = tts_text.lower()
+        if nm.lower() in low:
+            return tts_text, False
+
+        # Gap de segurança (default 6 min)
+        try:
+            gap = int(os.getenv("SALES_NAME_SPOKEN_MIN_GAP_SECONDS", "360") or "360")
+        except Exception:
+            gap = 360
+
+        now = time.time()
+        last_at = float(_LAST_NAME_SPOKEN_AT.get(wa_key_effective) or 0.0)
+        last_nm = str(_LAST_NAME_TEXT_USED.get(wa_key_effective) or "").strip().lower()
+        if (now - last_at) < float(gap):
+            return tts_text, False
+        if last_nm and last_nm == nm.lower():
+            return tts_text, False
+
+        out = f"{nm}, " + tts_text.lstrip()
+
+        _LAST_NAME_SPOKEN_AT[wa_key_effective] = now
+        _LAST_NAME_TEXT_USED[wa_key_effective] = nm.lower()
+        return out, True
+    except Exception:
+        return tts_text, False
+
+
 
 # Memória em-processo para "spice" (saudação do Firestore) com cadência
 _LAST_SPICE_AT = {}          # wa_key -> epoch seconds
@@ -120,7 +179,7 @@ def _mark_name_used(wa_key: str, name_use: str) -> None:
     except Exception:
         pass
 
-def _maybe_name_prefix(*, wa_key: str, display_name: str, base_text: str, understanding: dict) -> str:
+def _maybe_name_prefix_legacy(*, wa_key: str, display_name: str, base_text: str, understanding: dict) -> str:
     """Aplica nome no começo (raramente) conforme sinal da IA + regras mecânicas."""
     try:
         name_use = str((understanding or {}).get("name_use") or (understanding or {}).get("nameUse") or "").strip().lower()
@@ -2958,35 +3017,32 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                         # 🔒 Blindagem final: nunca começar com "Fala!"
                         tts_text = re.sub(r"^(fala+[\s,!\.\-–—]*)", "", (tts_text or "").strip(), flags=re.IGNORECASE).strip() or "Oi 🙂"
-                        # UX: nome só quando a IA pedir e o gate autorizar (evita 'metralhadora de nome')
+                        
+                        # ----------------------------------------------------------
+                        # Nome no ÁUDIO (gate): IA sinaliza via nameUse; código decide.
+                        # Texto NÃO leva nome por padrão.
+                        # ----------------------------------------------------------
+                        name_used = False
                         try:
-                            tts_text = _maybe_name_prefix(wa_key=str(wa_key or ""), display_name=str(display_name or ""), base_text=str(tts_text or ""), understanding=(understanding if isinstance(understanding, dict) else {}))
+                            if tts_text and wa_key_effective:
+                                tts_text, name_used = _maybe_name_prefix(
+                                    tts_text=str(tts_text or ""),
+                                    name_use=str(name_use or "none"),
+                                    display_name=str(display_name or ""),
+                                    wa_key_effective=str(wa_key_effective or ""),
+                                )
+                        except Exception:
+                            name_used = False
+
+                        # (opcional) debug leve do TTS
+                        try:
+                            if isinstance(ttsTextProbe, dict):
+                                ttsTextProbe["nameUsed"] = bool(name_used)
+                                ttsTextProbe["nameUse"] = str(name_use or "none")
+                                ttsTextProbe["leadName"] = str(display_name or "")
                         except Exception:
                             pass
 
-                        # UX (VENDAS): aplicar nome no ÁUDIO quando a IA sinaliza via wa_out.nameUse, com gate de cadência (mesmo sem uid)
-                        try:
-                            tts_text_base = str(tts_text or "")
-                            _under = (understanding if isinstance(understanding, dict) else {})
-                            _name_use_signal = str((wa_out or {}).get("nameUse") or _under.get("name_use") or "none").strip().lower()
-                            _contact_name = (
-                                str((wa_out or {}).get("leadName") or (wa_out or {}).get("displayName") or (display_name or "")).strip()
-                                or str((speaker_state or {}).get("displayName") or "").strip()
-                            ) or None
-                            tts_text, name_used = _maybe_apply_name_to_tts(
-                                text=tts_text_base,
-                                name_use=_name_use_signal,
-                                contact_name=_contact_name,
-                                speaker_state=speaker_state,
-                                now_ts=time.time(),
-                                min_gap_seconds=int(_SALES_NAME_MIN_GAP_SECONDS or 120),
-                            )
-                            # persist best-effort (mantém cadência entre requests)
-                            if name_used and wa_key:
-                                try:
-                                    _mark_name_used(str(wa_key or ""), str((wa_out or {}).get("nameUse") or ""))
-                                except Exception:
-                                    pass
                         except Exception:
                             pass
                         tts_text_final_used = tts_text
