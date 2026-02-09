@@ -2130,7 +2130,33 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             except Exception:
                 pass
 
-            # Normalização final (não muda comportamento): evita ia_first vazio
+            
+            # ----------------------------------------------------------
+            # Rota (front vs legacy) — para telemetria e "IA first"
+            # ----------------------------------------------------------
+            _route = ""
+            _is_front = False
+            try:
+                _route = str(wa_out.get("route") or "").strip().lower()
+                if not _route:
+                    # fallbacks possíveis
+                    _route = str(((audio_debug.get("waOutMeta") or {}) if isinstance(audio_debug.get("waOutMeta"), dict) else {}).get("route") or "").strip().lower()
+                _is_front = _route in ("front", "conversational_front", "conversationalfront")
+            except Exception:
+                _route = ""
+                _is_front = False
+
+            # Se veio do FRONT, evita carimbo de fallback do worker/legacy
+            try:
+                if _is_front and isinstance(understanding, dict):
+                    _src = str(understanding.get("source") or "").strip()
+                    _src_l = _src.lower()
+                    if (not _src) or _src_l.startswith("worker_fallback") or _src_l.startswith("fallback_") or _src_l.startswith("empty_reply"):
+                        understanding["source"] = "front"
+            except Exception:
+                pass
+
+# Normalização final (não muda comportamento): evita ia_first vazio
             try:
                 if isinstance(understanding, dict):
                     _ii = str(understanding.get("intent") or "").strip().upper()
