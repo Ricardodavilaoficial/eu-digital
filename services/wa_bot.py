@@ -497,6 +497,10 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
         # ----------------------------------------------------------
         # 🎯 GATE ÚNICO — Conversational Front (até MAX_AI_TURNS)
         # ----------------------------------------------------------
+        front_reason = ""
+        front_err = ""
+        front_attempted = False
+        front_out = None
         try:
             if CONVERSATIONAL_FRONT:
                 # leitura segura do contador
@@ -524,6 +528,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
                 if ai_turns < MAX_AI_TURNS:
                     try:
+                        front_attempted = True
                         from services.conversational_front import handle as _front_handle  # type: ignore
 
                         # Monta KB Snapshot compacto (Firestore->wa_bot) com teto.
@@ -534,6 +539,9 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "ai_turns": ai_turns,
                             "is_lead": True,
                             "name_hint": ctx.get("displayName") or ctx.get("leadName") or "",
+                            # Micro-contexto (best-effort). Se não vier, segue vazio.
+                            "last_intent": ctx.get("last_intent") or ctx.get("lastIntent") or "",
+                            "last_user_goal": ctx.get("last_user_goal") or ctx.get("lastUserGoal") or "",
                         }
 
                         # Compat: se o front aceitar kb_snapshot como arg, usamos.
@@ -550,15 +558,6 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 user_text=text or "",
                                 state_summary=state_summary,
                             ) or {}
-
-                        # incrementa contador SOMENTE se o front rodou
-                        try:
-                            from services.speaker_state import bump_ai_turns  # type: ignore
-                            if wa_key:
-                                bump_ai_turns(wa_key)
-                        except Exception:
-                            pass
-
                         # saída compatível com o worker
                         und = front_out.get("understanding") or {}
                         # espelha nextStep/shouldEnd dentro de understanding também (tolerante)
@@ -581,18 +580,73 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "ttsOwner": "worker",
                             # Telemetria leve (ignorada se o worker não usar)
                             "kbSnapshotSizeChars": len(kb_snapshot or ""),
+                            # Auditoria: mata a dúvida "quem respondeu?"
+                            "replySource": "front",
+                            # Custo (best-effort) vindo do front
+                            "tokenUsage": front_out.get("tokenUsage") or {},
                         }
 
                         # guard: texto vazio nunca passa nunca passa
                         if out["replyText"]:
+                            # incrementa contador SOMENTE se o front realmente respondeu
+                            try:
+                                from services.speaker_state import bump_ai_turns  # type: ignore
+                                if wa_key:
+                                    bump_ai_turns(wa_key)
+                            except Exception:
+                                pass
+                            try:
+                                logging.info(
+                                    "[WA_BOT][FRONT_OK] waKey=%s ai_turns=%s topic=%s kbChars=%s next=%s",
+                                    (wa_key or "")[:32],
+                                    ai_turns,
+                                    str((und or {}).get("topic") or (und or {}).get("intent") or "")[:24],
+                                    len(kb_snapshot or ""),
+                                    str(out.get("planNextStep") or "NONE"),
+                                )
+                            except Exception:
+                                pass
                             return out
-                    except Exception:
-                        # qualquer falha cai para o módulo B
-                        pass
+                        else:
+                            front_reason = "front_empty_reply"
+                    except Exception as e:
+                        front_reason = "front_exception"
+                        front_err = (str(e) or "exception")[:200]
+                        try:
+                            logging.exception(
+                                "[WA_BOT][FRONT_EXCEPTION] waKey=%s ai_turns=%s topicHint=%s kbChars=%s err=%s",
+                                (wa_key or "")[:32],
+                                ai_turns,
+                                (topic_hint or "")[:16],
+                                len((kb_snapshot or "")),
+                                front_err,
+                            )
+                        except Exception:
+                            pass
         except Exception:
             pass
 
-        # ----------------------------------------------------------
+        
+        # log único para nunca mais ficar ambíguo
+        try:
+            if not front_reason:
+                if not bool(CONVERSATIONAL_FRONT):
+                    front_reason = "front_disabled"
+                elif "ai_turns" in locals() and int(ai_turns) >= int(MAX_AI_TURNS):
+                    front_reason = "front_max_turns"
+                else:
+                    front_reason = "unknown"
+            logging.info(
+                "[WA_BOT][FRONT_FALLBACK] reason=%s waKey=%s ai_turns=%s err=%s",
+                (front_reason or "unknown"),
+                (wa_key or "")[:32] if "wa_key" in locals() else "",
+                ai_turns if "ai_turns" in locals() else "?",
+                (front_err or "")[:120],
+            )
+        except Exception:
+            pass
+
+# ----------------------------------------------------------
         # ⬇️ Módulo B (atual): sales_lead (modo econômico)
         # ----------------------------------------------------------
         try:
@@ -614,7 +668,16 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
             # ✅ Propaga o pacote completo do Sales (kbContext/kind/ttsOwner/etc)
             # e deixa o worker ser o DONO do áudio (evita duplicidade de TTS).
-            out: Dict[str, Any] = {"ok": True, "route": "sales_lead", "replyText": reply}
+            out: Dict[str, Any] = {
+                "ok": True,
+                "route": "sales_lead",
+                "replyText": reply,
+                "replySource": "sales_lead",
+                # 🔎 Telemetria do front (pra provar se tentou e por que caiu)
+                "frontAttempted": bool(front_attempted),
+                "frontReason": str(front_reason or "").strip(),
+                "frontErr": str(front_err or "").strip(),
+            }
             if isinstance(reply_obj, dict):
                 # copia metadados úteis (sem sobrescrever replyText final já validado)
                 for k in (

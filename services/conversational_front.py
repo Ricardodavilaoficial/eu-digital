@@ -61,6 +61,9 @@ Objetivo:
 Regras IMPORTANTES:
 - NUNCA escreva o nome da pessoa no texto.
 - Se quiser usar o nome, apenas sinalize via "nameUse".
+- Regra de ouro: responda PRIMEIRO a pergunta do usuário de forma direta (sim/não ou a informação pedida) em 1 frase.
+- Só depois (se fizer sentido), complemente com 1 frase curta e faça no máximo 1 pergunta prática para avançar.
+- Evite começar com um "pitch" padrão quando o usuário fez uma pergunta objetiva.
 - Quando a confiança for BAIXA, faça APENAS 1 pergunta prática.
 - Nada de listas longas ou menus artificiais.
 - Pode explicar melhor quando a intenção estiver clara.
@@ -82,6 +85,10 @@ Fechamento:
 - Se o usuário pedir link, site, como assinar ou ativar:
   - nextStep = SEND_LINK
   - shouldEnd = true
+
+Exemplo rápido de estilo:
+Usuário: "Posso tirar dúvidas por aqui?"
+Você: "Sim — pode mandar suas dúvidas por aqui mesmo. Quer falar de agenda, preço ou ativação?"
 """
 
 # -----------------------------
@@ -106,6 +113,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     ai_turns = int(state_summary.get("ai_turns") or 0)
 
+
+    last_intent = str(state_summary.get("last_intent") or "").strip().upper()
+    last_user_goal = str(state_summary.get("last_user_goal") or "").strip()
     kb_snapshot = (kb_snapshot or "").strip()
     if kb_snapshot:
         kb_snapshot = kb_snapshot[:FRONT_KB_MAX_CHARS]
@@ -121,6 +131,10 @@ Mensagem do usuário:
 
 Turno atual: {ai_turns}
 
+
+Contexto curto (se existir; não invente):
++- last_intent: {last_intent or "NONE"}
++- last_user_goal: {last_user_goal or "NONE"}
 KB Snapshot (fonte da verdade, compacto; não invente fora disso):
 \"\"\"
 {kb_snapshot}
@@ -149,6 +163,21 @@ Responda em JSON estrito no formato:
             max_tokens=FRONT_ANSWER_MAX_TOKENS,
             messages=messages,
         )
+
+        # -----------------------------
+        # Uso de tokens (telemetria)
+        # -----------------------------
+        token_usage = {}
+        try:
+            u = getattr(resp, "usage", None)
+            if u:
+                token_usage = {
+                    "input_tokens": int(getattr(u, "prompt_tokens", 0) or 0),
+                    "output_tokens": int(getattr(u, "completion_tokens", 0) or 0),
+                    "total_tokens": int(getattr(u, "total_tokens", 0) or 0),
+                }
+        except Exception:
+            token_usage = {}
 
         raw = resp.choices[0].message.content.strip()
         # -----------------------------
@@ -196,19 +225,22 @@ Responda em JSON estrito no formato:
             "replySource": "front",
             # Probe leve do snapshot (ajuda a ver se o front "passou fome")
             "kbSnapshotSizeChars": len(kb_snapshot or ""),
+            # Telemetria de custo (best-effort)
+            "tokenUsage": token_usage,
         }
 
         # -----------------------------
         # Observabilidade leve
         # -----------------------------
         logging.info(
-            "[CONVERSATIONAL_FRONT] ai_turns=%s topic=%s confidence=%s nextStep=%s shouldEnd=%s kbChars=%s",
+            "[CONVERSATIONAL_FRONT] ai_turns=%s topic=%s confidence=%s nextStep=%s shouldEnd=%s kbChars=%s tok=%s",
             ai_turns,
             topic,
             confidence,
             next_step,
             should_end,
             len(kb_snapshot or ""),
+            token_usage or {},
         )
 
         return out
