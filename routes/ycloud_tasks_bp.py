@@ -2174,16 +2174,28 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 pass
             # Observabilidade IA-first (fallback): garante campos básicos no understanding
             try:
+                # Se o wa_bot retornou FRONT, o worker NÃO pode carimbar fallback no entendimento.
+                _route_hint = ""
+                try:
+                    _route_hint = (wa_out.get("route") or wa_out.get("replySource") or wa_out.get("route_hint") or "").strip().lower()
+                except Exception:
+                    _route_hint = ""
+                _is_front = _route_hint in ("front", "conversational_front", "conversationalfront")
+
                 if not isinstance(understanding, dict):
                     understanding = {}
-                if not understanding.get("source"):
+
+                # Só marque fallback quando NÃO for FRONT
+                if not understanding.get("source") and (not _is_front):
                     understanding["source"] = "worker_fallback_from_wa_out"
+
                 if not understanding.get("intent"):
                     understanding["intent"] = intent_final or ""
                 if not understanding.get("next_step"):
                     understanding["next_step"] = plan_next_step or ""
                 if eventType_missing_fallback:
                     understanding["eventType_missing_fallback"] = True
+
             except Exception:
                 pass
 
@@ -2406,13 +2418,15 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         try:
             if isinstance(understanding, dict) and understanding:
                 logger.info(
-                    "[tasks] ia_first intent=%s conf=%s risk=%s depth=%s next=%s source=%s",
+                    "[tasks] ia_first intent=%s conf=%s risk=%s depth=%s next=%s source=%s front=%s route_hint=%s",
                     str(understanding.get("intent") or ""),
                     str(understanding.get("confidence") or ""),
                     str(understanding.get("risk") or ""),
                     str(understanding.get("depth") or ""),
                     str(understanding.get("next_step") or ""),
                     str(understanding.get("source") or ""),
+                    str(_is_front),
+                    str(_route_hint),
                 )
         except Exception:
             pass
