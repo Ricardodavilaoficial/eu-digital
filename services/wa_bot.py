@@ -284,6 +284,8 @@ def _build_front_kb_snapshot(topic: str) -> str:
         ("tone_rules", "TOM (tone_rules)"),
         ("behavior_rules", "REGRAS DE VENDEDOR (behavior_rules)"),
         ("brand_guardrails", "GUARDRAILS (brand_guardrails)"),
+        ("product_truth_v1", "VERDADE DO PRODUTO (product_truth_v1)"),
+        ("answer_playbook_v1", "PLAYBOOK DE RESPOSTA (answer_playbook_v1)"),
         ("product_pitch", "PITCH OFICIAL (product_pitch)"),
         ("closing_guidance", "FECHAMENTO (closing_guidance)"),
         ("operational_capabilities", "CAPACIDADES (operational_capabilities)"),
