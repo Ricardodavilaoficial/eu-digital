@@ -978,9 +978,11 @@ def process_change(
             msgs = value.get("messages") or []
             msg0 = msgs[0] if msgs else {}
             msg_type = (msg0.get("type") or "").strip().lower()
+            wa_key_local = "".join(ch for ch in (from_id or "") if ch.isdigit())
             ctx_local = {
                 "from_e164": from_id or "",
                 "wa_id": from_id or "",  # ajuda o reply_to_text a formar sender_id
+                "waKey": wa_key_local or (from_id or ""),
                 "msg_type": msg_type,
                 "wamid": (msg0.get("id") or "").strip(),
                 "event_key": (change or {}).get("event_key") or (change or {}).get("eventKey") or "",
@@ -990,29 +992,24 @@ def process_change(
                 "route_hint": "vendas",
             }
         except Exception:
-            ctx_local = {"from_e164": from_id or "", "app_tag": app_tag or ""}
+            wa_key_local = "".join(ch for ch in (from_id or "") if ch.isdigit())
+            ctx_local = {
+                "from_e164": from_id or "",
+                "wa_id": from_id or "",
+                "waKey": wa_key_local or (from_id or ""),
+                "msg_type": "",
+                "app_tag": app_tag or "",
+                "route_hint": "vendas",
+            }
 
-        # ✅ Unificar núcleo de VENDAS: mesma lógica do reply_to_text(...)
-        # - extrai texto
-        # - monta ctx
-        # - sales_lead.generate_reply(text, ctx)
-        # Mantém handle_sales_lead(change) como fallback/compat.
+        # ✅ Unificar núcleo de VENDAS: passa SEMPRE pelo reply_to_text(...)
+        # Isso garante que o Módulo 1 (Conversational Front) seja o "dono" nos 5 primeiros turnos.
         try:
-            from services.bot_handlers import sales_lead  # type: ignore
-
-            reply_obj = sales_lead.generate_reply(text=_body or "", ctx=ctx_local)
-
-            lead_name = ""
-            reply_text = ""
-            if isinstance(reply_obj, dict):
-                reply_text = str((reply_obj or {}).get("replyText") or "").strip()
-                lead_name = str((reply_obj or {}).get("name") or (reply_obj or {}).get("leadName") or "").strip()
-            else:
-                reply_text = str(reply_obj or "").strip()
-
+            out = reply_to_text("", _body or "", ctx_local) or {}
+            reply_text = str(out.get("replyText") or "").strip()
             if not reply_text:
-                _log_sales_lead_fallback(ctx_local, reason="empty_reply")
-                reply_text = _sales_lead_neutral_fallback(lead_name)
+                _log_sales_lead_fallback(ctx_local, reason="empty_reply_from_reply_to_text")
+                reply_text = _sales_lead_neutral_fallback(str(out.get("leadName") or "").strip())
 
             if reply_text and effective_send is not None and from_id:
                 effective_send(from_id, reply_text)
