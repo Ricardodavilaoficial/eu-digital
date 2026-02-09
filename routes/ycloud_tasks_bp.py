@@ -3062,8 +3062,9 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             if concept_generated:
                                 tts_text = _clean_for_speech(tts_text)
                             else:
-                                tts_text = _make_tts_text(tts_text, name_to_use_for_make)
-
+                                _route_hint = (wa_out.get("route") or wa_out.get("replySource") or wa_out.get("route_hint") or wa_out.get("replySource") or "").strip().lower()
+                                _is_front = _route_hint in ("front", "conversational_front", "conversationalfront")
+                                tts_text = _make_tts_text(tts_text, name_to_use_for_make, add_acervo_cta=(not _is_front))
                             # 5) IA reescreve para fala humana (agora com persona do Firestore)
                             if _SUPPORT_TTS_SUMMARY_MODE == "on" and (not is_sales):
                                 rewritten = _openai_rewrite_for_speech(tts_text, name_to_use_for_make)
