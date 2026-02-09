@@ -278,14 +278,67 @@ def _build_front_kb_snapshot(topic: str) -> str:
     kb = src.get("kb") or {}
     pr = src.get("pricing") or {}
 
+    def _pick_dict(d: Any, keys: list[str], max_lines: int = 24) -> str:
+        """Extrai poucos campos (compacto) de um dict do Firestore, sem dump gigante."""
+        if not isinstance(d, dict):
+            return ""
+        lines = []
+        for k in keys:
+            v = d.get(k)
+            if v is None:
+                continue
+            if isinstance(v, list):
+                picked = []
+                for it in v[:6]:
+                    s = _safe_str(it)
+                    if s:
+                        picked.append(s)
+                if picked:
+                    lines.append(f"- {k}: " + " | ".join(picked))
+            else:
+                s = _safe_str(v)
+                if s:
+                    lines.append(f"- {k}: {s}")
+            if len(lines) >= max_lines:
+                break
+        return "\n".join(lines).strip()
+
+    # Blocos “verdade do produto” e “playbook” — compactos (não estourar teto)
+    truth_block = ""
+    try:
+        truth = kb.get("product_truth_v1")
+        truth_txt = _pick_dict(
+            truth,
+            ["one_liner", "core_rule", "does_well", "limits", "fit_question"],
+            max_lines=18,
+        )
+        if truth_txt:
+            truth_block = "[VERDADE DO PRODUTO]\n" + truth_txt
+    except Exception:
+        truth_block = ""
+
+    playbook_block = ""
+    try:
+        pb = kb.get("answer_playbook_v1")
+        pb_txt = _pick_dict(pb, ["pattern"], max_lines=10)
+        ms = pb.get("micro_scenes") if isinstance(pb, dict) else None
+        ms_txt = _pick_dict(
+            ms,
+            ["food_example", "health_example", "tech_support_example"],
+            max_lines=10,
+        )
+        joined = "\n".join([t for t in [pb_txt, ms_txt] if t]).strip()
+        if joined:
+            playbook_block = "[PLAYBOOK DE RESPOSTA]\n" + joined
+    except Exception:
+        playbook_block = ""
+
     # KIT_BASE (sempre)
     kit_blocks = []
     for key, title in (
         ("tone_rules", "TOM (tone_rules)"),
         ("behavior_rules", "REGRAS DE VENDEDOR (behavior_rules)"),
         ("brand_guardrails", "GUARDRAILS (brand_guardrails)"),
-        ("product_truth_v1", "VERDADE DO PRODUTO (product_truth_v1)"),
-        ("answer_playbook_v1", "PLAYBOOK DE RESPOSTA (answer_playbook_v1)"),
         ("product_pitch", "PITCH OFICIAL (product_pitch)"),
         ("closing_guidance", "FECHAMENTO (closing_guidance)"),
         ("operational_capabilities", "CAPACIDADES (operational_capabilities)"),
@@ -389,14 +442,16 @@ def _build_front_kb_snapshot(topic: str) -> str:
         feat_block = ""
 
     # Montagem com prioridade + corte
-    # 1) Guardrails + Pitch (KIT_BASE)
+    # IMPORTANTE: tópico primeiro para não ser truncado quando o KIT_BASE encosta no teto.
     parts = []
-    if kit_base:
-        parts.append(kit_base)
-    # 2) Bloco do tópico
     if topic_block:
         parts.append(topic_block)
-    # 3) Features (o que sobrar)
+    if truth_block:
+        parts.append(truth_block)
+    if playbook_block:
+        parts.append(playbook_block)
+    if kit_base:
+        parts.append(kit_base)
     if feat_block:
         parts.append(feat_block)
 
