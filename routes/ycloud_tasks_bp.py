@@ -3557,6 +3557,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
 
                 # --- CTA GATING (IA soberana) ---
+                cta_reason = locals().get("cta_reason") or ""
+
                 try:
                     ia_next_step = str((understanding or {}).get("next_step") or "").strip().upper()
                 except Exception:
@@ -3589,12 +3591,12 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 except Exception:
                     pass
                 # Telemetria: CTA bloqueado quando a IA não pediu SEND_LINK
+                # (não cria log extra; apenas carimba no outbox principal deste evento)
                 try:
-                    if (not force_send_link_text) and (not bool(uid)) and send_text and ia_next_step != "SEND_LINK":
-                        try:
-                            _wa_log_outbox_deterministic(route="cta_skipped", to_e164=from_e164, reply_text="", sent_ok=True)
-                        except Exception:
-                            pass
+                    if (not force_send_link_text) and (not bool(uid)) and send_text and (not bool(explicit_link_request)) and ia_next_step != "SEND_LINK":
+                        # keep stable string for auditoria
+                        if not (locals().get("cta_reason") or ""):
+                            cta_reason = "cta_disabled_next_step_none"
                 except Exception:
                     pass
 
@@ -3781,6 +3783,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     "iaSource": (_ia_src or "")[:40],
                     "iaSovereign": bool(_ia_sov),
                     "fallbackReason": ((_ia_src or "")[:40] if not _ia_sov else ""),
+                    "cta_reason": str(locals().get("cta_reason") or "")[:80],
                     "action": (_ia_next or "")[:40],
                     "deliveryMode": ("site_link" if (_ia_next == "SEND_LINK") else ""),
                     "spokenText": (tts_text_final_used or "")[:600],
