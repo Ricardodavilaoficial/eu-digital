@@ -1115,7 +1115,7 @@ def _openai_generate_concept_speech(question: str, kb_context: str, display_name
         return ""
 
 
-def _make_tts_text(reply_text: str, display_name: str) -> str:
+def _make_tts_text(reply_text: str, display_name: str, *, add_acervo_cta: bool = True) -> str:
     """
     Constrói o texto falado (TTS) com tom humano:
     - abre com nome quando disponível e quando não há saudação
@@ -1138,7 +1138,8 @@ def _make_tts_text(reply_text: str, display_name: str) -> str:
     # Porta aberta curta (não vira vendedor)
     if not re.search(r"[.!?]\s*$", base):
         base = base.strip() + "."
-    base = base + " Se quiser, me diz o que você quer guardar no acervo: texto, foto ou PDF?"
+    if add_acervo_cta:
+        base = base + " Se quiser, me diz o que você quer guardar no acervo: texto, foto ou PDF?"
     return base.strip()
 
 
@@ -2249,11 +2250,18 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # ==========================================================
             spoken_text = ""
             try:
-                spoken_text = (
+                _route_hint = (wa_out.get("route") or wa_out.get("replySource") or wa_out.get("route_hint") or "").strip().lower()
+                _is_front = _route_hint in ("front", "conversational_front", "conversationalfront")
+
+                _spoken_from_bot = (
                     (tts_text_from_bot or "").strip()
                     or str(wa_out.get("spokenText") or "").strip()
-                    or (reply_text or "").strip()
                 )
+                if _spoken_from_bot:
+                    spoken_text = _spoken_from_bot
+                else:
+                    # Só compõe quando não veio spoken pronto
+                    spoken_text = _make_tts_text((reply_text or "").strip(), display_name, add_acervo_cta=(not _is_front))
             except Exception:
                 spoken_text = (reply_text or "").strip()
 
