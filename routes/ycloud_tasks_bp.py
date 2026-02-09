@@ -1408,11 +1408,20 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 "wamid": str(wamid or "")[:180],
                 "to": str(to_e164 or "")[:40],
                 "route": str(route or "")[:80],
+                "cta_reason": "",
                 "msgType": str(msg_type or "")[:40],
                 "chars": int(len(reply_text or "")),
                 "sent_ok": bool(sent_ok),
                 "service": "ycloud_inbound_worker",
             }
+            try:
+                _r = str(route or "").strip()
+                if _r == "send_text_site_cta":
+                    payload_out["cta_reason"] = "next_step_send_link"
+                elif _r == "cta_skipped":
+                    payload_out["cta_reason"] = "cta_disabled_next_step_none"
+            except Exception:
+                pass
             try:
                 payload_out.update(_outbox_rich_enxuto(_sent_via=str(route or ""), _reply_text=str(reply_text or "")))
             except Exception:
@@ -3491,10 +3500,21 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     logger.exception("[tasks] lead: falha send_text (send_link_after_audio)")
 
 
+                # --- CTA GATING (IA soberana) ---
+                try:
+                    ia_next_step = str((understanding or {}).get("next_step") or "").strip().upper()
+                except Exception:
+                    ia_next_step = ""
+
                 # UX (produto): quando houver ÁUDIO em VENDAS, sempre mandar 1 CTA simples por TEXTO
                 # (clicável) — mas com cadência, pra não virar spam.
                 try:
-                    if (not force_send_link_text) and (not bool(uid)) and send_text:
+                    if (
+                        (not force_send_link_text)
+                        and (not bool(uid))
+                        and send_text
+                        and ia_next_step == "SEND_LINK"
+                    ):
                         try:
                             gap_cta = int(os.getenv("SALES_SITE_CTA_MIN_GAP_SECONDS", "600") or "600")
                         except Exception:
@@ -3512,6 +3532,16 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             _LAST_SALES_SITE_CTA_AT[wa_key_effective] = now
                 except Exception:
                     pass
+                # Telemetria: CTA bloqueado quando a IA não pediu SEND_LINK
+                try:
+                    if (not force_send_link_text) and (not bool(uid)) and send_text and ia_next_step != "SEND_LINK":
+                        try:
+                            _wa_log_outbox_deterministic(route="cta_skipped", to_e164=from_e164, reply_text="", sent_ok=True)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
 
 
                 # Pacote 2 (regra): se foi "decisão de assinar" por ÁUDIO, manda TEXTO com link também,
