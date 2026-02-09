@@ -1399,7 +1399,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         return out
 
     # OUTBOX (determinístico): sempre grava 1 doc do envio (sem depender de _try_log_outbox_immediate)
-    def _wa_log_outbox_deterministic(*, route: str, to_e164: str, reply_text: str, sent_ok: bool) -> None:
+    def _wa_log_outbox_deterministic(*, route: str, to_e164: str, reply_text: str, sent_ok: bool, extra: dict | None = None) -> None:
         try:
             _doc_out = _sha1_id(f"{event_key}:out:{to_e164}:{int(time.time())}")
             payload_out = {
@@ -1424,6 +1424,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 pass
             try:
                 payload_out.update(_outbox_rich_enxuto(_sent_via=str(route or ""), _reply_text=str(reply_text or "")))
+            except Exception:
+                pass
+
+
+            try:
+                if isinstance(extra, dict) and extra:
+                    payload_out.update(extra)
             except Exception:
                 pass
             _db().collection("platform_wa_outbox_logs").document(_doc_out).set(payload_out, merge=True)
@@ -1965,11 +1972,19 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     # (evita source=null no waOutMeta)
                     try:
                         if isinstance(wa_out, dict) and isinstance(audio_debug, dict):
+                            # preferência: _debug.source -> understanding.source -> inferido por route_hint
+                            _u_src = ""
+                            try:
+                                _u = wa_out.get("understanding")
+                                if isinstance(_u, dict):
+                                    _u_src = str(_u.get("source") or "").strip()
+                            except Exception:
+                                _u_src = ""
                             dbg = wa_out.get("_debug")
                             if isinstance(dbg, dict):
                                 _src = (dbg.get("source") or "").strip()
                                 if not _src:
-                                    _src = "sales_lead" if str(route_hint or "").strip().lower() == "sales" else "wa_bot"
+                                    _src = _u_src or ("sales_lead" if str(route_hint or "").strip().lower() == "sales" else "wa_bot")
                                 audio_debug["source"] = _src
                                 audio_debug["planner"] = {
                                     "intent": dbg.get("intent") or "",
@@ -1978,7 +1993,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 }
                             else:
                                 # nunca loga como "unknown"; se não veio _debug, inferimos pelo route_hint
-                                audio_debug["source"] = audio_debug.get("source") or ("sales_lead" if str(route_hint or "").strip().lower() == "sales" else "wa_bot")
+                                audio_debug["source"] = (
+                                    audio_debug.get("source")
+                                    or _u_src
+                                    or ("sales_lead" if str(route_hint or "").strip().lower() == "sales" else "wa_bot")
+                                )
                     except Exception:
                         pass
 
@@ -2289,7 +2308,20 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
             # marca quem gerou (planner/composer/fallback/worker etc.)
             if isinstance(audio_debug, dict) and isinstance(dbg, dict):
-                audio_debug["source"] = dbg.get("source") or audio_debug.get("source") or ("sales_lead" if (route_hint == "sales") else "wa_bot")
+                _dbg_src = str(dbg.get("source") or "").strip()
+                _u_src2 = ""
+                try:
+                    _u2 = wa_out.get("understanding") if isinstance(wa_out, dict) else None
+                    if isinstance(_u2, dict):
+                        _u_src2 = str(_u2.get("source") or "").strip()
+                except Exception:
+                    _u_src2 = ""
+                audio_debug["source"] = (
+                    _dbg_src
+                    or str(audio_debug.get("source") or "").strip()
+                    or _u_src2
+                    or ("sales_lead" if (route_hint == "sales") else "wa_bot")
+                )
                 audio_debug["planner"] = {
                     "intent": dbg.get("intent") or "",
                     "next_step": dbg.get("next_step") or "",
@@ -2312,6 +2344,30 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 force_send_link_text = True
         except Exception:
             force_send_link_text = False
+
+
+        # ==========================================================
+        # CTA Guard (produto): NÃO mandar link automático
+        # - Só permite CTA/link se:
+        #   a) planNextStep == SEND_LINK  (force_send_link_text=True), ou
+        #   b) o lead pediu link explicitamente ("me manda o link", "site", "onde assina", etc.)
+        # ==========================================================
+        explicit_link_request = False
+        try:
+            _trL = str(transcript or text_in or "").strip().lower()
+            if _trL:
+                link_words = (
+                    "me manda o link", "manda o link", "me envia o link", "envia o link",
+                    "o link", "qual o link", "tem o link",
+                    "site", "site de vocês", "site oficial",
+                    "onde assina", "como assino", "como assinar",
+                    "onde contratar", "como contratar",
+                    "procedimento pra assinar", "procedimento para assinar",
+                    "assinar", "assinatura", "contratar",
+                )
+                explicit_link_request = any(w in _trL for w in link_words)
+        except Exception:
+            explicit_link_request = False
 
 
         # SENTINELA: prova que gerou (ou não) conteúdo
@@ -3488,7 +3544,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         if _rtL:
                             _okL, _ = send_text(from_e164, _rtL)
                             try:
-                                _wa_log_outbox_deterministic(route="send_text_force_link", to_e164=from_e164, reply_text=(_rtL or ""), sent_ok=bool(_okL))
+                                _wa_log_outbox_deterministic(route="send_text_force_link", to_e164=from_e164, reply_text=(_rtL or ""), sent_ok=bool(_okL), extra={"ctaReason": "next_step_send_link"})
                             except Exception:
                                 pass
                             sent_ok = sent_ok or bool(_okL)
@@ -3513,7 +3569,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         (not force_send_link_text)
                         and (not bool(uid))
                         and send_text
-                        and ia_next_step == "SEND_LINK"
+                        and bool(explicit_link_request)
                     ):
                         try:
                             gap_cta = int(os.getenv("SALES_SITE_CTA_MIN_GAP_SECONDS", "600") or "600")
@@ -3525,7 +3581,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             _rtC = "https://www.meirobo.com.br"
                             _okC, _ = send_text(from_e164, _rtC)
                             try:
-                                _wa_log_outbox_deterministic(route="send_text_site_cta", to_e164=from_e164, reply_text=(_rtC or ""), sent_ok=bool(_okC))
+                                _wa_log_outbox_deterministic(route="send_text_site_cta", to_e164=from_e164, reply_text=(_rtC or ""), sent_ok=bool(_okC), extra={"ctaReason": "explicit_user_request"})
                             except Exception:
                                 pass
                             sent_ok = sent_ok or bool(_okC)
@@ -3630,6 +3686,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         dbg = wa_out.get("_debug")
                         if isinstance(dbg, dict):
                             _src = str(dbg.get("source") or "").strip()
+                        if not _src:
+                            try:
+                                _u = wa_out.get("understanding")
+                                if isinstance(_u, dict):
+                                    _src = str(_u.get("source") or "").strip()
+                            except Exception:
+                                _src = ""
                     if not _src:
                         _src = "sales_lead" if str(route_hint or "").strip().lower() == "sales" else "wa_bot"
 
