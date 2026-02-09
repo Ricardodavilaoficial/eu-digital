@@ -64,11 +64,15 @@ Regras IMPORTANTES:
 - Regra de ouro: responda PRIMEIRO a pergunta do usuário de forma direta (sim/não ou a informação pedida) em 1 frase.
 - Só depois (se fizer sentido), complemente com 1 frase curta e faça no máximo 1 pergunta prática para avançar.
 - Evite começar com um "pitch" padrão quando o usuário fez uma pergunta objetiva.
+- Se a pergunta for do tipo "posso/perguntar por aqui/onde eu pergunto/tem como?", responda com "Sim" (ou "Pode") antes de qualquer explicação.
+- Peça o nome apenas se isso realmente ajudar (lead novo e ainda sem nome). Não pergunte nome em toda mensagem.
+- Se o lead cumprimentar ("olá", "bom dia", "tudo bem"), responda o cumprimento em 1 frase curta e já vá direto ao ponto.
 - Quando a confiança for BAIXA, faça APENAS 1 pergunta prática.
 - Nada de listas longas ou menus artificiais.
 - Pode explicar melhor quando a intenção estiver clara.
 - Use o KB Snapshot como fonte da verdade do produto. Se não estiver no snapshot, NÃO invente.
 - Respostas: diretas, consultivas, com humor leve quando couber. Sem textão.
+- Responda sempre em PT-BR.
 
 Tópicos possíveis (escolha 1):
 AGENDA, PRECO, ORCAMENTO, VOZ, SOCIAL, OTHER
@@ -113,12 +117,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     ai_turns = int(state_summary.get("ai_turns") or 0)
 
-
     last_intent = str(state_summary.get("last_intent") or "").strip().upper()
     last_user_goal = str(state_summary.get("last_user_goal") or "").strip()
+    name_hint = str(state_summary.get("name_hint") or "").strip()
+    is_lead = bool(state_summary.get("is_lead") or False)
     kb_snapshot = (kb_snapshot or "").strip()
     if kb_snapshot:
         kb_snapshot = kb_snapshot[:FRONT_KB_MAX_CHARS]
+
+    # Sinal simples para o modelo: já sabemos o nome?
+    has_name = bool(name_hint)
 
     # Mensagens curtas para controle de custo
     messages = [
@@ -131,16 +139,18 @@ Mensagem do usuário:
 
 Turno atual: {ai_turns}
 
-
 Contexto curto (se existir; não invente):
-+- last_intent: {last_intent or "NONE"}
-+- last_user_goal: {last_user_goal or "NONE"}
+- is_lead: {"true" if is_lead else "false"}
+- has_name: {"true" if has_name else "false"}
+- last_intent: {last_intent or "NONE"}
+- last_user_goal: {last_user_goal or "NONE"}
+
 KB Snapshot (fonte da verdade, compacto; não invente fora disso):
 \"\"\"
 {kb_snapshot}
 \"\"\"
 
-Responda em JSON estrito no formato:
+Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
 
 {{
   "replyText": "...",
@@ -205,9 +215,26 @@ Responda em JSON estrito no formato:
         if topic not in TOPICS:
             topic = "OTHER"
 
-        next_step = data.get("nextStep") or "NONE"
+        next_step = str(data.get("nextStep") or "NONE").strip().upper()
+        if next_step not in ("NONE", "SEND_LINK"):
+            next_step = "NONE"
         should_end = bool(data.get("shouldEnd"))
-        name_use = data.get("nameUse") or "none"
+        name_use = str(data.get("nameUse") or "none").strip().lower()
+        if name_use not in ("none", "greet", "empathy", "clarify"):
+            name_use = "none"
+
+        # Normaliza confidence
+        if confidence not in ("high", "medium", "low"):
+            confidence = "low"
+
+        # Fail-safe: nunca devolver reply vazio (evita saída "muda" em produção)
+        if not reply_text:
+            reply_text = "Sim — pode mandar suas dúvidas por aqui mesmo. Quer falar de agenda, preço ou ativação?"
+            topic = "OTHER"
+            confidence = "low"
+            next_step = "NONE"
+            should_end = False
+            name_use = "clarify"
 
         out = {
             "replyText": reply_text[:FRONT_REPLY_MAX_CHARS].rstrip(),
