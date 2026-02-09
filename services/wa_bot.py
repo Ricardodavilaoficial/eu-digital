@@ -588,6 +588,16 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
                         # guard: texto vazio nunca passa nunca passa
                         if out["replyText"]:
+                            # 🔒 Mata a confusão de "IA primeiro vs fallback":
+                            # Se o FRONT respondeu, isso é IA-first por definição.
+                            out["aiMeta"] = {
+                                "ia_first": True,
+                                # Mantém compat com telemetria esperada no worker/outbox
+                                "iaSource": str((front_out.get("iaSource") or "box_decider")),
+                                "replySource": "front",
+                                "route": "conversational_front",
+                                "fallbackReason": "",
+                            }
                             # incrementa contador SOMENTE se o front realmente respondeu
                             try:
                                 from services.speaker_state import bump_ai_turns  # type: ignore
