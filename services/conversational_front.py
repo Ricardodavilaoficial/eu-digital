@@ -22,7 +22,14 @@ import logging
 from typing import Dict, Any
 
 import os
-from openai import OpenAI
+try:
+    # SDK novo (openai>=1.x)
+    from openai import OpenAI  # type: ignore
+    _HAS_OPENAI_CLIENT = True
+except Exception:
+    OpenAI = None  # type: ignore
+    _HAS_OPENAI_CLIENT = False
+import openai  # compat SDK antigo
 
 # -----------------------------
 # Configuração fixa (produto)
@@ -33,8 +40,7 @@ FRONT_ANSWER_MAX_TOKENS = int(os.getenv("FRONT_ANSWER_MAX_TOKENS", "260") or 260
 FRONT_KB_MAX_CHARS = int(os.getenv("FRONT_KB_MAX_CHARS", "2500") or 2500)          # entrada (snapshot)
 FRONT_REPLY_MAX_CHARS = int(os.getenv("FRONT_REPLY_MAX_CHARS", "900") or 900)      # corte final (anti-textão)
 
-_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
+_client = OpenAI() if _HAS_OPENAI_CLIENT else None
 # -----------------------------
 # Enum fechado de tópicos
 # -----------------------------
@@ -167,29 +173,51 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
     ]
 
     try:
-        resp = _client.chat.completions.create(
-            model=MODEL,
-            temperature=TEMPERATURE,
-            max_tokens=FRONT_ANSWER_MAX_TOKENS,
-            messages=messages,
-        )
-
-        # -----------------------------
-        # Uso de tokens (telemetria)
-        # -----------------------------
-        token_usage = {}
-        try:
-            u = getattr(resp, "usage", None)
-            if u:
-                token_usage = {
-                    "input_tokens": int(getattr(u, "prompt_tokens", 0) or 0),
-                    "output_tokens": int(getattr(u, "completion_tokens", 0) or 0),
-                    "total_tokens": int(getattr(u, "total_tokens", 0) or 0),
-                }
-        except Exception:
+        # ----------------------------------------------------------
+        # Chamada ao modelo (compat: SDK novo e antigo)
+        # ----------------------------------------------------------
+        if _HAS_OPENAI_CLIENT and _client is not None:
+            resp = _client.chat.completions.create(
+                model=MODEL,
+                temperature=TEMPERATURE,
+                max_tokens=FRONT_ANSWER_MAX_TOKENS,
+                messages=messages,
+            )
+            raw = resp.choices[0].message.content.strip()
+            # usage no SDK novo
             token_usage = {}
+            try:
+                u = getattr(resp, "usage", None)
+                if u:
+                    token_usage = {
+                        "input_tokens": int(getattr(u, "prompt_tokens", 0) or 0),
+                        "output_tokens": int(getattr(u, "completion_tokens", 0) or 0),
+                        "total_tokens": int(getattr(u, "total_tokens", 0) or 0),
+                    }
+            except Exception:
+                token_usage = {}
+        else:
+            # SDK antigo (openai<1.x)
+            resp = openai.ChatCompletion.create(  # type: ignore
+                model=MODEL,
+                temperature=TEMPERATURE,
+                max_tokens=FRONT_ANSWER_MAX_TOKENS,
+                messages=messages,
+            )
+            raw = (resp["choices"][0]["message"]["content"] or "").strip()
+            # usage no SDK antigo
+            token_usage = {}
+            try:
+                u = resp.get("usage") or {}
+                token_usage = {
+                    "input_tokens": int(u.get("prompt_tokens") or 0),
+                    "output_tokens": int(u.get("completion_tokens") or 0),
+                    "total_tokens": int(u.get("total_tokens") or 0),
+                }
+            except Exception:
+                token_usage = {}
 
-        raw = resp.choices[0].message.content.strip()
+        # raw já foi preenchido acima (compat)
         # -----------------------------
         # Parse seguro do JSON
         # -----------------------------
