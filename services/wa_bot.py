@@ -334,8 +334,20 @@ def _build_front_kb_snapshot(topic: str) -> str:
             vtxt = _safe_str(kb.get("voice_pill") or kb.get("voice") or kb.get("voice_rules"))
             if vtxt:
                 topic_block = f"[VOZ]\n{vtxt}".strip()
+        elif topic in ("SALES", "VALUE_SALES", "MONEY", "SOCIAL", "OTHER"):
+            # Quando cair em OTHER/SOCIAL (muito comum em “ganhar dinheiro”),
+            # ainda assim damos um bloco de VALOR EM VENDAS pra evitar resposta genérica.
+            sv = via.get("sales_value_scene") or {}
+            ttxt = ""
+            if isinstance(sv, dict):
+                ttxt = _safe_str(sv.get("scene_text") or sv.get("sales_value_scene_text") or sv.get("text") or "")
+            if not ttxt:
+                # fallback: alguns docs guardam o texto direto
+                ttxt = _safe_str(via.get("sales_value_scene_text") or "")
+            if ttxt:
+                topic_block = f"[VALOR EM VENDAS]\n{ttxt}".strip()
         else:
-            topic_block = ""  # SOCIAL/OTHER: sem extra
+            topic_block = ""  # sem extra
     except Exception:
         topic_block = ""
 
