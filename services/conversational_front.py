@@ -275,6 +275,61 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
             should_end = False
             name_use = "clarify"
 
+        # ----------------------------------------------------------
+        # Enforcements de produto (anti-resposta genérica)
+        # ----------------------------------------------------------
+        try:
+            ut = (user_text or "").strip().lower()
+
+            # Perguntas "macro" onde a resposta precisa ter a âncora do produto
+            is_macro = False
+            try:
+                # heurística simples e barata (sem NLP pesado)
+                macro_hits = (
+                    "ganhar dinheiro",
+                    "como ajuda",
+                    "como pode ajudar",
+                    "o que você faz",
+                    "oq vc faz",
+                    "o que o robô faz",
+                    "pra que serve",
+                    "para que serve",
+                    "serve pra que",
+                    "serve para que",
+                    "como funciona",
+                    "me explica",
+                )
+                is_macro = any(h in ut for h in macro_hits)
+            except Exception:
+                is_macro = False
+
+            if is_macro:
+                rt_low = (reply_text or "").lower()
+                has_acervo = ("acervo" in rt_low)
+                has_no_invent = (("não inventa" in rt_low) or ("nao inventa" in rt_low))
+
+                # Insere 1 frase curta obrigatória se estiver faltando
+                if (not has_acervo) or (not has_no_invent):
+                    acervo_line = "Ele responde com base no acervo do seu negócio (o que você cadastrar) e não inventa."
+
+                    # evita repetição se já estiver bem próximo por variação
+                    if acervo_line.lower() not in rt_low:
+                        # Insere depois da primeira frase (ou no começo se não achar pontuação)
+                        inserted = False
+                        for sep in (". ", " — ", "? ", "! "):
+                            idx = reply_text.find(sep)
+                            if idx > 0 and idx < 220:
+                                cut = idx + len(sep)
+                                reply_text = reply_text[:cut] + acervo_line + " " + reply_text[cut:]
+                                inserted = True
+                                break
+                        if not inserted:
+                            reply_text = acervo_line + " " + reply_text
+
+                        reply_text = reply_text[:FRONT_REPLY_MAX_CHARS].rstrip()
+        except Exception:
+            pass
+
         out = {
             "replyText": reply_text[:FRONT_REPLY_MAX_CHARS].rstrip(),
             "understanding": {
