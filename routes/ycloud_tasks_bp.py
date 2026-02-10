@@ -945,6 +945,8 @@ def _clean_for_tts(text: str) -> str:
 
     # colapsa espaços de novo
     t = re.sub(r"\s+", " ", t).strip()
+    # remove aspas que soam estranho no TTS
+    t = t.replace('"', "").replace("“", "").replace("”", "").replace("‘", "").replace("’", "")
     return t
 
 def _expand_units_for_speech(text: str) -> str:
