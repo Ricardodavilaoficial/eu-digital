@@ -253,7 +253,9 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
             raw_json = raw
 
         data = json.loads(raw_json)
+        spoken_text = ""
         reply_text = str(data.get("replyText") or "").strip()
+        spoken_text = str(data.get("spokenText") or "").strip()
         understanding = data.get("understanding") or {}
         topic = str(understanding.get("topic") or "OTHER").upper()
         confidence = str(understanding.get("confidence") or "low").lower()
@@ -394,13 +396,28 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
             # trocamos por uma fit question curta, baseada no tópico/intent.
             bad_close_markers = (
                 "como configurar",
+                "como cadastrar",
+                "como colocar",
+                "como adicionar",
+                "como fazer",
+                "como funciona por dentro",
+                "passo a passo",
                 "configurar isso",
-                "configurar para",
+                "cadastrar isso",
                 "te explico como",
-                "posso te explicar como",
-                "quer que eu te mostre como",
-                "quer saber como",
+                "quer aprender como",
                 "quer ver como",
+                "quer saber mais",
+                "saber mais",
+                "saber mais sobre",
+                "você gostaria de saber mais",
+                "voce gostaria de saber mais",
+                "quer entender melhor",
+                "posso te mostrar",
+                "posso te explicar",
+                "cadastrar isso",
+                "você gostaria de saber como cadastrar",
+                "voce gostaria de saber como cadastrar",
             )
             has_bad_close = any(m in rt_low for m in bad_close_markers)
 
@@ -443,12 +460,22 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
                     rt += "."
                 rt = rt + " " + fit_q
 
+                # Higiene: aspas e “quotes” atrapalham no WhatsApp e no TTS
+                rt = rt.replace('"', "").replace("“", "").replace("”", "").replace("‘", "").replace("’", "")
+
                 reply_text = rt[:FRONT_REPLY_MAX_CHARS].rstrip()
+
+                # spokenText separado: mesma ideia, mas mais "falável" (sem aspas)
+                spoken_text = reply_text.replace('"', "").replace("“", "").replace("”", "").replace("‘", "").replace("’", "")
         except Exception:
             pass
+        # Corte final (anti-textão)
+        reply_text = reply_text[:FRONT_REPLY_MAX_CHARS].rstrip()
+        spoken_text = (spoken_text or "")[:FRONT_REPLY_MAX_CHARS].rstrip()
 
         out = {
-            "replyText": reply_text[:FRONT_REPLY_MAX_CHARS].rstrip(),
+            "replyText": reply_text,
+            "spokenText": spoken_text,
             "understanding": {
                 "topic": topic,
                 # Harmoniza com o resto do pipeline (sales_lead/outbox)
