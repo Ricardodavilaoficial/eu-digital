@@ -700,7 +700,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             out["aiMeta"] = {
                                 "ia_first": True,
                                 # Mantém compat com telemetria esperada no worker/outbox
-                                "iaSource": str((front_out.get("iaSource") or "box_decider")),
+                                "iaSource": str((front_out.get("iaSource") or "front")),
                                 "replySource": "front",
                                 "route": "conversational_front",
                                 "fallbackReason": "",
