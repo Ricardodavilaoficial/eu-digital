@@ -911,6 +911,8 @@ def _clean_for_speech(text: str) -> str:
     t = t.replace("✅", "").replace("📌", "").replace("⚠️", "").replace("🏗️", "").replace("🛠️", "")
     # remove bullets e hífens de lista no meio
     t = re.sub(r"\s*-\s+", " ", t)
+    # remove colchetes e pipes típicos de tabelas/links
+    t = t.replace("|", " ").replace("[", "").replace("]", "")
     # colapsa espaços
     t = re.sub(r"\s+", " ", t).strip()
     return t
@@ -918,6 +920,32 @@ def _clean_for_speech(text: str) -> str:
 
 
 
+
+
+
+def _clean_for_tts(text: str) -> str:
+    """
+    Limpeza específica para TTS (áudio).
+    Mantém o replyText intacto no WhatsApp, mas remove ruídos que soam estranhos ao falar:
+    - aspas "..." e quotes “...”
+    - aspas soltas remanescentes
+    """
+    t = _clean_for_speech(text)
+    if not t:
+        return ""
+
+    # remove aspas/quotes envolvendo trechos curtos ("maionese X" -> maionese X)
+    try:
+        t = re.sub(r'[“"]([^”"]+)[”"]', r"\1", t)
+    except Exception:
+        pass
+
+    # remove quotes soltas que sobraram
+    t = t.replace('"', "").replace("“", "").replace("”", "")
+
+    # colapsa espaços de novo
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
 
 def _expand_units_for_speech(text: str) -> str:
     if not text:
@@ -1122,7 +1150,7 @@ def _make_tts_text(reply_text: str, display_name: str, *, add_acervo_cta: bool =
     - limpa bullets/ícones
     - fecha com porta aberta curta
     """
-    base = _clean_for_speech(reply_text)
+    base = _clean_for_tts(reply_text)
     if not base:
         return ""
 
@@ -3060,7 +3088,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                             # 4) texto falável base (limpo + nome opcional, mas sem duplicar se teve spice)
                             if concept_generated:
-                                tts_text = _clean_for_speech(tts_text)
+                                tts_text = _clean_for_tts(tts_text)
                             else:
                                 _route_hint = (wa_out.get("route") or wa_out.get("replySource") or wa_out.get("route_hint") or wa_out.get("replySource") or "").strip().lower()
                                 _is_front = _route_hint in ("front", "conversational_front", "conversationalfront")
