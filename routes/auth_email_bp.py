@@ -214,6 +214,13 @@ def send_verification_email_pretty():
             {"type": "text/html", "value": html_body}
         ]
     }
+
+    # IMPORTANTÍSSIMO: NÃO deixar o SendGrid embrulhar o link com click-tracking (ls/click),
+    # porque alguns navegadores (Edge/Tracking Prevention) bloqueiam/redirecionam e fica tela branca.
+    # Para e-mail de verificação, o correto é link direto.
+    payload["tracking_settings"] = {
+        "click_tracking": {"enable": False, "enable_text": False}
+    }
     if reply_to:
         payload["reply_to"] = {"email": reply_to}
 
