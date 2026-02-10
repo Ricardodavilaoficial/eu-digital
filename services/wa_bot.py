@@ -642,6 +642,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "ok": True,
                             "route": "conversational_front",
                             "replyText": str(front_out.get("replyText") or "").strip(),
+                            "spokenText": str(front_out.get("spokenText") or front_out.get("spoken_text") or "").strip(),
                             "prefersText": bool(front_out.get("prefersText", True)),
                             "understanding": und,
                             "planNextStep": front_out.get("nextStep") or "NONE",
@@ -654,6 +655,43 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             # Custo (best-effort) vindo do front
                             "tokenUsage": front_out.get("tokenUsage") or {},
                         }
+
+                        # 🔧 Polimento vendedor (mínimo): evita CTA "como configurar/cadastrar" no modo VENDAS.
+                        # O front pode evoluir isso, mas aqui garantimos que não escapa um "suporte disfarçado".
+                        try:
+                            import re
+                            _rt = (out.get("replyText") or "").strip()
+                            _topic = str((und or {}).get("topicHint") or (und or {}).get("topic") or topic_hint or "").strip().upper()
+
+                            # remove CTA de "como configurar/cadastrar" no final
+                            _rt = re.sub(
+                                r"(\s*Você\s+gostaria\s+de\s+saber\s+(mais\s+)?sobre\s+como\s+(configurar|cadastrar)\s+[^\?]*\??\s*)$",
+                                "",
+                                _rt,
+                                flags=re.IGNORECASE,
+                            ).strip()
+
+                            # se sobrou pergunta técnica "como cadastrar/configurar", troca por pergunta de objetivo
+                            if re.search(r"\bcomo\s+(configurar|cadastrar)\b", _rt, re.IGNORECASE):
+                                _rt = re.sub(r"\s*\bcomo\s+(configurar|cadastrar)\b[^\?]*\??\s*$", "", _rt, flags=re.IGNORECASE).strip()
+
+                            if _rt:
+                                if _topic in ("AGENDA",):
+                                    _rt = (_rt + " Você quer que ele foque mais em agenda (marcar/confirmar) ou em vendas (orçamento/pedido)?").strip()
+                                elif _topic in ("ORCAMENTO", "PEDIDO", "PRECO", "PRICING"):
+                                    _rt = (_rt + " Você quer que ele já leve pro orçamento/pedido, ou só qualifique o cliente primeiro?").strip()
+                                else:
+                                    _rt = (_rt + " Hoje você quer mais vender, organizar agenda ou tirar dúvidas?").strip()
+
+                            # garante no máximo 1 pergunta (1 '?')
+                            qpos = _rt.find("?")
+                            if qpos != -1:
+                                _rt = (_rt[: qpos + 1]).strip()
+
+                            if _rt:
+                                out["replyText"] = _rt
+                        except Exception:
+                            pass
 
                         # guard: texto vazio nunca passa nunca passa
                         if out["replyText"]:
