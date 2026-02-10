@@ -77,6 +77,13 @@ Regras IMPORTANTES:
 - Nada de listas longas ou menus artificiais.
 - Pode explicar melhor quando a intenção estiver clara.
 - Use o KB Snapshot como fonte da verdade do produto. Se não estiver no snapshot, NÃO invente.
+- Se a pergunta for do tipo "marca/ingrediente/procedimento interno", NUNCA invente. Diga que depende do acervo do próprio negócio.
+- O usuário precisa ouvir 1 frase curta sobre acervo: "Ele responde com base no acervo do seu negócio (o que você cadastrar) e não inventa."
+- VENDAS não é SUPORTE: NÃO termine com “quer saber como configurar / como cadastrar / como fazer”.
+- A pergunta final (se houver) deve ser de QUALIFICAÇÃO/NECESSIDADE (ex.: “vendas, agenda ou suporte?”, “fecha pedido/orçamento ou só qualifica?”).
+- No máximo 1 pergunta (1 “?”) por resposta. Sem “segunda pergunta”.
+- NÃO use placeholders tipo "X" e evite aspas em exemplos. Prefira exemplo simples sem aspas (ex.: “maionese Hellmann’s” ou “maionese tradicional”).
+- Só mencione e-mail/integrações/recursos específicos se estiverem EXPLICITAMENTE no KB Snapshot. Se não estiver, não cite.
 - Quando a pergunta for "o que você faz/para que serve/como ajuda/ganhar dinheiro", sempre conecte o valor a 3 pontos:
   (1) responde clientes com base no **acervo do próprio negócio** (produtos/serviços/regras/FAQ) — sem inventar;
   (2) organiza e conduz para um próximo passo (agenda, orçamento, pedido, atendimento);
@@ -274,6 +281,50 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
             next_step = "NONE"
             should_end = False
             name_use = "clarify"
+
+        # -----------------------------
+        # Pós-processo “Vendas, sem mini-suporte”
+        # -----------------------------
+        try:
+            import re
+
+            # 1) no máximo 1 pergunta
+            if reply_text.count("?") > 1:
+                first_q = reply_text.find("?")
+                # mantém até a primeira pergunta; o resto vira ponto final (sem novas perguntas)
+                reply_text = (reply_text[: first_q + 1]).strip()
+
+            # 2) mata “como configurar / como cadastrar” (vira qualificação)
+            if re.search(r"\bcomo\s+configurar\b|\bcomo\s+cadastrar\b|\bpasso\s+a\s+passo\b", reply_text, re.IGNORECASE):
+                if topic == "AGENDA":
+                    reply_text = re.sub(
+                        r"(?i)\s*Você gostaria.*$",
+                        " Você atende por hora marcada ou também faz encaixe?",
+                        reply_text
+                    ).strip()
+                elif topic in ("ORCAMENTO", "PRICE", "PRECO"):
+                    reply_text = re.sub(
+                        r"(?i)\s*Você gostaria.*$",
+                        " Você quer que o robô já leve o cliente pro orçamento/pedido, ou primeiro só qualifique?",
+                        reply_text
+                    ).strip()
+                else:
+                    reply_text = re.sub(
+                        r"(?i)\s*Você gostaria.*$",
+                        " Hoje sua prioridade é vender mais, organizar agenda ou tirar dúvidas dos clientes?",
+                        reply_text
+                    ).strip()
+
+            # 3) não inventa “email/e-mail” se não existir no KB snapshot
+            kb_low = (kb_snapshot or "").lower()
+            if re.search(r"\be-?mail\b", reply_text, re.IGNORECASE) and ("email" not in kb_low) and ("e-mail" not in kb_low):
+                # remove sentenças que citam email
+                parts = re.split(r"(?<=[\.\!\?])\s+", reply_text)
+                parts = [p for p in parts if not re.search(r"\be-?mail\b", p, re.IGNORECASE)]
+                reply_text = " ".join(parts).strip()
+
+        except Exception:
+            pass
 
         # ----------------------------------------------------------
         # Enforcements de produto (anti-resposta genérica)
