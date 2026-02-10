@@ -199,3 +199,27 @@ _trash/
 ervicesbot_handlerssales_lead.py
 *_trash/*
 *.backup.*
+
+# --- Local junk / debug dumps ---
+*.json
+*.yaml
+*.yml
+*.txt
+*.log
+*.mp3
+*_WIP_*
+*.patch
+tools/
+Deployment/
+Running/
+
+# weird accidental files
+findstr
+gcloud
+python
+status
+message
+error
+echo
+code
+content
