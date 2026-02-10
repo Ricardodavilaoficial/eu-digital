@@ -330,6 +330,72 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
         except Exception:
             pass
 
+
+        # ----------------------------------------------------------
+        # Enforcement VENDEDOR: bloquear "como configurar" no fechamento
+        # (evita virar suporte; fecha com pergunta de necessidade/encaixe)
+        # ----------------------------------------------------------
+        try:
+            rt = (reply_text or "").strip()
+            rt_low = rt.lower()
+
+            # Se a resposta termina/contém um convite de "configurar/ensinar como",
+            # trocamos por uma fit question curta, baseada no tópico/intent.
+            bad_close_markers = (
+                "como configurar",
+                "configurar isso",
+                "configurar para",
+                "te explico como",
+                "posso te explicar como",
+                "quer que eu te mostre como",
+                "quer saber como",
+                "quer ver como",
+            )
+            has_bad_close = any(m in rt_low for m in bad_close_markers)
+
+            def _pick_fit_question(_topic: str, _intent: str) -> str:
+                t = (_topic or "").strip().upper()
+                i = (_intent or "").strip().upper()
+                # AGENDA
+                if t == "AGENDA" or i == "AGENDA":
+                    return "Você quer que ele marque horários e confirme presença, ou só organize e te avise?"
+                # ORÇAMENTO / VENDAS
+                if t in ("ORCAMENTO", "PRECOS", "PRECO") or i in ("ORCAMENTO", "PRECOS", "PRECO"):
+                    return "Você quer que ele responda e já leve pro orçamento/pedido, ou só qualifique o cliente primeiro?"
+                # SUPORTE (tópico/intent pode variar; deixamos um genérico vendedor)
+                if t in ("SUPORTE", "TECNOLOGIA", "TECNICO") or i in ("SUPORTE", "TECNICO"):
+                    return "Seu gargalo hoje é mais tirar dúvidas rápidas, resolver problemas, ou orientar o cliente passo a passo?"
+                # DEFAULT (macro)
+                return "Hoje, seu gargalo é mais responder rápido, organizar agenda, ou transformar conversa em venda?"
+
+            if has_bad_close:
+                intent_hint = (last_intent or topic or "").strip()
+                fit_q = _pick_fit_question(topic, intent_hint)
+
+                # Remove a última pergunta "ruim" se ela estiver no fim
+                # Heurística: corta a partir do último "?" e substitui.
+                qpos = rt.rfind("?")
+                if qpos > 0:
+                    base = rt[: qpos + 1].strip()
+                    # Se a última pergunta é "ruim", removemos ela inteira
+                    base_low = base.lower()
+                    if any(m in base_low[-220:] for m in bad_close_markers):
+                        # mantém tudo antes da última pergunta
+                        keep = rt[: rt.rfind("?")].strip()
+                        # fallback seguro: se ficou vazio, não corta
+                        if len(keep) >= 20:
+                            rt = keep
+
+                # Garante terminar com a fit question (uma só)
+                rt = rt.rstrip()
+                if not rt.endswith((".", "!", "?")):
+                    rt += "."
+                rt = rt + " " + fit_q
+
+                reply_text = rt[:FRONT_REPLY_MAX_CHARS].rstrip()
+        except Exception:
+            pass
+
         out = {
             "replyText": reply_text[:FRONT_REPLY_MAX_CHARS].rstrip(),
             "understanding": {
