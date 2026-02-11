@@ -1625,19 +1625,44 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         wa_key_effective = (wa_key or _digits_only(from_e164)).strip()
         owner_name = _get_owner_name(uid) if uid else ""
 
-# --- 1) ÁUDIO: fluxo de VOZ (ingest) SOMENTE se onboarding estiver "waiting" ---
+        # --- 1) ÁUDIO: fluxo de VOZ (ingest) quando estiver explicitamente "waiting" ---
+        # Compat: status pode estar em 2 formatos:
+        # A) profissionais/{uid}.voz.whatsapp.status (legado)
+        # B) profissionais/{uid}/voz/whatsapp (doc) (atual do /api/voz/whatsapp/invite)
         voice_waiting = False
+        voice_uid_effective = (uid_voice_link or uid or "").strip()
         try:
-            prof = _db().collection("profissionais").document(uid).get()
-            prof_data = prof.to_dict() or {}
-            voz = prof_data.get("voz") or {}
-            wa = voz.get("whatsapp") or {}
-            # regra saudável: só é onboarding de voz se estiver explicitamente aguardando áudio
-            voice_waiting = (str(wa.get("status") or "").strip().lower() == "waiting")
+            if voice_uid_effective:
+                # A) topo (legado)
+                try:
+                    prof = _db().collection("profissionais").document(voice_uid_effective).get()
+                    prof_data = prof.to_dict() or {}
+                    voz = prof_data.get("voz") or {}
+                    wa = voz.get("whatsapp") or {}
+                    voice_waiting = (str(wa.get("status") or "").strip().lower() == "waiting")
+                except Exception:
+                    pass
+        
+                # B) subcoleção (atual)
+                if not voice_waiting:
+                    try:
+                        wa_doc = (
+                            _db()
+                            .collection("profissionais")
+                            .document(voice_uid_effective)
+                            .collection("voz")
+                            .document("whatsapp")
+                            .get()
+                        )
+                        if wa_doc.exists:
+                            wa_data = wa_doc.to_dict() or {}
+                            voice_waiting = (str(wa_data.get("status") or "").strip().lower() == "waiting")
+                    except Exception:
+                        pass
         except Exception:
             voice_waiting = False
-
-        if uid and msg_type in ("audio", "voice", "ptt") and voice_waiting:
+        
+        if voice_uid_effective and msg_type in ("audio", "voice", "ptt") and voice_waiting:
             try:
                 from services.voice_wa_download import download_media_bytes  # type: ignore
                 from services.voice_wa_storage import upload_voice_bytes  # type: ignore
@@ -1709,22 +1734,24 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 except Exception:
                     pass
 
-                # ACK coerente (config de voz): entra áudio -> sai áudio (curto) + texto opcional
-                # Não passa por STT nem por wa_bot (evita cair em vendas/suporte).
+                # ACK coerente (configuração de voz): NÃO faz STT e NÃO chama wa_bot.
+                # Deixa o fluxo normal gerar TTS (entra áudio -> sai áudio).
                 try:
-                    audio_debug = {"mode": "voice_config_ack", "voiceWaiting": True, "voiceUid": voice_uid_effective}
+                    reply_text = "Fechou — recebi teu áudio. Agora vou preparar tua voz e já te aviso por aqui."
+                    spoken_text = reply_text
                 except Exception:
-                    audio_debug = {}
-                reply_text = "Fechou — recebi teu áudio. Agora vou preparar tua voz e já te aviso por aqui."
-                spoken_text = reply_text
+                    reply_text = "Recebi teu áudio. Vou preparar tua voz e te aviso por aqui."
+                    spoken_text = reply_text
                 try:
-                    from providers.ycloud import send_text  # type: ignore
-                    send_text(
-                        to_e164=from_e164,
-                        text="✅ Áudio recebido. Pode voltar pra tela de configuração e clicar em Continuar."
-                    )
+                    audio_debug = dict(audio_debug or {})
+                    audio_debug["mode"] = "voice_config_ack"
+                    audio_debug["voiceWaiting"] = True
+                    audio_debug["voiceUid"] = voice_uid_effective
                 except Exception:
                     pass
+                prefers_text = False
+                skip_wa_bot = True
+                wa_out = {"replyText": reply_text, "spokenText": spoken_text, "audioUrl": "", "audioDebug": (audio_debug or {}), "prefersText": False}
 
                 try:
                     _db().collection("platform_wa_outbox_logs").add({
@@ -1744,12 +1771,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                 except Exception:
                     pass
-                logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "VOICE_INGEST_STORED", event_key, wamid)
-                # IMPORTANT: deixa o worker seguir pro bloco de envio normal,
-                # porque é ali que ele já sabe chamar /api/voz/tts e mandar o áudio.
-                # A gente só garante que reply_text/spoken_text estão corretos e que não caiu no STT/wa_bot.
-                wa_out = {"replyText": reply_text, "spokenText": spoken_text, "audioDebug": (audio_debug or {}), "prefersText": False}
-                # e continua o fluxo (sem return)
+                logger.info("[tasks] voice_config_ack_ready eventKey=%s wamid=%s", event_key, wamid)
+                # NÃO retorna aqui: deixa seguir para o AFTER_COMPUTE gerar TTS e enviar áudio.
 
             except Exception:
                 logger.exception("[tasks] voice: falha ingest uid=%s", uid)
