@@ -1645,9 +1645,40 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
             # Considera "aguardando áudio" em qualquer um dos schemas
             voice_waiting = (
-                vc_status in ("waiting", "waiting_audio", "awaiting_audio", "invited", "pending_audio")
-                or wa_status in ("waiting", "waiting_audio", "awaiting_audio", "invited")
+                vc_status in (
+                    "waiting",
+                    "waiting_audio",
+                    "awaiting_audio",
+                    "invited",
+                    "pending_audio",
+                    "invite_sent",
+                    "inviting",
+                    "awaiting",
+                    "awaiting_voice",
+                    "awaiting_upload",
+                    "waiting_voice",
+                )
+                or wa_status in (
+                    "waiting",
+                    "waiting_audio",
+                    "awaiting_audio",
+                    "invited",
+                    "invite_sent",
+                    "inviting",
+                    "awaiting",
+                )
             )
+
+            # Heurística: alguns invites antigos não carimbam status no Firestore.
+            # Se ainda não existe voiceId e status vier vazio, tratamos o 1º áudio como parte do onboarding.
+            try:
+                if (not voice_waiting) and (os.environ.get("VOICE_AUTO_ACCEPT_FIRST_AUDIO", "1") != "0"):
+                    vc_voice_id = str(vc.get("voiceId") or vc.get("providerVoiceId") or "").strip()
+                    if (not vc_status) and (not wa_status) and (not vc_voice_id):
+                        voice_waiting = True
+                        logger.info("[tasks] voice_waiting_heuristic uid=%s from=%s", uid, from_e164)
+            except Exception:
+                pass
         except Exception:
             voice_waiting = False
 
@@ -1740,7 +1771,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     pass
 
                 # ACK opcional (mesmo comportamento do webhook antigo)
-                if os.environ.get("VOICE_WA_ACK", "0") == "1":
+                # Default ON (1) para evitar silêncio quando o áudio foi aceito/armazenado.
+                if os.environ.get("VOICE_WA_ACK", "1") != "0":
                     try:
                         from providers.ycloud import send_text  # type: ignore
                         send_text(
