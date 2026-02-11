@@ -1287,6 +1287,16 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     send_audio = None
     sent_ok = False
 
+
+    # Estado base do turno (evita variáveis não inicializadas em early-returns)
+    wa_out = None
+    reply_text = ""
+    spoken_text = ""
+    audio_url = ""
+    audio_debug = {}
+    skip_wa_bot = False
+    voice_config_ack_ready = False
+
     # Stub seguro: alguns caminhos (fallback / firebase_off) chamam _try_log_outbox_immediate
     # antes dela ser definida. Mantém o worker vivo.
     def _try_log_outbox_immediate(*args, **kwargs):
@@ -1594,10 +1604,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
         from_e164 = _to_plus_e164(from_raw)
         to_e164 = _to_plus_e164(to_raw)        # --- resolve UID (identidade) ---
-        
-        # Garantir variáveis base antes de qualquer early-branch (ex.: voice_ingest)
-        audio_debug = {}
-        spoken_text = ""        # 1) Índice permanente: sender_uid_links/{waKey} -> uid
+        # 1) Índice permanente: sender_uid_links/{waKey} -> uid
         uid = ""
         wa_key = ""
         try:
@@ -1608,46 +1615,43 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             wa_key = ""
             uid = ""
 
-        # 2) voice_links (TTL): sinal do fluxo de VOZ via WhatsApp (invite/botão)
-        # Importante: este sinal deve ser consultado MESMO quando já existe UID (suporte),
-        # porque "configuração de voz" é um modo exclusivo, não depende de uid vazio.
-        uid_voice_link = ""
-        try:
-            from services.voice_wa_link import get_uid_for_sender  # type: ignore
-            uid_voice_link = (get_uid_for_sender(from_e164) or "").strip()
-        except Exception:
-            uid_voice_link = ""
-
-        # Se ainda não temos UID, usar o TTL como fallback (comportamento atual preservado)
-        if not uid and uid_voice_link:
-            uid = uid_voice_link
-
+        # 2) Fallback legado (TTL): voice_links (fluxo de voz)
+        if not uid:
+            try:
+                from services.voice_wa_link import get_uid_for_sender  # type: ignore
+                uid = (get_uid_for_sender(from_e164) or "").strip()
+            except Exception:
+                uid = ""
 
 
         # wa_key_effective: chave canônica para memória por remetente (override etc.)
         wa_key_effective = (wa_key or _digits_only(from_e164)).strip()
         owner_name = _get_owner_name(uid) if uid else ""
 
-        # --- 1) VOZ (flow de convite) ---
-        # status fica em /profissionais/{uid}/voz/whatsapp (doc)
+# --- 1) ÁUDIO: fluxo de VOZ (ingest) SOMENTE se onboarding estiver aguardando áudio ---
         voice_waiting = False
-        voice_uid_effective = (uid_voice_link or uid or "").strip()
         try:
-            if voice_uid_effective:
-                vdoc = (
-                    _db()
-                    .collection("profissionais")
-                    .document(voice_uid_effective)
-                    .collection("voz")
-                    .document("whatsapp")
-                    .get()
-                )
-                vdata = vdoc.to_dict() or {}
-                voice_waiting = (str(vdata.get("status") or "").strip().lower() == "waiting")
+            prof = _db().collection("profissionais").document(uid).get()
+            prof_data = prof.to_dict() or {}
+
+            # Novo canônico: profissionais/{uid}.vozClonada.*
+            vc = prof_data.get("vozClonada") or {}
+            vc_status = str(vc.get("status") or "").strip().lower()
+
+            # Legado (algumas versões): profissionais/{uid}.voz.whatsapp.status
+            voz = prof_data.get("voz") or {}
+            wa = voz.get("whatsapp") or {}
+            wa_status = str(wa.get("status") or "").strip().lower()
+
+            # Considera "aguardando áudio" em qualquer um dos schemas
+            voice_waiting = (
+                vc_status in ("waiting", "waiting_audio", "awaiting_audio", "invited", "pending_audio")
+                or wa_status in ("waiting", "waiting_audio", "awaiting_audio", "invited")
+            )
         except Exception:
             voice_waiting = False
-        
-        if voice_uid_effective and msg_type in ("audio", "voice", "ptt") and voice_waiting:
+
+        if uid and msg_type in ("audio", "voice", "ptt") and voice_waiting:
             try:
                 from services.voice_wa_download import download_media_bytes  # type: ignore
                 from services.voice_wa_storage import upload_voice_bytes  # type: ignore
@@ -1669,13 +1673,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     logger.exception("[tasks] outbox_final_write_fail wamid=%s eventKey=%s", wamid, event_key)
 
                 # Caminho padrão já usado no projeto (não muda contrato)
-                storage_path = f"profissionais/{voice_uid_effective}/voz/original/whatsapp_{int(time.time())}.{ext_hint}"
+                storage_path = f"profissionais/{uid}/voz/original/whatsapp_{int(time.time())}.{ext_hint}"
 
                 # Assinatura correta: (storage_path, content_type, data)
                 storage_path = upload_voice_bytes(storage_path, (mime or "audio/ogg"), b)
 # status em doc do profissional (compat com o que já existe no webhook)
                 try:
-                    _db().collection("profissionais").document(voice_uid_effective).set(
+                    _db().collection("profissionais").document(uid).set(
                         {
                             "vozClonada": {
                                 "status": "uploaded",
@@ -1693,56 +1697,42 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 # ✅ IMPORTANTÍSSIMO: encerra o modo "waiting" após receber 1 áudio válido.
                 # Isso destrava SUPORTE imediatamente, sem precisar esperar TTL.
                 try:
-                    _db().collection("profissionais").document(voice_uid_effective).collection("voz").document("whatsapp").set(
+                    _db().collection("profissionais").document(uid).set(
                         {
-                            "status": "received",
-                            "lastError": "",
-                            "lastAudioGcsPath": storage_path,
-                            "lastAudioMime": (mime or "audio/ogg"),
-                            "lastInboundAt": _fs_admin().SERVER_TIMESTAMP,
-                            "updatedAt": _fs_admin().SERVER_TIMESTAMP,
-                            "waFromE164": from_e164,
+                            "voz": {
+                                "whatsapp": {
+                                    "status": "received",
+                                    "lastError": "",
+                                    "lastAudioGcsPath": storage_path,
+                                    "lastAudioMime": (mime or "audio/ogg"),
+                                    "lastInboundAt": _fs_admin().SERVER_TIMESTAMP,
+                                    "updatedAt": _fs_admin().SERVER_TIMESTAMP,
+                                    "waFromE164": from_e164,
+                                }
+                            }
                         },
                         merge=True,
                     )
                 except Exception:
                     pass
 
-
-                # ACK: sempre responder (UX). Texto curto e direto.
-                try:
-                    from providers.ycloud import send_text  # type: ignore
-                    send_text(
-                        to_e164=from_e164,
-                        text="✅ Áudio recebido! Vou preparar sua Voz do Atendimento.\nAgora volte para a tela de configuração e clique em Continuar."
-                    )
-                except Exception:
-                    logger.exception("[tasks] voice: falha ao enviar ACK via WhatsApp")
                 # renova vínculo (from -> uid), tolerante ao 9 via store já existente
                 try:
                     ttl_seconds = int(os.environ.get("VOICE_LINK_TTL_SECONDS", "86400") or "86400")
-                    upsert_sender_link(from_e164, voice_uid_effective, ttl_seconds=ttl_seconds, method="audio_auto")
+                    upsert_sender_link(from_e164, uid, ttl_seconds=ttl_seconds, method="audio_auto")
                 except Exception:
                     pass
 
-                # ACK coerente (configuração de voz): NÃO faz STT e NÃO chama wa_bot.
-                # Deixa o fluxo normal gerar TTS (entra áudio -> sai áudio).
-                try:
-                    reply_text = "Fechou — recebi teu áudio. Agora vou preparar tua voz e já te aviso por aqui."
-                    spoken_text = reply_text
-                except Exception:
-                    reply_text = "Recebi teu áudio. Vou preparar tua voz e te aviso por aqui."
-                    spoken_text = reply_text
-                try:
-                    audio_debug = dict(audio_debug or {})
-                except Exception:
-                    audio_debug = {}
-                    audio_debug["mode"] = "voice_config_ack"
-                    audio_debug["voiceWaiting"] = True
-                    audio_debug["voiceUid"] = voice_uid_effective
-                prefers_text = False
-                skip_wa_bot = True
-                wa_out = {"replyText": reply_text, "spokenText": spoken_text, "audioUrl": "", "audioDebug": (audio_debug or {}), "prefersText": False}
+                # ACK opcional (mesmo comportamento do webhook antigo)
+                if os.environ.get("VOICE_WA_ACK", "0") == "1":
+                    try:
+                        from providers.ycloud import send_text  # type: ignore
+                        send_text(
+                            to_e164=from_e164,
+                            text="✅ Áudio recebido com sucesso.\nAgora volte para a tela de configuração e clique em Continuar."
+                        )
+                    except Exception:
+                        logger.exception("[tasks] voice: falha ao enviar ACK via WhatsApp")
 
                 try:
                     _db().collection("platform_wa_outbox_logs").add({
@@ -1754,7 +1744,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         "route": "voice_ingest",
                         "replyText": "ACK: voz recebida (configuração)",
                         "audioUrl": "",
-                        "audioDebug": (audio_debug or {}),
+                        "audioDebug": {},
                         "eventKey": event_key,
                         "sentOk": True,
                     })
@@ -1762,8 +1752,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                 except Exception:
                     pass
-                logger.info("[tasks] voice_config_ack_ready eventKey=%s wamid=%s", event_key, wamid)
-                # NÃO retorna aqui: deixa seguir para o AFTER_COMPUTE gerar TTS e enviar áudio.
+                logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "VOICE_INGEST_STORED", event_key, wamid)
+                return jsonify({"ok": True, "voice": "stored"}), 200
 
             except Exception:
                 logger.exception("[tasks] voice: falha ingest uid=%s", uid)
@@ -1808,7 +1798,20 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 wa_kind = "fallback"
                 kb_context = ""
                 # cai adiante no bloco de envio (send_text), sem quebrar o worker
-                wa_out = {"replyText": reply_text, "spokenText": spoken_text, "audioUrl": "", "audioDebug": audio_debug, "prefersText": True, "kind": wa_kind, "kbContext": kb_context}
+                wa_out = {
+                    "ok": True,
+                    "route": "voice_config_ack",
+                    "route_hint": "voice_config_ack",
+                    "replyText": reply_text,
+                    "spokenText": spoken_text,
+                    "audioUrl": "",
+                    "audioDebug": audio_debug,
+                    "prefersText": False,
+                    "kind": wa_kind,
+                    "kbContext": kb_context,
+                    "understanding": {"source": "voice_config_ack", "intent": "VOICE_CONFIG", "confidence": "high", "next_step": "WAIT"},
+                    "_debug": {"source": "voice_config_ack"},
+                }
                 skip_wa_bot = True
             else:
                 from services import wa_bot as wa_bot_entry  # lazy import
