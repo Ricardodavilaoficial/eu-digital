@@ -1651,7 +1651,23 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         except Exception:
             voice_waiting = False
 
-        if uid and msg_type in ("audio", "voice", "ptt") and voice_waiting:
+        # UID efetivo para fluxo de voz (por ora é o mesmo uid já resolvido)
+        voice_uid_effective = (uid or "").strip()
+
+        if voice_uid_effective and msg_type in ("audio", "voice", "ptt") and (not voice_waiting):
+            # Por enquanto: áudio do cliente só é processado no onboarding de VOZ.
+            # Isso evita o "áudio nada a ver" (TTS) quando o usuário manda áudio fora do fluxo de voz.
+            try:
+                from providers.ycloud import send_text as _send_text  # type: ignore
+                _send_text(
+                    to_e164=from_e164,
+                    text="📌 Recebi seu áudio 🙂\nNo momento eu só entendo áudio quando você está ativando a Voz do Atendimento.\nSe quiser falar comigo agora, me manda em texto aqui no WhatsApp."
+                )
+            except Exception:
+                logger.exception("[tasks] customer_audio: falha ao enviar aviso texto wamid=%s eventKey=%s", wamid, event_key)
+            logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "CUSTOMER_AUDIO_NOT_WAITING_TEXT_ONLY", event_key, wamid)
+            return jsonify({"ok": True, "audio": "ignored_not_waiting"}), 200
+        if voice_uid_effective and msg_type in ("audio", "voice", "ptt") and voice_waiting:
             try:
                 from services.voice_wa_download import download_media_bytes  # type: ignore
                 from services.voice_wa_storage import upload_voice_bytes  # type: ignore
@@ -1752,7 +1768,16 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                 except Exception:
                     pass
-                logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "VOICE_INGEST_STORED", event_key, wamid)
+                # Envia ACK por TEXTO (sempre) e encerra aqui para NÃO cair no TTS automático.
+                try:
+                    from providers.ycloud import send_text as _send_text  # type: ignore
+                    _send_text(
+                        to_e164=from_e164,
+                        text="✅ Áudio recebido com sucesso.\nAgora volte para a tela de configuração e clique em Continuar."
+                    )
+                except Exception:
+                    logger.exception("[tasks] voice: falha ao enviar ACK texto wamid=%s eventKey=%s", wamid, event_key)
+                logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "VOICE_INGEST_ACK_TEXT_ONLY", event_key, wamid)
                 return jsonify({"ok": True, "voice": "stored"}), 200
 
             except Exception:
