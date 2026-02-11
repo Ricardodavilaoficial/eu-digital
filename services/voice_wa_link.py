@@ -24,6 +24,8 @@ from services.phone_utils import normalize_e164_br, phone_variants_br
 def _db():
     """Firestore canônico: sempre via firebase-admin."""
     ensure_firebase_admin()
+    # Firestore client (firebase_admin) — evita NameError em runtime
+    from firebase_admin import firestore as fb_firestore
     return fb_firestore.client()
 
 def _now():
