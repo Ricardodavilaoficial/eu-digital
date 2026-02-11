@@ -1615,20 +1615,26 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             wa_key = ""
             uid = ""
 
-        # 2) Fallback legado (TTL): voice_links (fluxo de voz)
-        if not uid:
-            try:
-                from services.voice_wa_link import get_uid_for_sender  # type: ignore
-                uid = (get_uid_for_sender(from_e164) or "").strip()
-            except Exception:
-                uid = ""
+        # 2) voice_links (TTL): sinal do fluxo de VOZ via WhatsApp (invite/botão)
+        # IMPORTANTÍSSIMO: consultar MESMO se já existe uid, porque "configuração de voz"
+        # é um modo exclusivo disparado pelo botão/invite (não depende de uid vazio).
+        uid_voice_link = ""
+        try:
+            from services.voice_wa_link import get_uid_for_sender  # type: ignore
+            uid_voice_link = (get_uid_for_sender(from_e164) or "").strip()
+        except Exception:
+            uid_voice_link = ""
+
+        # Se não resolveu uid pelo wa_key, usa o voice_link (TTL) como fallback
+        if (not uid) and uid_voice_link:
+            uid = uid_voice_link
 
 
         # wa_key_effective: chave canônica para memória por remetente (override etc.)
         wa_key_effective = (wa_key or _digits_only(from_e164)).strip()
         owner_name = _get_owner_name(uid) if uid else ""
 
-# --- 1) ÁUDIO: fluxo de VOZ (ingest) SOMENTE se onboarding estiver aguardando áudio ---
+# --- 1) ÁUDIO: fluxo de VOZ (ingest) ---
         voice_waiting = False
         try:
             prof = _db().collection("profissionais").document(uid).get()
@@ -1682,10 +1688,14 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         except Exception:
             voice_waiting = False
 
-        # UID efetivo para fluxo de voz (por ora é o mesmo uid já resolvido)
-        voice_uid_effective = (uid or "").strip()
+        # Em produção, o status "waiting" pode falhar por drift de schema/endpoint de invite.
+        # Para deixar o fluxo redondinho: se o MEI (uid resolvido) mandar áudio, aceitamos como VOZ.
+        voice_accept_any = (os.environ.get("VOICE_ACCEPT_ANY_AUDIO", "1") == "1")
 
-        if voice_uid_effective and msg_type in ("audio", "voice", "ptt") and (not voice_waiting):
+        # UID efetivo para fluxo de voz (prioriza o link TTL de voice_links quando existir)
+        voice_uid_effective = ((uid_voice_link or uid) or "").strip()
+
+        if voice_uid_effective and msg_type in ("audio", "voice", "ptt") and (not voice_waiting) and (not voice_accept_any):
             # Por enquanto: áudio do cliente só é processado no onboarding de VOZ.
             # Isso evita o "áudio nada a ver" (TTS) quando o usuário manda áudio fora do fluxo de voz.
             try:
@@ -1698,7 +1708,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 logger.exception("[tasks] customer_audio: falha ao enviar aviso texto wamid=%s eventKey=%s", wamid, event_key)
             logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "CUSTOMER_AUDIO_NOT_WAITING_TEXT_ONLY", event_key, wamid)
             return jsonify({"ok": True, "audio": "ignored_not_waiting"}), 200
-        if voice_uid_effective and msg_type in ("audio", "voice", "ptt") and voice_waiting:
+        if voice_uid_effective and msg_type in ("audio", "voice", "ptt") and (voice_waiting or voice_accept_any):
             try:
                 from services.voice_wa_download import download_media_bytes  # type: ignore
                 from services.voice_wa_storage import upload_voice_bytes  # type: ignore
@@ -1777,7 +1787,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         from providers.ycloud import send_text  # type: ignore
                         send_text(
                             to_e164=from_e164,
-                            text="✅ Áudio recebido com sucesso.\nAgora volte para a tela de configuração e clique em Continuar."
+                            text="✅ Áudio recebido! Vou preparar sua Voz do Atendimento.\nAgora volte para a tela de configuração e clique em Continuar."
                         )
                     except Exception:
                         logger.exception("[tasks] voice: falha ao enviar ACK via WhatsApp")
@@ -1805,7 +1815,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     from providers.ycloud import send_text as _send_text  # type: ignore
                     _send_text(
                         to_e164=from_e164,
-                        text="✅ Áudio recebido com sucesso.\nAgora volte para a tela de configuração e clique em Continuar."
+                        text="✅ Áudio recebido! Vou preparar sua Voz do Atendimento.\nAgora volte para a tela de configuração e clique em Continuar."
                     )
                 except Exception:
                     logger.exception("[tasks] voice: falha ao enviar ACK texto wamid=%s eventKey=%s", wamid, event_key)
