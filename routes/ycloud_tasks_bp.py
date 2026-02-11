@@ -1594,7 +1594,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
         from_e164 = _to_plus_e164(from_raw)
         to_e164 = _to_plus_e164(to_raw)        # --- resolve UID (identidade) ---
-        # 1) Índice permanente: sender_uid_links/{waKey} -> uid
+        
+        # Garantir variáveis base antes de qualquer early-branch (ex.: voice_ingest)
+        audio_debug = {}
+        spoken_text = ""        # 1) Índice permanente: sender_uid_links/{waKey} -> uid
         uid = ""
         wa_key = ""
         try:
@@ -1744,11 +1747,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     spoken_text = reply_text
                 try:
                     audio_debug = dict(audio_debug or {})
+                except Exception:
+                    audio_debug = {}
                     audio_debug["mode"] = "voice_config_ack"
                     audio_debug["voiceWaiting"] = True
                     audio_debug["voiceUid"] = voice_uid_effective
-                except Exception:
-                    pass
                 prefers_text = False
                 skip_wa_bot = True
                 wa_out = {"replyText": reply_text, "spokenText": spoken_text, "audioUrl": "", "audioDebug": (audio_debug or {}), "prefersText": False}
