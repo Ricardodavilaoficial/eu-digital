@@ -1628,40 +1628,22 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         wa_key_effective = (wa_key or _digits_only(from_e164)).strip()
         owner_name = _get_owner_name(uid) if uid else ""
 
-        # --- 1) ÁUDIO: fluxo de VOZ (ingest) quando estiver explicitamente "waiting" ---
-        # Compat: status pode estar em 2 formatos:
-        # A) profissionais/{uid}.voz.whatsapp.status (legado)
-        # B) profissionais/{uid}/voz/whatsapp (doc) (atual do /api/voz/whatsapp/invite)
+        # --- 1) VOZ (flow de convite) ---
+        # status fica em /profissionais/{uid}/voz/whatsapp (doc)
         voice_waiting = False
         voice_uid_effective = (uid_voice_link or uid or "").strip()
         try:
             if voice_uid_effective:
-                # A) topo (legado)
-                try:
-                    prof = _db().collection("profissionais").document(voice_uid_effective).get()
-                    prof_data = prof.to_dict() or {}
-                    voz = prof_data.get("voz") or {}
-                    wa = voz.get("whatsapp") or {}
-                    voice_waiting = (str(wa.get("status") or "").strip().lower() == "waiting")
-                except Exception:
-                    pass
-        
-                # B) subcoleção (atual)
-                if not voice_waiting:
-                    try:
-                        wa_doc = (
-                            _db()
-                            .collection("profissionais")
-                            .document(voice_uid_effective)
-                            .collection("voz")
-                            .document("whatsapp")
-                            .get()
-                        )
-                        if wa_doc.exists:
-                            wa_data = wa_doc.to_dict() or {}
-                            voice_waiting = (str(wa_data.get("status") or "").strip().lower() == "waiting")
-                    except Exception:
-                        pass
+                vdoc = (
+                    _db()
+                    .collection("profissionais")
+                    .document(voice_uid_effective)
+                    .collection("voz")
+                    .document("whatsapp")
+                    .get()
+                )
+                vdata = vdoc.to_dict() or {}
+                voice_waiting = (str(vdata.get("status") or "").strip().lower() == "waiting")
         except Exception:
             voice_waiting = False
         
@@ -1711,25 +1693,31 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 # ✅ IMPORTANTÍSSIMO: encerra o modo "waiting" após receber 1 áudio válido.
                 # Isso destrava SUPORTE imediatamente, sem precisar esperar TTL.
                 try:
-                    _db().collection("profissionais").document(voice_uid_effective).set(
+                    _db().collection("profissionais").document(voice_uid_effective).collection("voz").document("whatsapp").set(
                         {
-                            "voz": {
-                                "whatsapp": {
-                                    "status": "received",
-                                    "lastError": "",
-                                    "lastAudioGcsPath": storage_path,
-                                    "lastAudioMime": (mime or "audio/ogg"),
-                                    "lastInboundAt": _fs_admin().SERVER_TIMESTAMP,
-                                    "updatedAt": _fs_admin().SERVER_TIMESTAMP,
-                                    "waFromE164": from_e164,
-                                }
-                            }
+                            "status": "received",
+                            "lastError": "",
+                            "lastAudioGcsPath": storage_path,
+                            "lastAudioMime": (mime or "audio/ogg"),
+                            "lastInboundAt": _fs_admin().SERVER_TIMESTAMP,
+                            "updatedAt": _fs_admin().SERVER_TIMESTAMP,
+                            "waFromE164": from_e164,
                         },
                         merge=True,
                     )
                 except Exception:
                     pass
 
+
+                # ACK: sempre responder (UX). Texto curto e direto.
+                try:
+                    from providers.ycloud import send_text  # type: ignore
+                    send_text(
+                        to_e164=from_e164,
+                        text="✅ Áudio recebido! Vou preparar sua Voz do Atendimento.\nAgora volte para a tela de configuração e clique em Continuar."
+                    )
+                except Exception:
+                    logger.exception("[tasks] voice: falha ao enviar ACK via WhatsApp")
                 # renova vínculo (from -> uid), tolerante ao 9 via store já existente
                 try:
                     ttl_seconds = int(os.environ.get("VOICE_LINK_TTL_SECONDS", "86400") or "86400")
