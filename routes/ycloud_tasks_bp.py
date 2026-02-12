@@ -1833,15 +1833,6 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                 except Exception:
                     pass
-                # Envia ACK por TEXTO (sempre) e encerra aqui para NÃO cair no TTS automático.
-                try:
-                    from providers.ycloud import send_text as _send_text  # type: ignore
-                    _send_text(
-                        to_e164=from_e164,
-                        text="✅ Áudio recebido! Vou preparar sua Voz do Atendimento.\nAgora volte para a tela de configuração e clique em Continuar."
-                    )
-                except Exception:
-                    logger.exception("[tasks] voice: falha ao enviar ACK texto wamid=%s eventKey=%s", wamid, event_key)
                 logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "VOICE_INGEST_ACK_TEXT_ONLY", event_key, wamid)
                 return jsonify({"ok": True, "voice": "stored"}), 200
 
