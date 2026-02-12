@@ -228,6 +228,31 @@ def voice_wa_invite():
         "lastError": "",
     })
 
+    # ✅ Canoniza o estado para o worker (voice_waiting confiável)
+    try:
+        _db().collection("profissionais").document(uid).set({
+            "vozClonada": {
+                "status": "invited",
+                "invitedAt": _now_ts(),
+            }
+        }, merge=True)
+    except Exception:
+        pass
+
+    # ✅ Compat legado (opcional): voz.whatsapp.status
+    try:
+        _db().collection("profissionais").document(uid).set({
+            "voz": {
+                "whatsapp": {
+                    "status": "invited",
+                    "invitedAt": _now_ts(),
+                }
+            }
+        }, merge=True)
+    except Exception:
+        pass
+
+
     # Invite sempre via template (Meta/YCloud happy)
     codigo_convite = generate_link_code()
     save_link_code(uid=uid, code=codigo_convite, ttl_seconds=ttl)
