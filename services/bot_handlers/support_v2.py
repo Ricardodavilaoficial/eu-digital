@@ -18,6 +18,9 @@ _SUPPORT_TTL_SECONDS = int(os.getenv("SUPPORT_KB_TTL_SECONDS", "600") or "600")
 COL_ACTION_MAPS = os.getenv("SUPPORT_ACTION_MAPS_COLL", "platform_kb_action_maps")
 COL_ARTICLES = os.getenv("SUPPORT_ARTICLES_COLL", "platform_kb_support_articles")
 
+# Perfis simples (nome curto por waKey). Default alinhado com o que você já tem no Firestore.
+COL_SUPPORT_PROFILES = os.getenv("SUPPORT_PROFILES_COLL", "platform_lead_profiles")
+
 # --- Route classifier (IA curtinho) ---
 SUPPORT_ROUTE_CLASSIFIER = os.getenv("SUPPORT_ROUTE_CLASSIFIER", "1").strip() in ("1", "true", "yes", "on")
 SUPPORT_ROUTE_CLASSIFIER_MODEL = os.getenv("SUPPORT_ROUTE_CLASSIFIER_MODEL", "gpt-4o-mini").strip()
@@ -86,6 +89,53 @@ def _get_article(page: str) -> str:
 
 def _norm(s: str) -> str:
     return (s or "").strip().lower()
+
+def _get_robot_persona(ctx: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(ctx, dict):
+        return {}
+    rp = ctx.get("robotPersona")
+    return rp if isinstance(rp, dict) else {}
+
+def _apply_persona_wrapper(reply: str, ctx: Optional[Dict[str, Any]]) -> str:
+    """
+    Aplica persona APENAS na casca (tom/emoji/fecho), sem mudar os passos canônicos.
+    Safe-by-default: se não houver persona, retorna reply original.
+    """
+    base = (reply or "").strip()
+    if not base:
+        return base
+
+    rp = _get_robot_persona(ctx)
+    if not rp:
+        return base
+
+    tone = str(rp.get("tone") or "").strip().lower()          # ex: "formal", "direto"
+    humor = rp.get("humor")
+    try:
+        humor_n = int(humor) if humor is not None else 0
+    except Exception:
+        humor_n = 0
+    use_emojis = str(rp.get("emojis") or rp.get("use_emojis") or "").strip().lower() in ("1","true","sim","yes","on")
+
+    out = base
+
+    # tom: "tu" -> "você" quando formal
+    if tone in ("formal", "alto", "alta"):
+        out = re.sub(r"\btu\b", "você", out, flags=re.IGNORECASE)
+        out = re.sub(r"\bteu\b", "seu", out, flags=re.IGNORECASE)
+        out = re.sub(r"\bcontigo\b", "com você", out, flags=re.IGNORECASE)
+
+    # fecho curto (não altera conteúdo)
+    if humor_n >= 1:
+        out = out.strip() + " Se travar em alguma etapa, me diz qual parte que eu destravo contigo."
+    else:
+        out = out.strip() + " Se travar, me diga em qual passo você parou."
+
+    if use_emojis:
+        out = out.strip() + " ✅"
+
+    return out.strip()
+
 
 def _route_cache_get(key: str) -> Optional[Dict[str, Any]]:
     try:
@@ -248,7 +298,7 @@ def _get_profile_name_from_ctx(uid: str, ctx: Optional[Dict[str, Any]]) -> str:
     if not db:
         return ""
     try:
-        doc = db.collection("platform_support_profiles").document(wa_key).get()
+        doc = db.collection(COL_SUPPORT_PROFILES).document(wa_key).get()
         data = doc.to_dict() or {}
         name = str(data.get("displayName") or "").strip()
         return name.split()[0].strip() if name else ""
@@ -289,7 +339,7 @@ def _maybe_update_name_from_text(ctx: Optional[Dict[str, Any]], text: str) -> st
         return new_name
 
     try:
-        db.collection("platform_support_profiles").document(wa_key).set(
+        db.collection(COL_SUPPORT_PROFILES).document(wa_key).set(
             {"displayName": new_name, "updatedAt": time.time()},
             merge=True,
         )
@@ -442,12 +492,14 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
     # 1) Action Map
     ans = _try_answer_from_action_map(page, q)
     if ans:
+        ans = _apply_persona_wrapper(ans, ctx)
         return {"ok": True, "route": f"support_v2:{page}:action_map", "replyText": ans, "prefersText": bool(prefers_text), "displayName": display_name}
 
     # 2) Artigo (conceitual)
     force_conceptual = bool(route_hint and route_hint.get("kind") == "conceptual" and float(route_hint.get("confidence", 0)) >= 0.55)
     ans2 = _try_answer_from_article(page, q, force_conceptual=force_conceptual)
     if ans2:
+        ans2 = _apply_persona_wrapper(ans2, ctx)
         # kbContext é o artigo completo (cérebro). replyText é fala curta (boca).
         return {
             "ok": True,
@@ -463,3 +515,4 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
     # 3) Sem match: pedir 1 clarificação (curta) OU cair no legacy.
     # Aqui vamos cair no legacy para manter comportamento e qualidade.
     return None
+
