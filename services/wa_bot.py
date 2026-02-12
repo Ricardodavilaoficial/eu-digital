@@ -272,7 +272,9 @@ def _fetch_front_kb_sources() -> Dict[str, Any]:
 
 def _load_prof_robot_persona_v1(uid: str) -> Dict[str, Any]:
     """Carrega (best-effort) a persona/jeito de atender do profissional.
-    - Fonte: profissionais/{uid}.config.jeitoAtenderV1
+    - Fontes aceitas (compat):
+        1) profissionais/{uid}.config.jeitoAtenderV1  (canônico novo)
+        2) profissionais/{uid}.config.robotPersona    (legado do front)
     - Safe-by-default: retorna {} em qualquer falha/ausência
     """
     uid = (uid or "").strip()
@@ -284,7 +286,10 @@ def _load_prof_robot_persona_v1(uid: str) -> Dict[str, Any]:
         snap = db.collection("profissionais").document(uid).get()
         data = (snap.to_dict() or {}) if snap else {}
         cfg = data.get("config") or {}
+        # Preferência: V1 canônico; fallback: legado robotPersona
         persona = cfg.get("jeitoAtenderV1") or {}
+        if not isinstance(persona, dict) or not persona:
+            persona = cfg.get("robotPersona") or {}
         return persona if isinstance(persona, dict) else {}
     except Exception:
         return {}
