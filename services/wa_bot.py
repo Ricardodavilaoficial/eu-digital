@@ -270,6 +270,27 @@ def _fetch_front_kb_sources() -> Dict[str, Any]:
     return out
 
 
+def _load_prof_robot_persona_v1(uid: str) -> Dict[str, Any]:
+    """Carrega (best-effort) a persona/jeito de atender do profissional.
+    - Fonte: profissionais/{uid}.config.jeitoAtenderV1
+    - Safe-by-default: retorna {} em qualquer falha/ausência
+    """
+    uid = (uid or "").strip()
+    if not uid:
+        return {}
+    try:
+        from firebase_admin import firestore  # type: ignore
+        db = firestore.client()
+        snap = db.collection("profissionais").document(uid).get()
+        data = (snap.to_dict() or {}) if snap else {}
+        cfg = data.get("config") or {}
+        persona = cfg.get("jeitoAtenderV1") or {}
+        return persona if isinstance(persona, dict) else {}
+    except Exception:
+        return {}
+
+
+
 def _build_front_kb_snapshot(topic: str) -> str:
     """
     Monta snapshot textual compacto com teto de chars.
@@ -909,6 +930,15 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
         # 2) SUPORTE (uid presente) — tenta SUPPORT_V2 (Action Map / Artigo), com fallback no legacy
         try:
             if SUPPORT_V2:
+                # Best-effort: injeta persona do profissional (se existir) no ctx do suporte.
+                try:
+                    if isinstance(ctx, dict) and not ctx.get("robotPersona"):
+                        _persona = _load_prof_robot_persona_v1(uid)
+                        if _persona:
+                            ctx["robotPersona"] = _persona
+                            ctx["robotPersonaId"] = "config.jeitoAtenderV1"
+                except Exception:
+                    pass
                 from services.bot_handlers import support_v2  # type: ignore
                 v2 = support_v2.generate_reply(uid=uid, text=text, ctx=ctx)  # type: ignore
                 if isinstance(v2, dict):
