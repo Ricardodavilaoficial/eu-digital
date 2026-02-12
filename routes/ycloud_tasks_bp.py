@@ -1239,27 +1239,30 @@ def ycloud_inbound_worker():
             _wamid_d = ""
         try:
             _ek = str(event_key or "").strip()
-            if _ek:
-                _dedupe_id = hashlib.sha1(_ek.encode("utf-8")).hexdigest()
-                # TTL opcional via env (padrão 2 dias)
-                _ttl = int(os.environ.get("YCLOUD_DEDUPE_TTL_SECONDS", "172800") or "172800")
-                _now = time.time()
-                _db().collection("platform_wa_dedupe").document(_dedupe_id).create({
-                    "eventKey": _ek[:500],
-                    "wamid": _wamid_d[:120],
-                    "createdAt": _fs_admin().SERVER_TIMESTAMP,
-                    "expiresAt": _now + _ttl,
-                    "service": "ycloud_inbound_worker",
-                })
-            else:
-                _dedupe_id = ""
-        except Exception as e:
-            # Se já existe, é replay: retorna 200 sem reenviar.
-            # Firestore levanta AlreadyExists em create().
-            if "AlreadyExists" in str(type(e)) or "already exists" in str(e).lower():
-                logger.info("[tasks] deduped eventKey=%s wamid=%s", str(event_key or "")[:160], _wamid_d)
-                return jsonify({"ok": True, "deduped": True}), 200
-            logger.warning("[tasks] dedupe_guard_failed eventKey=%s err=%s", str(event_key or "")[:120], f"{type(e).__name__}:{str(e)[:160]}")
+            _wm = str(_wamid_d or "").strip()
+            # Preferir WAMID para dedupe (mais estável que eventKey quando muda normalização/msgType)
+            _dedupe_basis = _wm or _ek
+            if _dedupe_basis:
+                _dedup_doc = _sha1_id(f"task:{_dedupe_basis}")
+                _ref = _db().collection("platform_tasks_dedup").document(_dedup_doc)
+                _snap = _ref.get()
+                if _snap.exists:
+                    logger.info("[tasks] dedup: already_processed eventKey=%s wamid=%s", event_key, _wm)
+                    return jsonify({"ok": True, "deduped": True}), 200
+                _ref.set(
+                    {
+                        "eventKey": _ek,
+                        "dedupeBasis": _dedupe_basis,
+                        "wamid": _wm,
+                        "createdAt": _fs_admin().SERVER_TIMESTAMP,
+                    },
+                    merge=True,
+                )
+        except Exception:
+            pass
+
+
+
 
     except Exception:
         logger.exception("[tasks] worker_unhandled_exception (parse_json)")
@@ -1784,11 +1787,31 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 # Default ON (1) para evitar silêncio quando o áudio foi aceito/armazenado.
                 if os.environ.get("VOICE_WA_ACK", "1") != "0":
                     try:
+                        # Idempotência do ACK (evita mandar 2x em retries/duplicatas)
+                        _wm = str(wamid or "").strip()
+                        _ek = str(event_key or "").strip()
+                        _dedupe_basis = _wm or _ek
+                        _ack_key = _sha1_id(f"voice_ack:{_dedupe_basis}")
+                        _ack_ref = _db().collection("platform_tasks_dedup").document(_ack_key)
+                        _ack_snap = _ack_ref.get()
+                        if _ack_snap.exists:
+                            logger.info("[tasks] voice_ack: already_sent eventKey=%s wamid=%s", event_key, wamid)
+                        else:
+                            _ack_ref.set(
+                                {
+                                    "eventKey": _ek,
+                                    "wamid": _wm,
+                                    "kind": "voice_ack",
+                                    "createdAt": _fs_admin().SERVER_TIMESTAMP,
+                                },
+                                merge=True,
+                            )
                         from providers.ycloud import send_text  # type: ignore
-                        send_text(
-                            to_e164=from_e164,
-                            text="✅ Áudio recebido! Vou preparar sua Voz do Atendimento.\nAgora volte para a tela de configuração e clique em Continuar."
-                        )
+                        if not _ack_snap.exists:
+                            send_text(
+                                to_e164=from_e164,
+                                text="✅ Áudio recebido! Vou preparar sua Voz do Atendimento.\nAgora volte para a tela de configuração e clique em Continuar."
+                            )
                     except Exception:
                         logger.exception("[tasks] voice: falha ao enviar ACK via WhatsApp")
 
