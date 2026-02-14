@@ -603,6 +603,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 # porque o hard cap é garantido pelo MAX_AI_TURNS + bump (best-effort).
                 ai_turns = 0
                 wa_key = (ctx.get("waKey") or ctx.get("wa_key") or ctx.get("from_e164") or "").strip()
+                uid_owner = (ctx.get("uid_owner") or "").strip()
                 try:
                     from services.speaker_state import get_speaker_state  # type: ignore
                     st = get_speaker_state(wa_key, uid_owner=(uid_owner or None)) if wa_key else {}
