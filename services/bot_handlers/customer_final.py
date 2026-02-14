@@ -7,10 +7,144 @@ from __future__ import annotations
 import os
 import time
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
 
 # Turnos “SHOW” (IA mais caprichada) antes de cair no econômico
 CUSTOMER_FINAL_AI_TURNS = int(os.getenv("CUSTOMER_FINAL_AI_TURNS", "5") or "5")
+
+# --- Customer Final Front (modo SHOW v2) ---
+CONVERSATIONAL_FRONT = os.getenv("CONVERSATIONAL_FRONT", "false").strip().lower() in ("1", "true", "yes", "on")
+MAX_AI_TURNS = int(os.getenv("MAX_AI_TURNS", "5") or 5)
+FRONT_KB_MAX_CHARS = int(os.getenv("FRONT_KB_MAX_CHARS", "2500") or 2500)
+
+def _norm(s: str) -> str:
+    return (s or "").strip()
+
+def _safe_int(v: Any, default: int = 0) -> int:
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+def _truncate(s: str, n: int) -> str:
+    s = (s or "").strip()
+    if len(s) <= n:
+        return s
+    return s[: max(0, n - 1)].rstrip() + "…"
+
+def _load_persona(uid: str) -> Dict[str, Any]:
+    """
+    Compat com o wa_bot:
+    - profissionais/{uid}.config.jeitoAtenderV1 (novo)
+    - profissionais/{uid}.config.robotPersona   (legado)
+    """
+    uid = _norm(uid)
+    if not uid:
+        return {}
+    try:
+        db = _fs_client()
+        if not db:
+            return {}
+        snap = db.collection("profissionais").document(uid).get()
+        data = (snap.to_dict() or {}) if snap else {}
+        cfg = data.get("config") or {}
+        p1 = cfg.get("jeitoAtenderV1")
+        if isinstance(p1, dict) and p1:
+            return p1
+        p2 = cfg.get("robotPersona")
+        if isinstance(p2, dict) and p2:
+            return p2
+    except Exception:
+        pass
+    return {}
+
+def _load_catalog(uid: str, *, limit: int = 14) -> List[Dict[str, Any]]:
+    """
+    Best-effort catálogo do profissional.
+    Tenta: profissionais/{uid}/produtosEServicos (coleção)
+    Safe-by-default: retorna [] em qualquer falha.
+    """
+    uid = _norm(uid)
+    if not uid:
+        return []
+    try:
+        db = _fs_client()
+        if not db:
+            return []
+        q = db.collection("profissionais").document(uid).collection("produtosEServicos").limit(limit)
+        out: List[Dict[str, Any]] = []
+        for doc in q.stream():
+            d = doc.to_dict() or {}
+            nome = _norm(str(d.get("nome") or d.get("name") or ""))
+            if not nome:
+                continue
+            out.append({
+                "nome": nome,
+                "preco": d.get("precoBase") or d.get("preco") or d.get("valor") or "",
+                "duracaoMin": d.get("duracaoMin") or d.get("duracao") or "",
+                "outras": d.get("outrasInformacoes") or d.get("outras") or "",
+            })
+        return out
+    except Exception:
+        return []
+
+def _build_prof_snapshot(uid: str, ctx: Optional[Dict[str, Any]]) -> str:
+    """Monta um snapshot enxuto (<= FRONT_KB_MAX_CHARS) para o front IA."""
+    uid = _norm(uid)
+    ctx = ctx if isinstance(ctx, dict) else {}
+    display_name = _norm(str(ctx.get("displayName") or ctx.get("nomeProfissional") or ""))
+
+    persona = _load_persona(uid)
+    tone = persona.get("tom") or persona.get("tone") or ""
+    style = persona.get("estilo") or persona.get("style") or ""
+    formal = persona.get("formalidade") or persona.get("formality") or ""
+    selling = persona.get("posturaVenda") or persona.get("sales_posture") or ""
+
+    catalog = _load_catalog(uid, limit=14)
+
+    snap_lines: List[str] = []
+    snap_lines.append("## PROFISSIONAL (Contexto do atendimento)")
+    if display_name:
+        snap_lines.append(f"- Nome: {display_name}")
+    snap_lines.append(f"- uid: {uid}")
+
+    if tone or style or formal or selling:
+        snap_lines.append("## JEITO DE ATENDER (persona)")
+        if tone:
+            snap_lines.append(f"- Tom: {tone}")
+        if formal:
+            snap_lines.append(f"- Formalidade: {formal}")
+        if style:
+            snap_lines.append(f"- Estilo: {style}")
+        if selling:
+            snap_lines.append(f"- Postura de venda: {selling}")
+
+    if catalog:
+        snap_lines.append("## CATÁLOGO (serviços/produtos)")
+        for it in catalog:
+            nome = _norm(str(it.get("nome") or ""))
+            if not nome:
+                continue
+            preco = _norm(str(it.get("preco") or ""))
+            dur = _norm(str(it.get("duracaoMin") or ""))
+            extra = _norm(str(it.get("outras") or ""))
+            parts: List[str] = []
+            if preco:
+                parts.append(f"R$ {preco}".replace("R$ R$", "R$ "))
+            if dur:
+                parts.append(f"{dur}min")
+            if extra:
+                parts.append(extra)
+            tail = (" — " + " | ".join(parts)) if parts else ""
+            snap_lines.append(f"- {nome}{tail}")
+
+    snap_lines.append("## REGRAS (canônicas)")
+    snap_lines.append("- Se o cliente pedir AGENDAR: peça dia/horário e confirme antes de marcar.")
+    snap_lines.append("- Se o cliente pedir PREÇO: responda com base no catálogo; se faltar, pergunte detalhes.")
+    snap_lines.append("- Respostas curtas, claras e úteis. Nada de falar da plataforma MEI Robô.")
+
+    snap = "\n".join(snap_lines).strip()
+    return _truncate(snap, FRONT_KB_MAX_CHARS)
 
 # TTL do contador por contato
 _TURNS_TTL_SECONDS = int(os.getenv("CUSTOMER_FINAL_TURNS_TTL_SECONDS", "21600") or "21600")  # 6h
@@ -297,6 +431,61 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
     t = (text or "").strip()
     if not uid or not t:
         return {"ok": True, "route": "customer_final", "replyText": "Oi! Me diz o que você precisa 🙂"}
+
+    # --- FRONT (Customer Final) — 5 turnos com snapshot do profissional ---
+    wa_key = _norm(str((ctx or {}).get("waKey") or (ctx or {}).get("wa_key") or (ctx or {}).get("from_e164") or "")) if isinstance(ctx, dict) else ""
+    uid_owner = _norm(str((ctx or {}).get("uid_owner") or uid)) if isinstance(ctx, dict) else uid
+    ai_turns = 0
+    try:
+        from services.speaker_state import get_speaker_state  # type: ignore
+        st = get_speaker_state(wa_key, uid_owner=(uid_owner or None)) if wa_key else {}
+        ai_turns = _safe_int((st or {}).get("ai_turns"), 0)
+    except Exception:
+        ai_turns = 0
+
+    try:
+        logging.info("[CUSTOMER_FINAL][FRONT_GATE] enabled=%s uid_owner=%s waKey=%s ai_turns=%s max=%s",
+                     bool(CONVERSATIONAL_FRONT), (uid_owner or "")[:10], (wa_key or "")[:32], ai_turns, MAX_AI_TURNS)
+    except Exception:
+        pass
+
+    if CONVERSATIONAL_FRONT and ai_turns < MAX_AI_TURNS:
+        try:
+            from services.conversational_front import handle as _front_handle  # type: ignore
+            kb_snapshot = _build_prof_snapshot(uid_owner, ctx)
+            state_summary = {"ai_turns": ai_turns, "is_customer_final": True, "uid_owner": uid_owner, "waKey": wa_key}
+            try:
+                front_out = _front_handle(user_text=t, state_summary=state_summary, kb_snapshot=kb_snapshot) or {}
+            except TypeError:
+                state_summary["kb_snapshot"] = kb_snapshot
+                front_out = _front_handle(user_text=t, state_summary=state_summary) or {}
+            reply_text = _norm(str((front_out or {}).get("replyText") or ""))
+            if reply_text:
+                try:
+                    from services.speaker_state import bump_ai_turns  # type: ignore
+                    if wa_key:
+                        bump_ai_turns(wa_key, uid_owner=(uid_owner or None))
+                except Exception:
+                    pass
+                und = (front_out or {}).get("understanding") or {}
+                return {
+                    "ok": True,
+                    "route": "customer_final_front",
+                    "replyText": reply_text,
+                    "prefersText": bool((front_out or {}).get("prefersText", True)),
+                    "understanding": und if isinstance(und, dict) else {},
+                    "kbSnapshotSizeChars": len(kb_snapshot or ""),
+                    "tokenUsage": (front_out or {}).get("tokenUsage") or {},
+                    "aiMeta": {
+                        "ia_first": True,
+                        "mode": "customer_final_front",
+                        "uid_owner": uid_owner,
+                        "ai_turns_before": ai_turns,
+                        "max_ai_turns": MAX_AI_TURNS,
+                    },
+                }
+        except Exception:
+            pass
 
     persona = _get_robot_persona(ctx)
     contact_key = _get_contact_key(uid, ctx)
