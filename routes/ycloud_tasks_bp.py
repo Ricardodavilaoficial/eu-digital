@@ -2203,10 +2203,9 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     wa_out = {"replyText": reply_text, "audioUrl": "", "audioDebug": audio_debug}
                 else:
                     ctx_for_bot = {
-                        "channel": "whatsapp",
-                        "from_e164": from_e164,
-                        "waKey": wa_key_effective,
-                        "to_e164": to_e164,
+                        "from_e164": from_e164,   # cliente final
+                        "to_e164": to_e164,       # número que recebeu (WABA)
+                        "waKey": from_e164,       # chave SaaS correta (cliente final)
                         "msg_type": msg_type,
                         "wamid": wamid,
                         "route_hint": route_hint,
@@ -2227,6 +2226,22 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         ctx_for_bot["uid_sender"] = uid_sender
                     else:
                         ctx_for_bot["actor_type"] = "lead"
+
+                    # ----------------------------------------------------------
+                    # LOG CIRÚRGICO (observabilidade Cliente Zero)
+                    # ----------------------------------------------------------
+                    try:
+                        logger.info(
+                            "[TASKS][CTX] actor_type=%s uid_owner=%s from=%s to=%s waKey=%s",
+                            ctx_for_bot.get("actor_type"),
+                            (ctx_for_bot.get("uid_owner") or "")[:12],
+                            (from_e164 or "")[:16],
+                            (to_e164 or "")[:16],
+                            (ctx_for_bot.get("waKey") or "")[:16],
+                        )
+                    except Exception:
+                        pass
+
                     # PATCH A (obrigatório): garantir msg_type no ctx do wa_bot
                     ctx_for_bot["msg_type"] = msg_type  # "audio" | "voice" | "ptt" | "text"
 
