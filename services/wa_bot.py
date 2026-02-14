@@ -946,6 +946,27 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
         except Exception:
             pass
 
+        # ----------------------------------------------------------
+        # CUSTOMER FINAL: tenta handler novo (safe-by-default)
+        # ----------------------------------------------------------
+        try:
+            from services.bot_handlers import customer_final  # novo
+            cf = customer_final.generate_reply(uid=uid, text=text, ctx=ctx)  # type: ignore
+            if isinstance(cf, dict):
+                reply_text = str(cf.get("replyText") or "").strip()
+                if reply_text:
+                    out = {
+                        "ok": True,
+                        "route": cf.get("route") or "customer_final",
+                        "replyText": reply_text,
+                        "aiMeta": cf.get("aiMeta") or {"mode": "customer_final"},
+                        "ttsOwner": "worker",
+                    }
+                    return out
+        except Exception:
+            pass
+
+
     try:
         # 2) SUPORTE (uid presente) — tenta SUPPORT_V2 (Action Map / Artigo), com fallback no legacy
         try:
