@@ -1656,6 +1656,16 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
         from_e164 = _to_plus_e164(from_raw)
         to_e164 = _to_plus_e164(to_raw)
+        
+        try:
+            inst_dbg = _to_plus_e164(os.environ.get("YCLOUD_WA_FROM_E164") or "")
+        except Exception:
+            inst_dbg = ""
+        logger.info(
+            "[tasks][route_probe] from_raw=%s to_raw=%s from_e164=%s to_e164=%s inst=%s",
+            from_raw, to_raw, from_e164, to_e164, inst_dbg
+        )
+        
         # --- resolve UID (identidade) ---
 
         # ----------------------------------------------------------
@@ -1694,7 +1704,24 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         # - se existir owner → cliente final (o bot responde como o profissional dono do número)
         # - senão → sender (institucional/suporte/config)
         uid = (uid_owner or uid_sender or "").strip()
-# 2) voice_links (TTL): sinal do fluxo de VOZ via WhatsApp (invite/botão)
+        
+        # --- route decision log (institucional vs cliente_final) ---
+        try:
+            branch = "institutional"
+            actor_type = "platform_institutional"
+            if uid_owner:
+                branch = "customer_final"
+                actor_type = "customer_final"
+            elif inst_from_e164 and to_e164 and to_e164 != inst_from_e164:
+                branch = "unknown_waba"
+                actor_type = "unknown"
+
+            logger.info("[tasks][route_pick] branch=%s uid=%s actor_type=%s", branch, uid, actor_type)
+        except Exception:
+            pass
+
+        
+        # 2) voice_links (TTL): sinal do fluxo de VOZ via WhatsApp (invite/botão)
         # IMPORTANTÍSSIMO: consultar MESMO se já existe uid, porque "configuração de voz"
         # é um modo exclusivo disparado pelo botão/invite (não depende de uid vazio).
         uid_voice_link = ""
@@ -1713,7 +1740,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         wa_key_effective = (wa_key or _digits_only(from_e164)).strip()
         owner_name = _get_owner_name(uid) if uid else ""
 
-# --- 1) ÁUDIO: fluxo de VOZ (ingest) ---
+        # --- 1) ÁUDIO: fluxo de VOZ (ingest) ---
         voice_waiting = False
         try:
             prof = _db().collection("profissionais").document(uid).get()
