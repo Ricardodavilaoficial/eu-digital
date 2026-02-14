@@ -1716,7 +1716,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 branch = "unknown_waba"
                 actor_type = "unknown"
 
-            logger.info("[tasks][route_pick] branch=%s uid=%s actor_type=%s", branch, uid, actor_type)
+            logger.info(
+                "[tasks][route_pick] branch=%s uid=%s actor_type=%s to_e164=%s inst=%s",
+                branch, uid, actor_type, (to_e164 or ""), (inst_from_e164 or "")
+            )
+            
         except Exception:
             pass
 
@@ -2207,6 +2211,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         "wamid": wamid,
                         "route_hint": route_hint,
                         "event_key": event_key,
+                        "uid_owner": uid_owner,
+                        "uid_sender": uid_sender,
                     }
                     # ----------------------------------------------------------
                     # CARIMBO DE ROTA (multi-WABA)
