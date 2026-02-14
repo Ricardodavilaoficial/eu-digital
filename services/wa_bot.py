@@ -931,10 +931,25 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             }
             return out
     # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
+    actor_type = str((ctx.get("actor_type") or "")).strip().lower()
+    is_customer_final = (actor_type == "customer_final")
+
+    # Se for CLIENTE FINAL (mensagem chegou no WABA do profissional), não usar SUPPORT_V2 (helpdesk da plataforma).
+    # Ainda não troca a lógica interna: só separa rota + injeta persona para o legacy (mínimo seguro).
+    if is_customer_final:
+        try:
+            if isinstance(ctx, dict) and not ctx.get("robotPersona"):
+                _persona = _load_prof_robot_persona_v1(uid)
+                if _persona:
+                    ctx["robotPersona"] = _persona
+                    ctx["robotPersonaId"] = "config.jeitoAtenderV1"
+        except Exception:
+            pass
+
     try:
         # 2) SUPORTE (uid presente) — tenta SUPPORT_V2 (Action Map / Artigo), com fallback no legacy
         try:
-            if SUPPORT_V2:
+            if SUPPORT_V2 and (not is_customer_final):
                 # Best-effort: injeta persona do profissional (se existir) no ctx do suporte.
                 try:
                     if isinstance(ctx, dict) and not ctx.get("robotPersona"):
@@ -996,8 +1011,15 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
         reply_text = captured["text"] or "Certo."
         out = {
             "ok": True,
-            "route": "support_legacy",
+            "route": ("customer_final_legacy" if is_customer_final else "support_legacy"),
             "replyText": reply_text,
+
+            "aiMeta": {
+                "actorType": ("customer_final" if is_customer_final else "support"),
+                "personaUsed": bool(ctx.get("robotPersona")),
+                "personaId": str(ctx.get("robotPersonaId") or ""),
+            },
+
 
             # 🔒 Garante que o áudio será decidido no worker
             "ttsOwner": "worker",

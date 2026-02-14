@@ -351,6 +351,13 @@ try:
     _register_bp(admin_ycloud_test_bp, "admin_ycloud_test_bp (/admin/ycloud/send-test)")
 except Exception as e:
     print("[bp][warn] admin_ycloud_test_bp:", e)
+    
+# === NOVO: Admin-only attach WABA (chip/manual) — /admin/waba/attach ===
+try:
+    from routes.admin_waba_bp import admin_waba_bp
+    _register_bp(admin_waba_bp, "admin_waba_bp (/admin/waba/attach)")
+except Exception as e:
+    print("[bp][warn] admin_waba_bp:", e)
 
 
 # === NOVO: Admin job Aniversário (MVP) — /admin/jobs/birthday ===
@@ -1420,5 +1427,3 @@ def __adc_debug():
 # =====================================
 # EOF
 # =====================================
-
-

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import json
 import time
 from datetime import datetime
 import random
@@ -610,6 +611,54 @@ def _to_plus_e164(raw: str) -> str:
 _NAME_OVERRIDE_TTL = int(os.environ.get("SUPPORT_NAME_OVERRIDE_TTL_SECONDS", "3600") or "3600")  # 1h
 
 
+
+
+# --- WABA owner resolve (multi-WABA): resolve o UID do profissional pelo número DESTINO (to_e164) ---
+def _wa_key_digits(e164: str) -> str:
+    s = (e164 or '').strip()
+    if not s:
+        return ''
+    return ''.join(ch for ch in s if ch.isdigit())
+
+def _resolve_owner_uid_by_to_e164(to_e164: str) -> str:
+    """Resolve UID do profissional dono do WABA (destino).
+    Ordem:
+      1) waba_owner_links/{waKeyDigits} -> {uid, fromE164} (preferido)
+      2) fallback query: profissionais where waba.fromE164 == to_e164
+    Safe-by-default: retorna '' em qualquer falha.
+    """
+    try:
+        to_e164_norm = _to_plus_e164(to_e164)
+        if not to_e164_norm:
+            return ''
+        inst = _to_plus_e164(os.environ.get('YCLOUD_WA_FROM_E164') or '')
+        if inst and to_e164_norm == inst:
+            return ''
+        wa_key = _wa_key_digits(to_e164_norm)
+        if wa_key:
+            try:
+                snap = _db().collection('waba_owner_links').document(wa_key).get()
+                if snap and snap.exists:
+                    data = snap.to_dict() or {}
+                    uid = (data.get('uid') or '').strip()
+                    fromE = _to_plus_e164(data.get('fromE164') or '')
+                    if uid and (not fromE or fromE == to_e164_norm):
+                        return uid
+            except Exception:
+                pass
+        # Fallback: query direta (pode exigir índice, mas é single-field)
+        try:
+            q = _db().collection('profissionais').where('waba.fromE164', '==', to_e164_norm).limit(2).stream()
+            uids = [d.id for d in q]
+            if not uids:
+                return ''
+            if len(uids) > 1:
+                logger.warning('[tasks] multiple_waba_owners to=%s uids=%s', to_e164_norm, uids)
+            return uids[0]
+        except Exception:
+            return ''
+    except Exception:
+        return ''
 
 # ==========================================================
 # IDENTIDADE PREMIUM (interlocutor ativo por waKey)
@@ -1606,19 +1655,46 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         media = payload.get("media") or {}
 
         from_e164 = _to_plus_e164(from_raw)
-        to_e164 = _to_plus_e164(to_raw)        # --- resolve UID (identidade) ---
-        # 1) Índice permanente: sender_uid_links/{waKey} -> uid
-        uid = ""
+        to_e164 = _to_plus_e164(to_raw)
+        # --- resolve UID (identidade) ---
+
+        # ----------------------------------------------------------
+        # GUARD: nunca tratar o número institucional como "sender"
+        # (evita marcar customer_final / uid via sender_uid_links quando a msg for do nosso WABA)
+        # ----------------------------------------------------------
+        inst_from_e164 = ""
+        try:
+            inst_from_e164 = _to_plus_e164(os.environ.get("YCLOUD_WA_FROM_E164") or "")
+        except Exception:
+            inst_from_e164 = ""
+        skip_sender_uid_lookup = bool(inst_from_e164 and from_e164 and from_e164 == inst_from_e164)
+
+        # 1) Quem enviou (uid_sender) — usado no fluxo institucional (to == institucional)
+        uid_sender = ""
         wa_key = ""
         try:
             from services.sender_uid_links import canonical_wa_key, get_uid_for_wa_key  # type: ignore
-            wa_key = (canonical_wa_key(from_e164) or "").strip()
-            uid = (get_uid_for_wa_key(wa_key) or "").strip()
+            if (not skip_sender_uid_lookup) and from_e164:
+                wa_key = (canonical_wa_key(from_e164) or "").strip()
+                uid_sender = (get_uid_for_wa_key(wa_key) or "").strip()
         except Exception:
             wa_key = ""
-            uid = ""
+            uid_sender = ""
 
-        # 2) voice_links (TTL): sinal do fluxo de VOZ via WhatsApp (invite/botão)
+        # 2) Dono do WABA (cliente final): se o toE164 NÃO for o institucional,
+        # resolve UID do profissional pelo DESTINO (to_e164) via waba_owner_links/profissionais.waba
+        uid_owner = ""
+        try:
+            if to_e164 and (not inst_from_e164 or to_e164 != inst_from_e164):
+                uid_owner = _resolve_owner_uid_by_to_e164(to_e164)
+        except Exception:
+            uid_owner = ""
+
+        # UID efetivo:
+        # - se existir owner → cliente final (o bot responde como o profissional dono do número)
+        # - senão → sender (institucional/suporte/config)
+        uid = (uid_owner or uid_sender or "").strip()
+# 2) voice_links (TTL): sinal do fluxo de VOZ via WhatsApp (invite/botão)
         # IMPORTANTÍSSIMO: consultar MESMO se já existe uid, porque "configuração de voz"
         # é um modo exclusivo disparado pelo botão/invite (não depende de uid vazio).
         uid_voice_link = ""
@@ -2035,7 +2111,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     audio_debug.setdefault("stt", {"ok": False, "reason": stt_err})
 
 
-                        # ==========================================================
+            # ==========================================================
             # IDENTIDADE PREMIUM (interlocutor ativo)
             # - Primeiro tenta override por regex (barato)
             # - Se não tiver, e houver gatilho, chama IA (curta) e persiste
@@ -2105,10 +2181,24 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         "route_hint": route_hint,
                         "event_key": event_key,
                     }
+                    # ----------------------------------------------------------
+                    # CARIMBO DE ROTA (multi-WABA)
+                    # ----------------------------------------------------------
+                    if uid_owner:
+                        ctx_for_bot["actor_type"] = "customer_final"
+                        ctx_for_bot["uid_owner"] = uid_owner
+                        ctx_for_bot["uid_sender"] = uid_sender
+                        uid = uid_owner  # responde como o profissional dono do WABA
+                    elif uid_sender:
+                        ctx_for_bot["actor_type"] = "support"
+                        ctx_for_bot["uid_sender"] = uid_sender
+                    else:
+                        ctx_for_bot["actor_type"] = "lead"
                     # PATCH A (obrigatório): garantir msg_type no ctx do wa_bot
                     ctx_for_bot["msg_type"] = msg_type  # "audio" | "voice" | "ptt" | "text"
 
                     wa_out = wa_bot_entry.reply_to_text(
+
                         uid=uid,
                         text=text_in,
                         ctx=ctx_for_bot,
