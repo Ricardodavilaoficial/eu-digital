@@ -605,7 +605,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 wa_key = (ctx.get("waKey") or ctx.get("wa_key") or ctx.get("from_e164") or "").strip()
                 try:
                     from services.speaker_state import get_speaker_state  # type: ignore
-                    st = get_speaker_state(wa_key) if wa_key else {}
+                    st = get_speaker_state(wa_key, uid_owner=(uid_owner or None)) if wa_key else {}
                     ai_turns = int(st.get("ai_turns") or 0)
                 except Exception:
                     ai_turns = 0
@@ -735,7 +735,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             try:
                                 from services.speaker_state import bump_ai_turns  # type: ignore
                                 if wa_key:
-                                    bump_ai_turns(wa_key)
+                                    bump_ai_turns(wa_key, uid_owner=(uid_owner or None))
                             except Exception:
                                 pass
                             try:
