@@ -632,6 +632,26 @@ def create_agendamento(
             "estado": "confirmado",
             "origem": "whatsapp",
         })
+
+        # 🔔 Enviar e-mail de confirmação para o profissional
+        try:
+            from services.email_sender import send_confirmation  # type: ignore
+            from services.db import db  # type: ignore
+
+            prof = db.collection("profissionais").document(uid).get()
+            prof_data = prof.to_dict() or {}
+            to_email = (prof_data.get("email") or "").strip()
+
+            if to_email:
+                payload = {
+                    "cliente": wa_key,
+                    "inicio": inicio_str,
+                    "duracao": duracao_min,
+                }
+                send_confirmation(to_email, payload)
+        except Exception as e:
+            logging.info("[scheduling] email confirmacao falhou: %s", e)
+
         return True
     except Exception as e:
         logging.info("[scheduling] create_agendamento falhou: %s", e)
