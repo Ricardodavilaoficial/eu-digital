@@ -131,3 +131,29 @@ def bump_ai_turns(wa_key: str, uid_owner: Optional[str] = None) -> int:
             logging.debug("[speaker_state] firestore set falhou: %s", e)
 
     return n
+
+
+# ===============================
+# BOOKING PENDENTE (Customer Final)
+# ===============================
+
+def set_pending_booking(wa_key: str, data: Dict[str, Any], uid_owner: Optional[str] = None):
+    state = get_speaker_state(wa_key, uid_owner=uid_owner) or {}
+    state["pending_booking"] = data
+    did = _doc_id(wa_key, uid_owner=uid_owner)
+    _mem[did] = (dict(state), _now() + _TTL_SECONDS)
+
+    db = _fs_client()
+    if _db_ready(db):
+        try:
+            db.collection(_SPEAKER_COLL).document(did).set(
+                {"pending_booking": data},
+                merge=True,
+            )
+        except Exception:
+            pass
+
+
+def get_pending_booking(wa_key: str, uid_owner: Optional[str] = None) -> Dict[str, Any]:
+    state = get_speaker_state(wa_key, uid_owner=uid_owner) or {}
+    return state.get("pending_booking") or {}

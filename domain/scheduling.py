@@ -602,3 +602,37 @@ if __name__ == "__main__":
         out = propose(uid=uid, service_slug=os.getenv("SERVICE_SLUG") or None)
         print(out)
 
+
+
+
+# ===============================
+# CRIAÇÃO REAL DE AGENDAMENTO
+# ===============================
+
+def create_agendamento(
+    uid: str,
+    wa_key: str,
+    inicio_str: str,
+    service_slug: Optional[str] = None,
+    duracao_min: int = 60,
+) -> bool:
+    if not _db_ready():
+        return False
+
+    try:
+        col = _get_col_ref(f"profissionais/{uid}/agendamentos")
+        if col is None:
+            return False
+
+        doc = col.document()
+        doc.set({
+            "clienteWaKey": wa_key,
+            "inicio": inicio_str,
+            "duracaoMin": duracao_min,
+            "estado": "confirmado",
+            "origem": "whatsapp",
+        })
+        return True
+    except Exception as e:
+        logging.info("[scheduling] create_agendamento falhou: %s", e)
+        return False

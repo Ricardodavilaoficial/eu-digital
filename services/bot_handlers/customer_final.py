@@ -594,6 +594,14 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
                 lista = slots.get("slots") or []
                 if lista:
                     linhas = "\n".join([f"• {s}" for s in lista[:5]])
+
+                    # Guarda slots pendentes
+                    from services.speaker_state import set_pending_booking  # type: ignore
+                    set_pending_booking(
+                        wa_key,
+                        {"slots": lista[:5]},
+                        uid_owner=uid,
+                    )
                     return {
                         "ok": True,
                         "route": "customer_final_scheduling",
@@ -602,6 +610,22 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
                     }
             except Exception:
                 pass
+
+        # 🔹 CONFIRMAÇÃO DE HORÁRIO
+        from services.speaker_state import get_pending_booking  # type: ignore
+        pending = get_pending_booking(wa_key, uid_owner=uid)
+        if pending and "slots" in pending:
+            for s in pending["slots"]:
+                if s.lower() in txt:
+                    from domain.scheduling import create_agendamento  # type: ignore
+                    ok = create_agendamento(uid, wa_key, s)
+                    if ok:
+                        return {
+                            "ok": True,
+                            "route": "customer_final_confirmed",
+                            "replyText": f"Fechado ✅\nTe espero dia {s}.",
+                            "aiMeta": {"mode": "booking_confirmed"},
+                        }
 
     except Exception:
         pass
