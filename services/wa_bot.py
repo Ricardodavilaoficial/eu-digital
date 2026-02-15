@@ -935,6 +935,9 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
     actor_type = str((ctx.get("actor_type") or "")).strip().lower()
     is_customer_final = (actor_type == "customer_final")
 
+    # Observabilidade básica (customer_final)
+    wa_key_cf = str((ctx.get("waKey") or ctx.get("wa_key") or ctx.get("from_e164") or "")).strip()
+
     # Se for CLIENTE FINAL (mensagem chegou no WABA do profissional), não usar SUPPORT_V2 (helpdesk da plataforma).
     # Ainda não troca a lógica interna: só separa rota + injeta persona para o legacy (mínimo seguro).
     if is_customer_final:
@@ -956,13 +959,42 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             if isinstance(cf, dict):
                 reply_text = str(cf.get("replyText") or "").strip()
                 if reply_text:
+                    # ✅ Se o handler respondeu, NÃO cai no legacy.
+                    try:
+                        logging.info(
+                            "[WA_BOT][CUSTOMER_FINAL_OK] waKey=%s route=%s",
+                            (wa_key_cf or "")[:32],
+                            str(cf.get("route") or "customer_final")[:48],
+                        )
+                    except Exception:
+                        pass
                     out = {
                         "ok": True,
                         "route": cf.get("route") or "customer_final",
                         "replyText": reply_text,
+                        # 🔎 Propaga telemetria/decisão do handler (worker pode usar ou ignorar)
+                        "prefersText": bool(cf.get("prefersText", True)),
+                        "understanding": cf.get("understanding") or {},
+                        "planNextStep": cf.get("planNextStep") or cf.get("plan_next_step") or "",
+                        "tokenUsage": cf.get("tokenUsage") or {},
+                        "kbSnapshotSizeChars": cf.get("kbSnapshotSizeChars") or cf.get("kb_snapshot_chars") or 0,
+                        "replySource": cf.get("replySource") or "customer_final",
+                        "decisionDebug": cf.get("decisionDebug") or {},
+                        # aiMeta básico (auditoria)
                         "aiMeta": cf.get("aiMeta") or {"mode": "customer_final"},
                         "ttsOwner": "worker",
                     }
+                    # ✅ complementa aiMeta com carimbo de actor/persona (sem sobrescrever o que já veio)
+                    try:
+                        am = out.get("aiMeta") or {}
+                        if not isinstance(am, dict):
+                            am = {"mode": str(am)}
+                        am.setdefault("actorType", "customer_final")
+                        am.setdefault("personaUsed", bool((ctx or {}).get("robotPersona")))
+                        am.setdefault("personaId", str((ctx or {}).get("robotPersonaId") or ""))
+                        out["aiMeta"] = am
+                    except Exception:
+                        pass
                     return out
         except Exception:
             pass
