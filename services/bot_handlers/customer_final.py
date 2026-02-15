@@ -453,6 +453,48 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
         try:
             from services.conversational_front import handle as _front_handle  # type: ignore
             kb_snapshot = _build_prof_snapshot(uid_owner, ctx)
+
+            # ----------------------------------------------------------
+            # BLOCO 1 — ENRIQUECIMENTO (Contact Memory + Acervo)
+            # ----------------------------------------------------------
+            contact_ctx = ""
+            acervo_ctx = ""
+
+            # 1️⃣ Contact Memory
+            try:
+                from services.contact_memory import build_contact_context  # type: ignore
+                if wa_key:
+                    cm = build_contact_context(uid_owner, wa_key) or {}
+                    summary = (cm.get("summary") or "").strip()
+                    if summary:
+                        contact_ctx = f"\n\n## CONTEXTO DO CLIENTE\n{summary}"
+            except Exception:
+                pass
+
+            # 2️⃣ Acervo do profissional
+            try:
+                from services.acervo import query_acervo_for_uid  # type: ignore
+                ac_out = query_acervo_for_uid(uid_owner, text, max_tokens=120) or {}
+                ac_text = (ac_out.get("answer") or "").strip()
+                if ac_text:
+                    acervo_ctx = f"\n\n## ACERVO PROFISSIONAL\n{ac_text}"
+            except Exception:
+                pass
+
+            if contact_ctx:
+                kb_snapshot += contact_ctx
+            if acervo_ctx:
+                kb_snapshot += acervo_ctx
+
+            try:
+                logging.info(
+                    "[CUSTOMER_FINAL][ENRICH] contact=%s acervo=%s snapshot_chars=%s",
+                    bool(contact_ctx),
+                    bool(acervo_ctx),
+                    len(kb_snapshot or ""),
+                )
+            except Exception:
+                pass
             state_summary = {"ai_turns": ai_turns, "is_customer_final": True, "uid_owner": uid_owner, "waKey": wa_key}
             try:
                 front_out = _front_handle(user_text=t, state_summary=state_summary, kb_snapshot=kb_snapshot) or {}
