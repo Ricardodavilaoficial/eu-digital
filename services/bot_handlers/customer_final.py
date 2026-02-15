@@ -566,10 +566,49 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
             },
         }
 
-    # 3) Depois: econômico (pede só o essencial)
+    # 3) Depois: ECONÔMICO REAL (pricing + scheduling)
+    try:
+        txt = t.lower()
+
+        # 🔹 INTENÇÃO: PREÇO
+        if any(k in txt for k in ["preço", "valor", "quanto custa"]):
+            try:
+                from domain.pricing import get_price  # type: ignore
+                price = get_price(uid, txt) or {}
+                valor = price.get("valor")
+                if valor:
+                    return {
+                        "ok": True,
+                        "route": "customer_final_pricing",
+                        "replyText": f"O valor é R$ {valor}. Quer que eu veja horários disponíveis?",
+                        "aiMeta": {"mode": "pricing", "turn": turn_n},
+                    }
+            except Exception:
+                pass
+
+        # 🔹 INTENÇÃO: AGENDAR
+        if any(k in txt for k in ["agendar", "marcar", "horário"]):
+            try:
+                from domain.scheduling import propose  # type: ignore
+                slots = propose(uid, txt) or {}
+                lista = slots.get("slots") or []
+                if lista:
+                    linhas = "\n".join([f"• {s}" for s in lista[:5]])
+                    return {
+                        "ok": True,
+                        "route": "customer_final_scheduling",
+                        "replyText": f"Tenho estes horários disponíveis:\n{linhas}\n\nQual você prefere?",
+                        "aiMeta": {"mode": "scheduling", "turn": turn_n},
+                    }
+            except Exception:
+                pass
+
+    except Exception:
+        pass
+
     return {
         "ok": True,
         "route": "customer_final_econ",
-        "replyText": "Perfeito. Pra eu te ajudar sem enrolar: você quer *preço* ou *agendar*? Se for agendar, me diga o dia e o horário.",
+        "replyText": "Me diz rapidinho: você quer *preço* ou *agendar*?",
         "aiMeta": {"mode": "econ", "turn": turn_n},
     }
