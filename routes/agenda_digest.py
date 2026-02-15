@@ -224,6 +224,74 @@ def _get_profissional_name(uid: str) -> str:
     return "MEI"
 
 
+
+
+def _get_profissional_email(uid: str) -> str:
+    """
+    Resolve e-mail canônico do profissional:
+      profissionais/{uid}.email
+    Safe-by-default: retorna "" se não encontrar.
+    """
+    if not db or not uid:
+        return ""
+    try:
+        doc = db.collection("profissionais").document(uid).get()
+        if doc and doc.exists:
+            data = doc.to_dict() or {}
+            email = (data.get("email") or "").strip()
+            return email
+    except Exception:
+        logging.exception("[agenda_digest] falha ao ler email do profissional para uid=%s", uid)
+    return ""
+
+
+def _load_agenda_cfg(uid: str) -> dict:
+    """
+    Carrega config de agenda (mesmo esquema do domain/scheduling.py):
+      Canonical: profissionais/{uid}/config/agendamento
+      Compat:    profissionais/{uid}/configAgendamento
+    Defaults: diasAtendimento seg–sex.
+    """
+    cfg = {}
+    if not db or not uid:
+        return {"diasAtendimento": [1, 2, 3, 4, 5]}
+    try:
+        # novo
+        d1 = db.document(f"profissionais/{uid}/config/agendamento").get()
+        if d1 and d1.exists:
+            cfg = d1.to_dict() or {}
+        else:
+            # legado
+            d2 = db.document(f"profissionais/{uid}/configAgendamento").get()
+            if d2 and d2.exists:
+                cfg = d2.to_dict() or {}
+    except Exception:
+        cfg = {}
+
+    dias = cfg.get("diasAtendimento")
+    if not isinstance(dias, (list, tuple)) or not dias:
+        dias = [1, 2, 3, 4, 5]  # seg–sex
+    cfg["diasAtendimento"] = list(dias)
+    return cfg
+
+
+def _is_workday(uid: str, date_str: str, tz: str) -> bool:
+    """
+    Verifica se a data está em diasAtendimento.
+    Mapeamento: 1=Seg ... 7=Dom.
+    """
+    try:
+        tzinfo = pytz.timezone(tz or "America/Sao_Paulo")
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        dt = tzinfo.localize(dt)
+        dow = dt.weekday() + 1  # Monday=0 -> 1
+        cfg = _load_agenda_cfg(uid)
+        dias = cfg.get("diasAtendimento") or [1, 2, 3, 4, 5]
+        return int(dow) in set(int(x) for x in dias if str(x).isdigit() or isinstance(x, int))
+    except Exception:
+        # safe-by-default: se falhar, considera workday (pra não “silenciar” tudo)
+        return True
+
 # ---------------- Route ----------------
 @agenda_digest_bp.route("/digest", methods=["GET"])
 def digest_get():
@@ -235,6 +303,18 @@ def digest_get():
     dry_run = _parse_bool(request.args.get("dry_run"), default=True)
     tz = (request.args.get("tz") or request.args.get("timezone") or "America/Sao_Paulo").strip()
     date_str = (request.args.get("date") or "").strip() or _today_str_tz(tz)
+
+    # 🔒 Respeita dias de trabalho configurados (diasAtendimento)
+    if not _is_workday(uid, date_str, tz):
+        logging.info("[agenda_digest] skip (not workday) uid=%s date=%s tz=%s", uid, date_str, tz)
+        return jsonify({
+            "ok": True,
+            "skipped": True,
+            "reason": "not_workday",
+            "date": date_str,
+            "tz": tz,
+        })
+
 
     # Coleta eventos reais do dia (se repo disponível)
     items = []
@@ -293,16 +373,19 @@ def digest_get():
             "detail": "Configure EMAIL_SENDER para envio real."
         }), 400
 
-    # destinatário obrigatório para envio real
-    to_email = request.args.get("to") or request.headers.get("X-Digest-To")
+    # destinatário: opcional via ?to/header, senão usa profissionais/{uid}.email
+    to_email = (request.args.get("to") or request.headers.get("X-Digest-To") or "").strip()
+    if not to_email:
+        to_email = _get_profissional_email(uid)
     if not to_email:
         return jsonify({
             "ok": False,
             "dry_run": False,
             "date": date_str,
             "error": "recipient_missing",
-            "detail": "Informe destinatário via ?to=email@dominio ou header X-Digest-To."
+            "detail": "Profissional sem e-mail cadastrado (profissionais/{uid}.email)."
         }), 400
+
 
     # BCC (env ou header)
     bcc_header = request.headers.get("X-Digest-Bcc", "")
