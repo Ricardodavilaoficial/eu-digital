@@ -381,6 +381,13 @@ except Exception as e:
     print("[bp][warn] servicos_foto_bp:", e)
 
 try:
+    from routes.importar_precos import importar_bp
+    _register_bp(importar_bp, "importar_bp (/api/importar-precos)")
+except Exception as e:
+    print("[bp][warn] importar_bp:", e)
+
+
+try:
     from routes.contacts import contacts_bp
     _register_bp(contacts_bp, "contacts_bp")
 except Exception as e:
