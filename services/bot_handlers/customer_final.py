@@ -32,6 +32,120 @@ def _truncate(s: str, n: int) -> str:
         return s
     return s[: max(0, n - 1)].rstrip() + "…"
 
+def _cm_safe_date(dt_val: Any) -> str:
+    try:
+        if hasattr(dt_val, "seconds"):
+            import datetime as _dt
+            return _dt.datetime.utcfromtimestamp(int(dt_val.seconds)).date().isoformat()
+        if hasattr(dt_val, "isoformat"):
+            return str(dt_val.isoformat())[:10]
+        s = str(dt_val or "").strip()
+        if "T" in s:
+            return s.split("T", 1)[0][:10]
+        return s[:10]
+    except Exception:
+        return ""
+
+def _cm_wants_more(txt_lower: str) -> bool:
+    keys = ["tem mais", "mais alguma", "mais coisa", "anteriore", "histórico", "historico", "outras", "detalhes", "lista"]
+    return any(k in txt_lower for k in keys)
+
+def _cm_is_status_question(txt_lower: str) -> bool:
+    keys = ["novidade", "andamento", "status", "atualiza", "processo", "retorno", "consulta", "resultado", "evolução", "evolucao"]
+    return any(k in txt_lower for k in keys)
+
+def _cm_fetch_timeline(uid_owner: str, wa_key_e164: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """
+    Lê eventos recentes do contato:
+      profissionais/{uid}/clientes/{cid}/timeline (fallback historico/historicoEventos)
+    Safe-by-default: retorna [].
+    """
+    try:
+        from domain.contact_memory import contact_memory_enabled_for, _find_cliente_doc  # type: ignore
+    except Exception:
+        return []
+
+    if not uid_owner or not wa_key_e164:
+        return []
+    try:
+        if not contact_memory_enabled_for(uid_owner):
+            return []
+    except Exception:
+        return []
+
+    try:
+        cid, _c = _find_cliente_doc(uid_owner, wa_key_e164, {})  # telefone=wa_key; value vazio
+        if not cid:
+            return []
+    except Exception:
+        return []
+
+    db = _fs_client()
+    if not db:
+        return []
+
+    subs = ("timeline", "historico", "historicoEventos")
+    for sub in subs:
+        try:
+            col = (
+                db.collection("profissionais").document(uid_owner)
+                .collection("clientes").document(cid)
+                .collection(sub)
+                .order_by("createdAt", direction="DESCENDING")
+                .limit(max(1, int(limit)))
+            )
+            docs = list(col.stream())
+            if not docs:
+                continue
+            out: List[Dict[str, Any]] = []
+            for d in docs:
+                data = d.to_dict() or {}
+                txt = (
+                    data.get("text")
+                    or data.get("texto")
+                    or data.get("descricao")
+                    or data.get("descricaoEvento")
+                    or data.get("resumo")
+                    or ""
+                )
+                txt = str(txt or "").strip()
+                if not txt:
+                    continue
+                out.append({
+                    "id": d.id,
+                    "createdAt": data.get("createdAt") or data.get("updatedAt"),
+                    "tipo": data.get("type") or data.get("tipo") or data.get("kind") or "",
+                    "texto": txt[:260],
+                    "importance": data.get("importance"),
+                })
+            return out
+        except Exception:
+            continue
+    return []
+
+def _cm_format_last_event(ev: Dict[str, Any]) -> str:
+    d = _cm_safe_date(ev.get("createdAt"))
+    tipo = str(ev.get("tipo") or "").strip()
+    txt = str(ev.get("texto") or "").strip()
+    if tipo:
+        return f"A última atualização foi em {d or '—'}: {tipo} — {txt}"
+    return f"A última atualização foi em {d or '—'}: {txt}"
+
+def _cm_format_recent(events: List[Dict[str, Any]], max_items: int = 5) -> str:
+    lines: List[str] = []
+    for ev in (events or [])[:max_items]:
+        d = _cm_safe_date(ev.get("createdAt"))
+        tipo = str(ev.get("tipo") or "").strip()
+        txt = str(ev.get("texto") or "").strip()
+        if tipo:
+            lines.append(f"• {d or '—'} — {tipo}: {txt}")
+        else:
+            lines.append(f"• {d or '—'} — {txt}")
+    if not lines:
+        return ""
+    return "Tenho estas atualizações registradas:\n" + "\n".join(lines)
+
+
 def _load_persona(uid: str) -> Dict[str, Any]:
     """
     Compat com o wa_bot:
@@ -532,6 +646,36 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
     persona = _get_robot_persona(ctx)
     contact_key = _get_contact_key(uid, ctx)
     turn_n = _get_and_bump_turns(uid, contact_key) if contact_key else 1
+
+    # 0) Memória por contato (barato): responder “status/novidade” sem IA quando houver timeline
+    try:
+        txt_l = t.lower()
+        if _cm_is_status_question(txt_l) or _cm_wants_more(txt_l):
+            wa_key_e164 = _norm(str((ctx or {}).get("waKey") or (ctx or {}).get("wa_key") or (ctx or {}).get("from_e164") or "")) if isinstance(ctx, dict) else ""
+            uid_owner = _norm(str((ctx or {}).get("uid_owner") or uid)) if isinstance(ctx, dict) else uid
+            if wa_key_e164 and uid_owner:
+                evs = _cm_fetch_timeline(uid_owner, wa_key_e164, limit=5)
+                if evs:
+                    if _cm_wants_more(txt_l):
+                        msg = _cm_format_recent(evs, max_items=5)
+                        if msg:
+                            return {
+                                "ok": True,
+                                "route": "customer_final_contact_timeline",
+                                "replyText": msg,
+                                "aiMeta": {"mode": "contact_memory", "turn": turn_n, "items": min(5, len(evs))},
+                            }
+                    msg = _cm_format_last_event(evs[0])
+                    if msg:
+                        return {
+                            "ok": True,
+                            "route": "customer_final_contact_last",
+                            "replyText": msg,
+                            "aiMeta": {"mode": "contact_memory", "turn": turn_n},
+                        }
+    except Exception:
+        pass
+
 
     # 1) Primeiro: tenta acervo (perguntas de conteúdo). Barato e assertivo.
     acervo_ans = _try_acervo(uid, t)
