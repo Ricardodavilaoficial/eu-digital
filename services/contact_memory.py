@@ -39,3 +39,30 @@ def build_contact_context(
         return {"summary": ctx_str}
     except Exception:
         return {}
+def store_contact_event(
+    uid: str,
+    telefone: str,
+    summary: str,
+    *,
+    importance: int = 1,
+    dedupe_key: str = "",
+    source: str = "auto",
+) -> bool:
+    """Shim: encaminha para domain.contact_memory.store_contact_event."""
+    try:
+        from domain.contact_memory import store_contact_event as _store  # type: ignore
+    except Exception:
+        return False
+    try:
+        return bool(
+            _store(
+                uid=uid,
+                telefone=telefone,
+                summary=summary,
+                importance=importance,
+                dedupe_key=dedupe_key,
+                source=source,
+            )
+        )
+    except Exception:
+        return False

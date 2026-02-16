@@ -16,6 +16,7 @@
 
 import logging
 import os
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -338,3 +339,107 @@ def build_contact_context(
     if len(ctx) > max_chars:
         ctx = ctx[: max_chars - 3].rstrip() + "..."
     return ctx
+
+# ===============================
+# WRITE — EVENTOS NA LINHA DO TEMPO
+# ===============================
+
+def _server_ts() -> Any:
+    """
+    Preferencialmente usa SERVER_TIMESTAMP do Firestore.
+    Fallback: datetime UTC.
+    """
+    try:
+        from google.cloud import firestore  # type: ignore
+        return firestore.SERVER_TIMESTAMP
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
+def _sha1_16(s: str) -> str:
+    return hashlib.sha1((s or "").encode("utf-8")).hexdigest()[:16]
+
+
+def store_contact_event(
+    uid: str,
+    telefone: str,
+    summary: str,
+    *,
+    importance: int = 1,
+    dedupe_key: Optional[str] = None,
+    source: str = "auto",
+) -> bool:
+    """
+    Grava um evento compacto na timeline do contato.
+
+    - NÃO salva conversa inteira
+    - dedupe por dedupeKey
+    - mantém histórico completo (não apaga eventos antigos)
+    - atualiza profissionais/{uid}/clientes/{cid}.lastEvent
+    """
+    uid = (uid or "").strip()
+    telefone = (telefone or "").strip()
+    summary = (summary or "").strip()
+    if not uid or not telefone or not summary:
+        return False
+
+    if not contact_memory_enabled_for(uid):
+        return False
+
+    if not _db_ready():
+        return False
+
+    # resolve contato
+    cliente_id, _cliente = _find_cliente_doc(uid, telefone, {})
+    if not cliente_id:
+        return False
+
+    ded = (dedupe_key or "").strip()
+    if not ded:
+        ded = _sha1_16(summary)
+
+    try:
+        col = DB.collection(f"profissionais/{uid}/clientes/{cliente_id}/timeline")
+
+        # dedupe: se já existe um evento com a mesma dedupeKey, não grava de novo
+        try:
+            q = col.where("dedupeKey", "==", ded).limit(1).stream()
+            for _ in q:
+                return False
+        except Exception:
+            pass
+
+        # cria evento
+        doc = col.document()
+        doc.set(
+            {
+                "texto": summary[:180],
+                "type": "auto",
+                "importance": 3 if int(importance) >= 3 else (2 if int(importance) == 2 else 1),
+                "dedupeKey": ded[:64],
+                "source": (source or "auto")[:32],
+                "createdAt": _server_ts(),
+            }
+        )
+
+        # atualiza lastEvent no doc do cliente
+        try:
+            DB.collection(f"profissionais/{uid}/clientes").document(cliente_id).set(
+                {
+                    "lastEvent": {
+                        "summary": summary[:180],
+                        "importance": 3 if int(importance) >= 3 else (2 if int(importance) == 2 else 1),
+                        "dedupeKey": ded[:64],
+                        "createdAt": _server_ts(),
+                        "source": (source or "auto")[:32],
+                    }
+                },
+                merge=True,
+            )
+        except Exception:
+            pass
+
+        return True
+    except Exception as e:
+        logging.info("[CONTACT_MEMORY][WRITE] falhou: %s", e)
+        return False

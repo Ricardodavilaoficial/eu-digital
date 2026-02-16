@@ -536,6 +536,151 @@ def _call_llm_min(text: str, persona: Dict[str, Any], catalog_brief: str) -> str
     except Exception:
         return "Me diz rapidinho: é *preço* ou *agendar*?"
 
+
+# ===============================
+# MEMÓRIA INTELIGENTE (WRITE)
+# ===============================
+
+def _hash_key(s: str) -> str:
+    import hashlib
+    return hashlib.sha1((s or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _should_consider_memory_update(user_text: str) -> bool:
+    """
+    Camada 1 (barata): só liga o modo 'avaliar/gravar' quando parece haver fato estável.
+    Evita gastar tokens e evita salvar ruído.
+    """
+    t = (user_text or "").strip().lower()
+    if not t:
+        return False
+
+    # sinais clássicos de "fato novo" / preferência / mudança
+    keywords = [
+        "meu nome", "me chama", "pode me chamar", "prefiro", "não gosto", "odeio", "sou alérg",
+        "alerg", "intoler", "moro", "endereço", "rua ", "avenida", "av.", "número", "apto", "apart",
+        "troquei de número", "meu número", "whatsapp novo", "novo número", "e-mail", "email",
+        "sempre", "nunca", "só", "apenas", "depois das", "antes das", "horário", "horario",
+        "vou viajar", "viajar", "volto", "retorno", "semana que vem", "mês que vem", "ano que vem",
+        "aniversário", "nascimento", "casamento", "filho", "filha",
+        "pode ser", "fechado", "combinado", "confirmo", "confirmado", "cancel", "remarcar",
+    ]
+    return any(k in t for k in keywords)
+
+
+def _llm_extract_memory_event(uid_owner: str, user_text: str, bot_reply: str = "") -> Dict[str, Any]:
+    """
+    Camada 2 (IA leve): retorna JSON com should_update/summary/importance/dedupeKey.
+    Safe-by-default: qualquer falha => should_update False.
+    """
+    out: Dict[str, Any] = {"should_update": False}
+    try:
+        import json
+        from openai import OpenAI  # type: ignore
+    except Exception:
+        return out
+
+    model = (os.getenv("CONTACT_MEMORY_MODEL") or os.getenv("CUSTOMER_FINAL_MODEL") or os.getenv("LLM_MODEL_ACERVO") or "gpt-4o-mini").strip()
+    try:
+        max_tokens = int(os.getenv("CONTACT_MEMORY_MAX_TOKENS", "120") or "120")
+    except Exception:
+        max_tokens = 120
+
+    sys = (
+        "Você extrai SOMENTE fatos estáveis e úteis sobre o cliente para uma linha do tempo.\n"
+        "NÃO salve conversa, NÃO salve pergunta de preço, NÃO salve tentativa de agendar.\n"
+        "Salve apenas: preferência/aversão, restrição de horário, mudança de contato, endereço, alergia, perfil importante,\n"
+        "ou um combinado/confirmacão REAL (algo decidido).\n"
+        "Responda APENAS em JSON válido, sem texto extra."
+    )
+
+    user = {
+        "uid_owner": (uid_owner or ""),
+        "user_text": (user_text or ""),
+        "bot_reply": (bot_reply or ""),
+        "schema": {
+            "should_update": "boolean",
+            "summary": "string curta (<= 120 chars), linguagem simples",
+            "importance": "1|2|3 (1 normal, 3 muito importante)",
+            "dedupeKey": "string curta estável (snake_case), ou vazio"
+        }
+    }
+
+    try:
+        client = OpenAI()
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": sys},
+                {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
+            ],
+            temperature=0.1,
+            max_tokens=max_tokens,
+        )
+        txt = (resp.choices[0].message.content or "").strip()
+        data = json.loads(txt) if txt.startswith("{") else {}
+        if isinstance(data, dict):
+            should = bool(data.get("should_update"))
+            summary = str(data.get("summary") or "").strip()
+            imp = _safe_int(data.get("importance"), 1)
+            ded = str(data.get("dedupeKey") or "").strip()
+            if should and summary:
+                out = {
+                    "should_update": True,
+                    "summary": summary[:120],
+                    "importance": 3 if imp >= 3 else (2 if imp == 2 else 1),
+                    "dedupeKey": ded[:64] if ded else "",
+                }
+    except Exception:
+        return {"should_update": False}
+
+    return out
+
+
+def _maybe_record_contact_event(uid_owner: str, wa_key: str, user_text: str, bot_reply: str = "") -> None:
+    """
+    Grava evento resumido (linha do tempo) se detectar fato relevante.
+    Não quebra fluxo: fire-and-forget com try/except.
+    """
+    try:
+        from domain.contact_memory import store_contact_event  # type: ignore
+    except Exception:
+        try:
+            from services.contact_memory import store_contact_event  # type: ignore
+        except Exception:
+            return
+
+    if not wa_key:
+        return
+
+    if not _should_consider_memory_update(user_text):
+        return
+
+    ai = _llm_extract_memory_event(uid_owner=uid_owner, user_text=user_text, bot_reply=bot_reply) or {}
+    if not bool(ai.get("should_update")):
+        return
+
+    summary = str(ai.get("summary") or "").strip()
+    if not summary:
+        return
+
+    importance = _safe_int(ai.get("importance"), 1)
+    dedupe_key = str(ai.get("dedupeKey") or "").strip()
+    if not dedupe_key:
+        dedupe_key = _hash_key(summary)
+
+    try:
+        store_contact_event(
+            uid=uid_owner,
+            telefone=wa_key,
+            summary=summary,
+            importance=importance,
+            dedupe_key=dedupe_key,
+            source="auto",
+        )
+    except Exception:
+        return
+
 def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Retorna dict no padrão do wa_bot:
@@ -624,6 +769,10 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
                 except Exception:
                     pass
                 und = (front_out or {}).get("understanding") or {}
+                try:
+                    _maybe_record_contact_event(uid_owner=uid_owner, wa_key=wa_key, user_text=t, bot_reply=reply_text)
+                except Exception:
+                    pass
                 return {
                     "ok": True,
                     "route": "customer_final_front",
@@ -697,6 +846,10 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
         snap = _load_prof_catalog_snapshot(uid)
         catalog_brief = _format_catalog_brief(snap)
         reply = _call_llm_min(t, persona, catalog_brief)
+        try:
+            _maybe_record_contact_event(uid_owner=uid, wa_key=wa_key, user_text=t, bot_reply=reply)
+        except Exception:
+            pass
         return {
             "ok": True,
             "route": "customer_final_ai",
@@ -744,7 +897,7 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
                     set_pending_booking(
                         wa_key,
                         {"slots": lista[:5]},
-                        uid_owner=uid,
+                        uid_owner=uid_owner,
                     )
                     return {
                         "ok": True,
@@ -757,7 +910,7 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
 
         # 🔹 CONFIRMAÇÃO DE HORÁRIO
         from services.speaker_state import get_pending_booking  # type: ignore
-        pending = get_pending_booking(wa_key, uid_owner=uid)
+        pending = get_pending_booking(wa_key, uid_owner=uid_owner)
         if pending and "slots" in pending:
             for s in pending["slots"]:
                 if s.lower() in txt:
