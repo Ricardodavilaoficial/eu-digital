@@ -56,6 +56,31 @@ def _get_next_numero(uid: str) -> str:
     return f"ORC-{datetime.utcnow().year}-{str(total).zfill(5)}"
 
 
+def _find_last_by_conversation(uid: str, wa_key: str) -> Optional[Dict[str, Any]]:
+    """
+    Busca o orçamento mais recente desta conversa (conversationKey = wa_key).
+    Safe-by-default: retorna None se falhar.
+    """
+    try:
+        q = (
+            db.collection("profissionais").document(uid)
+            .collection("orcamentos")
+            .where("conversationKey", "==", wa_key)
+            .order_by("createdAt", direction="DESCENDING")
+            .limit(1)
+        )
+        docs = list(q.stream())
+        if not docs:
+            return None
+        d = docs[0]
+        data = d.to_dict() or {}
+        data["id"] = d.id
+        return data
+    except Exception:
+        return None
+
+
+
 # ==========================================================
 # CORE
 # ==========================================================
@@ -87,6 +112,18 @@ def create_orcamento(
         "email": cliente_email,
         "validUntil": valid_until,
     })
+
+    # ------------------------------
+    # IDEMPOTÊNCIA POR CONVERSA:
+    # Se o último orçamento desta conversa tem o mesmo hash, reusa.
+    # ------------------------------
+    if wa_key:
+        last = _find_last_by_conversation(uid, wa_key)
+        if isinstance(last, dict):
+            last_hash = str(last.get("hashConteudo") or "").strip()
+            if last_hash and last_hash == payload_hash:
+                # Reusa o mesmo orçamento (não cria outro número/documento)
+                return last
 
     numero = _get_next_numero(uid)
 
