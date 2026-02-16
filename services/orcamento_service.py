@@ -56,26 +56,56 @@ def _get_next_numero(uid: str) -> str:
     return f"ORC-{datetime.utcnow().year}-{str(total).zfill(5)}"
 
 
+def _parse_created_at(v: Any) -> float:
+    """
+    Normaliza createdAt (ISO string) pra epoch float.
+    Safe-by-default: retorna 0.0.
+    """
+    try:
+        s = str(v or "").strip()
+        if not s:
+            return 0.0
+        # ISO "2026-02-16T..." (com ou sem Z)
+        if s.endswith("Z"):
+            s = s[:-1]
+        # datetime.fromisoformat não aceita 'Z' no py<3.11
+        dt = datetime.fromisoformat(s)
+        return dt.timestamp()
+    except Exception:
+        return 0.0
+
+
 def _find_last_by_conversation(uid: str, wa_key: str) -> Optional[Dict[str, Any]]:
     """
     Busca o orçamento mais recente desta conversa (conversationKey = wa_key).
     Safe-by-default: retorna None se falhar.
     """
     try:
-        q = (
-            db.collection("profissionais").document(uid)
-            .collection("orcamentos")
-            .where("conversationKey", "==", wa_key)
-            .order_by("createdAt", direction="DESCENDING")
-            .limit(1)
-        )
-        docs = list(q.stream())
-        if not docs:
-            return None
-        d = docs[0]
-        data = d.to_dict() or {}
-        data["id"] = d.id
-        return data
+# Sem order_by para NÃO depender de índice composto.
+# Busca poucos docs e resolve "mais recente" em memória.
+q = (
+    db.collection("profissionais").document(uid)
+    .collection("orcamentos")
+    .where("conversationKey", "==", wa_key)
+    .limit(5)
+)
+docs = list(q.stream())
+if not docs:
+    return None
+best = None
+best_ts = -1.0
+for d in docs:
+    data = d.to_dict() or {}
+    ts = _parse_created_at(data.get("createdAt"))
+    if ts >= best_ts:
+        best_ts = ts
+        best = (d, data)
+if not best:
+    return None
+d0, data0 = best
+data0["id"] = d0.id
+return data0
+
     except Exception:
         return None
 
