@@ -867,6 +867,72 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
     try:
         txt = t.lower()
 
+
+        # ==========================================================
+        # 🔹 INTENÇÃO: ENVIAR ORÇAMENTO POR EMAIL
+        # ==========================================================
+
+        try:
+            from services.budget_intent_detector import detect_budget_email_intent
+            from services.orcamento_service import (
+                create_orcamento,
+                send_orcamento_email,
+            )
+
+            intent_data = detect_budget_email_intent(
+                text=text,
+                context={
+                    "last_service": (ctx or {}).get("last_service") if isinstance(ctx, dict) else None,
+                    "last_price": (ctx or {}).get("last_price") if isinstance(ctx, dict) else None,
+                },
+            )
+
+            if intent_data.get("intent") == "send_budget_email" and intent_data.get("confidence", 0) > 0.6:
+
+                last_service = (ctx or {}).get("last_service") if isinstance(ctx, dict) else None
+                last_price = (ctx or {}).get("last_price") if isinstance(ctx, dict) else None
+                cliente_nome = ((ctx or {}).get("cliente_nome") if isinstance(ctx, dict) else None) or "Cliente"
+                cliente_email = (ctx or {}).get("cliente_email") if isinstance(ctx, dict) else None
+
+                # 1️⃣ Se não temos serviço ou valor → não gera orçamento
+                if not last_service or not last_price:
+                    return {}
+
+                # 2️⃣ Se não temos e-mail → pedir
+                if not cliente_email:
+                    return {
+                        "ok": True,
+                        "route": "customer_final_request_email",
+                        "replyText": "Pode me informar o e-mail para enviar o orçamento?",
+                        "aiMeta": {"mode": "budget_email_request"},
+                    }
+
+                # 3️⃣ Criar orçamento
+                orc = create_orcamento(
+                    uid=uid,
+                    wa_key=(ctx or {}).get("waKey") if isinstance(ctx, dict) else None,
+                    cliente_nome=cliente_nome,
+                    cliente_email=cliente_email,
+                    servico=last_service,
+                    valor=float(last_price),
+                )
+
+                # 4️⃣ Enviar
+                send_orcamento_email(
+                    uid=uid,
+                    orcamento=orc,
+                )
+
+                return {
+                    "ok": True,
+                    "route": "customer_final_budget_sent",
+                    "replyText": "Te enviei o orçamento por e-mail 📧 Qualquer dúvida me chama por aqui.",
+                    "aiMeta": {"mode": "budget_sent"},
+                }
+
+        except Exception as e:
+            logging.warning("budget_email_flow_fail: %s", e)
+
         # 🔹 INTENÇÃO: PREÇO
         if any(k in txt for k in ["preço", "valor", "quanto custa"]):
             try:
