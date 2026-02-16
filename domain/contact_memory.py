@@ -131,17 +131,17 @@ def _find_cliente_doc(uid: str, telefone: str, value: Dict[str, Any]) -> Tuple[O
         except Exception as e:
             logging.info("[CONTACT_MEMORY] lookup por telefone falhou: %s", e)
 
-# 1b) compat: telefone_v2.digits (UI contatos.html)
-if digits:
-    try:
-        q = col.where("telefone_v2.digits", "==", digits).limit(1).stream()
-        for d in q:
-            data = d.to_dict() or {}
-            if nome_contato and not data.get("nome"):
-                data.setdefault("nome", nome_contato)
-            return d.id, data
-    except Exception as e:
-        logging.info("[CONTACT_MEMORY] lookup por telefone_v2.digits falhou: %s", e)
+    # 1b) compat: telefone_v2.digits (UI contatos.html)
+    if digits:
+        try:
+            q = col.where("telefone_v2.digits", "==", digits).limit(1).stream()
+            for d in q:
+                data = d.to_dict() or {}
+                if nome_contato and not data.get("nome"):
+                    data.setdefault("nome", nome_contato)
+                return d.id, data
+        except Exception as e:
+            logging.info("[CONTACT_MEMORY] lookup por telefone_v2.digits falhou: %s", e)
 
     # 2) waKey, se existir
     if eq_key:
@@ -155,17 +155,17 @@ if digits:
         except Exception as e:
             logging.info("[CONTACT_MEMORY] lookup por waKey falhou: %s", e)
 
-# 2b) compat: telefone_v2.waKey (UI contatos.html)
-if eq_key:
-    try:
-        q = col.where("telefone_v2.waKey", "==", eq_key).limit(1).stream()
-        for d in q:
-            data = d.to_dict() or {}
-            if nome_contato and not data.get("nome"):
-                data.setdefault("nome", nome_contato)
-            return d.id, data
-    except Exception as e:
-        logging.info("[CONTACT_MEMORY] lookup por telefone_v2.waKey falhou: %s", e)
+    # 2b) compat: telefone_v2.waKey (UI contatos.html)
+    if eq_key:
+        try:
+            q = col.where("telefone_v2.waKey", "==", eq_key).limit(1).stream()
+            for d in q:
+                data = d.to_dict() or {}
+                if nome_contato and not data.get("nome"):
+                    data.setdefault("nome", nome_contato)
+                return d.id, data
+        except Exception as e:
+            logging.info("[CONTACT_MEMORY] lookup por telefone_v2.waKey falhou: %s", e)
 
     return None, None
 
@@ -308,27 +308,27 @@ def build_contact_context(
         except Exception as e:
             logging.info("[CONTACT_MEMORY] erro ao ler acervoContato: %s", e)
 
-# 3) compat: anexos do contato (UI usa subcoleção "files")
-try:
-    col = (
-        DB.collection(f"profissionais/{uid}/clientes/{cliente_id}/files")
-        .order_by("updatedAt", direction="DESCENDING")
-        .limit(3)
-    )
-    docs = list(col.stream())
-    for d in docs:
-        data = d.to_dict() or {}
-        nome = data.get("name") or data.get("filename") or data.get("originalName") or "arquivo"
-        ctype = data.get("contentType") or data.get("mime") or ""
-        dt_label = _safe_date(data.get("updatedAt") or data.get("createdAt"))
-        linha = f" - Anexo: {nome}"
-        if ctype:
-            linha += f" [{ctype}]"
-        if dt_label:
-            linha += f" ({dt_label})"
-        eventos.append(linha)
-except Exception as e:
-    logging.info("[CONTACT_MEMORY] erro ao ler files: %s", e)
+        # 3) compat: anexos do contato (UI usa subcoleção "files")
+        try:
+            col = (
+                DB.collection(f"profissionais/{uid}/clientes/{cliente_id}/files")
+                .order_by("updatedAt", direction="DESCENDING")
+                .limit(3)
+            )
+            docs = list(col.stream())
+            for d in docs:
+                data = d.to_dict() or {}
+                nome = data.get("name") or data.get("filename") or data.get("originalName") or "arquivo"
+                ctype = data.get("contentType") or data.get("mime") or ""
+                dt_label = _safe_date(data.get("updatedAt") or data.get("createdAt"))
+                linha = f" - Anexo: {nome}"
+                if ctype:
+                    linha += f" [{ctype}]"
+                if dt_label:
+                    linha += f" ({dt_label})"
+                eventos.append(linha)
+        except Exception as e:
+            logging.info("[CONTACT_MEMORY] erro ao ler files: %s", e)
 
     if eventos:
         partes.append("Registros recentes do contato:")

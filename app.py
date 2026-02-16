@@ -402,6 +402,12 @@ except Exception as e:
     print("[bp][warn] contacts_bp:", e)
 
 try:
+    from routes.memory_bp import memory_bp
+    _register_bp(memory_bp, "memory_bp (/api/memory/*)")
+except Exception as e:
+    print("[bp][warn] memory_bp:", e)
+
+try:
     from routes.configuracao import config_bp, ler_configuracao as _config_read
     _register_bp(config_bp, "config_bp (/api/configuracao GET)")
 except Exception as e:
