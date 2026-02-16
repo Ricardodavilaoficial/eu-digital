@@ -869,7 +869,7 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
 
 
         # ==========================================================
-        # 🔹 INTENÇÃO: ENVIAR ORÇAMENTO POR EMAIL
+        # 🔹 INTENÇÃO: ENVIAR ORÇAMENTO POR EMAIL (ROBUSTO via speaker_state)
         # ==========================================================
 
         try:
@@ -878,24 +878,34 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
                 create_orcamento,
                 send_orcamento_email,
             )
+            from services.speaker_state import get_last_quote  # type: ignore
 
             intent_data = detect_budget_email_intent(
                 text=text,
                 context={
-                    "last_service": (ctx or {}).get("last_service") if isinstance(ctx, dict) else None,
-                    "last_price": (ctx or {}).get("last_price") if isinstance(ctx, dict) else None,
+                    "last_service": (ctx or {}).get("last_service") if isinstance(ctx, dict) else "",
+                    "last_price": (ctx or {}).get("last_price") if isinstance(ctx, dict) else "",
                 },
             )
 
             if intent_data.get("intent") == "send_budget_email" and intent_data.get("confidence", 0) > 0.6:
 
-                last_service = (ctx or {}).get("last_service") if isinstance(ctx, dict) else None
-                last_price = (ctx or {}).get("last_price") if isinstance(ctx, dict) else None
-                cliente_nome = ((ctx or {}).get("cliente_nome") if isinstance(ctx, dict) else None) or "Cliente"
-                cliente_email = (ctx or {}).get("cliente_email") if isinstance(ctx, dict) else None
+                # Fonte de verdade: speaker_state.last_quote (sobrevive entre mensagens)
+                q = get_last_quote(wa_key, uid_owner=uid_owner) if wa_key else {}
+                last_service = (q.get("service") or "").strip()
+                last_price = q.get("price")
+                last_obs = (q.get("obs") or "").strip()
+
+                cliente_nome = ((ctx or {}).get("cliente_nome") if isinstance(ctx, dict) else "") or "Cliente"
+                cliente_email = ((ctx or {}).get("cliente_email") if isinstance(ctx, dict) else "")
 
                 # 1️⃣ Se não temos serviço ou valor → não gera orçamento
-                if not last_service or not last_price:
+                try:
+                    price_num = float(last_price)
+                except Exception:
+                    price_num = 0.0
+
+                if not last_service or price_num <= 0:
                     return {}
 
                 # 2️⃣ Se não temos e-mail → pedir
@@ -910,11 +920,12 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
                 # 3️⃣ Criar orçamento
                 orc = create_orcamento(
                     uid=uid,
-                    wa_key=(ctx or {}).get("waKey") if isinstance(ctx, dict) else None,
+                    wa_key=wa_key,
                     cliente_nome=cliente_nome,
                     cliente_email=cliente_email,
                     servico=last_service,
-                    valor=float(last_price),
+                    valor=float(price_num),
+                    observacoes=last_obs or None,
                 )
 
                 # 4️⃣ Enviar
@@ -940,6 +951,23 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
                 price = get_price(uid, txt) or {}
                 valor = price.get("valor")
                 if valor:
+                    # Guarda última cotação (robusto) para orçamento por e-mail
+                    try:
+                        from services.speaker_state import set_last_quote  # type: ignore
+                        # best-effort service: se pricing devolver slug/nome, usa; senão, tenta um fallback seguro
+                        svc = (
+                            str(price.get("slug") or price.get("service") or price.get("nome") or price.get("name") or "").strip()
+                        )
+                        if not svc:
+                            svc = "Serviço informado"
+                        obs = str(price.get("observacao") or price.get("obs") or price.get("outras") or "").strip()
+                        set_last_quote(
+                            wa_key,
+                            {"service": svc, "price": float(valor), "obs": obs},
+                            uid_owner=uid_owner,
+                        )
+                    except Exception:
+                        pass
                     return {
                         "ok": True,
                         "route": "customer_final_pricing",

@@ -157,3 +157,47 @@ def set_pending_booking(wa_key: str, data: Dict[str, Any], uid_owner: Optional[s
 def get_pending_booking(wa_key: str, uid_owner: Optional[str] = None) -> Dict[str, Any]:
     state = get_speaker_state(wa_key, uid_owner=uid_owner) or {}
     return state.get("pending_booking") or {}
+
+
+# ===============================
+# ÚLTIMA COTAÇÃO (PREÇO/SERVIÇO) — Orçamentos
+# ===============================
+
+def set_last_quote(wa_key: str, data: Dict[str, Any], uid_owner: Optional[str] = None):
+    """
+    Guarda a última cotação inferida/confirmada na conversa:
+      data = {"service": str, "price": float, "obs": str, "updatedAtEpoch": float}
+    Safe-by-default: best-effort (memória + Firestore).
+    """
+    wa_key = (wa_key or "").strip()
+    if not wa_key or not isinstance(data, dict):
+        return
+
+    now = _now()
+    row = get_speaker_state(wa_key, uid_owner=uid_owner) or {}
+    q = dict(data)
+    if "updatedAtEpoch" not in q:
+        q["updatedAtEpoch"] = now
+
+    row["last_quote"] = q
+    did = _doc_id(wa_key, uid_owner=uid_owner)
+    _mem[did] = (dict(row), now + _TTL_SECONDS)
+
+    db = _fs_client()
+    if _db_ready(db):
+        try:
+            db.collection(_SPEAKER_COLL).document(did).set({"last_quote": q}, merge=True)
+        except Exception:
+            pass
+
+
+def get_last_quote(wa_key: str, uid_owner: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Retorna a última cotação salva (ou {}).
+    """
+    wa_key = (wa_key or "").strip()
+    if not wa_key:
+        return {}
+    st = get_speaker_state(wa_key, uid_owner=uid_owner) or {}
+    q = st.get("last_quote")
+    return q if isinstance(q, dict) else {}
