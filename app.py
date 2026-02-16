@@ -374,6 +374,14 @@ try:
 except Exception as e:
     print("[bp][warn] ycloud_tasks_bp:", e)
 
+
+# === NOVO: Cloud Tasks Worker (Acervo index) — /tasks/acervo-index ===
+try:
+    from routes.acervo_tasks_bp import acervo_tasks_bp
+    _register_bp(acervo_tasks_bp, "acervo_tasks_bp (/tasks/acervo-index)")
+except Exception as e:
+    print("[bp][warn] acervo_tasks_bp:", e)
+
 try:
     from routes.servicos_foto import servicos_foto_bp
     _register_bp(servicos_foto_bp, "servicos_foto_bp (/api/servicos/foto)")

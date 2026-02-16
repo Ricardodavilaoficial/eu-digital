@@ -75,3 +75,46 @@ def enqueue_ycloud_inbound(payload: Dict[str, Any], event_key: str) -> Dict[str,
             return {"ok": True, "taskName": task_name, "deduped": True}
         raise
 
+
+def enqueue_acervo_index(uid: str, acervo_id: str) -> Dict[str, Any]:
+    """
+    Enfileira indexação do acervo (gera magrinho + resumo + tags + embedding).
+    """
+    project = (os.environ.get("CLOUD_TASKS_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT") or "").strip()
+    location = (os.environ.get("CLOUD_TASKS_LOCATION") or "").strip()
+    queue = (os.environ.get("CLOUD_TASKS_QUEUE") or "").strip()
+    target_url = (os.environ.get("CLOUD_TASKS_TARGET_URL") or "").strip().rstrip("/")
+    secret = (os.environ.get("CLOUD_TASKS_SECRET") or "").strip()
+
+    if not (project and location and queue and target_url and secret):
+        raise RuntimeError("Cloud Tasks ENVs ausentes: CLOUD_TASKS_PROJECT/LOCATION/QUEUE/TARGET_URL/SECRET")
+
+    parent = _client().queue_path(project, location, queue)
+
+    key = f"acervo:{uid}:{acervo_id}"
+    task_id = _sha1(key)[:32]
+    task_name = _client().task_path(project, location, queue, task_id)
+
+    body = json.dumps({"uid": uid, "acervoId": acervo_id}).encode("utf-8")
+
+    task = {
+        "name": task_name,
+        "http_request": {
+            "http_method": tasks_v2.HttpMethod.POST,
+            "url": f"{target_url}/tasks/acervo-index",
+            "headers": {
+                "Content-Type": "application/json",
+                "X-MR-Tasks-Secret": secret,
+            },
+            "body": body,
+        },
+    }
+
+    try:
+        _client().create_task(request={"parent": parent, "task": task})
+        return {"ok": True, "task": task_name, "mode": "cloudtasks", "dup": False}
+    except Exception as e:
+        msg = str(e)
+        if "ALREADY_EXISTS" in msg or "AlreadyExists" in msg:
+            return {"ok": True, "task": task_name, "mode": "cloudtasks", "dup": True}
+        raise

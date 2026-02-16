@@ -375,11 +375,20 @@ def criar_acervo_upload():
             "storageConsultaUrl": None,
             "resumoCurto": None,
             "ultimaIndexacao": None,
+            "indexStatus": "pending",
+            "indexError": None,
             "criadoEm": now,
             "atualizadoEm": now,
         }
 
         doc_ref.set(doc_data)
+
+        # Enfileira indexação (Cloud Tasks). Se falhar, não quebra upload.
+        try:
+            from services.cloud_tasks import enqueue_acervo_index  # type: ignore
+            enqueue_acervo_index(uid, acervo_id)
+        except Exception:
+            logging.exception("Falha ao enfileirar acervo-index; seguirá sem indexação automática por enquanto")
 
         # atualiza meta de quota (somatório de bytes do acervo)
         try:
