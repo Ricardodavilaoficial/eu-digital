@@ -13,6 +13,9 @@ from typing import Optional, Tuple
 
 log = logging.getLogger(__name__)
 
+# Redirect central: usa o fallback com cooldown
+from services.tts_fallback import speak_bytes, tts_bytes  # noqa
+
 # =========================
 # Envs / defaults
 # =========================
@@ -196,7 +199,7 @@ def _tts_google_bytes(
 # =========================
 # API pública (usada pelo wa_bot.py)
 # =========================
-def speak_bytes(
+def _legacy_speak_bytes(
     text: str,
     uid: Optional[str] = None,   # compat (não usado)
     voice: Optional[str] = None, # ElevenLabs: voice_id
@@ -250,8 +253,6 @@ def speak_bytes(
 def synthesize_bytes(*args, **kwargs):
     return speak_bytes(*args, **kwargs)
 
-def tts_bytes(*args, **kwargs):
-    return speak_bytes(*args, **kwargs)
 
 def speak(*args, **kwargs):
     return speak_bytes(*args, **kwargs)

@@ -11,7 +11,13 @@
 # - Cabeçalhos explícitos e stream sem carregar tudo em RAM.
 
 from flask import Blueprint, request, Response, jsonify
-import os, logging, requests
+import os, logging
+
+# Fallback automático: ElevenLabs -> Google TTS (com cooldown)
+try:
+    from services.tts_fallback import tts_bytes as _tts_bytes  # type: ignore
+except Exception:
+    _tts_bytes = None
 
 voz_tts_bp = Blueprint("voz_tts_bp", __name__)
 ELEVEN_TTS_URL_TEMPLATE = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
@@ -24,10 +30,6 @@ def tts_post():
     # Feature flag opcional (default habilitado)
     if not _env_true(os.environ.get("VOZ_V2_ENABLED", "true")):
         return jsonify({"ok": False, "error": "feature_disabled"}), 403
-
-    api_key = os.environ.get("ELEVEN_API_KEY") or ""
-    if not api_key:
-        return jsonify({"ok": False, "error": "missing_env", "detail": "ELEVEN_API_KEY is required"}), 500
 
     # Extrai payload (JSON ou form)
     if request.is_json:
@@ -46,69 +48,28 @@ def tts_post():
         max_chars = 1000
     if len(text) > max_chars:
         return jsonify({"ok": False, "error": "text_too_long", "limit": max_chars}), 413
-
-    # Voice id (prioridade: body -> query -> env)
+    # Voice id (opcional) (prioridade: body -> query -> env)
     voice_id = (data.get("voice_id") or request.args.get("voice_id") or os.environ.get("ELEVEN_VOICE_ID") or "").strip()
-    if not voice_id:
-        return jsonify({"ok": False, "error": "missing_voice_id"}), 400
+    voice_id = voice_id or None
 
-    # Parâmetros opcionais
-    model_id = (data.get("model") or os.environ.get("ELEVEN_TTS_MODEL") or "eleven_multilingual_v2").strip()
-    opt_latency = (data.get("optimize_streaming_latency") or os.environ.get("ELEVEN_TTS_OPT_LAT", "0")).strip()
-
-    headers = {
-        "xi-api-key": api_key,
-        "Accept": "audio/mpeg",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "text": text,
-        "model_id": model_id,
-        "voice_settings": {
-            "stability": float(os.environ.get("ELEVEN_VOICE_STABILITY", "0.5")),
-            "similarity_boost": float(os.environ.get("ELEVEN_VOICE_SIMILARITY", "0.75")),
-            "style": float(os.environ.get("ELEVEN_VOICE_STYLE", "0.0")),
-            "use_speaker_boost": _env_true(os.environ.get("ELEVEN_VOICE_SPK_BOOST", "true")),
-        },
-    }
-    try:
-        opt_int = int(opt_latency)
-        if opt_int in (0, 1, 2, 3, 4):
-            payload["optimize_streaming_latency"] = opt_int
-    except Exception:
-        pass
-
-    url = ELEVEN_TTS_URL_TEMPLATE.format(voice_id=voice_id)
+    if _tts_bytes is None:
+        return jsonify({"ok": False, "error": "tts_fallback_unavailable"}), 500
 
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=(5, 30), stream=True)
-    except requests.RequestException as e:
-        logging.exception("ElevenLabs request failed: %s", e)
-        return jsonify({"ok": False, "error": "upstream_error", "detail": str(e)}), 502
+        audio = _tts_bytes(text=text, voice_id=voice_id)
+    except Exception as e:
+        logging.exception("TTS fallback failed: %s", e)
+        return jsonify({"ok": False, "error": "tts_failed", "detail": str(e)}), 502
 
-    if r.status_code != 200:
-        try:
-            detail = r.json()
-        except Exception:
-            detail = r.text[:500]
-        return jsonify({"ok": False, "error": "upstream_non_200", "status": r.status_code, "detail": detail}), 502
-
-    def generate():
-        try:
-            for chunk in r.iter_content(chunk_size=8192):
-                if chunk:
-                    yield chunk
-        finally:
-            r.close()
+    if not audio:
+        return jsonify({"ok": False, "error": "empty_audio"}), 502
 
     headers_resp = {
         "Content-Type": "audio/mpeg",
         "Cache-Control": "no-store",
-        "X-Voice-Id": voice_id,
-        "X-Model-Id": model_id,
+        "X-Voice-Id": (voice_id or ""),
     }
-    return Response(generate(), headers=headers_resp, status=200)
-
+    return Response(audio, headers=headers_resp, status=200)
 @voz_tts_bp.route("/tts/ping", methods=["GET"], strict_slashes=False)
 def tts_ping():
     return jsonify({"ok": True, "service": "voz_tts", "enabled": _env_true(os.environ.get("VOZ_V2_ENABLED", "true"))})
