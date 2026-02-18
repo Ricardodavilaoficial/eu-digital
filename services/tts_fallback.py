@@ -137,10 +137,20 @@ def _tts_google(*, text: str, lang: str = "pt-BR") -> bytes:
     client = texttospeech.TextToSpeechClient()
 
     synthesis_input = texttospeech.SynthesisInput(text=text)
-    voice = texttospeech.VoiceSelectionParams(
-        language_code=lang,
-        ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL,
-    )
+    # Preferir voz explícita (ex.: pt-BR-Neural2-B / pt-BR-Wavenet-B).
+    # Se não houver, força MALE pra evitar cair no default (geralmente feminino).
+    voice_name = (os.getenv("GOOGLE_TTS_VOICE") or "").strip()
+    language_code = (os.getenv("TTS_LANGUAGE_CODE") or lang or "pt-BR").strip()
+    if voice_name:
+        voice = texttospeech.VoiceSelectionParams(
+            language_code=language_code,
+            name=voice_name,
+        )
+    else:
+        voice = texttospeech.VoiceSelectionParams(
+            language_code=language_code,
+            ssml_gender=texttospeech.SsmlVoiceGender.MALE,
+        )
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3,
     )
