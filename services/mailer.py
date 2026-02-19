@@ -1,14 +1,56 @@
 # services/mailer.py
 # Mailer mínimo para SendGrid via HTTP API (sem dependências externas)
 
-import os, json
+import os, json, time
 from urllib import request as ulreq
 from urllib.error import HTTPError, URLError
 from typing import Iterable, Union
 
+# SMTP fallback (Google Workspace / Gmail SMTP)
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 class MailerError(RuntimeError): ...
 class ProviderNotSupported(MailerError): ...
 class MissingConfig(MailerError): ...
+
+# -----------------------
+# Cooldown / circuit breaker (SendGrid -> SMTP)
+# -----------------------
+_SENDGRID_DISABLED_UNTIL_TS: float = 0.0
+
+def _cooldown_seconds() -> int:
+    try:
+        return int(os.getenv("EMAIL_FAILOVER_COOLDOWN_SECONDS", "300"))
+    except Exception:
+        return 300
+
+def _now() -> float:
+    return time.time()
+
+def _is_sendgrid_in_cooldown() -> bool:
+    try:
+        return _now() < float(_SENDGRID_DISABLED_UNTIL_TS or 0.0)
+    except Exception:
+        return False
+
+def _set_sendgrid_cooldown(reason: str = "") -> None:
+    global _SENDGRID_DISABLED_UNTIL_TS
+    _SENDGRID_DISABLED_UNTIL_TS = _now() + float(_cooldown_seconds())
+
+def _clear_sendgrid_cooldown() -> None:
+    global _SENDGRID_DISABLED_UNTIL_TS
+    _SENDGRID_DISABLED_UNTIL_TS = 0.0
+
+def _failover_enabled() -> bool:
+    return (os.getenv("EMAIL_FAILOVER_ENABLED", "1") or "1").strip().lower() in ("1", "true", "yes", "on")
+
+def _smtp_timeout() -> int:
+    try:
+        return int(os.getenv("SMTP_TIMEOUT", "20"))
+    except Exception:
+        return 20
 
 # -----------------------
 # Helpers internos
@@ -33,44 +75,106 @@ def _parse_from(s: str) -> tuple[str | None, str]:
             pass
     return (None, s)
 
+
 # -----------------------
-# Envio genérico (mantido)
+# SMTP sender (fallback)
 # -----------------------
-def send_email(
+def _send_smtp(
     *,
-    to=None,
-    subject: str = "",
-    text: str | None = None,
-    from_email: str | None = None,
-    html: str | None = None,
-    bcc=None,
-    reply_to: str | None = None,
-    disable_click_tracking: bool = False,  # << ideal p/ verificação
-    **kw,
-):
-    """
-    Envia e-mail via SendGrid HTTP API.
-    Aceita aliases: body_text/body_html e ignora kwargs extras.
-    """
-    if text is None:
-        text = kw.pop("body_text", None)
-    if html is None:
-        html = kw.pop("body_html", None)
-    if from_email is None:
-        from_email = kw.pop("sender", None) or kw.pop("from", None)
+    to_list: list[str],
+    subject: str,
+    text: str | None,
+    html: str | None,
+    from_env: str,
+    bcc_list: list[str],
+    reply_to: str | None,
+) -> bool:
+    host = (os.getenv("SMTP_HOST") or "smtp.gmail.com").strip()
+    port_raw = (os.getenv("SMTP_PORT") or "587").strip()
+    try:
+        port = int(port_raw)
+    except Exception:
+        port = 587
 
-    provider = (os.environ.get("EMAIL_PROVIDER") or "").strip().lower()
-    if provider != "sendgrid":
-        raise ProviderNotSupported(f"unsupported provider: {provider!r}")
+    user = (os.getenv("SMTP_USER") or "").strip()
+    password = (os.getenv("SMTP_PASS") or "").strip()
 
-    api_key = os.environ.get("SENDGRID_API_KEY")
-    if not api_key:
-        raise MissingConfig("SENDGRID_API_KEY ausente no ambiente do servidor")
+    from_name, from_addr = _parse_from(from_env)
+    if "@" not in (from_addr or ""):
+        raise MissingConfig("Remetente inválido; verifique EMAIL_SENDER/EMAIL_FROM")
 
-    from_env = (from_email or os.environ.get("EMAIL_SENDER") or os.environ.get("EMAIL_FROM") or "").strip()
-    if not from_env:
-        raise MissingConfig("EMAIL_SENDER/EMAIL_FROM ausente(s) no ambiente do servidor")
+    if not to_list:
+        raise MailerError("destinatário inválido")
 
+    # Monta MIME
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject or ""
+    msg["From"] = f'{from_name} <{from_addr}>' if from_name else from_addr
+    msg["To"] = ", ".join(to_list)
+    if reply_to:
+        msg["Reply-To"] = reply_to
+
+    # Headers mínimos “transacionais”
+    msg["Auto-Submitted"] = "auto-generated"
+    msg["X-Purpose"] = "transactional"
+
+    # Corpo: sempre tenta incluir text; html é opcional
+    body_text = text if text is not None else ""
+    msg.attach(MIMEText(body_text, "plain", "utf-8"))
+    if html:
+        msg.attach(MIMEText(html, "html", "utf-8"))
+
+    recipients = list(to_list)
+    if bcc_list:
+        # BCC não vai no header (pra não vazar); só no envelope
+        recipients.extend([e for e in bcc_list if e and e.lower() not in {x.lower() for x in to_list}])
+
+    timeout = _smtp_timeout()
+
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=timeout) as server:
+                if user and password:
+                    server.login(user, password)
+                server.sendmail(from_addr, recipients, msg.as_string())
+        else:
+            with smtplib.SMTP(host, port, timeout=timeout) as server:
+                try:
+                    server.ehlo()
+                except Exception:
+                    pass
+                try:
+                    server.starttls()
+                    try:
+                        server.ehlo()
+                    except Exception:
+                        pass
+                except Exception:
+                    # alguns relays podem estar sem TLS; se for o caso, segue (ou configure corretamente)
+                    pass
+                if user and password:
+                    server.login(user, password)
+                server.sendmail(from_addr, recipients, msg.as_string())
+    except Exception as e:
+        raise MailerError(f"smtp_failed: {e}") from e
+
+    return True
+
+# -----------------------
+# SendGrid sender (primary)
+# -----------------------
+def _send_sendgrid(
+    *,
+    api_key: str,
+    to_list: list[str],
+    subject: str,
+    text: str | None,
+    html: str | None,
+    from_env: str,
+    bcc_list: list[str],
+    reply_to: str | None,
+    disable_click_tracking: bool,
+) -> bool:
     from_name, from_addr = _parse_from(from_env)
     if "@" not in from_addr:
         fallback = (os.environ.get("EMAIL_SENDER") or "").strip()
@@ -79,14 +183,6 @@ def send_email(
             from_name, from_addr = fn2_name, fn2_addr
         else:
             raise MissingConfig("Remetente inválido; verifique EMAIL_SENDER/EMAIL_FROM")
-
-    to_list = _norm_emails(to)
-    if not to_list:
-        raise MailerError("destinatário inválido")
-
-    bcc_list = _norm_emails(bcc)
-    to_lower = {e.lower() for e in to_list}
-    bcc_list = [e for e in bcc_list if e.lower() not in to_lower]
 
     personalization = {"to": [{"email": e} for e in to_list]}
     if bcc_list:
@@ -109,7 +205,6 @@ def send_email(
     if from_name:
         payload["from"]["name"] = from_name
 
-    reply_to = reply_to or os.environ.get("EMAIL_REPLY_TO")
     if reply_to:
         payload["reply_to"] = {"email": reply_to}
         payload["headers"]["List-Unsubscribe"] = f"<mailto:{reply_to}>"
@@ -147,6 +242,104 @@ def send_email(
         raise MailerError(f"sendgrid_unexpected_status_{status}")
 
     return True
+
+# -----------------------
+# Envio genérico (mantido)
+# -----------------------
+def send_email(
+    *,
+    to=None,
+    subject: str = "",
+    text: str | None = None,
+    from_email: str | None = None,
+    html: str | None = None,
+    bcc=None,
+    reply_to: str | None = None,
+    disable_click_tracking: bool = False,  # << ideal p/ verificação
+    **kw,
+):
+    """
+    Envia e-mail via SendGrid HTTP API.
+    Aceita aliases: body_text/body_html e ignora kwargs extras.
+    """
+    if text is None:
+        text = kw.pop("body_text", None)
+    if html is None:
+        html = kw.pop("body_html", None)
+    if from_email is None:
+        from_email = kw.pop("sender", None) or kw.pop("from", None)
+
+    from_env = (from_email or os.environ.get("EMAIL_SENDER") or os.environ.get("EMAIL_FROM") or "").strip()
+    if not from_env:
+        raise MissingConfig("EMAIL_SENDER/EMAIL_FROM ausente(s) no ambiente do servidor")
+
+    to_list = _norm_emails(to)
+    if not to_list:
+        raise MailerError("destinatário inválido")
+
+    bcc_list = _norm_emails(bcc)
+    to_lower = {e.lower() for e in to_list}
+    bcc_list = [e for e in bcc_list if e.lower() not in to_lower]
+
+    reply_to = reply_to or os.environ.get("EMAIL_REPLY_TO")
+    provider = (os.environ.get("EMAIL_PROVIDER") or "sendgrid").strip().lower()
+    fallback_provider = (os.environ.get("EMAIL_FALLBACK_PROVIDER") or "smtp").strip().lower()
+
+    # Se o modo principal for SMTP, envia direto por SMTP (sem tentar SendGrid)
+    if provider == "smtp":
+        return _send_smtp(
+            to_list=to_list,
+            subject=subject,
+            text=text,
+            html=html,
+            from_env=from_env,
+            bcc_list=bcc_list,
+            reply_to=reply_to,
+        )
+
+    if provider != "sendgrid":
+        raise ProviderNotSupported(f"unsupported provider: {provider!r}")
+
+    # 1) PRIMARY: SendGrid (com cooldown)
+    api_key = os.environ.get("SENDGRID_API_KEY")
+    if api_key and not _is_sendgrid_in_cooldown():
+        try:
+            ok = _send_sendgrid(
+                api_key=api_key,
+                to_list=to_list,
+                subject=subject,
+                text=text,
+                html=html,
+                from_env=from_env,
+                bcc_list=bcc_list,
+                reply_to=reply_to,
+                disable_click_tracking=disable_click_tracking,
+            )
+            if ok:
+                _clear_sendgrid_cooldown()
+                return True
+        except Exception:
+            # qualquer falha em SendGrid → entra em cooldown e tenta fallback (se habilitado)
+            _set_sendgrid_cooldown("sendgrid_failed")
+    else:
+        # Sem api_key OU em cooldown → pula direto pro fallback
+        if not api_key:
+            _set_sendgrid_cooldown("missing_api_key")
+
+    # 2) FALLBACK: SMTP (catch-all) — não quebra o fluxo se SendGrid caiu (fatura/cartão/etc.)
+    if _failover_enabled() and fallback_provider == "smtp":
+        return _send_smtp(
+            to_list=to_list,
+            subject=subject,
+            text=text,
+            html=html,
+            from_env=from_env,
+            bcc_list=bcc_list,
+            reply_to=reply_to,
+        )
+
+    # Se fallback estiver desabilitado, mantém comportamento “falha”
+    raise MailerError("sendgrid_unavailable_and_failover_disabled")
 
 # -----------------------
 # Verificação de e-mail
