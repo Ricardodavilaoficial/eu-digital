@@ -18,6 +18,20 @@ logging.basicConfig(level=logging.INFO)
 # App + CORS (whitelist apenas /api/*)
 # =====================================
 app = Flask(__name__, static_folder="public", static_url_path="/")
+
+# -------------------------
+# APP_ROLE: separa serviço de webhook e serviço de worker
+# - webhook: só registra /integracoes/ycloud/webhook + /health (blueprints)
+# - worker: registra /tasks/* e o restante dos blueprints (voz, stripe, acervo, auth, etc.)
+# - all: comportamento atual (default)
+# -------------------------
+APP_ROLE = (os.getenv("APP_ROLE") or "all").strip().lower()
+
+def _role_enabled(*roles: str) -> bool:
+    return APP_ROLE in roles or APP_ROLE == "all"
+
+print(f"[boot] APP_ROLE={APP_ROLE}", flush=True)
+
 # REMOVIDO: CORS(app)  ← evitamos abrir tudo por engano
 
 # =====================================
@@ -197,39 +211,45 @@ def publish_email_verified(uid: str):
 # BYPASS PÚBLICO ANTECIPADO (signup/CNPJ/health/captcha)
 # =========================================================
 
-# === Blueprint: authority (vinculação de CNPJ) — isolado e atrás de flag ===
-try:
-    from routes.authority_bp import authority_bp
-    app.register_blueprint(authority_bp)
-    print("[boot] authority_bp registrado ✓", flush=True)
-except Exception as e:
-    # Mantém produção viva mesmo se o arquivo ainda não existir
-    print("[boot] authority_bp não registrado:", e, flush=True)
-
-# === Blueprint: voz via WhatsApp (novo, atrás de flag VOICE_WA_MODE) ===
-try:
-    from routes.voz_whatsapp_bp import voz_whatsapp_bp
-    app.register_blueprint(voz_whatsapp_bp)
-    print("[boot] voz_whatsapp_bp registrado ✓", flush=True)
-except Exception as e:
-    print("[boot] voz_whatsapp_bp não registrado:", e, flush=True)
-
-# === NOVO: webhook YCloud (GLOBAL) — /integracoes/ycloud/webhook ===
-try:
-    from routes.ycloud_webhook_bp import ycloud_webhook_bp
-    app.register_blueprint(ycloud_webhook_bp)
-    print("[boot] ycloud_webhook_bp registrado ✓", flush=True)
-
-    # DEBUG: provar quais métodos o Flask registrou para o webhook
+if _role_enabled("worker"):
+    # === Blueprint: authority (vinculação de CNPJ) — isolado e atrás de flag ===
     try:
-        rules = [r for r in app.url_map.iter_rules() if "integracoes/ycloud/webhook" in str(r.rule)]
-        for r in rules:
-            print(f"[boot] rule={r.rule} methods={sorted(list(r.methods or []))}", flush=True)
-    except Exception as _e:
-        print("[boot][warn] url_map inspect falhou:", _e, flush=True)
+        from routes.authority_bp import authority_bp
+        app.register_blueprint(authority_bp)
+        print("[boot] authority_bp registrado ✓", flush=True)
+    except Exception as e:
+        # Mantém produção viva mesmo se o arquivo ainda não existir
+        print("[boot] authority_bp não registrado:", e, flush=True)
 
-except Exception as e:
-    print("[boot] ycloud_webhook_bp não registrado:", e, flush=True)
+
+if _role_enabled("worker"):
+    # === Blueprint: voz via WhatsApp (novo, atrás de flag VOICE_WA_MODE) ===
+    try:
+        from routes.voz_whatsapp_bp import voz_whatsapp_bp
+        app.register_blueprint(voz_whatsapp_bp)
+        print("[boot] voz_whatsapp_bp registrado ✓", flush=True)
+    except Exception as e:
+        print("[boot] voz_whatsapp_bp não registrado:", e, flush=True)
+
+
+if _role_enabled("webhook"):
+    # === NOVO: webhook YCloud (GLOBAL) — /integracoes/ycloud/webhook ===
+    try:
+        from routes.ycloud_webhook_bp import ycloud_webhook_bp
+        app.register_blueprint(ycloud_webhook_bp)
+        print("[boot] ycloud_webhook_bp registrado ✓", flush=True)
+
+        # DEBUG: provar quais métodos o Flask registrou para o webhook
+        try:
+            rules = [r for r in app.url_map.iter_rules() if "integracoes/ycloud/webhook" in str(r.rule)]
+            for r in rules:
+                print(f"[boot] rule={r.rule} methods={sorted(list(r.methods or []))}", flush=True)
+        except Exception as _e:
+            print("[boot][warn] url_map inspect falhou:", _e, flush=True)
+
+    except Exception as e:
+        print("[boot] ycloud_webhook_bp não registrado:", e, flush=True)
+
 
 from flask import jsonify as _jsonify  # já importado acima, mas evita shadowing
 _PUBLIC_ALLOW_EXACT = {
@@ -309,289 +329,291 @@ def _register_bp(bp, name: str):
         print(f"[bp][erro] {name}: {e}")
         traceback.print_exc()
 
-try:
-    from routes.health import health_bp
-    _register_bp(health_bp, "health_bp")
-except Exception as e:
-    print("[bp][warn] health_bp:", e)
+if _role_enabled("webhook"):
+    try:
+        from routes.health import health_bp
+        _register_bp(health_bp, "health_bp")
+    except Exception as e:
+        print("[bp][warn] health_bp:", e)
 
-try:
-    from routes.agenda_api import agenda_api_bp
-    _register_bp(agenda_api_bp, "agenda_api_bp")
-except Exception as e:
-    print("[bp][warn] agenda_api_bp:", e)
+if _role_enabled("worker"):
+    try:
+        from routes.agenda_api import agenda_api_bp
+        _register_bp(agenda_api_bp, "agenda_api_bp")
+    except Exception as e:
+        print("[bp][warn] agenda_api_bp:", e)
 
-try:
-    from routes.agenda_reminders import agenda_rem_bp
-    _register_bp(agenda_rem_bp, "agenda_rem_bp")
-except Exception as e:
-    print("[bp][warn] agenda_rem_bp:", e)
+    try:
+        from routes.agenda_reminders import agenda_rem_bp
+        _register_bp(agenda_rem_bp, "agenda_rem_bp")
+    except Exception as e:
+        print("[bp][warn] agenda_rem_bp:", e)
 
-try:
-    from routes.agenda_digest import agenda_digest_bp
-    _register_bp(agenda_digest_bp, "agenda_digest_bp")
-except Exception as e:
-    print("[bp][warn] agenda_digest_bp:", e)
+    try:
+        from routes.agenda_digest import agenda_digest_bp
+        _register_bp(agenda_digest_bp, "agenda_digest_bp")
+    except Exception as e:
+        print("[bp][warn] agenda_digest_bp:", e)
 
-try:
-    from routes.media import media_bp
-    _register_bp(media_bp, "media_bp")
-except Exception as e:
-    print("[bp][warn] media_bp:", e)
+    try:
+        from routes.media import media_bp
+        _register_bp(media_bp, "media_bp")
+    except Exception as e:
+        print("[bp][warn] media_bp:", e)
 
-try:
-    from routes.admin_storage import admin_storage_bp
-    _register_bp(admin_storage_bp, "admin_storage_bp (/api/admin/storage/*)")
-except Exception as e:
-    print("[bp][warn] admin_storage_bp:", e)
+    try:
+        from routes.admin_storage import admin_storage_bp
+        _register_bp(admin_storage_bp, "admin_storage_bp (/api/admin/storage/*)")
+    except Exception as e:
+        print("[bp][warn] admin_storage_bp:", e)
 
-# === NOVO: Admin-only teste YCloud — /admin/ycloud/send-test ===
-try:
-    from routes.admin_ycloud_test_bp import admin_ycloud_test_bp
-    _register_bp(admin_ycloud_test_bp, "admin_ycloud_test_bp (/admin/ycloud/send-test)")
-except Exception as e:
-    print("[bp][warn] admin_ycloud_test_bp:", e)
+    # === NOVO: Admin-only teste YCloud — /admin/ycloud/send-test ===
+    try:
+        from routes.admin_ycloud_test_bp import admin_ycloud_test_bp
+        _register_bp(admin_ycloud_test_bp, "admin_ycloud_test_bp (/admin/ycloud/send-test)")
+    except Exception as e:
+        print("[bp][warn] admin_ycloud_test_bp:", e)
     
-# === NOVO: Admin-only attach WABA (chip/manual) — /admin/waba/attach ===
-try:
-    from routes.admin_waba_bp import admin_waba_bp
-    _register_bp(admin_waba_bp, "admin_waba_bp (/admin/waba/attach)")
-except Exception as e:
-    print("[bp][warn] admin_waba_bp:", e)
+    # === NOVO: Admin-only attach WABA (chip/manual) — /admin/waba/attach ===
+    try:
+        from routes.admin_waba_bp import admin_waba_bp
+        _register_bp(admin_waba_bp, "admin_waba_bp (/admin/waba/attach)")
+    except Exception as e:
+        print("[bp][warn] admin_waba_bp:", e)
 
 
-# === NOVO: Admin job Aniversário (MVP) — /admin/jobs/birthday ===
-try:
-    from routes.admin_birthday_job_bp import admin_birthday_job_bp
-    _register_bp(admin_birthday_job_bp, "admin_birthday_job_bp (/admin/jobs/birthday)")
-except Exception as e:
-    print("[bp][warn] admin_birthday_job_bp:", e)
+    # === NOVO: Admin job Aniversário (MVP) — /admin/jobs/birthday ===
+    try:
+        from routes.admin_birthday_job_bp import admin_birthday_job_bp
+        _register_bp(admin_birthday_job_bp, "admin_birthday_job_bp (/admin/jobs/birthday)")
+    except Exception as e:
+        print("[bp][warn] admin_birthday_job_bp:", e)
 
-# === NOVO: Cloud Tasks Worker (YCloud inbound) — /tasks/ycloud-inbound ===
-try:
-    from routes.ycloud_tasks_bp import ycloud_tasks_bp
-    _register_bp(ycloud_tasks_bp, "ycloud_tasks_bp (/tasks/ycloud-inbound)")
-except Exception as e:
-    print("[bp][warn] ycloud_tasks_bp:", e)
-
-
-# === NOVO: Cloud Tasks Worker (Acervo index) — /tasks/acervo-index ===
-try:
-    from routes.acervo_tasks_bp import acervo_tasks_bp
-    _register_bp(acervo_tasks_bp, "acervo_tasks_bp (/tasks/acervo-index)")
-except Exception as e:
-    print("[bp][warn] acervo_tasks_bp:", e)
-
-try:
-    from routes.servicos_foto import servicos_foto_bp
-    _register_bp(servicos_foto_bp, "servicos_foto_bp (/api/servicos/foto)")
-except Exception as e:
-    print("[bp][warn] servicos_foto_bp:", e)
-
-try:
-    from routes.importar_precos import importar_bp
-    _register_bp(importar_bp, "importar_bp (/api/importar-precos)")
-except Exception as e:
-    print("[bp][warn] importar_bp:", e)
+    # === NOVO: Cloud Tasks Worker (YCloud inbound) — /tasks/ycloud-inbound ===
+    try:
+        from routes.ycloud_tasks_bp import ycloud_tasks_bp
+        _register_bp(ycloud_tasks_bp, "ycloud_tasks_bp (/tasks/ycloud-inbound)")
+    except Exception as e:
+        print("[bp][warn] ycloud_tasks_bp:", e)
 
 
-try:
-    from routes.contacts import contacts_bp
-    _register_bp(contacts_bp, "contacts_bp")
-except Exception as e:
-    print("[bp][warn] contacts_bp:", e)
+    # === NOVO: Cloud Tasks Worker (Acervo index) — /tasks/acervo-index ===
+    try:
+        from routes.acervo_tasks_bp import acervo_tasks_bp
+        _register_bp(acervo_tasks_bp, "acervo_tasks_bp (/tasks/acervo-index)")
+    except Exception as e:
+        print("[bp][warn] acervo_tasks_bp:", e)
 
-try:
-    from routes.memory_bp import memory_bp
-    _register_bp(memory_bp, "memory_bp (/api/memory/*)")
-except Exception as e:
-    print("[bp][warn] memory_bp:", e)
+    try:
+        from routes.servicos_foto import servicos_foto_bp
+        _register_bp(servicos_foto_bp, "servicos_foto_bp (/api/servicos/foto)")
+    except Exception as e:
+        print("[bp][warn] servicos_foto_bp:", e)
 
-try:
-    from routes.configuracao import config_bp, ler_configuracao as _config_read
-    _register_bp(config_bp, "config_bp (/api/configuracao GET)")
-except Exception as e:
-    print("[bp][warn] config_bp:", e)
-    _config_read = None
+    try:
+        from routes.importar_precos import importar_bp
+        _register_bp(importar_bp, "importar_bp (/api/importar-precos)")
+    except Exception as e:
+        print("[bp][warn] importar_bp:", e)
 
-try:
-    from routes.orcamentos import orcamentos_bp
-    _register_bp(orcamentos_bp, "orcamentos_bp (/api/orcamentos)")
-except Exception as e:
-    print("[bp][warn] orcamentos_bp:", e)
 
-try:
-    from routes.orcamentos_digest import orcamentos_digest_bp
-    _register_bp(orcamentos_digest_bp, "orcamentos_digest_bp (/api/orcamentos/digest)")
-except Exception as e:
-    print("[bp][warn] orcamentos_digest_bp:", e)
+    try:
+        from routes.contacts import contacts_bp
+        _register_bp(contacts_bp, "contacts_bp")
+    except Exception as e:
+        print("[bp][warn] contacts_bp:", e)
 
-try:
-    from routes.stripe_webhook import stripe_webhook_bp
-    _register_bp(stripe_webhook_bp, "stripe_webhook_bp")
-except Exception as e:
-    print("[bp][warn] stripe_webhook_bp:", e)
+    try:
+        from routes.memory_bp import memory_bp
+        _register_bp(memory_bp, "memory_bp (/api/memory/*)")
+    except Exception as e:
+        print("[bp][warn] memory_bp:", e)
 
-try:
-    from routes.stripe_checkout import stripe_checkout_bp
-    _register_bp(stripe_checkout_bp, "stripe_checkout_bp")
-except Exception as e:
-    print("[bp][warn] stripe_checkout_bp:", e)
+    try:
+        from routes.configuracao import config_bp, ler_configuracao as _config_read
+        _register_bp(config_bp, "config_bp (/api/configuracao GET)")
+    except Exception as e:
+        print("[bp][warn] config_bp:", e)
+        _config_read = None
 
-try:
-    from routes.conta_status import bp_conta
-    _register_bp(bp_conta, "bp_conta")
-except Exception as e:
-    print("[bp][warn] bp_conta:", e)
+    try:
+        from routes.orcamentos import orcamentos_bp
+        _register_bp(orcamentos_bp, "orcamentos_bp (/api/orcamentos)")
+    except Exception as e:
+        print("[bp][warn] orcamentos_bp:", e)
 
-try:
-    from routes.acervo import bp_acervo
-    _register_bp(bp_acervo, "bp_acervo (/api/acervo)")
-except Exception as e:
-    print("[bp][warn] bp_acervo:", e)
+    try:
+        from routes.orcamentos_digest import orcamentos_digest_bp
+        _register_bp(orcamentos_digest_bp, "orcamentos_digest_bp (/api/orcamentos/digest)")
+    except Exception as e:
+        print("[bp][warn] orcamentos_digest_bp:", e)
 
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-# NOVO: Auth blueprint (whoami + check-verification) sob /api
-try:
-    from routes.auth_bp import auth_bp
-    app.register_blueprint(auth_bp, url_prefix="/api/auth")
-    print("[bp] Registrado: auth_bp (/api/auth/*)")
-except Exception as e:
-    print("[bp][warn] auth_bp:", e)
+    try:
+        from routes.stripe_webhook import stripe_webhook_bp
+        _register_bp(stripe_webhook_bp, "stripe_webhook_bp")
+    except Exception as e:
+        print("[bp][warn] stripe_webhook_bp:", e)
 
-# 🔸 NOVO (1/2): import do blueprint de e-mail bonito
-try:
-    from routes.auth_email_bp import auth_email_bp
-    app.register_blueprint(auth_email_bp, url_prefix="/api/auth")
-    print("[bp] Registrado: auth_email_bp (/api/auth/send-verification-email)")
-except Exception as e:
-    print("[bp][warn] auth_email_bp:", e)
-# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+    try:
+        from routes.stripe_checkout import stripe_checkout_bp
+        _register_bp(stripe_checkout_bp, "stripe_checkout_bp")
+    except Exception as e:
+        print("[bp][warn] stripe_checkout_bp:", e)
 
-# 🔸 NOVO (2/2): geração de link via Admin SDK com o MESMO prefixo
-_gen_link_bp_ok = False
-try:
-    from routes.verify_email_link_bp import verify_email_link_bp
-    app.register_blueprint(verify_email_link_bp, url_prefix="/api/auth")
-    print("[bp] Registrado: verify_email_link_bp (/api/auth/generate-verification-link)")
-    _gen_link_bp_ok = True
-except Exception as e:
-    print("[bp][warn] verify_email_link_bp:", e)
+    try:
+        from routes.conta_status import bp_conta
+        _register_bp(bp_conta, "bp_conta")
+    except Exception as e:
+        print("[bp][warn] bp_conta:", e)
 
-# --- (A) Registrar blueprint SSE ---
-try:
-    from routes.sse_bp import sse_bp  # ADICIONADO
-    _register_bp(sse_bp, "sse_bp")    # ADICIONADO
-except Exception as e:
-    print("[bp][warn] sse_bp:", e)
-# --- FIM (A) ---
+    try:
+        from routes.acervo import bp_acervo
+        _register_bp(bp_acervo, "bp_acervo (/api/acervo)")
+    except Exception as e:
+        print("[bp][warn] bp_acervo:", e)
 
-# --- SHIM: gerar link de verificação (Admin SDK) ---
-# Só cria o SHIM se o blueprint NÃO entrou
-if not _gen_link_bp_ok:
-    from flask import request as _req
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    # NOVO: Auth blueprint (whoami + check-verification) sob /api
+    try:
+        from routes.auth_bp import auth_bp
+        app.register_blueprint(auth_bp, url_prefix="/api/auth")
+        print("[bp] Registrado: auth_bp (/api/auth/*)")
+    except Exception as e:
+        print("[bp][warn] auth_bp:", e)
 
-    @app.route("/api/auth/generate-verification-link", methods=["GET", "POST", "OPTIONS"])
-    def _auth_generate_verification_link():
-        if _req.method == "OPTIONS":
-            return ("", 204)
+    # 🔸 NOVO (1/2): import do blueprint de e-mail bonito
+    try:
+        from routes.auth_email_bp import auth_email_bp
+        app.register_blueprint(auth_email_bp, url_prefix="/api/auth")
+        print("[bp] Registrado: auth_email_bp (/api/auth/send-verification-email)")
+    except Exception as e:
+        print("[bp][warn] auth_email_bp:", e)
+    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+    # 🔸 NOVO (2/2): geração de link via Admin SDK com o MESMO prefixo
+    _gen_link_bp_ok = False
+    try:
+        from routes.verify_email_link_bp import verify_email_link_bp
+        app.register_blueprint(verify_email_link_bp, url_prefix="/api/auth")
+        print("[bp] Registrado: verify_email_link_bp (/api/auth/generate-verification-link)")
+        _gen_link_bp_ok = True
+    except Exception as e:
+        print("[bp][warn] verify_email_link_bp:", e)
+
+    # --- (A) Registrar blueprint SSE ---
+    try:
+        from routes.sse_bp import sse_bp  # ADICIONADO
+        _register_bp(sse_bp, "sse_bp")    # ADICIONADO
+    except Exception as e:
+        print("[bp][warn] sse_bp:", e)
+    # --- FIM (A) ---
+
+    # --- SHIM: gerar link de verificação (Admin SDK) ---
+    # Só cria o SHIM se o blueprint NÃO entrou
+    if not _gen_link_bp_ok:
+        from flask import request as _req
+
+        @app.route("/api/auth/generate-verification-link", methods=["GET", "POST", "OPTIONS"])
+        def _auth_generate_verification_link():
+            if _req.method == "OPTIONS":
+                return ("", 204)
+            try:
+                if ensure_firebase_admin is None or fb_auth is None:
+                    return jsonify({"ok": False, "error": "admin_sdk_unavailable"}), 500
+
+                data = _req.get_json(silent=True) or {}
+                email = (_req.args.get("email") or data.get("email") or "").strip().lower()
+                continue_url = (
+                    _req.args.get("continueUrl")
+                    or data.get("continueUrl")
+                    or (os.getenv("FRONTEND_BASE", "https://www.meirobo.com.br").rstrip("/") + "/verify-email.html")
+                ).strip()
+
+                if not email:
+                    return jsonify({"ok": False, "error": "missing_email"}), 400
+
+                ensure_firebase_admin()
+                acs = fb_auth.ActionCodeSettings(url=continue_url, handle_code_in_app=False)
+                link = fb_auth.generate_email_verification_link(email, acs)
+                return jsonify({"ok": True, "verification_link": link, "continueUrl": continue_url}), 200
+
+            except Exception as e:
+                app.logger.exception("generate_verification_link: erro")
+                return jsonify({"ok": False, "error": "link_generate_failed", "detail": str(e)}), 500
+    # --- FIM SHIM ---
+
+    # =========================================================
+    # (C) Hook pós-resposta para publicar evento quando check-verification confirmar
+    # =========================================================
+    @app.after_request
+    def _maybe_publish_email_verified(resp):
         try:
-            if ensure_firebase_admin is None or fb_auth is None:
-                return jsonify({"ok": False, "error": "admin_sdk_unavailable"}), 500
+            if request.path == "/api/auth/check-verification" and resp.status_code == 200:
+                # Tenta ler JSON e detectar "verified": true
+                ct = (resp.headers.get("Content-Type") or "").lower()
+                if "application/json" in ct:
+                    import json as _json
+                    data = _json.loads(resp.get_data(as_text=True) or "{}")
+                    verified = bool(data.get("verified")) or bool(data.get("isVerified")) or (data.get("ok") and data.get("status") == "verified")
+                    if verified:
+                        # extrai uid do bearer e publica
+                        uid = _uid_from_bearer() if 'Authorization' in request.headers else None
+                        if uid:
+                            try:
+                                publish_email_verified(uid)
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+        return resp
 
-            data = _req.get_json(silent=True) or {}
-            email = (_req.args.get("email") or data.get("email") or "").strip().lower()
-            continue_url = (
-                _req.args.get("continueUrl")
-                or data.get("continueUrl")
-                or (os.getenv("FRONTEND_BASE", "https://www.meirobo.com.br").rstrip("/") + "/verify-email.html")
-            ).strip()
-
-            if not email:
-                return jsonify({"ok": False, "error": "missing_email"}), 400
-
-            ensure_firebase_admin()
-            acs = fb_auth.ActionCodeSettings(url=continue_url, handle_code_in_app=False)
-            link = fb_auth.generate_email_verification_link(email, acs)
-            return jsonify({"ok": True, "verification_link": link, "continueUrl": continue_url}), 200
-
+    # ================================
+    # Blueprints opcionais (flags)
+    # ================================
+    # CNPJ pública
+    if os.getenv("CNPJ_BP_ENABLED", "false").lower() in ("1","true","yes"):
+        try:
+            from routes.cnpj_publica import cnpj_bp
+            _register_bp(cnpj_bp, "cnpj_bp (/api/cnpj/<cnpj>)")
         except Exception as e:
-            app.logger.exception("generate_verification_link: erro")
-            return jsonify({"ok": False, "error": "link_generate_failed", "detail": str(e)}), 500
-# --- FIM SHIM ---
-
-# =========================================================
-# (C) Hook pós-resposta para publicar evento quando check-verification confirmar
-# =========================================================
-@app.after_request
-def _maybe_publish_email_verified(resp):
-    try:
-        if request.path == "/api/auth/check-verification" and resp.status_code == 200:
-            # Tenta ler JSON e detectar "verified": true
-            ct = (resp.headers.get("Content-Type") or "").lower()
-            if "application/json" in ct:
-                import json as _json
-                data = _json.loads(resp.get_data(as_text=True) or "{}")
-                verified = bool(data.get("verified")) or bool(data.get("isVerified")) or (data.get("ok") and data.get("status") == "verified")
-                if verified:
-                    # extrai uid do bearer e publica
-                    uid = _uid_from_bearer() if 'Authorization' in request.headers else None
-                    if uid:
-                        try:
-                            publish_email_verified(uid)
-                        except Exception:
-                            pass
-    except Exception:
-        pass
-    return resp
-
-# ================================
-# Blueprints opcionais (flags)
-# ================================
-# CNPJ pública
-if os.getenv("CNPJ_BP_ENABLED", "false").lower() in ("1","true","yes"):
-    try:
-        from routes.cnpj_publica import cnpj_bp
-        _register_bp(cnpj_bp, "cnpj_bp (/api/cnpj/<cnpj>)")
-    except Exception as e:
-        print("[bp][warn] cnpj_bp:", e)
-# CNPJ verificação (ReceitaWS pública)
-if os.getenv("CNPJ_VERIFICACAO_BP_ENABLED", "true").lower() in ("1","true","yes"):
-    try:
-        from routes.verificacao_cnpj_bp import verificacao_cnpj_bp
-        _register_bp(verificacao_cnpj_bp, "verificacao_cnpj_bp (/api/cnpj/verificar)")
-    except Exception as e:
-        print("[bp][warn] verificacao_cnpj_bp:", e)
+            print("[bp][warn] cnpj_bp:", e)
+    # CNPJ verificação (ReceitaWS pública)
+    if os.getenv("CNPJ_VERIFICACAO_BP_ENABLED", "true").lower() in ("1","true","yes"):
+        try:
+            from routes.verificacao_cnpj_bp import verificacao_cnpj_bp
+            _register_bp(verificacao_cnpj_bp, "verificacao_cnpj_bp (/api/cnpj/verificar)")
+        except Exception as e:
+            print("[bp][warn] verificacao_cnpj_bp:", e)
         
-# Voz V2 — usa o blueprint unificado routes/voz_v2.py
-if os.getenv("VOZ_V2_ENABLED", "false").lower() in ("1","true","yes"):
+    # Voz V2 — usa o blueprint unificado routes/voz_v2.py
+    if os.getenv("VOZ_V2_ENABLED", "false").lower() in ("1","true","yes"):
+        try:
+            from routes.voz_v2 import voz_upload_bp  # <- nome correto do blueprint
+            _register_bp(voz_upload_bp, "voz_upload_v2 (/api/voz/*)")
+        except Exception as e:
+            print("[bp][warn] voz_upload_v2:", e)
+
+    # Voz TTS (ElevenLabs) — independente da VOZ_V2 (apenas TTS)
     try:
-        from routes.voz_v2 import voz_upload_bp  # <- nome correto do blueprint
-        _register_bp(voz_upload_bp, "voz_upload_v2 (/api/voz/*)")
+        from routes.voz_tts import voz_tts_bp
+        app.register_blueprint(voz_tts_bp, url_prefix="/api/voz")  # expõe /api/voz/tts
+        print("[bp] Registrado: voz_tts_bp (/api/voz/tts)")
     except Exception as e:
-        print("[bp][warn] voz_upload_v2:", e)
+        print("[bp][warn] voz_tts_bp:", e)
 
-# Voz TTS (ElevenLabs) — independente da VOZ_V2 (apenas TTS)
-try:
-    from routes.voz_tts import voz_tts_bp
-    app.register_blueprint(voz_tts_bp, url_prefix="/api/voz")  # expõe /api/voz/tts
-    print("[bp] Registrado: voz_tts_bp (/api/voz/tts)")
-except Exception as e:
-    print("[bp][warn] voz_tts_bp:", e)
+    # Voz PROCESS (/api/voz/process) — marca status ready + voiceId
+    try:
+        from routes.voz_process_bp import voz_process_bp
+        _register_bp(voz_process_bp, "voz_process_bp (/api/voz/process)")
+    except Exception as e:
+        print("[bp][warn] voz_process_bp:", e)
 
-# Voz PROCESS (/api/voz/process) — marca status ready + voiceId
-try:
-    from routes.voz_process_bp import voz_process_bp
-    _register_bp(voz_process_bp, "voz_process_bp (/api/voz/process)")
-except Exception as e:
-    print("[bp][warn] voz_process_bp:", e)
-
-# (Opcional) Voz STT — se existir arquivo routes/voz_stt_bp.py
-try:
-    from routes.voz_stt_bp import voz_stt_bp
-    _register_bp(voz_stt_bp, "voz_stt_bp (/api/voz/stt)")
-except Exception as e:
-    print("[bp][warn] voz_stt_bp:", e)
+    # (Opcional) Voz STT — se existir arquivo routes/voz_stt_bp.py
+    try:
+        from routes.voz_stt_bp import voz_stt_bp
+        _register_bp(voz_stt_bp, "voz_stt_bp (/api/voz/stt)")
+    except Exception as e:
+        print("[bp][warn] voz_stt_bp:", e)
 
 # =====================================
 # Health simples adicional e versão
@@ -1356,11 +1378,12 @@ def captcha_verify():
     return jsonify({"ok": _verify_turnstile_token(token)}), 200
 
 # Registrar blueprint opcional
-try:
-    app.register_blueprint(captcha_bp)
-    print("[bp] Registrado: captcha_bp (/api/captcha/verify)")
-except Exception as e:
-    print("[bp][warn] captcha_bp:", e)
+if _role_enabled("worker"):
+    try:
+        app.register_blueprint(captcha_bp)
+        print("[bp] Registrado: captcha_bp (/api/captcha/verify)")
+    except Exception as e:
+        print("[bp][warn] captcha_bp:", e)
 
 # Shim legado: /captcha/verify (sem /api) usado pelo captcha_gate.js antigo
 @app.route("/captcha/verify", methods=["POST", "OPTIONS"])
