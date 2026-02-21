@@ -45,7 +45,21 @@ WORKDIR /app
 # -------------------------
 # Dependncias Python (camada separada = cache saudvel)
 # -------------------------
-COPY requirements.txt /app/requirements.txt
+# requirements pode estar na raiz OU dentro de mei-robo-whatsapp-webhook/
+# copiamos o que existir, sem quebrar o build.
+COPY requirements*.txt /tmp/req_root/
+COPY mei-robo-whatsapp-webhook/requirements*.txt /tmp/req_webhook/
+
+RUN set -eux; \
+    if [ -f /tmp/req_root/requirements.txt ]; then \
+        cp /tmp/req_root/requirements.txt /app/requirements.txt; \
+    elif [ -f /tmp/req_webhook/requirements.txt ]; then \
+        cp /tmp/req_webhook/requirements.txt /app/requirements.txt; \
+    else \
+        echo "ERROR: requirements.txt not found in build context"; \
+        ls -la /; ls -la /tmp; ls -la /tmp/req_root || true; ls -la /tmp/req_webhook || true; \
+        exit 1; \
+    fi
 RUN pip install --no-cache-dir -r requirements.txt
 
 # -------------------------
@@ -63,4 +77,7 @@ COPY . /app
 # Inicializao (nico ponto de entrada)
 # server.py -> app.py (como vocs j usam)
 # -------------------------
-CMD sh -c "gunicorn app:app -k gthread --workers 2 --threads 8 --bind 0.0.0.0:${PORT:-8080} --access-logfile - --error-logfile -"
+# Default (pode ser sobrescrito via ENV no Cloud Run)
+ENV GUNICORN_CMD_ARGS="-k gthread --workers 1 --threads 16 --timeout 30 --graceful-timeout 10 --access-logfile - --error-logfile -"
+
+CMD sh -c "exec gunicorn app:app --bind 0.0.0.0:${PORT:-8080} $GUNICORN_CMD_ARGS"
