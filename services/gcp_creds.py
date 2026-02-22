@@ -36,11 +36,20 @@ def get_firestore_client(project: Optional[str] = None):
 
 def get_storage_client():
     from google.cloud import storage
+
+    # 1) Preferir credencial inline quando disponível (Cloud Run + Signed URL V4)
+    creds, project = _inline_creds()
+    if creds:
+        return storage.Client(project=project, credentials=creds)
+
+    # 2) Arquivo via GOOGLE_APPLICATION_CREDENTIALS (Secret File)
     if _gac_file():
-        # ADC via arquivo (Secret File)
         return storage.Client()
-    if _mode() == "adc_or_inline":
-        creds, project = _inline_creds()
-        if creds:
-            return storage.Client(project=project, credentials=creds)
+
+    # 3) Opcional: tentar ADC "padrão" (se tiver)
+    try:
+        return storage.Client()
+    except Exception:
+        pass
+
     raise RuntimeError("ADC not configured for Storage (set GOOGLE_APPLICATION_CREDENTIALS or use adc_or_inline).")
