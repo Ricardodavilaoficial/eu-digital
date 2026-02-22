@@ -1,19 +1,20 @@
 # services/gcp_creds.py
 import os, json
 from typing import Optional, Tuple
+
 from google.oauth2 import service_account
 
-# Modo de credenciais:
-# - "adc_only": exige GOOGLE_APPLICATION_CREDENTIALS (arquivo) — recomendado em produção
-# - "adc_or_inline": tenta arquivo; se não houver, usa FIREBASE_SERVICE_ACCOUNT_JSON (inline)
+# Modos:
+# - "workload_identity": usa ADC do runtime (Cloud Run SA / Workload Identity) — RECOMENDADO
+# - "adc_or_inline": tenta runtime/arquivo; se não houver, usa FIREBASE_SERVICE_ACCOUNT_JSON (inline)
+# - "inline_only": exige FIREBASE_SERVICE_ACCOUNT_JSON (sem ADC)
 def _mode() -> str:
-    return (os.getenv("GCP_CREDENTIALS_MODE") or "adc_only").strip().lower()
+    return (os.getenv("GCP_CREDENTIALS_MODE") or "workload_identity").strip().lower()
 
 def _gac_file() -> Optional[str]:
     """
     Retorna o caminho do GOOGLE_APPLICATION_CREDENTIALS apenas se existir de verdade.
-    Evita o caso Cloud Run: GAC apontando para algo inválido (ex.: JSON em env),
-    que faz o SDK tentar abrir "um arquivo" com o conteúdo do JSON.
+    Evita o caso Cloud Run: GAC apontando para algo inválido.
     """
     gac = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
     if not gac:
@@ -29,27 +30,47 @@ def _inline_creds() -> Tuple[Optional[service_account.Credentials], Optional[str
     project = info.get("project_id")
     return creds, project
 
+def _runtime_creds() -> Tuple[object, Optional[str]]:
+    """
+    ADC do runtime (Workload Identity / Cloud Run service account).
+    Não usa private_key local.
+    """
+    import google.auth
+    creds, project = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    return creds, project
+
 def get_firestore_client(project: Optional[str] = None):
-    # Firestore deve ser via firebase-admin (FIREBASE_SERVICE_ACCOUNT_JSON).
-    # Este módulo existe para credenciais GCP (GCS/Tasks), não para Firestore.
+    # Firestore deve ser via firebase-admin.
     raise RuntimeError("firestore_via_adc_disabled_use_firebase_admin")
 
 def get_storage_client():
     from google.cloud import storage
 
-    # 1) Preferir credencial inline quando disponível (Cloud Run + Signed URL V4)
-    creds, project = _inline_creds()
-    if creds:
-        return storage.Client(project=project, credentials=creds)
+    mode = _mode()
 
-    # 2) Arquivo via GOOGLE_APPLICATION_CREDENTIALS (Secret File)
-    if _gac_file():
-        return storage.Client()
+    # 1) Cloud Run "certo": Workload Identity (ADC runtime)
+    if mode in ("workload_identity", "adc_only", "adc_or_inline"):
+        try:
+            creds, project = _runtime_creds()
+            return storage.Client(project=project, credentials=creds)
+        except Exception:
+            # se o modo for estrito, não cai adiante
+            if mode in ("workload_identity", "adc_only"):
+                raise
 
-    # 3) Opcional: tentar ADC "padrão" (se tiver)
-    try:
-        return storage.Client()
-    except Exception:
-        pass
+    # 2) Arquivo via GOOGLE_APPLICATION_CREDENTIALS (se existir de verdade)
+    if mode in ("adc_only", "adc_or_inline"):
+        if _gac_file():
+            return storage.Client()
 
-    raise RuntimeError("ADC not configured for Storage (set GOOGLE_APPLICATION_CREDENTIALS or use adc_or_inline).")
+    # 3) Inline (JSON em env) — fallback controlado
+    if mode in ("adc_or_inline", "inline_only"):
+        creds, project = _inline_creds()
+        if creds:
+            return storage.Client(project=project, credentials=creds)
+
+    raise RuntimeError(
+        f"Storage credentials not configured. mode={mode}. "
+        "Use workload_identity (Cloud Run SA), or set FIREBASE_SERVICE_ACCOUNT_JSON (inline), "
+        "or provide GOOGLE_APPLICATION_CREDENTIALS pointing to an existing file."
+    )
