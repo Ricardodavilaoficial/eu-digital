@@ -1214,7 +1214,7 @@ def _uid_from_bearer() -> str | None:
     try:
         pad = "=" * ((4 - len(parts[1]) % 4) % 4)
         payload = json.loads(_b64.urlsafe_b64decode((parts[1] + pad).encode()).decode())
-        return payload.get("user_id") or payload.get("uid") or payload.get("sub")
+        return payload.get("uid") or payload.get("user_id") or payload.get("sub")
     except Exception:
         return None
 
