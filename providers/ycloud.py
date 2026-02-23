@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import json
 import socket
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import request as ulreq
 from urllib.error import HTTPError, URLError
@@ -20,6 +21,18 @@ DEFAULT_TIMEOUT_SECONDS = 12
 
 class YCloudError(RuntimeError):
     pass
+
+
+logger = logging.getLogger(__name__)
+
+def _log_enabled() -> bool:
+    return (os.environ.get("YCLOUD_LOG_ERRORS") or "").strip().lower() in ("1","true","yes","on")
+
+def _mask_e164(x: str) -> str:
+    s = (x or "").strip()
+    if len(s) <= 6:
+        return s
+    return s[:-4].replace("0","x").replace("1","x").replace("2","x").replace("3","x").replace("4","x").replace("5","x").replace("6","x").replace("7","x").replace("8","x").replace("9","x") + s[-4:]
 
 
 def _env(name: str, default: str = "") -> str:
@@ -85,11 +98,26 @@ def _post_json(path: str, payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]
 
     except HTTPError as e:
         # erro HTTP com body JSON (geralmente)
+        raw_txt = ""
         try:
             raw = e.read() or b"{}"
-            data = json.loads(raw.decode("utf-8", errors="replace"))
+            raw_txt = raw.decode("utf-8", errors="replace")
+            data = json.loads(raw_txt or "{}")
         except Exception:
             data = {"error": {"message": str(e), "status": getattr(e, "code", 0)}}
+
+        if _log_enabled():
+            try:
+                logger.error(
+                    "[ycloud] http_error status=%s path=%s from=%s to=%s body=%s",
+                    getattr(e, "code", 0),
+                    path,
+                    _mask_e164(str(payload.get("from",""))),
+                    _mask_e164(str(payload.get("to",""))),
+                    (raw_txt[:1200] if raw_txt else str(data)[:1200]),
+                )
+            except Exception:
+                pass
 
         return False, {
             "httpStatus": getattr(e, "code", 0),
@@ -97,12 +125,28 @@ def _post_json(path: str, payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]
         }
 
     except (URLError, socket.timeout) as e:
+        if _log_enabled():
+            try:
+                logger.error(
+                    "[ycloud] network_error type=%s path=%s from=%s to=%s",
+                    type(e).__name__,
+                    path,
+                    _mask_e164(str(payload.get("from",""))),
+                    _mask_e164(str(payload.get("to",""))),
+                )
+            except Exception:
+                pass
         return False, {
             "httpStatus": 0,
             "error": {"message": f"network_error:{type(e).__name__}"},
         }
 
     except Exception as e:
+        if _log_enabled():
+            try:
+                logger.exception("[ycloud] unexpected_error type=%s path=%s", type(e).__name__, path)
+            except Exception:
+                pass
         return False, {
             "httpStatus": 0,
             "error": {"message": f"unexpected_error:{type(e).__name__}"},
