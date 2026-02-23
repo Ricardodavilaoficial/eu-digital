@@ -44,6 +44,11 @@ def _base_url() -> str:
 def _api_key() -> str:
     k = _env("YCLOUD_API_KEY", "")
     if not k:
+        if _log_enabled():
+            try:
+                print("[ycloud] config_error missing_YCLOUD_API_KEY", flush=True)
+            except Exception:
+                pass
         raise YCloudError("missing_YCLOUD_API_KEY")
     return k
 
@@ -65,6 +70,11 @@ def _from_number() -> str:
     if v:
         return v
 
+    if _log_enabled():
+        try:
+            print("[ycloud] config_error missing_from_number set_YCLOUD_WA_FROM_E164", flush=True)
+        except Exception:
+            pass
     raise YCloudError("missing_from_number (set YCLOUD_WA_FROM_E164)")
 
 

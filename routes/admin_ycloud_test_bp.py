@@ -87,7 +87,14 @@ def admin_send_test():
             text = (data.get("text") or "Teste MEI Robô ✅").strip()
             ok, resp = send_text(to_e164, text)
     except Exception as e:
-        ok, resp = False, {"error": {"message": f"sender_exception:{type(e).__name__}"}}
+        # não esconder causa real (ex.: missing_YCLOUD_API_KEY)
+        msg = f"sender_exception:{type(e).__name__}:{str(e) or 'no_message'}"
+        if (os.environ.get("YCLOUD_LOG_ERRORS") or "").strip().lower() in ("1","true","yes","on"):
+            try:
+                print(f"[admin_ycloud_test] {msg}", flush=True)
+            except Exception:
+                pass
+        ok, resp = False, {"error": {"message": msg}}
 
     # Log (sem segredos)
     _log({
