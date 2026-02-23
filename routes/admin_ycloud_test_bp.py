@@ -98,4 +98,10 @@ def admin_send_test():
         "resp": resp,
     })
 
-    return jsonify({"ok": bool(ok), "toE164": to_e164, "mode": mode, "resp": resp}), (200 if ok else 502)
+    status = 200 if ok else int(resp.get("httpStatus") or 502)
+    return jsonify({
+        "ok": bool(ok),
+        "toE164": to_e164,
+        "mode": mode,
+        "resp": resp
+    }), status
