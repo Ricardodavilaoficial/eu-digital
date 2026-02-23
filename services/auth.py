@@ -130,7 +130,7 @@ def get_verified_user_from_request() -> SimpleNamespace | None:
         return None
     try:
         decoded = verify_id_token_strict(token)
-        uid = decoded.get("uid")
+        uid = decoded.get("uid") or decoded.get("user_id") or decoded.get("sub")
         if not uid:
             return None
         return SimpleNamespace(uid=uid, email=decoded.get("email"), claims=decoded)
@@ -184,7 +184,7 @@ def auth_required(fn):
         else:
             try:
                 decoded = verify_id_token_strict(token)
-                uid = decoded.get("uid")
+                uid = decoded.get("uid") or decoded.get("user_id") or decoded.get("sub")
                 if not uid:
                     return jsonify({"erro": "Token inválido (sem UID)"}), 401
                 g.user = SimpleNamespace(uid=uid, email=decoded.get("email"), claims=decoded)
@@ -235,7 +235,7 @@ def admin_required(fn):
         else:
             try:
                 decoded = verify_id_token_strict(token)
-                uid = decoded.get("uid")
+                uid = decoded.get("uid") or decoded.get("user_id") or decoded.get("sub")
                 email = decoded.get("email")
                 if not uid:
                     return jsonify({"erro": "Token inválido (sem UID)"}), 401
@@ -286,7 +286,7 @@ def get_uid_from_bearer(req) -> str | None:
         return None
     try:
         decoded = verify_id_token_strict(token)
-        uid = decoded.get("uid")
+        uid = decoded.get("uid") or decoded.get("user_id") or decoded.get("sub")
         return uid or None
     except Exception as e:
         logger.warning("get_uid_from_bearer: token inválido (%s)", type(e).__name__)
@@ -302,7 +302,7 @@ def get_user_from_bearer(req) -> SimpleNamespace | None:
         return None
     try:
         decoded = verify_id_token_strict(token)
-        uid = decoded.get("uid")
+        uid = decoded.get("uid") or decoded.get("user_id") or decoded.get("sub")
         if not uid:
             return None
         return SimpleNamespace(uid=uid, email=decoded.get("email"), claims=decoded)
