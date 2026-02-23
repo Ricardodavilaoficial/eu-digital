@@ -13,6 +13,11 @@ from flask import request, jsonify, g
 import firebase_admin
 from firebase_admin import auth as fb_auth, credentials
 
+AUTH_BUILD_ID = os.getenv("K_REVISION") or "local"
+if (os.getenv("AUTH_DEBUG") or "").strip().lower() in ("1","true","yes","on"):
+    pid = os.getenv("FIREBASE_PROJECT_ID") or os.getenv("GCLOUD_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT") or "-"
+    print(f"[auth] loaded rev={AUTH_BUILD_ID} project={pid}", flush=True)
+    
 # -----------------------------------------------------------------------------
 # Logging (discreto)
 # -----------------------------------------------------------------------------
