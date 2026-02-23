@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import json
 import socket
-import logging
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import request as ulreq
 from urllib.error import HTTPError, URLError
@@ -22,8 +21,6 @@ DEFAULT_TIMEOUT_SECONDS = 12
 class YCloudError(RuntimeError):
     pass
 
-
-logger = logging.getLogger(__name__)
 
 def _log_enabled() -> bool:
     return (os.environ.get("YCLOUD_LOG_ERRORS") or "").strip().lower() in ("1","true","yes","on")
@@ -105,16 +102,16 @@ def _post_json(path: str, payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]
             data = json.loads(raw_txt or "{}")
         except Exception:
             data = {"error": {"message": str(e), "status": getattr(e, "code", 0)}}
-
         if _log_enabled():
             try:
-                logger.error(
-                    "[ycloud] http_error status=%s path=%s from=%s to=%s body=%s",
-                    getattr(e, "code", 0),
-                    path,
-                    _mask_e164(str(payload.get("from",""))),
-                    _mask_e164(str(payload.get("to",""))),
-                    (raw_txt[:1200] if raw_txt else str(data)[:1200]),
+                print(
+                    "[ycloud] http_error "
+                    f"status={getattr(e,'code',0)} "
+                    f"path={path} "
+                    f"from={_mask_e164(str(payload.get('from','')))} "
+                    f"to={_mask_e164(str(payload.get('to','')))} "
+                    f"body={(raw_txt[:1200] if raw_txt else str(data)[:1200])}",
+                    flush=True,
                 )
             except Exception:
                 pass
@@ -127,12 +124,13 @@ def _post_json(path: str, payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]
     except (URLError, socket.timeout) as e:
         if _log_enabled():
             try:
-                logger.error(
-                    "[ycloud] network_error type=%s path=%s from=%s to=%s",
-                    type(e).__name__,
-                    path,
-                    _mask_e164(str(payload.get("from",""))),
-                    _mask_e164(str(payload.get("to",""))),
+                print(
+                    "[ycloud] network_error "
+                    f"type={type(e).__name__} "
+                    f"path={path} "
+                    f"from={_mask_e164(str(payload.get('from','')))} "
+                    f"to={_mask_e164(str(payload.get('to','')))}",
+                    flush=True,
                 )
             except Exception:
                 pass
@@ -144,7 +142,7 @@ def _post_json(path: str, payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]
     except Exception as e:
         if _log_enabled():
             try:
-                logger.exception("[ycloud] unexpected_error type=%s path=%s", type(e).__name__, path)
+                print(f"[ycloud] unexpected_error type={type(e).__name__} path={path}", flush=True)
             except Exception:
                 pass
         return False, {
