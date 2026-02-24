@@ -328,6 +328,26 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
         except Exception:
             pass
 
+        # ✅ Produto: SEND_LINK = venda fechada (link-only, sem pergunta)
+        try:
+            if next_step == "SEND_LINK":
+                should_end = True
+                url = "https://www.meirobo.com.br"
+                rt0 = (reply_text or "").strip()
+                if ("http://" not in rt0) and ("https://" not in rt0):
+                    reply_text = f"Perfeito. Aqui está o link pra assinar agora:\n{url}"
+                else:
+                    qpos = rt0.find("?")
+                    if qpos != -1:
+                        reply_text = (rt0[: qpos]).rstrip()
+                st0 = (spoken_text or reply_text or "").strip()
+                qpos2 = st0.find("?")
+                if qpos2 != -1:
+                    st0 = (st0[: qpos2]).rstrip()
+                spoken_text = st0
+        except Exception:
+            pass
+
         # ----------------------------------------------------------
         # Enforcements de produto (anti-resposta genérica)
         # ----------------------------------------------------------

@@ -683,12 +683,36 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "tokenUsage": front_out.get("tokenUsage") or {},
                         }
 
+                        # ✅ Produto: SEND_LINK = venda fechada (link-only, sem pergunta)
+                        try:
+                            if str(out.get("planNextStep") or "").strip().upper() == "SEND_LINK":
+                                _url = "https://www.meirobo.com.br"
+                                _rt0 = (out.get("replyText") or "").strip()
+                                if ("http://" not in _rt0) and ("https://" not in _rt0):
+                                    out["replyText"] = f"Perfeito. Aqui está o link pra assinar agora:\n{_url}"
+                                else:
+                                    # se já tem link, garante que não termina com pergunta
+                                    qpos = _rt0.find("?")
+                                    if qpos != -1:
+                                        out["replyText"] = (_rt0[: qpos]).rstrip()
+                                _st0 = (out.get("spokenText") or out.get("replyText") or "").strip()
+                                qpos2 = _st0.find("?")
+                                if qpos2 != -1:
+                                    _st0 = (_st0[: qpos2]).rstrip()
+                                out["spokenText"] = _st0
+                        except Exception:
+                            pass
+
                         # 🔧 Polimento vendedor (mínimo): evita CTA "como configurar/cadastrar" no modo VENDAS.
                         # O front pode evoluir isso, mas aqui garantimos que não escapa um "suporte disfarçado".
                         try:
                             import re
                             _rt = (out.get("replyText") or "").strip()
                             _topic = str((und or {}).get("topicHint") or (und or {}).get("topic") or topic_hint or "").strip().upper()
+
+                            # ✅ Produto: se já é SEND_LINK, não adiciona pergunta/CTA nenhuma
+                            if str(out.get("planNextStep") or "").strip().upper() == "SEND_LINK":
+                                raise Exception("skip_polish_for_send_link")
 
                             # remove CTA de "como configurar/cadastrar" no final
                             _rt = re.sub(
