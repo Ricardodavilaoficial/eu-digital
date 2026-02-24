@@ -275,6 +275,17 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
         if confidence not in ("high", "medium", "low"):
             confidence = "low"
 
+        # ----------------------------------------------------------
+        # ✅ Regra canônica de VENDAS:
+        # Se o cliente pediu LINK (nextStep=SEND_LINK), o negócio já está fechado.
+        # Então: manda o link e encerra, sem CTA extra.
+        # ----------------------------------------------------------
+        if next_step == "SEND_LINK":
+            base = (os.getenv("FRONTEND_BASE") or "https://www.meirobo.com.br").strip()
+            reply_text = f"Perfeito. Aqui está o link pra assinar agora: {base}"
+            should_end = True
+
+
         # Fail-safe: nunca devolver reply vazio (evita saída "muda" em produção)
         if not reply_text:
             reply_text = "Sim — pode mandar suas dúvidas por aqui mesmo. Quer falar de agenda, preço ou ativação?"
@@ -332,7 +343,7 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
         try:
             if next_step == "SEND_LINK":
                 should_end = True
-                url = "https://www.meirobo.com.br"
+                url = (os.getenv("FRONTEND_BASE") or "https://www.meirobo.com.br").strip()
                 rt0 = (reply_text or "").strip()
                 if ("http://" not in rt0) and ("https://" not in rt0):
                     reply_text = f"Perfeito. Aqui está o link pra assinar agora:\n{url}"
