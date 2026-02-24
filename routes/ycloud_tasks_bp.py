@@ -1303,6 +1303,17 @@ def ycloud_inbound_worker():
         event_key = (data.get("eventKey") or "").strip()
         payload = data.get("payload") or {}
 
+        # 🔒 DEDUPE FORTE (Cloud Tasks retry-safe)
+        try:
+            if event_key:
+                from services.dedupe import dedupe_once
+                if not dedupe_once(event_key):
+                    logger.info(f"[tasks][dedupe] skip eventKey={event_key}")
+                    return jsonify({"ok": True, "deduped": True}), 200
+        except Exception as _e:
+            logger.warning(f"[tasks][dedupe] error: {_e}")
+
+
         # ==========================================================
         # DEDUPE (produção): garante idempotência por eventKey
         # Se o mesmo eventKey cair 2x (retry YCloud/Tasks), NÃO reenviar outbound.
@@ -2369,6 +2380,15 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 or ""
             )
             prefers_text = bool(wa_out.get("prefersText"))
+            plan_next_step = str(wa_out.get("planNextStep") or "").strip().upper()
+            tts_owner = str(wa_out.get("ttsOwner") or "").strip().lower()
+
+            # Guard-rail: entrada é áudio e o áudio é do WORKER.
+            # Não deixar prefersText=True matar TTS por engano.
+            # Exceção: SEND_LINK deve continuar texto (link não vai no áudio).
+            if msg_type in ("audio", "voice", "ptt") and tts_owner == "worker":
+                if plan_next_step != "SEND_LINK" and prefers_text:
+                    prefers_text = False
             # Blindagem: se o bot quer texto e o reply contém link, nunca "perder" o texto.
             # (evita casos onde a pipeline envia só áudio e o link some)
             try:
@@ -2386,6 +2406,23 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             kb_context = (wa_out.get("kbContext") or wa_out.get("kb_context") or "")
             wa_kind = (wa_out.get("kind") or wa_out.get("type") or "")
             plan_next_step = str(wa_out.get("planNextStep") or wa_out.get("plan_next_step") or "").strip().upper()
+
+            # 📐 NORMALIZA prefersText (SHOW institucional consistente)
+            try:
+                _mt = (msg_type or "").lower()
+                _pns = (plan_next_step or "").strip().upper()
+
+                # Se inbound é áudio → padrão é responder com áudio
+                if _mt in ("audio", "voice", "ptt") and _pns != "SEND_LINK":
+                    prefers_text = False
+
+                # SEND_LINK sempre força texto (evita áudio lendo URL)
+                if _pns == "SEND_LINK":
+                    prefers_text = True
+
+            except Exception as _e:
+                logger.warning(f"[tasks][prefers_normalize] {_e}")
+
             intent_final = str(wa_out.get("intentFinal") or wa_out.get("intent_final") or "").strip().upper()
             policies_applied = wa_out.get("policiesApplied") or []
             if not isinstance(policies_applied, list):

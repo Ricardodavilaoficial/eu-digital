@@ -670,21 +670,20 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "route": "conversational_front",
                             "replyText": str(front_out.get("replyText") or "").strip(),
                             "spokenText": str(front_out.get("spokenText") or front_out.get("spoken_text") or "").strip(),
-                            # Produto: o worker é o dono do áudio. Se entrou por áudio, ele decide falar.
-# Default seguro aqui: NÃO forçar texto.
-"prefersText": bool(front_out.get("prefersText", False)),
                             "understanding": und,
                             "planNextStep": front_out.get("nextStep") or "NONE",
                             "nameUse": front_out.get("nameUse") or "none",
-                            "ttsOwner": "worker",
                             # Telemetria leve (ignorada se o worker não usar)
                             "kbSnapshotSizeChars": len(kb_snapshot or ""),
                             # Auditoria: mata a dúvida "quem respondeu?"
                             "replySource": "front",
                             # Custo (best-effort) vindo do front
                             "tokenUsage": front_out.get("tokenUsage") or {},
+                            # Produto: o worker é o dono do áudio. Se entrou por áudio, ele decide falar.
+                            # Default seguro aqui: NÃO forçar texto.
+                            "prefersText": bool(front_out.get("prefersText", False)),
+                            "ttsOwner": "worker",
                         }
-
                         # ✅ Produto: SEND_LINK = venda fechada (link-only, sem pergunta)
                         try:
                             if str(out.get("planNextStep") or "").strip().upper() == "SEND_LINK":

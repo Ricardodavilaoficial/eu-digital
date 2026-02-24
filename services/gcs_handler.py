@@ -99,10 +99,7 @@ def _init_bucket():
 
 
 # Client/Bucket globais (simples)
-_bucket = _init_bucket()
-if _bucket is None:
-    print("[GCS][WARN] Bucket não inicializado. Verifique credenciais e variáveis de ambiente.")
-
+_bucket = None  # Lazy init (evita erro em cold start Cloud Run
 
 # ----------------------------
 # Helpers de Upload/Download
