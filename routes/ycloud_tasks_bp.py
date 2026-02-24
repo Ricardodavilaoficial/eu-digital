@@ -2430,6 +2430,21 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 _route = ""
                 _is_front = False
 
+            # ----------------------------------------------------------
+            # REGRA DE PRODUTO (canônica):
+            # entrou por ÁUDIO -> deve sair por ÁUDIO
+            # EXCEÇÃO: SEND_LINK (precisa do link em texto)
+            # Observação: o Conversational Front pode vir com prefersText=true por padrão;
+            # aqui a gente neutraliza isso no worker quando a entrada foi áudio.
+            # ----------------------------------------------------------
+            try:
+                if msg_type in ("audio", "voice", "ptt"):
+                    _ns = str(plan_next_step or "").strip().upper()
+                    if _is_front and _ns != "SEND_LINK":
+                        prefers_text = False
+            except Exception:
+                pass
+
             # Se veio do FRONT, evita carimbo de fallback do worker/legacy
             try:
                 if _is_front and isinstance(understanding, dict):
