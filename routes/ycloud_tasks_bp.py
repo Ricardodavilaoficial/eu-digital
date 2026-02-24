@@ -9,6 +9,31 @@ import time
 from datetime import datetime
 import random
 import re
+
+
+def _backend_base(request) -> str:
+    """
+    Resolve a base URL interna para chamadas /api/voz/* feitas pelo WORKER.
+    Blindagem: se BACKEND_BASE apontar pro webhook, usamos host_url do request (worker).
+    """
+    base = (os.environ.get("BACKEND_BASE_URL") or os.environ.get("BACKEND_BASE") or "").strip().rstrip("/")
+    host = (getattr(request, "host_url", "") or "").strip().rstrip("/")
+
+    if base.startswith("http://"):
+        base = "https://" + base[len("http://"):]
+    if host.startswith("http://"):
+        host = "https://" + host[len("http://"):]
+
+    # se não tiver base, usa o host atual (normal em Cloud Run)
+    if not base:
+        return host
+
+    # blindagem: se base aponta pro webhook, e host atual NÃO é webhook, força host (worker)
+    if ("mei-robo-webhook" in base) and host and ("mei-robo-webhook" not in host):
+        return host
+
+    return base
+
 import hashlib
 import logging
 import uuid
@@ -2043,18 +2068,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         else:
                             # Chama STT interno via HTTP (mesmo serviço)
                             try:
-                                base = (
-                                    os.environ.get("BACKEND_BASE_URL")
-                                    or os.environ.get("BACKEND_BASE")
-                                    or ""
-                                ).strip().rstrip("/")
-                                if not base:
-                                    # tenta inferir pelo request atual
-                                    base = (request.host_url or "").strip().rstrip("/")
-                                # Cloud Run pode redirecionar http->https com 302; requests pode virar GET e quebrar o POST.
-                                # Força HTTPS para evitar 302->GET.
-                                if base.startswith("http://"):
-                                    base = "https://" + base[len("http://"):]
+                                base = _backend_base(request)
                                 stt_url = f"{base}/api/voz/stt"
 
                                 headers = {"Content-Type": ctype or "audio/ogg"}
@@ -3067,17 +3081,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     # Se não tem audio_url ainda, gera ACK institucional via /api/voz/tts e sobe Signed URL (padrão do worker)
                     if not audio_url:
                         try:
-                            base = (
-                                    os.environ.get("BACKEND_BASE_URL")
-                                    or os.environ.get("BACKEND_BASE")
-                                    or ""
-                                ).strip().rstrip("/")
-                            if not base:
-                                base = (request.host_url or "").strip().rstrip("/")
-                            # Cloud Run pode redirecionar http->https com 302; requests pode virar GET e quebrar o POST.
-                            # Força HTTPS para evitar 302->GET (e 404 no GET).
-                            if base.startswith("http://"):
-                                base = "https://" + base[len("http://"):]
+                            base = _backend_base(request)
                             tts_url = f"{base}/api/voz/tts"
                             voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
                             if voice_id:
@@ -3119,17 +3123,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     # gera áudio curto institucional (sem url) para manter "entra áudio -> sai áudio"
                     if not audio_url:
                         try:
-                            base = (
-                                    os.environ.get("BACKEND_BASE_URL")
-                                    or os.environ.get("BACKEND_BASE")
-                                    or ""
-                                ).strip().rstrip("/")
-                            if not base:
-                                base = (request.host_url or "").strip().rstrip("/")
-                            # Cloud Run pode redirecionar http->https com 302; requests pode virar GET e quebrar o POST.
-                            # Força HTTPS para evitar 302->GET (e 404 no GET).
-                            if base.startswith("http://"):
-                                base = "https://" + base[len("http://"):]
+                            base = _backend_base(request)
                             tts_url = f"{base}/api/voz/tts"
                             voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
                             if voice_id:
@@ -3182,17 +3176,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # ==========================================================
             if msg_type in ("audio", "voice", "ptt") and (not audio_url) and reply_text and (not prefers_text):
                 try:
-                    base = (
-                                    os.environ.get("BACKEND_BASE_URL")
-                                    or os.environ.get("BACKEND_BASE")
-                                    or ""
-                                ).strip().rstrip("/")
-                    if not base:
-                        base = (request.host_url or "").strip().rstrip("/")
-                    # Cloud Run pode redirecionar http->https com 302; requests pode virar GET e quebrar o POST.
-                    # Força HTTPS para evitar 302->GET (e 404 no GET).
-                    if base.startswith("http://"):
-                        base = "https://" + base[len("http://"):]
+                    base = _backend_base(request)
                     tts_url = f"{base}/api/voz/tts"
 
                     voice_id = ""
@@ -3555,6 +3539,23 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         except Exception:
                             pass
 
+                        # ==========================================================
+                        # LIMPEZA FINAL (OBRIGATÓRIA) DO QUE VAI SER FALADO
+                        # - garante "humanizado", mesmo se vier do spokenText do bot
+                        # - remove links/domínios
+                        # - evita ler "89,00" como "oitenta e nove ... zero zero"
+                        # ==========================================================
+                        try:
+                            tts_text = _strip_links_for_audio(tts_text or "")
+                            # dinheiro comum: "R$ 89,00" -> "89 reais"
+                            tts_text = re.sub(r"R\$\s*([0-9]{1,7})[.,]00\b", r"\1 reais", tts_text)
+                            # número com ,00 no final: "89,00" -> "89"
+                            tts_text = re.sub(r"([0-9]{1,7})[.,]00\b", r"\1", tts_text)
+                            # limpeza geral já existente (URLs quebradas, espaços, etc)
+                            tts_text = _clean_for_speech(tts_text)
+                        except Exception:
+                            pass
+
                         tts_text_final_used = tts_text
 
                         rr = _call_tts(tts_text_final_used)
@@ -3673,6 +3674,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # Pacote 1 (robustez): grava outbox imediatamente após envio bem-sucedido.
             # Evita depender do "bloco final" e facilita auditoria em produção.
             def _try_log_outbox_immediate(_sent_ok: bool, _channel: str, _extra: dict = None) -> None:
+                # Por padrão, DESLIGADO para evitar duplicar com o OUTBOX determinístico.
+                # Se quiser reativar em incidentes: OUTBOX_IMMEDIATE=1
+                if (os.environ.get("OUTBOX_IMMEDIATE") or "").strip().lower() not in ("1","true","yes","on"):
+                    return
                 try:
                     # A3: Se cair no modo ACK+texto, não pode perder displayName no outbox
                     try:
