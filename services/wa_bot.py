@@ -697,10 +697,22 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                     qpos = _rt0.find("?")
                                     if qpos != -1:
                                         out["replyText"] = (_rt0[: qpos]).rstrip()
-                                _st0 = (out.get("spokenText") or out.get("replyText") or "").strip()
-                                qpos2 = _st0.find("?")
-                                if qpos2 != -1:
-                                    _st0 = (_st0[: qpos2]).rstrip()
+                                # ✅ spokenText NUNCA deve carregar URL (evita áudio lendo link)
+                                _st0 = (out.get("spokenText") or "").strip()
+                                if not _st0:
+                                    # fallback humano: manda o link no texto, fala só a intenção
+                                    _st0 = "Perfeito. Te enviei o link no texto pra assinar agora."
+                                else:
+                                    # se veio do front, limpa qualquer URL por segurança
+                                    _hpos = _st0.find("http://")
+                                    if _hpos == -1:
+                                        _hpos = _st0.find("https://")
+                                    if _hpos != -1:
+                                        _st0 = (_st0[:_hpos]).rstrip()
+                                    # também evita terminar com pergunta no áudio
+                                    qpos2 = _st0.find("?")
+                                    if qpos2 != -1:
+                                        _st0 = (_st0[: qpos2]).rstrip()
                                 out["spokenText"] = _st0
                         except Exception:
                             pass
