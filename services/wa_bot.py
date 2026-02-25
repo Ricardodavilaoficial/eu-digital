@@ -727,8 +727,9 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             if re.search(r"\bcomo\s+(configurar|cadastrar)\b", _rt, re.IGNORECASE):
                                 _rt = re.sub(r"\s*\bcomo\s+(configurar|cadastrar)\b[^\?]*\??\s*$", "", _rt, flags=re.IGNORECASE).strip()
 
-                            # 🛑 Regra: no máximo 1 pergunta. Se já tem "?", não adiciona outra.
-                            already_has_question = ("?" in (_rt or ""))
+                            # 🛑 Regra: no máximo 1 pergunta.
+                            # Se já tem "?" OU já tem cara de pergunta ("Você quer/Quer"), não adiciona outra.
+                            already_has_question = ("?" in (_rt or "")) or bool(re.search(r"\b(você\s+quer|quer)\b", (_rt or ""), re.IGNORECASE))
 
                             if _rt and (not already_has_question):
                                 if _topic in ("AGENDA",):

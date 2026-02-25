@@ -506,6 +506,28 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
         reply_text = reply_text[:FRONT_REPLY_MAX_CHARS].rstrip()
         spoken_text = (spoken_text or "")[:FRONT_REPLY_MAX_CHARS].rstrip()
 
+        # ✅ Normalização: se tiver "Você quer/Quer" mas faltou "?", corrige.
+        # Isso evita o wa_bot achar que "não tem pergunta" e adicionar outra.
+        try:
+            import re
+            def _fix_missing_qmark(s: str) -> str:
+                s = (s or "").strip()
+                if not s:
+                    return s
+                if "?" in s:
+                    return s
+                if re.search(r"\b(você\s+quer|quer)\b", s, re.IGNORECASE):
+                    # se termina com ponto, troca por interrogação
+                    if s.endswith("."):
+                        return s[:-1].rstrip() + "?"
+                    # senão, só garante "?" no fim
+                    return s.rstrip("! ") + "?"
+                return s
+            reply_text = _fix_missing_qmark(reply_text)
+            spoken_text = _fix_missing_qmark(spoken_text)
+        except Exception:
+            pass
+
         # fallback hard: no máximo 1 pergunta em cada canal (texto/voz)
         try:
             if (reply_text or "").count("?") > 1:
