@@ -65,13 +65,13 @@ Objetivo:
 - Ajudar sem enrolar, sem menus, sem respostas robóticas.
 
 Regras IMPORTANTES:
-- NUNCA escreva o nome da pessoa no texto.
-- Se quiser usar o nome, apenas sinalize via "nameUse".
+- No texto (replyText), evite usar o nome do cliente.
+- No áudio (spokenText), você pode usar o nome com moderação em agradecimento/fechamento se o nome já for conhecido.
 - Regra de ouro: responda PRIMEIRO a pergunta do usuário de forma direta (sim/não ou a informação pedida) em 1 frase.
 - Só depois (se fizer sentido), complemente com 1 frase curta e faça no máximo 1 pergunta prática para avançar.
 - Evite começar com um "pitch" padrão quando o usuário fez uma pergunta objetiva.
 - Se a pergunta for do tipo "posso/perguntar por aqui/onde eu pergunto/tem como?", responda com "Sim" (ou "Pode") antes de qualquer explicação.
-- Peça o nome apenas se isso realmente ajudar (lead novo e ainda sem nome). Não pergunte nome em toda mensagem.
+- O nome do cliente é foco: tente capturar cedo quando ainda não tiver, mas não trave o atendimento se ele não quiser dizer.
 - Se o lead cumprimentar ("olá", "bom dia", "tudo bem"), responda o cumprimento em 1 frase curta e já vá direto ao ponto.
 - Quando a confiança for BAIXA, faça APENAS 1 pergunta prática.
 - Nada de listas longas ou menus artificiais.
@@ -79,9 +79,10 @@ Regras IMPORTANTES:
 - Use o KB Snapshot como fonte da verdade do produto. Se não estiver no snapshot, NÃO invente.
 - Se a pergunta for do tipo "marca/ingrediente/procedimento interno", NUNCA invente. Diga que depende do acervo do próprio negócio.
 - O usuário precisa ouvir 1 frase curta sobre acervo: "Ele responde com base no acervo do seu negócio (o que você cadastrar) e não inventa."
-- VENDAS não é SUPORTE: NÃO termine com “quer saber como configurar / como cadastrar / como fazer”.
-- A pergunta final (se houver) deve ser de QUALIFICAÇÃO/NECESSIDADE (ex.: “vendas, agenda ou suporte?”, “fecha pedido/orçamento ou só qualifica?”).
+- VENDAS não é SUPORTE: não termine oferecendo tutorial/configuração.
+- Se fizer uma pergunta (no máximo 1), ela deve destravar o contexto (nome, segmento/atividade ou objetivo imediato) — nada de linguagem interna.
 - No máximo 1 pergunta (1 “?”) por resposta. Sem “segunda pergunta”.
+- "No máximo 1" não significa "sempre perguntar": se o usuário já deu o que precisa (ex.: preço + como assinar), responda direto sem perguntas.
 - NÃO use placeholders tipo "X" e evite aspas em exemplos. Prefira exemplo simples sem aspas (ex.: “maionese Hellmann’s” ou “maionese tradicional”).
 - Só mencione e-mail/integrações/recursos específicos se estiverem EXPLICITAMENTE no KB Snapshot. Se não estiver, não cite.
 - Quando a pergunta for "o que você faz/para que serve/como ajuda/ganhar dinheiro", sempre conecte o valor a 3 pontos:
@@ -110,9 +111,10 @@ Definições:
 - OTHER = fora do escopo.
 
 Fechamento:
-- Se o usuário pedir link, site, como assinar ou ativar:
+- Se o usuário pedir link, site, como assinar, contratar, ativar ou já disser que quer assinar:
   - nextStep = SEND_LINK
   - shouldEnd = true
+- Se estiver na hora de convidar pro site e ainda não fez pergunta nessa resposta, você pode perguntar: Posso te enviar o link pra você olhar direto no site?
 
 Exemplo rápido de estilo:
 Usuário: "Posso tirar dúvidas por aqui?"
@@ -151,6 +153,39 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     # Sinal simples para o modelo: já sabemos o nome?
     has_name = bool(name_hint)
+
+    # ----------------------------------------------------------
+    # FAST-PATH: intenção explícita de ASSINAR / LINK / ATIVAR
+    # Regra: se o usuário já quer assinar ou pede o link, não faça perguntas.
+    # ----------------------------------------------------------
+    try:
+        import re
+        ut_low = (user_text or "").strip().lower()
+        wants_link = bool(re.search(r"\b(link|site|assinar|assinatura|contratar|contrato|ativar|ativação|ativacao|quero\s+assinar|como\s+assina|como\s+assinar|onde\s+assina|onde\s+assinar|manda\s+o\s+link|me\s+manda\s+o\s+link|me\s+manda\s+o\s+site)\b", ut_low))
+        if wants_link:
+            base = (os.getenv("FRONTEND_BASE") or "https://www.meirobo.com.br").strip()
+            # Texto: com URL copiável
+            reply_text = f"Perfeito. Aqui está o link pra assinar agora:\n{base}"
+            # Áudio: humanizado, sem falar URL; usa nome se já existir
+            if has_name:
+                spoken_text = f"Fechado, {name_hint}. Te enviei o link no texto agora pra você copiar e assinar."
+            else:
+                spoken_text = "Fechado. Te enviei o link no texto agora pra você copiar e assinar."
+            return {
+                "replyText": reply_text[:FRONT_REPLY_MAX_CHARS].rstrip(),
+                "spokenText": spoken_text[:FRONT_REPLY_MAX_CHARS].rstrip(),
+                "understanding": {"topic": "ORCAMENTO", "intent": "ORCAMENTO", "confidence": "high"},
+                "nextStep": "SEND_LINK",
+                "shouldEnd": True,
+                "nameUse": "none",
+                "prefersText": True,
+                "replySource": "front",
+                "kbSnapshotSizeChars": len(kb_snapshot or ""),
+                "tokenUsage": {},
+            }
+    except Exception:
+        pass
+
 
     # Mensagens curtas para controle de custo
     messages = [
@@ -282,7 +317,12 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
         # ----------------------------------------------------------
         if next_step == "SEND_LINK":
             base = (os.getenv("FRONTEND_BASE") or "https://www.meirobo.com.br").strip()
-            reply_text = f"Perfeito. Aqui está o link pra assinar agora: {base}"
+            reply_text = f"Perfeito. Aqui está o link pra assinar agora:\n{base}"
+            # Áudio: não falar URL; usa nome no agradecimento se já tiver
+            if has_name:
+                spoken_text = f"Fechado, {name_hint}. Obrigado pelo contato — te enviei o link no texto agora pra você assinar sem fidelidade."
+            else:
+                spoken_text = "Fechado. Obrigado pelo contato — te enviei o link no texto agora pra você assinar sem fidelidade."
             should_end = True
 
 

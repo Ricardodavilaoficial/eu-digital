@@ -696,11 +696,11 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                     qpos = _rt0.find("?")
                                     if qpos != -1:
                                         out["replyText"] = (_rt0[: qpos]).rstrip()
-                                # ÁUDIO (humanizado): NÃO falar URL. Link vai no texto.
-                                out["spokenText"] = (
-                                    "Fechado. Te enviei o link no texto agora pra você copiar e assinar. "
-                                    "Se quiser, eu te explico os próximos passos rapidinho."
-                                ).strip()
+                                # ÁUDIO (humanizado): o front pode ter montado spokenText (com nome).
+                                # Se não vier, usamos um fallback curto (sem falar URL).
+                                out["spokenText"] = (out.get("spokenText") or (
+                                    "Fechado. Te enviei o link no texto agora pra você copiar e assinar."
+                                )).strip()
                         except Exception:
                             pass
 
@@ -728,18 +728,9 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 _rt = re.sub(r"\s*\bcomo\s+(configurar|cadastrar)\b[^\?]*\??\s*$", "", _rt, flags=re.IGNORECASE).strip()
 
                             # 🛑 Regra: no máximo 1 pergunta.
-                            # Se já tem "?" OU já tem cara de pergunta ("Você quer/Quer"), não adiciona outra.
-                            already_has_question = ("?" in (_rt or "")) or bool(re.search(r"\b(você\s+quer|quer)\b", (_rt or ""), re.IGNORECASE))
-
-                            if _rt and (not already_has_question):
-                                if _topic in ("AGENDA",):
-                                    _rt = (_rt + " Você quer que ele foque mais em agenda (marcar/confirmar) ou em vendas (orçamento/pedido)?").strip()
-                                elif _topic in ("ORCAMENTO", "PEDIDO", "PRECO", "PRICING"):
-                                    _rt = (_rt + " Você quer que ele já leve pro orçamento/pedido, ou só qualifique o cliente primeiro?").strip()
-                                else:
-                                    _rt = (_rt + " Hoje você quer mais vender, organizar agenda ou tirar dúvidas?").strip()
-
-                            # fallback hard: garante no máximo 1 "?"
+                            # Importante: "no máximo 1" NÃO significa "sempre perguntar".
+                            # O Módulo 1 (front) é quem decide se deve haver pergunta.
+                            # Aqui só garantimos higiene: sem pergunta técnica e sem duplicar "?".
                             if (_rt or "").count("?") > 1:
                                 qpos = _rt.find("?")
                                 if qpos != -1:
