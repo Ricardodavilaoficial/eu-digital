@@ -1303,17 +1303,6 @@ def ycloud_inbound_worker():
         event_key = (data.get("eventKey") or "").strip()
         payload = data.get("payload") or {}
 
-        # 🔒 DEDUPE FORTE (Cloud Tasks retry-safe)
-        try:
-            if event_key:
-                from services.dedupe import dedupe_once
-                if not dedupe_once(event_key):
-                    logger.info(f"[tasks][dedupe] skip eventKey={event_key}")
-                    return jsonify({"ok": True, "deduped": True}), 200
-        except Exception as _e:
-            logger.warning(f"[tasks][dedupe] error: {_e}")
-
-
         # ==========================================================
         # DEDUPE (produção): garante idempotência por eventKey
         # Se o mesmo eventKey cair 2x (retry YCloud/Tasks), NÃO reenviar outbound.

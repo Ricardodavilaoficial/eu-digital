@@ -489,7 +489,9 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
                 rt = rt.rstrip()
                 if not rt.endswith((".", "!", "?")):
                     rt += "."
-                rt = rt + " " + fit_q
+                # 🛑 Regra: no máximo 1 pergunta. Se já existe "?" no texto, não anexa fit_q.
+                if "?" not in rt:
+                    rt = rt + " " + fit_q
 
                 # Higiene: aspas e “quotes” atrapalham no WhatsApp e no TTS
                 rt = rt.replace('"', "").replace("“", "").replace("”", "").replace("‘", "").replace("’", "")
@@ -504,6 +506,20 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
         reply_text = reply_text[:FRONT_REPLY_MAX_CHARS].rstrip()
         spoken_text = (spoken_text or "")[:FRONT_REPLY_MAX_CHARS].rstrip()
 
+        # fallback hard: no máximo 1 pergunta em cada canal (texto/voz)
+        try:
+            if (reply_text or "").count("?") > 1:
+                qpos = reply_text.find("?")
+                if qpos != -1:
+                    reply_text = reply_text[: qpos + 1].strip()
+            if (spoken_text or "").count("?") > 1:
+                qpos2 = spoken_text.find("?")
+                if qpos2 != -1:
+                    spoken_text = spoken_text[: qpos2 + 1].strip()
+        except Exception:
+            pass
+
+
         out = {
             "replyText": reply_text,
             "spokenText": spoken_text,
@@ -516,7 +532,9 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
             "nextStep": next_step,
             "shouldEnd": should_end,
             "nameUse": name_use,
-            "prefersText": True,
+            # ✅ Regra canônica: texto só quando for SEND_LINK (link copiável).
+            # Caso contrário, o worker decide o canal (entra áudio -> sai áudio).
+            "prefersText": (next_step == "SEND_LINK"),
             # Auditoria: quem respondeu
             "replySource": "front",
             # Probe leve do snapshot (ajuda a ver se o front "passou fome")

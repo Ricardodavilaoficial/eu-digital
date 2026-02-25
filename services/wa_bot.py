@@ -727,7 +727,10 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             if re.search(r"\bcomo\s+(configurar|cadastrar)\b", _rt, re.IGNORECASE):
                                 _rt = re.sub(r"\s*\bcomo\s+(configurar|cadastrar)\b[^\?]*\??\s*$", "", _rt, flags=re.IGNORECASE).strip()
 
-                            if _rt:
+                            # 🛑 Regra: no máximo 1 pergunta. Se já tem "?", não adiciona outra.
+                            already_has_question = ("?" in (_rt or ""))
+
+                            if _rt and (not already_has_question):
                                 if _topic in ("AGENDA",):
                                     _rt = (_rt + " Você quer que ele foque mais em agenda (marcar/confirmar) ou em vendas (orçamento/pedido)?").strip()
                                 elif _topic in ("ORCAMENTO", "PEDIDO", "PRECO", "PRICING"):
@@ -735,10 +738,11 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 else:
                                     _rt = (_rt + " Hoje você quer mais vender, organizar agenda ou tirar dúvidas?").strip()
 
-                            # garante no máximo 1 pergunta (1 '?')
-                            qpos = _rt.find("?")
-                            if qpos != -1:
-                                _rt = (_rt[: qpos + 1]).strip()
+                            # fallback hard: garante no máximo 1 "?"
+                            if (_rt or "").count("?") > 1:
+                                qpos = _rt.find("?")
+                                if qpos != -1:
+                                    _rt = (_rt[: qpos + 1]).strip()
 
                             if _rt:
                                 out["replyText"] = _rt
