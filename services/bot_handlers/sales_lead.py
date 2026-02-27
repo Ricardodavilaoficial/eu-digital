@@ -20,9 +20,6 @@ import hashlib
 import requests
 import unicodedata
 from typing import Any, Dict, Optional, Tuple
-
-
-
 # ==========================================================
 # Firestore client (credencial consistente)
 # - Evita 403 "Missing or insufficient permissions" quando o client pega credencial errada (ADC).
@@ -5385,7 +5382,6 @@ def _reply_from_state(text_in: str, st: Dict[str, Any]) -> str:
 
         st["kb_used"] = bool(kb_slice) and bool(st.get("kb_required_ok") is True)
         prices = _get_display_prices(ttl_seconds=180) or {}
-
 # Observabilidade: marca fonte e exemplo quando KB ok
         try:
             st["kb_used"] = bool(kb_slice) and bool(st.get("kb_required_ok"))

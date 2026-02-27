@@ -26,6 +26,8 @@ import traceback
 import logging
 from typing import Any, Dict, Optional, Tuple, Callable  # <- acrescentado Callable
 
+# Runtime mode router (sales vs operational)
+
 __version__ = "1.0.0-fachada"
 BUILD_DATE = "2025-09-30"
 
@@ -243,7 +245,7 @@ def _safe_str(x: Any) -> str:
         return ""
 
 
-def _fetch_front_kb_sources() -> Dict[str, Any]:
+def _fetch_front_kb_sources(topic_hint: str = "") -> Dict[str, Any]:
     """
     Busca poucas fontes canônicas no Firestore (curtas):
     - platform_kb/sales
@@ -268,6 +270,188 @@ def _fetch_front_kb_sources() -> Dict[str, Any]:
         # sem Firestore? snapshot vazio (front ainda funciona, só fica mais “simpático”)
         pass
     return out
+
+
+def _simple_tpl(s: str, slots: Dict[str, str]) -> str:
+    out = str(s or "")
+    # substituição simples {{key}}
+    try:
+        for k, v in (slots or {}).items():
+            out = out.replace("{{" + str(k) + "}}", str(v))
+    except Exception:
+        pass
+    return out
+
+
+def _select_pack_id(decider: Dict[str, Any], kb: Dict[str, Any]) -> str:
+    value_packs = kb.get("value_packs_v1") or {}
+    seg_map = kb.get("segment_value_map_v1") or {}
+    seg_tpl = kb.get("segment_template_v1") or {}
+    policy = kb.get("pack_selection_policy_v1") or {}
+
+    pack_profile = str(decider.get("packProfile") or "generic").strip()
+    intent = str(decider.get("intent") or "").strip().upper()
+    segment_key = str(decider.get("segmentKey") or "").strip()
+
+    # normaliza perfil por intent
+    if pack_profile in ("", "generic", "DEFAULT"):
+        if intent in ("SCHEDULE", "BOOK", "AGENDA", "AGENDAR"):
+            pack_profile = "by_schedule"
+        elif intent in ("ORDERS", "ORDER", "PEDIDO", "PEDIDOS"):
+            pack_profile = "by_orders"
+        elif intent in ("STATUS", "PROCESS"):
+            pack_profile = "by_status"
+        elif intent in ("SERVICES", "PRICE"):
+            pack_profile = "by_schedule"
+        else:
+            pack_profile = "by_schedule"
+
+    preferred: list = []
+    do_not_use: list = []
+    try:
+        if segment_key and isinstance(seg_map, dict) and segment_key in seg_map:
+            seg = seg_map.get(segment_key) or {}
+            preferred = list(seg.get("preferred_packs") or [])
+            do_not_use = list(seg.get("do_not_use") or [])
+        else:
+            dp = ((seg_tpl.get("default_preferred_packs_by_profile") or {}) if isinstance(seg_tpl, dict) else {})
+            preferred = list((dp.get(pack_profile) or []))
+    except Exception:
+        preferred = []
+
+    # enforce: 1 pack
+    try:
+        _ = int((policy.get("max_packs_per_response") or 1))
+    except Exception:
+        pass
+
+    for pid in preferred:
+        try:
+            pid = str(pid)
+            if pid in (do_not_use or []):
+                continue
+            if isinstance(value_packs, dict) and pid in value_packs:
+                return pid
+        except Exception:
+            continue
+
+    try:
+        if isinstance(value_packs, dict) and value_packs:
+            return str(next(iter(value_packs.keys())))
+    except Exception:
+        pass
+    return ""
+
+
+def _render_pack_reply(decider: Dict[str, Any], kb: Dict[str, Any]) -> Dict[str, Any]:
+    """Render determinístico: 1 pack, short por padrão, tokens por segmento."""
+    value_packs = kb.get("value_packs_v1") or {}
+    seg_map = kb.get("segment_value_map_v1") or {}
+    policy = kb.get("pack_selection_policy_v1") or {}
+
+    pack_id = str(decider.get("packId") or decider.get("pack_id") or "").strip()
+    if not pack_id:
+        pack_id = _select_pack_id(decider, kb)
+
+    if not pack_id or not isinstance(value_packs, dict) or pack_id not in value_packs:
+        return {"ok": False, "reason": "no_pack"}
+
+    pack = dict(value_packs.get(pack_id) or {})
+
+    segment_key = str(decider.get("segmentKey") or "").strip()
+    seg_tokens = {}
+    do_not_use = []
+    seg_question_text = "Qual é seu tipo de negócio?"
+    try:
+        seg_handling = (policy.get("segment_handling") or {}) if isinstance(policy, dict) else {}
+        seg_question_text = str(seg_handling.get("segment_question_text") or seg_question_text)
+    except Exception:
+        pass
+
+    if segment_key and isinstance(seg_map, dict) and segment_key in seg_map:
+        seg = seg_map.get(segment_key) or {}
+        try:
+            do_not_use = list(seg.get("do_not_use") or [])
+        except Exception:
+            do_not_use = []
+        if pack_id in do_not_use:
+            # se segmento proíbe, troca pack pelo primeiro permitido
+            try:
+                pref = list(seg.get("preferred_packs") or [])
+                for pid in pref:
+                    pid = str(pid)
+                    if pid != pack_id and pid not in do_not_use and pid in value_packs:
+                        pack_id = pid
+                        pack = dict(value_packs.get(pid) or {})
+                        break
+            except Exception:
+                pass
+
+        try:
+            tokens = (seg.get("tokens") or {}) if isinstance(seg, dict) else {}
+            seg_tokens = (tokens.get(pack_id) or {}) if isinstance(tokens, dict) else {}
+        except Exception:
+            seg_tokens = {}
+
+    # slots defaults
+    slots: Dict[str, str] = {}
+    try:
+        seg_slots = (pack.get("segment_slots") or {}) if isinstance(pack, dict) else {}
+        for k, v in (seg_slots or {}).items():
+            dv = (v or {}).get("default")
+            if dv is not None:
+                slots[str(k)] = str(dv)
+    except Exception:
+        pass
+
+    # override tokens
+    try:
+        if isinstance(seg_tokens, dict):
+            for k, v in seg_tokens.items():
+                if v is not None:
+                    slots[str(k)] = str(v)
+    except Exception:
+        pass
+
+    render_mode = str(decider.get("renderMode") or "short").strip().lower()
+    if render_mode not in ("short", "long"):
+        render_mode = "short"
+
+    if render_mode == "long":
+        txt = str(((pack.get("runtime_long") or {}) if isinstance(pack, dict) else {}).get("text") or "")
+        reply = _simple_tpl(txt, slots).strip()
+    else:
+        micro = str(((pack.get("runtime_short") or {}) if isinstance(pack, dict) else {}).get("micro_scene") or "")
+        reply = _simple_tpl(micro, slots).strip()
+        ex = str(slots.get("example_line") or "").strip()
+        if ex:
+            reply = (reply + "\n" + ex).strip()
+
+    # 1 pergunta no máximo: clarify > segment
+    needs_clarify = str(decider.get("needsClarify") or "no").strip().lower()
+    clarify_q = str(decider.get("clarifyQuestion") or "").strip()
+    should_ask_segment = str(decider.get("shouldAskSegment") or "no").strip().lower()
+
+    q = ""
+    if needs_clarify == "yes" and clarify_q:
+        q = clarify_q
+    elif (not segment_key) and should_ask_segment == "yes":
+        q = seg_question_text
+
+    if q:
+        if "?" not in q:
+            q = q.rstrip(".!") + "?"
+        if "?" not in reply:
+            reply = (reply.rstrip() + " " + q).strip()
+
+    return {
+        "ok": True,
+        "packId": pack_id,
+        "renderMode": render_mode,
+        "segmentKey": segment_key,
+        "replyText": reply.strip(),
+        "spokenText": "",
+    }
 
 
 def _load_prof_robot_persona_v1(uid: str) -> Dict[str, Any]:
@@ -303,6 +487,45 @@ def _build_front_kb_snapshot(topic: str) -> str:
     src = _fetch_front_kb_sources()
     kb = src.get("kb") or {}
     pr = src.get("pricing") or {}
+
+
+    # ✅ packs_v1: snapshot em JSON compacto (para render determinístico no front)
+    try:
+        pb = (kb.get("answer_playbook_v1") or {}) if isinstance(kb, dict) else {}
+        rs = (pb.get("runtime_selector_v1") or {}) if isinstance(pb, dict) else {}
+        mode = str((rs.get("mode") or "")).strip().lower()
+        if mode == "packs_v1":
+            import json as _json
+            payload = {
+                "answer_playbook_v1": {
+                    "runtime_selector_v1": pb.get("runtime_selector_v1") if isinstance(pb, dict) else {},
+                    "pack_selection_policy_v1": pb.get("pack_selection_policy_v1") if isinstance(pb, dict) else {},
+                    "segment_template_v1": pb.get("segment_template_v1") if isinstance(pb, dict) else {},
+                    "segment_value_map_v1": pb.get("segment_value_map_v1") if isinstance(pb, dict) else {},
+                },
+                "value_packs_v1": kb.get("value_packs_v1") or {},
+            }
+            s = _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            # teto duro
+            if len(s) > FRONT_KB_MAX_CHARS:
+                # fallback: remove tokens pesados, mantém só lista de segmentos + packs
+                try:
+                    svm = payload.get("answer_playbook_v1", {}).get("segment_value_map_v1") or {}
+                    if isinstance(svm, dict):
+                        slim = {}
+                        for seg, sd in list(svm.items())[:24]:
+                            if isinstance(sd, dict):
+                                slim[seg] = {
+                                    "preferred_packs": sd.get("preferred_packs") or [],
+                                    "do_not_use": sd.get("do_not_use") or [],
+                                }
+                        payload["answer_playbook_v1"]["segment_value_map_v1"] = slim
+                    s = _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                except Exception:
+                    pass
+            return s[:FRONT_KB_MAX_CHARS]
+    except Exception:
+        pass
 
     def _pick_dict(d: Any, keys: list[str], max_lines: int = 24) -> str:
         """Extrai poucos campos (compacto) de um dict do Firestore, sem dump gigante."""
@@ -622,7 +845,27 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 except Exception:
                     pass
 
-                if ai_turns < MAX_AI_TURNS:
+
+                # Gate do Conversational Front (Módulo 1): só roda em packs_v1 e enquanto não forçado ao operacional
+                front_kb_sources = None
+                front_mode = "packs_v1"
+                force_operational = False
+                try:
+                    from services.speaker_state import is_force_operational
+                    force_operational = bool(is_force_operational(wa_key, uid_owner=(uid_owner or None)))
+                except Exception:
+                    force_operational = False
+                try:
+                    front_kb_sources = _fetch_front_kb_sources()
+                    _kb0 = (front_kb_sources.get("kb") or {}) if isinstance(front_kb_sources, dict) else {}
+                    _pb0 = (_kb0.get("answer_playbook_v1") or {}) if isinstance(_kb0, dict) else {}
+                    _rs0 = (_pb0.get("runtime_selector_v1") or {}) if isinstance(_pb0, dict) else {}
+                    front_mode = str((_rs0.get("mode") or "packs_v1")).strip()
+                except Exception:
+                    front_kb_sources = None
+                    front_mode = "packs_v1"
+
+                if ai_turns < MAX_AI_TURNS and (not force_operational) and front_mode == "packs_v1":
                     try:
                         front_attempted = True
                         from services.conversational_front import handle as _front_handle  # type: ignore
@@ -654,6 +897,40 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 user_text=text or "",
                                 state_summary=state_summary,
                             ) or {}
+
+
+                        # ✅ packs_v1: se vier decider (sem replyText), renderiza via Pack Engine (determinístico)
+                        try:
+                            dec = (front_out.get("decider") or {}) if isinstance(front_out, dict) else {}
+                            if dec and not str(front_out.get("replyText") or "").strip():
+                                kb = ((front_kb_sources or {}).get("kb") or {}) if isinstance(front_kb_sources, dict) else {}
+                                if not kb:
+                                    kb = (_fetch_front_kb_sources().get("kb") or {})
+                                rend = _render_pack_reply(dec, kb)
+                                if rend.get("ok"):
+                                    front_out["replyText"] = rend.get("replyText") or ""
+                                    if str(rend.get("spokenText") or "").strip():
+                                        front_out["spokenText"] = rend.get("spokenText") or ""
+                                    front_out["packId"] = rend.get("packId") or ""
+                                    front_out["renderMode"] = rend.get("renderMode") or ""
+                                    front_out["segmentKey"] = rend.get("segmentKey") or ""
+                                    front_out["replySource"] = "pack_engine"
+                        except Exception:
+                            pass
+
+                        # ✅ transição: se o decider já captou intenção operacional com boa confiança, pula front no próximo turno
+                        try:
+                            dec = (front_out.get("decider") or {}) if isinstance(front_out, dict) else {}
+                            _intent = str(dec.get("intent") or "").strip().upper()
+                            _conf = str(dec.get("confidence") or "").strip().lower()
+                            operational_intents = {"SCHEDULE","BOOK","AGENDA","AGENDAR","ORDERS","ORDER","PEDIDO","PEDIDOS","STATUS","PROCESS","ACTIVATE"}
+                            if _intent in operational_intents and _conf in ("high", "medium"):
+                                from services.speaker_state import set_force_operational
+                                set_force_operational(wa_key, True, reason=f"intent={_intent} conf={_conf}", uid_owner=(uid_owner or None))
+                        except Exception:
+                            pass
+
+
                         # saída compatível com o worker
                         und = front_out.get("understanding") or {}
                         # espelha nextStep/shouldEnd dentro de understanding também (tolerante)
@@ -808,6 +1085,49 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 ai_turns if "ai_turns" in locals() else "?",
                 (front_err or "")[:120],
             )
+        except Exception:
+            pass
+
+
+        # ----------------------------------------------------------
+        # 🧭 Runtime mode (antes de sales_lead): pode forçar modo operacional
+        # ----------------------------------------------------------
+        try:
+            detected_intent = str(
+                (ctx.get("detected_intent") or ctx.get("detectedIntent") or ctx.get("intentFinal") or "") or
+                (((ctx.get("understanding") or {}).get("intent") or "") if isinstance(ctx.get("understanding"), dict) else "") or
+                (((front_out.get("understanding") or {}).get("intent") or "") if isinstance(front_out, dict) else "")
+            ).strip().upper()
+
+            confidence = (
+                ctx.get("confidence")
+                or ctx.get("intent_confidence")
+                or (((ctx.get("understanding") or {}).get("confidence")) if isinstance(ctx.get("understanding"), dict) else None)
+                or (((front_out.get("understanding") or {}).get("confidence")) if isinstance(front_out, dict) else None)
+            )
+
+            # runtime_mode resolvido localmente (packs_v1 + force_operational)
+            mode = "sales"
+            try:
+                # ai_turns e intent/confidence já estão disponíveis aqui
+                _turns = int(locals().get("ai_turns") or 0)
+                _intent = str(detected_intent or "").strip().upper()
+                _conf = str(confidence or "").strip().lower()
+                operational_intents = {"SCHEDULE","BOOK","AGENDA","AGENDAR","ORDERS","ORDER","PEDIDO","PEDIDOS","STATUS","PROCESS","ACTIVATE"}
+                if _turns >= 5:
+                    mode = "operational"
+                elif _intent in operational_intents and _conf in ("high", "medium"):
+                    mode = "operational"
+            except Exception:
+                mode = "sales"
+
+            if mode == "operational":
+                uid_oper = str(ctx.get("uid_owner") or ctx.get("uid") or "").strip()
+                if uid_oper:
+                    from services.bot_handlers import customer_final  # novo
+                    ctx["force_operational"] = True
+                    # força customer_final
+                    return customer_final.generate_reply(uid_oper, text, ctx)  # type: ignore
         except Exception:
             pass
 

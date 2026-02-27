@@ -708,7 +708,9 @@ def generate_reply(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) ->
     except Exception:
         pass
 
-    if CONVERSATIONAL_FRONT and ai_turns < MAX_AI_TURNS:
+    # Nunca usar front institucional se já estiver em modo operacional
+    _ctx = ctx or {}
+    if CONVERSATIONAL_FRONT and ai_turns < MAX_AI_TURNS and not _ctx.get("force_operational"):
         try:
             from services.conversational_front import handle as _front_handle  # type: ignore
             kb_snapshot = _build_prof_snapshot(uid_owner, ctx)

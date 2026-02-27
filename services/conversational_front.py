@@ -20,6 +20,12 @@ from __future__ import annotations
 
 import logging
 from typing import Dict, Any
+import json
+
+try:
+    from services.pack_engine import render_pack_reply  # type: ignore
+except Exception:
+    render_pack_reply = None  # type: ignore
 
 import os
 try:
@@ -59,66 +65,36 @@ TOPICS = {
 SYSTEM_PROMPT = """
 Você é o MEI Robô em modo VENDAS institucional.
 
-Objetivo:
-- Conversar como um vendedor humano, claro e útil.
-- Entender a intenção do usuário e conduzir a conversa.
-- Ajudar sem enrolar, sem menus, sem respostas robóticas.
+Seu trabalho aqui é DECIDIR (e não palestrar):
+- Entender a intenção do lead.
+- Escolher QUAL "perfil de valor" se aplica (agenda / serviços / pedidos / status).
+- Sugerir se é caso de perguntar algo (no máximo 1 pergunta) ou encerrar.
+
+⚠️ IMPORTANTE
+- No modo packs_v1, você NÃO deve escrever a resposta final (replyText/spokenText) — isso será renderizado de forma determinística pelo backend.
+- Exceção: se a intenção for SEND_LINK (lead pediu para assinar / link), você PODE devolver replyText/spokenText curto.
+
+Saída: responda APENAS em JSON, sem texto fora, sem markdown.
+Schema:
+{
+  "intent": "WHAT_IS|PRICE|PROCESS|ACTIVATE|SCHEDULE|SERVICES|ORDERS|STATUS|OTHER",
+  "confidence": "low|medium|high",
+  "needsClarify": "yes|no",
+  "clarifyQuestion": "string (se needsClarify=yes, máx 1 pergunta, sem textão)",
+  "packProfile": "by_schedule|by_orders|by_status|by_tech_service|generic",
+  "renderMode": "short|long",
+  "segmentKey": "string (opcional; só se tiver boa certeza)",
+  "segmentConfidence": "low|medium|high",
+  "shouldAskSegment": "yes|no",
+  "nextStep": "NONE|SEND_LINK",
+  "shouldEnd": true|false
+}
 
 Regras IMPORTANTES:
-- No texto (replyText), evite usar o nome do cliente.
-- No áudio (spokenText), você pode usar o nome com moderação em agradecimento/fechamento se o nome já for conhecido.
-- Regra de ouro: responda PRIMEIRO a pergunta do usuário de forma direta (sim/não ou a informação pedida) em 1 frase.
-- Só depois (se fizer sentido), complemente com 1 frase curta e faça no máximo 1 pergunta prática para avançar.
-- Evite começar com um "pitch" padrão quando o usuário fez uma pergunta objetiva.
-- Se a pergunta for do tipo "posso/perguntar por aqui/onde eu pergunto/tem como?", responda com "Sim" (ou "Pode") antes de qualquer explicação.
-- O nome do cliente é foco: tente capturar cedo quando ainda não tiver, mas não trave o atendimento se ele não quiser dizer.
-- Se o lead cumprimentar ("olá", "bom dia", "tudo bem"), responda o cumprimento em 1 frase curta e já vá direto ao ponto.
-- Quando a confiança for BAIXA, faça APENAS 1 pergunta prática.
-- Nada de listas longas ou menus artificiais.
-- Pode explicar melhor quando a intenção estiver clara.
-- Use o KB Snapshot como fonte da verdade do produto. Se não estiver no snapshot, NÃO invente.
-- Se a pergunta for do tipo "marca/ingrediente/procedimento interno", NUNCA invente. Diga que depende do acervo do próprio negócio.
-- O usuário precisa ouvir 1 frase curta sobre acervo: "Ele responde com base no acervo do seu negócio (o que você cadastrar) e não inventa."
-- VENDAS não é SUPORTE: não termine oferecendo tutorial/configuração.
-- Se fizer uma pergunta (no máximo 1), ela deve destravar o contexto (nome, segmento/atividade ou objetivo imediato) — nada de linguagem interna.
-- No máximo 1 pergunta (1 “?”) por resposta. Sem “segunda pergunta”.
-- "No máximo 1" não significa "sempre perguntar": se o usuário já deu o que precisa (ex.: preço + como assinar), responda direto sem perguntas.
-- NÃO use placeholders tipo "X" e evite aspas em exemplos. Prefira exemplo simples sem aspas (ex.: “maionese Hellmann’s” ou “maionese tradicional”).
-- Só mencione e-mail/integrações/recursos específicos se estiverem EXPLICITAMENTE no KB Snapshot. Se não estiver, não cite.
-- Quando a pergunta for "o que você faz/para que serve/como ajuda/ganhar dinheiro", sempre conecte o valor a 3 pontos:
-  (1) responde clientes com base no **acervo do próprio negócio** (produtos/serviços/regras/FAQ) — sem inventar;
-  (2) organiza e conduz para um próximo passo (agenda, orçamento, pedido, atendimento);
-  (3) o dono do MEI configura o que o robô pode responder (acervo + jeitão).
-- REGRA OBRIGATÓRIA (para não soar genérico):
-  - Em perguntas do tipo "o que você faz/para que serve/como ajuda/ganhar dinheiro",
-    inclua SEMPRE 1 frase curta (apenas 1) explicitando:
-    "ele responde com base no acervo do seu negócio (o que você cadastrar) e não inventa."
-  - Essa frase deve caber em até ~140 caracteres, sem jargão e sem textão.
-  - NÃO repita essa frase se a resposta já explicou claramente acervo + não inventa.
-- Priorize especialmente os blocos do snapshot: "VERDADE DO PRODUTO (product_truth_v1)" e "PLAYBOOK DE RESPOSTA (answer_playbook_v1)".
-- Respostas: diretas, consultivas, com humor leve quando couber. Sem textão.
-- Responda sempre em PT-BR.
-
-Tópicos possíveis (escolha 1):
-AGENDA, PRECO, ORCAMENTO, VOZ, SOCIAL, OTHER
-
-Definições:
-- PRECO = valores, planos, custo.
-- ORCAMENTO = contratação, ativação, orçamento para o negócio.
-- AGENDA = como clientes marcam horário.
-- VOZ = áudio, responder por voz, voz clonada.
-- SOCIAL = conversa casual, curiosidade, elogio.
-- OTHER = fora do escopo.
-
-Fechamento:
-- Se o usuário pedir link, site, como assinar, contratar, ativar ou já disser que quer assinar:
-  - nextStep = SEND_LINK
-  - shouldEnd = true
-- Se estiver na hora de convidar pro site e ainda não fez pergunta nessa resposta, você pode perguntar: Posso te enviar o link pra você olhar direto no site?
-
-Exemplo rápido de estilo:
-Usuário: "Posso tirar dúvidas por aqui?"
-Você: "Sim — pode mandar suas dúvidas por aqui mesmo. Quer falar de agenda, preço ou ativação?"
+- Nunca mais de 1 pergunta.
+- Se a pergunta do lead for objetiva, classifique o intent corretamente (ex.: prazo/ativação nunca é WHAT_IS).
+- Só sugerir segmentKey se estiver realmente seguro; se não, use shouldAskSegment=yes apenas quando for necessário para dar exemplo certeiro.
+- renderMode: short por padrão; long só quando: lead pediu para explicar melhor / lead muito engajado / primeira vez que identificou segmento.
 """
 
 # -----------------------------
@@ -213,9 +189,17 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
 
 {{
   "replyText": "...",
+  "spokenText": "... (opcional)",
   "understanding": {{
-    "topic": "AGENDA|PRECO|ORCAMENTO|VOZ|SOCIAL|OTHER",
+    "topic": "AGENDA|SERVICOS|PEDIDOS|STATUS|PRECO|PROCESSO|ATIVAR|OTHER",
     "confidence": "high|medium|low"
+  }},
+  "decider": {{
+    "intent": "WHAT_IS|AGENDA|SERVICOS|PEDIDOS|STATUS|PRECO|PROCESSO|ATIVAR|OTHER",
+    "segment": "string (opcional)",
+    "packId": "PACK_A_AGENDA|PACK_B_SERVICOS|PACK_C_PEDIDOS|PACK_D_STATUS (opcional)",
+    "renderMode": "short|long",
+    "questionType": "none|clarify|name|segment|link_permission"
   }},
   "nextStep": "NONE|SEND_LINK",
   "shouldEnd": true|false,
@@ -288,25 +272,105 @@ Responda em JSON ESTRITO (sem texto fora do JSON) no formato:
             raw_json = raw
 
         data = json.loads(raw_json)
-        spoken_text = ""
+
+        # ----------------------------------------------------------
+        # Decider JSON (packs_v1): por padrão NÃO gera replyText final.
+        # Exceção: SEND_LINK pode trazer replyText/spokenText curto.
+        # ----------------------------------------------------------
+        understanding = data.get("understanding") or {}
+
+        intent = str(
+            data.get("intent")
+            or understanding.get("intent")
+            or understanding.get("topic")
+            or "OTHER"
+        ).strip().upper()
+
+        confidence = str(
+            data.get("confidence")
+            or understanding.get("confidence")
+            or "low"
+        ).strip().lower()
+
+        needs_clarify = str(
+            data.get("needsClarify")
+            or understanding.get("needsClarify")
+            or "no"
+        ).strip().lower()
+
+        clarify_q = str(
+            data.get("clarifyQuestion")
+            or understanding.get("clarifyQuestion")
+            or ""
+        ).strip()
+
+        pack_profile = str(data.get("packProfile") or understanding.get("packProfile") or "generic").strip()
+        render_mode = str(data.get("renderMode") or understanding.get("renderMode") or "short").strip().lower()
+        segment_key = str(data.get("segmentKey") or understanding.get("segmentKey") or "").strip()
+        segment_conf = str(data.get("segmentConfidence") or understanding.get("segmentConfidence") or "low").strip().lower()
+        should_ask_segment = str(data.get("shouldAskSegment") or "no").strip().lower()
+
+        # Back-compat: alguns retornos antigos ainda vêm com replyText/spokenText
         reply_text = str(data.get("replyText") or "").strip()
         spoken_text = str(data.get("spokenText") or "").strip()
-        understanding = data.get("understanding") or {}
-        topic = str(understanding.get("topic") or "OTHER").upper()
-        confidence = str(understanding.get("confidence") or "low").lower()
 
+        # Compat: topic é o intent (mantém contrato anterior)
+        topic = intent
         if topic not in TOPICS:
             topic = "OTHER"
 
-        next_step = str(data.get("nextStep") or "NONE").strip().upper()
+        next_step = str(data.get("nextStep") or data.get("next_step") or "NONE").strip().upper()
         if next_step not in ("NONE", "SEND_LINK"):
             next_step = "NONE"
-        should_end = bool(data.get("shouldEnd"))
+
+        should_end = bool(data.get("shouldEnd")) or bool(data.get("should_end"))
+
+        # name_use: só 4 valores no contrato
         name_use = str(data.get("nameUse") or "none").strip().lower()
         if name_use not in ("none", "greet", "empathy", "clarify"):
             name_use = "none"
 
+        # Se for decider-only (padrão), devolve sem replyText e deixa o backend renderizar o pack.
+        if next_step != "SEND_LINK":
+            decider = {
+                "intent": intent,
+                "confidence": confidence,
+                "needsClarify": needs_clarify,
+                "clarifyQuestion": clarify_q,
+                "packProfile": pack_profile,
+                "renderMode": render_mode,
+                "segmentKey": segment_key,
+                "segmentConfidence": segment_conf,
+                "shouldAskSegment": should_ask_segment,
+            }
+            return {
+                "replyText": "",
+                "spokenText": "",
+                "understanding": {
+                    "topic": topic,
+                    "intent": intent,
+                    "confidence": confidence,
+                    "needsClarify": needs_clarify,
+                    "clarifyQuestion": clarify_q,
+                    "packProfile": pack_profile,
+                    "renderMode": render_mode,
+                    "segmentKey": segment_key,
+                    "segmentConfidence": segment_conf,
+                    "shouldAskSegment": should_ask_segment,
+                },
+                "decider": decider,
+                "nextStep": "NONE",
+                "shouldEnd": False,
+                "nameUse": ("clarify" if needs_clarify == "yes" or should_ask_segment == "yes" else "none"),
+                "prefersText": False,
+                "replySource": "front_decider",
+                "kbSnapshotSizeChars": len(kb_snapshot or ""),
+                "tokenUsage": token_usage or {},
+            }
+
+
         # Normaliza confidence
+        confidence = str(understanding.get("confidence") or "low").strip().lower()
         if confidence not in ("high", "medium", "low"):
             confidence = "low"
 

@@ -137,6 +137,53 @@ def bump_ai_turns(wa_key: str, uid_owner: Optional[str] = None) -> int:
 # BOOKING PENDENTE (Customer Final)
 # ===============================
 
+
+# ===============================
+# RUNTIME FLAGS (Módulo 1 → Módulo 2)
+# ===============================
+
+def set_force_operational(wa_key: str, value: bool = True, reason: str = "", uid_owner: Optional[str] = None):
+    """Força pular o Conversational Front (Módulo 1) e ir direto ao operacional (Módulo 2)."""
+    wa_key = (wa_key or "").strip()
+    if not wa_key:
+        return
+
+    did = _doc_id(wa_key, uid_owner=uid_owner)
+    now = _now()
+
+    cur = get_speaker_state(wa_key, uid_owner=uid_owner) or {}
+    row = dict(cur)
+    row["force_operational"] = bool(value)
+    if reason:
+        row["force_operational_reason"] = str(reason)[:200]
+    row["updatedAtEpoch"] = now
+    if "createdAtEpoch" not in row:
+        row["createdAtEpoch"] = now
+
+    _mem[did] = (dict(row), now + _TTL_SECONDS)
+
+    db = _fs_client()
+    if _db_ready(db):
+        try:
+            db.collection(_SPEAKER_COLL).document(did).set(
+                {
+                    "force_operational": bool(value),
+                    "force_operational_reason": str(reason)[:200] if reason else "",
+                    "updatedAtEpoch": now,
+                },
+                merge=True,
+            )
+        except Exception:
+            pass
+
+
+def is_force_operational(wa_key: str, uid_owner: Optional[str] = None) -> bool:
+    st = get_speaker_state(wa_key, uid_owner=uid_owner) or {}
+    try:
+        return bool(st.get("force_operational"))
+    except Exception:
+        return False
+
 def set_pending_booking(wa_key: str, data: Dict[str, Any], uid_owner: Optional[str] = None):
     state = get_speaker_state(wa_key, uid_owner=uid_owner) or {}
     state["pending_booking"] = data
