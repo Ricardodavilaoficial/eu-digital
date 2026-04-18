@@ -1,4 +1,3 @@
-# routes/routes.py
 import os
 import io
 import uuid
@@ -21,12 +20,6 @@ except Exception:
     tts = None
 
 try:
-    # Se existir, usamos para gerar texto-resposta
-    from services.openai.openai_handler import obter_resposta_openai
-except Exception:
-    obter_resposta_openai = None
-
-try:
     # Página HTML simples (debug/local). Se não existir, devolvemos texto plain.
     from interfaces.web_interface import html_index
 except Exception:
@@ -36,6 +29,23 @@ except Exception:
 
 routes = Blueprint("routes", __name__)
 log = logging.getLogger(__name__)
+
+
+_obter_resposta_openai = None
+_obter_resposta_openai_loaded = False
+
+
+def _get_obter_resposta_openai():
+    global _obter_resposta_openai, _obter_resposta_openai_loaded
+    if _obter_resposta_openai_loaded:
+        return _obter_resposta_openai
+    try:
+        from services.openai.openai_handler import obter_resposta_openai as _handler
+        _obter_resposta_openai = _handler
+    except Exception:
+        _obter_resposta_openai = None
+    _obter_resposta_openai_loaded = True
+    return _obter_resposta_openai
 
 
 def _guess_mime(filename: str, fallback: str = "application/octet-stream") -> str:
@@ -85,6 +95,7 @@ def _transcrever(audio_bytes: bytes, mime: str, idioma: str = "pt-BR") -> str:
 
 def _responder_texto(texto_do_cliente: str) -> str:
     """Gera resposta textual (padrão) a partir da entrada do usuário."""
+    obter_resposta_openai = _get_obter_resposta_openai()
     if obter_resposta_openai:
         try:
             return (obter_resposta_openai(texto_do_cliente) or "").strip()

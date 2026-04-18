@@ -8,7 +8,6 @@
 
 from flask import Blueprint, request, jsonify
 from services import db as dbsvc
-import pandas as pd
 import re
 
 importar_bp = Blueprint('importar_precos', __name__)
@@ -108,6 +107,8 @@ def _parse_duration_to_minutes(val):
 
 def _read_table(file_storage, filename: str):
     """Lê CSV/XLSX com tolerância a encoding e separador; retorna DataFrame."""
+    import pandas as pd
+
     name = (filename or "").lower()
 
     # CSV
@@ -137,6 +138,8 @@ def _read_table(file_storage, filename: str):
 
 @importar_bp.route('/api/importar-precos', methods=['POST'])
 def importar_precos():
+    import pandas as pd
+
     uid = (request.form.get('uid') or 'demo').strip()
 
     arquivo = request.files.get('arquivo')

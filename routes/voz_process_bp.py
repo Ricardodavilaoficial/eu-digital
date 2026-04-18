@@ -9,9 +9,9 @@ from typing import Optional
 
 import requests
 from flask import Blueprint, request, jsonify
-from google.cloud import storage
+
 from services.firebase_admin_init import ensure_firebase_admin
-from firebase_admin import firestore as fb_firestore  # type: ignore
+
 
 # -----------------------------------------------------------------------------
 # Blueprint (export principal)
@@ -36,15 +36,33 @@ SIGNED_SECS = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900"))
 # -----------------------------------------------------------------------------
 # Clients
 # -----------------------------------------------------------------------------
-def _db():
-    """Firestore canônico: sempre via firebase-admin (determinístico em Render + Cloud Run)."""
-    ensure_firebase_admin()
-    return fb_firestore.client()
 
+_DB_CLIENT = None
+def _db():
+    global _DB_CLIENT
+    if _DB_CLIENT is None:
+        from services.firebase_admin_init import ensure_firebase_admin
+        ensure_firebase_admin()
+        from firebase_admin import firestore as fb_firestore
+        _DB_CLIENT = fb_firestore.client()
+    return _DB_CLIENT
 
 db = _db()
-gcs = storage.Client(project=GCP_PROJECT) if GCP_PROJECT else storage.Client()
-bucket = gcs.bucket(BUCKET)
+
+
+_GCS_CLIENT = None
+_BUCKET = None
+
+def _get_bucket():
+    global _GCS_CLIENT, _BUCKET
+    if _GCS_CLIENT is None:
+        from google.cloud import storage
+        _GCS_CLIENT = storage.Client(project=GCP_PROJECT) if GCP_PROJECT else storage.Client()
+        _BUCKET = _GCS_CLIENT.bucket(BUCKET)
+    return _BUCKET
+
+bucket = _get_bucket()
+
 
 logging.getLogger().setLevel(logging.INFO)
 logging.info(f"[voz_process] Using bucket: {BUCKET} | project={GCP_PROJECT or 'auto'}")
@@ -133,7 +151,7 @@ def _is_truthy(v) -> bool:
     return str(v).lower() in ("1", "true", "yes", "y", "on")
 
 def _signed_url(object_path: str, content_type: Optional[str] = None) -> str:
-    blob = bucket.blob(object_path)
+    blob = _get_bucket().blob(object_path)
     if not blob.exists():
         raise FileNotFoundError(f"Objeto nao encontrado: gs://{BUCKET}/{object_path}")
     params = {

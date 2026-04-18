@@ -8,10 +8,39 @@ from __future__ import annotations
 
 import os
 import json
+import time
 import socket
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import request as ulreq
 from urllib.error import HTTPError, URLError
+
+# ==========================================================
+# DEV_LOCAL (temporário): não envia para YCloud, só imprime.
+# Ative com: set DEV_LOCAL=1
+# ==========================================================
+def _is_dev_local() -> bool:
+    v = (os.environ.get("DEV_LOCAL") or "").strip().lower()
+    return v in ("1", "true", "yes", "y", "on")
+
+
+def _clip(s: str, n: int = 800) -> str:
+    s = (s or "").strip()
+    if len(s) <= n:
+        return s
+    return s[:n].rstrip() + " …(clip)"
+
+
+def _dev_print(tag: str, payload: dict) -> None:
+    try:
+        print("")
+        print("========== YCLOUD DEV_LOCAL ==========")
+        print(f"ts={int(time.time())} tag={tag}")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print("======================================")
+        print("")
+    except Exception:
+        # não quebra fluxo por causa de print
+        pass
 
 
 DEFAULT_BASE_URL = "https://api.ycloud.com"
@@ -162,6 +191,16 @@ def _post_json(path: str, payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]
 
 
 def send_text(to_e164: str, text: str, from_e164: Optional[str] = None) -> Tuple[bool, Dict[str, Any]]:
+    if _is_dev_local():
+        _dev_print("send_text", {
+            "to": (to_e164 or "").strip(),
+            "text": _clip(text, 2000),
+            "kwargs": {
+                "from_e164": (from_e164 or None),
+            },
+        })
+        return True, {"ok": True, "dev_local": True, "kind": "text"}
+
     payload = {
         "from": (from_e164 or _from_number()),
         "to": (to_e164 or "").strip(),
@@ -172,6 +211,16 @@ def send_text(to_e164: str, text: str, from_e164: Optional[str] = None) -> Tuple
 
 
 def send_audio(to_e164: str, audio_url: str, from_e164: Optional[str] = None) -> Tuple[bool, Dict[str, Any]]:
+    if _is_dev_local():
+        _dev_print("send_audio", {
+            "to": (to_e164 or "").strip(),
+            "audioUrl": _clip(audio_url, 2000),
+            "kwargs": {
+                "from_e164": (from_e164 or None),
+            },
+        })
+        return True, {"ok": True, "dev_local": True, "kind": "audio"}
+
     payload = {
         "from": (from_e164 or _from_number()),
         "to": (to_e164 or "").strip(),

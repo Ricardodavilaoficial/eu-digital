@@ -1,13 +1,6 @@
 # routes/auth_bp.py
 from flask import Blueprint, jsonify, request
-from firebase_admin import auth as fb_auth
 from services.firebase_admin_init import ensure_firebase_admin
-
-# Firestore (via Admin SDK)
-try:
-    from firebase_admin import firestore as fb_fs
-except Exception:
-    fb_fs = None
 
 from datetime import datetime, timezone
 
@@ -18,18 +11,26 @@ auth_bp = Blueprint("auth_bp", __name__)
 def _utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
 
+def _get_fb_auth():
+    from firebase_admin import auth as fb_auth
+    return fb_auth
+
+def _get_fb_fs():
+    from firebase_admin import firestore as fb_fs
+    return fb_fs
+
 def _verify_bearer_token():
     """Extrai e valida o token Bearer do header Authorization; retorna o token decodificado ou None."""
     hdr = request.headers.get("Authorization", "")
     if not hdr.startswith("Bearer "):
         return None
     token = hdr.split(" ", 1)[1]
+    fb_auth = _get_fb_auth()
     return fb_auth.verify_id_token(token)
 
 def _get_fs():
     """Retorna o client do Firestore via Admin SDK."""
-    if fb_fs is None:
-        raise RuntimeError("Firestore Admin SDK indisponível.")
+    fb_fs = _get_fb_fs()
     return fb_fs.client()
 
 def _has_pending_lead_by_uid(fs, uid: str) -> bool:
@@ -96,6 +97,7 @@ def check_verification():
         if not email_verified:
             # Revalida direto no Admin (estado mais atual)
             try:
+                fb_auth = _get_fb_auth()
                 user_record = fb_auth.get_user(uid)
                 email_verified = bool(getattr(user_record, "email_verified", False))
                 if not email and getattr(user_record, "email", None):
@@ -175,8 +177,9 @@ def reclaim_email():
 
         # Busca usuário pelo e-mail
         try:
+            fb_auth = _get_fb_auth()
             user_record = fb_auth.get_user_by_email(email)
-        except fb_auth.UserNotFoundError:
+        except _get_fb_auth().UserNotFoundError:
             return jsonify({"ok": False, "reason": "not-found"}), 200
         except Exception as e:
             return jsonify({"ok": False, "error": "admin-get-user-failed", "detail": str(e)}), 200
@@ -195,8 +198,9 @@ def reclaim_email():
 
         # Deleta usuário para liberar novo fluxo
         try:
+            fb_auth = _get_fb_auth()
             fb_auth.delete_user(user_record.uid)
-        except fb_auth.UserNotFoundError:
+        except _get_fb_auth().UserNotFoundError:
             pass
         except Exception as e:
             return jsonify({"ok": False, "error": "delete-failed", "detail": str(e)}), 200

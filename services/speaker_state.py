@@ -13,6 +13,12 @@ from typing import Any, Dict, Optional, Tuple
 _SPEAKER_COLL = (os.environ.get("SPEAKER_STATE_COLL") or "platform_speaker_state").strip()
 _TTL_SECONDS = int(os.environ.get("SPEAKER_STATE_TTL_SECONDS") or "21600")  # 6h
 
+# Reset de turnos por inatividade (evita LEAD “carregar” turns por dias e cair cedo no Módulo 2)
+# - LEAD (sem uid_owner): default 24h
+# - CUSTOMER FINAL (com uid_owner): default 7 dias
+_LEAD_RESET_SECONDS = int(os.environ.get("LEAD_AI_TURNS_RESET_SECONDS") or "86400")
+_CUSTOMER_RESET_SECONDS = int(os.environ.get("CUSTOMER_AI_TURNS_RESET_SECONDS") or "604800")
+
 _mem: Dict[str, Tuple[Dict[str, Any], float]] = {}
 
 
@@ -48,6 +54,70 @@ def _db_ready(db) -> bool:
     except Exception:
         return False
 
+def _apply_inactivity_reset(
+    did: str,
+    data: Dict[str, Any],
+    now: float,
+    uid_owner: Optional[str],
+    db,
+) -> Dict[str, Any]:
+    """
+    Regra de produto:
+    - LEAD (uid_owner vazio): a conversa “recomeça” após janela de inatividade (default 24h).
+      -> zera ai_turns e limpa force_operational (para não cair no Módulo 2 por “histórico antigo”).
+    - CUSTOMER FINAL (uid_owner presente): janela maior (default 7 dias).
+    """
+    try:
+        if not isinstance(data, dict) or not data:
+            return data or {}
+
+        u = (uid_owner or "").strip()
+        reset_after = _CUSTOMER_RESET_SECONDS if u else _LEAD_RESET_SECONDS
+        if reset_after <= 0:
+            return data
+
+        last = data.get("updatedAtEpoch")
+        try:
+            last_ts = float(last) if last is not None else 0.0
+        except Exception:
+            last_ts = 0.0
+
+        # Se não tem updatedAtEpoch, não inventa reset.
+        if last_ts <= 0:
+            return data
+
+        stale = (now - last_ts) > float(reset_after)
+        if not stale:
+            return data
+
+        # Reset efetivo
+        new_row = dict(data)
+        new_row["ai_turns"] = 0
+        new_row["force_operational"] = False
+        new_row["force_operational_reason"] = ""
+        new_row["updatedAtEpoch"] = now  # marca “novo ciclo”
+
+        # best-effort writeback (pra não resetar toda hora)
+        if _db_ready(db):
+            try:
+                db.collection(_SPEAKER_COLL).document(did).set(
+                    {
+                        "ai_turns": 0,
+                        "force_operational": False,
+                        "force_operational_reason": "",
+                        "updatedAtEpoch": now,
+                    },
+                    merge=True,
+                )
+            except Exception:
+                pass
+
+        return new_row
+    except Exception:
+        return data
+
+
+
 
 def get_speaker_state(wa_key: str, uid_owner: Optional[str] = None) -> Dict[str, Any]:
     wa_key = (wa_key or "").strip()
@@ -61,7 +131,11 @@ def get_speaker_state(wa_key: str, uid_owner: Optional[str] = None) -> Dict[str,
     try:
         row, exp = _mem.get(did, ({}, 0.0))
         if exp and exp > now and isinstance(row, dict):
-            return dict(row)
+            out = dict(row)
+            db = _fs_client()
+            out = _apply_inactivity_reset(did, out, now, uid_owner, db)
+            _mem[did] = (dict(out), now + _TTL_SECONDS)
+            return dict(out)
     except Exception:
         pass
 
@@ -90,6 +164,9 @@ def get_speaker_state(wa_key: str, uid_owner: Optional[str] = None) -> Dict[str,
                         data["ai_turns"] = int(data.get("ai_turns") or 0)
                     except Exception:
                         data["ai_turns"] = 0
+            # ✅ Reset por inatividade (LEAD vs CUSTOMER)
+            data = _apply_inactivity_reset(did, dict(data), now, uid_owner, db)
+
             # cache local
             _mem[did] = (dict(data), now + _TTL_SECONDS)
             return dict(data)

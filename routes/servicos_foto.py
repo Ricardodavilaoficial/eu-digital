@@ -27,7 +27,6 @@ from datetime import timedelta, datetime
 
 from flask import Blueprint, request, jsonify
 from services.storage_quota import reserve_bytes, adjust_bytes, QuotaExceeded
-from firebase_admin import firestore  # Firestore Admin
 
 from services.auth import auth_required, current_uid
 from services.gcs_handler import get_storage_client
@@ -166,6 +165,7 @@ def upload_foto_servico():
     )
 
     # ---- Atualizar Firestore: fotoPath + fotoUrl (legado) ----
+    from firebase_admin import firestore
     db = firestore.client()
     doc_ref = (
         db.collection("profissionais")
@@ -203,4 +203,3 @@ def upload_foto_servico():
         ),
         200,
     )
-

@@ -5,18 +5,24 @@
 import os, hashlib, time
 from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify
-from firebase_admin import auth as fb_auth
 from services.firebase_admin_init import ensure_firebase_admin
 
-try:
-    from firebase_admin import firestore as fb_fs
-except Exception:
-    fb_fs = None
 
 authority_bp = Blueprint("authority_bp", __name__, url_prefix="/api")
 
 # Flags (lidas do ambiente)
 AUTHORITY_LINKAGE_ENABLED = os.getenv("AUTHORITY_LINKAGE_ENABLED", "0") in ("1","true","TRUE")
+
+
+def _get_fb_auth():
+    ensure_firebase_admin()
+    from firebase_admin import auth as fb_auth
+    return fb_auth
+
+def _get_fb_fs():
+    ensure_firebase_admin()
+    from firebase_admin import firestore as fb_fs
+    return fb_fs
 
 def _utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -28,8 +34,7 @@ def _require_auth():
         return None
     token = hdr.split(" ", 1)[1]
     try:
-        ensure_firebase_admin()
-        decoded = fb_auth.verify_id_token(token)
+        decoded = _get_fb_auth().verify_id_token(token)
         return decoded.get("uid")
     except Exception:
         return None
@@ -37,8 +42,7 @@ def _require_auth():
 def _require_admin(uid):
     # Simplificado: se tiver custom-claim admin=true
     try:
-        ensure_firebase_admin()
-        user = fb_auth.get_user(uid)
+        user = _get_fb_auth().get_user(uid)
         return bool(getattr(user, "custom_claims", {}) and user.custom_claims.get("admin") is True)
     except Exception:
         return False
@@ -78,8 +82,7 @@ def authority_start():
     if not uid:
         return jsonify({"error": "unauthorized"}), 401
 
-    ensure_firebase_admin()
-    db = fb_fs.client()
+    db = _get_fb_fs().client()
 
     data = request.get_json(silent=True) or {}
     cnpj = (data.get("cnpj") or "").strip()
@@ -109,8 +112,7 @@ def authority_evidence_url():
     if not uid:
         return jsonify({"error": "unauthorized"}), 401
 
-    ensure_firebase_admin()
-    db = fb_fs.client()
+    db = _get_fb_fs().client()
     _init_if_missing(db, uid)
 
     data = request.get_json(silent=True) or {}
@@ -176,8 +178,7 @@ def authority_evidence_commit():
     if not uid:
         return jsonify({"error": "unauthorized"}), 401
 
-    ensure_firebase_admin()
-    db = fb_fs.client()
+    db = _get_fb_fs().client()
 
     data = request.get_json(silent=True) or {}
     evidence_id = (data.get("evidenceId") or "").strip()
@@ -229,8 +230,7 @@ def authority_status():
     if not uid:
         return jsonify({"error": "unauthorized"}), 401
 
-    ensure_firebase_admin()
-    db = fb_fs.client()
+    db = _get_fb_fs().client()
     ref = _authority_ref(db, uid)
     snap = ref.get()
     doc = _doc_safe_get(snap) or {"status": "UNVERIFIED", "evidence": []}
@@ -256,8 +256,7 @@ def admin_authority_pending():
     if not _require_admin(uid):
         return jsonify({"error": "forbidden"}), 403
 
-    ensure_firebase_admin()
-    db = fb_fs.client()
+    db = _get_fb_fs().client()
 
     # Buscar docs em subcoleção 'meta' com status pendente
     q1 = db.collection_group("meta").where("status", "in", ["UNDER_REVIEW", "DOCS_REQUIRED"]).stream()
@@ -283,8 +282,7 @@ def admin_authority_decision():
     if not _require_admin(uid):
         return jsonify({"error": "forbidden"}), 403
 
-    ensure_firebase_admin()
-    db = fb_fs.client()
+    db = _get_fb_fs().client()
 
     data = request.get_json(silent=True) or {}
     target_uid = (data.get("uid") or "").strip()

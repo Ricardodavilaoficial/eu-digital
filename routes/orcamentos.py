@@ -14,8 +14,6 @@
 
 import os
 from datetime import timedelta
-from google.cloud import storage
-
 from datetime import datetime, timezone
 import random
 
@@ -311,6 +309,7 @@ def upload_timbrado():
     object_path = f"profissionais/{uid}/orcamentos/{kind}.{ext}"
 
     try:
+        from google.cloud import storage
         client = storage.Client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(object_path)
@@ -376,4 +375,3 @@ def upload_timbrado():
 
     except Exception as e:
         return jsonify({"ok": False, "error": "upload_failed", "detail": str(e)}), 500
-

@@ -9,9 +9,6 @@ import time
 from typing import Any, Dict, Optional
 
 from flask import Blueprint, request, jsonify
-from firebase_admin import auth as fb_auth
-from firebase_admin import firestore as fb_firestore  # type: ignore
-from services.firebase_admin_init import ensure_firebase_admin
 
 from services.voice_wa_link import (
     generate_link_code,
@@ -34,13 +31,28 @@ from services.wa_send import send_template
 
 voz_whatsapp_bp = Blueprint("voz_whatsapp_bp", __name__)
 
+
+def _ensure_firebase_admin():
+    from services.firebase_admin_init import ensure_firebase_admin
+    ensure_firebase_admin()
+
+def _get_fb_auth():
+    _ensure_firebase_admin()
+    from firebase_admin import auth as fb_auth
+    return fb_auth
+
+def _get_fb_fs():
+    _ensure_firebase_admin()
+    from firebase_admin import firestore as fb_firestore  # type: ignore
+    return fb_firestore
+
+
 def _db():
     """Firestore canônico: sempre via firebase-admin."""
-    ensure_firebase_admin()
-    return fb_firestore.client()
+    return _get_fb_fs().client()
 
 def _now_ts():
-    return fb_firestore.SERVER_TIMESTAMP
+    return _get_fb_fs().SERVER_TIMESTAMP
 
 def _get_profile_telefone_candidates(uid: str) -> list[str]:
     """Busca possíveis telefones do MEI no Firestore (por UID).
@@ -109,8 +121,7 @@ def _get_auth_uid() -> str:
     if not token:
         raise PermissionError("missing_token")
     try:
-        ensure_firebase_admin()
-        decoded = fb_auth.verify_id_token(token)
+        decoded = _get_fb_auth().verify_id_token(token)
     except Exception:
         raise PermissionError("auth_unavailable")
     uid = decoded.get("uid")

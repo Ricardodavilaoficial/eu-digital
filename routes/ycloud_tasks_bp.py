@@ -20,6 +20,8 @@ def _backend_base(request) -> str:
     host = (getattr(request, "host_url", "") or "").strip().rstrip("/")
 
     if base.startswith("http://"):
+    from google.cloud import storage
+    from services.gcp_creds import get_storage_client
         base = "https://" + base[len("http://"):]
     if host.startswith("http://"):
         host = "https://" + host[len("http://"):]
@@ -38,8 +40,36 @@ import hashlib
 import logging
 import uuid
 import datetime
-from google.cloud import storage as gcs_storage  # type: ignore
+  # type: ignore
 from typing import Any, Dict, Optional, Tuple
+
+
+def _ensure_send_link_in_reply(reply: str, next_step: str) -> str:
+    """
+    Regra canônica: se next_step == SEND_LINK, a resposta precisa conter o link (FRONTEND_BASE).
+    Evita o bug: "vou te mandar o link" sem link.
+    """
+    try:
+        ns = str(next_step or "").strip().upper()
+        r = str(reply or "").strip()
+        if ns != "SEND_LINK":
+            return r
+
+        base = (os.environ.get("FRONTEND_BASE") or "").strip().rstrip("/")
+        if not base:
+            return r  # sem base configurada, não inventa
+        # já tem o link? não duplica
+        if base.lower() in r.lower():
+            return r
+        # já tem algum http? não força (pode ser outro link gerado)
+        if re.search(r"https?://", r, re.I):
+            return r
+        # anexa o link no final
+        if r and not r.endswith((".", "!", "?", ":")):
+            r = r + "."
+        return (r + "\n" + base).strip()
+    except Exception:
+        return str(reply or "").strip()
 
 import requests
 
@@ -311,7 +341,7 @@ def _upload_audio_bytes_to_signed_url(*, b: bytes, audio_debug: dict, tag: str =
 
         # Validação leve (não bloquear formatos): só garante que tem bytes suficientes
 
-        from google.cloud import storage  # type: ignore
+          # type: ignore
         from services.gcp_creds import get_storage_client
         import uuid
         # usa o módulo datetime (já importado no topo) para acessar datetime + timedelta
@@ -495,6 +525,37 @@ def _strip_links_for_audio(text: str) -> str:
     t = t.replace("www.", "").strip()
     t = re.sub(r"\s{2,}", " ", t).strip()
     return t
+
+
+def _keep_sales_surface_from_bot(*, wa_out: dict | None = None, uid: str = "") -> bool:
+    """
+    Em vendas, se o bot/front já entregou a superfície falável,
+    o worker não deve remodelar essa camada.
+    """
+    try:
+        if str(uid or "").strip():
+            return False
+
+        out = dict(wa_out or {})
+
+        if str(out.get("spokenText") or "").strip():
+            return True
+
+        if str(out.get("ttsText") or out.get("tts_text") or "").strip():
+            return True
+
+        route = str(out.get("route") or "").strip().lower()
+        reply_source = str(out.get("replySource") or out.get("reply_source") or "").strip().lower()
+
+        if route in ("front", "conversational_front", "conversationalfront"):
+            return True
+
+        if reply_source in ("front", "pack_engine", "pack_engine_fallback_default"):
+            return True
+
+        return False
+    except Exception:
+        return False
 
 def _openai_sales_speech(reply_text: str, user_text: str, kb: Dict[str, Any], name_hint: str = "", mode: str = "demo") -> str:
     """
@@ -1587,7 +1648,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     # SENTINELA: prova que o handler entrou e leu payload
     try:
         _wamid = str((payload or {}).get("wamid") or "")
-        _msg_type = str((payload or {}).get("msgType") or (payload or {}).get("messageType") or "")
+        _msg_type = str(
+            (payload or {}).get("msgType")
+            or (payload or {}).get("messageType")
+            or (payload or {}).get("msg_type")
+            or (payload or {}).get("msgType")
+            or ""
+        )
         logger.info("[tasks] start eventKey=%s wamid=%s msgType=%s", event_key, _wamid, _msg_type)
     except Exception:
         logger.info("[tasks] start eventKey=%s (no payload details)", event_key)
@@ -1641,28 +1708,32 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
     eventType_missing_fallback = False
 
-    if ev_type != "whatsapp.inbound_message.received":
-        # Fallback saudável: eventType pode vir vazio em testes manuais/alguns provedores.
-        # Se houver sinais fortes de inbound real, processa mesmo assim.
+    # ✅ Aceita variações reais do YCloud
+    allowed_event_types = {"whatsapp.inbound_message.received", "message", "messages", "whatsapp.message", ""}
+
+    if ev_type not in allowed_event_types:
         _mt = str((payload or {}).get("msgType") or (payload or {}).get("messageType") or "").strip().lower()
-        _from0 = str((payload or {}).get("from") or "").strip()
-        _to0 = str((payload or {}).get("to") or "").strip()
-        _w0 = str((payload or {}).get("wamid") or (payload or {}).get("messageId") or "").strip()
+        logger.info(
+            "[tasks] early_return reason=%s eventKey=%s wamid=%s eventType=%s msgType=%s",
+            "IGNORED_EVENTTYPE", event_key, (_wamid or ""), ev_type, _mt
+        )
+        return jsonify({"ok": True, "ignored": True, "eventType": ev_type}), 200
 
-        _looks_inbound = bool(_w0 and _from0 and _to0 and (_mt in ("text", "chat", "audio", "voice", "ptt")))
+    # Fallback saudável: eventType pode vir vazio em testes manuais/alguns provedores.
+    # Se houver sinais fortes de inbound real, marcamos para auditoria (sem bloquear).
+    _mt = str((payload or {}).get("msgType") or (payload or {}).get("messageType") or "").strip().lower()
+    _from0 = str((payload or {}).get("from") or "").strip()
+    _to0 = str((payload or {}).get("to") or "").strip()
+    _w0 = str((payload or {}).get("wamid") or (payload or {}).get("messageId") or "").strip()
 
-        if (not ev_type) and _looks_inbound:
-            eventType_missing_fallback = True
-            logger.info(
-                "[tasks] eventType_missing_fallback=true eventKey=%s wamid=%s msgType=%s",
-                event_key, (_w0 or _wamid), _mt
-            )
-        else:
-            logger.info(
-                "[tasks] early_return reason=%s eventKey=%s wamid=%s eventType=%s msgType=%s",
-                "IGNORED_EVENTTYPE", event_key, (_w0 or _wamid), ev_type, _mt
-            )
-            return jsonify({"ok": True, "ignored": True, "eventType": ev_type}), 200
+    _looks_inbound = bool(_w0 and _from0 and _to0 and (_mt in ("text", "chat", "audio", "voice", "ptt")))
+
+    if (not ev_type) and _looks_inbound:
+        eventType_missing_fallback = True
+        logger.info(
+            "[tasks] eventType_missing_fallback=true eventKey=%s wamid=%s msgType=%s",
+            event_key, (_w0 or _wamid), _mt
+        )
 
 
     dedup_ttl = int(os.environ.get("CLOUD_TASKS_DEDUP_TTL_SECONDS", "86400") or "86400")
@@ -1676,7 +1747,17 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         from_raw = (payload.get("from") or "").strip()
         to_raw = (payload.get("to") or "").strip()
         wamid = (payload.get("wamid") or "").strip()
-        text_in = (payload.get("text") or "").strip()
+        _t = payload.get("text")
+        if isinstance(_t, dict):
+            text_in = str(_t.get("body") or _t.get("text") or _t.get("message") or "").strip()
+        else:
+            text_in = str(_t or "").strip()
+
+        # Robustez: em testes/local alguns eventos chegam sem msgType;
+        # se há texto, trate como "text" para evitar lastMsgType=""
+        if (not msg_type) and text_in:
+            msg_type = "text"
+
         media = payload.get("media") or {}
 
         from_e164 = _to_plus_e164(from_raw)
@@ -2216,10 +2297,30 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 if skip_wa_bot:
                     wa_out = {"replyText": reply_text, "audioUrl": "", "audioDebug": audio_debug}
                 else:
+                    # ==========================================================
+                    # Lead hints (segmento / nome) — lookup O(1)
+                    # Não altera fluxo: só enriquece contexto se existir
+                    # ==========================================================
+                    segment_hint = ""
+                    name_hint = ""
+                    try:
+                        leads_coll = os.getenv("INSTITUTIONAL_LEADS_COLL", "institutional_leads")
+                        wa_key_digits = _digits_only(from_e164)
+                        if wa_key_digits:
+                            lead_doc = _db().collection(leads_coll).document(wa_key_digits).get()
+                            if lead_doc.exists:
+                                ld = lead_doc.to_dict() or {}
+                                segment_hint = str(ld.get("segment") or "").strip()
+                                name_hint = str(ld.get("name") or ld.get("displayName") or "").strip()
+                    except Exception:
+                        pass
+
                     ctx_for_bot = {
                         "from_e164": from_e164,   # cliente final
                         "to_e164": to_e164,       # número que recebeu (WABA)
-                        "waKey": from_e164,       # chave SaaS correta (cliente final)
+                        # chave canônica (sempre digits-only, compatível com institutional_leads/{waKey})
+
+                        "waKey": _digits_only(from_e164),
                         "msg_type": msg_type,
                         "wamid": wamid,
                         "route_hint": route_hint,
@@ -2227,6 +2328,12 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         "uid_owner": uid_owner,
                         "uid_sender": uid_sender,
                     }
+
+                    if segment_hint:
+                        ctx_for_bot["segment_hint"] = segment_hint
+                    if name_hint:
+                        ctx_for_bot["name_hint"] = name_hint
+
                     # ----------------------------------------------------------
                     # CARIMBO DE ROTA (multi-WABA)
                     # ----------------------------------------------------------
@@ -2370,6 +2477,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             )
             prefers_text = bool(wa_out.get("prefersText"))
             plan_next_step = str(wa_out.get("planNextStep") or "").strip().upper()
+            reply_text = _ensure_send_link_in_reply(reply_text, plan_next_step)
             tts_owner = str(wa_out.get("ttsOwner") or "").strip().lower()
 
             # Guard-rail: entrada é áudio e o áudio é do WORKER.
@@ -2511,6 +2619,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         understanding["next_step"] = _nn
             except Exception:
                 pass
+            try:
+                if _is_front:
+                    route_hint = "conversational_front"
+            except Exception:
+                pass
             # Observabilidade IA-first (fallback): garante campos básicos no understanding
             try:
                 # Se o wa_bot retornou FRONT, o worker NÃO pode carimbar fallback no entendimento.
@@ -2595,8 +2708,15 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     (tts_text_from_bot or "").strip()
                     or str(wa_out.get("spokenText") or "").strip()
                 )
+                preserve_sales_surface = _keep_sales_surface_from_bot(
+                    wa_out=wa_out if isinstance(wa_out, dict) else {},
+                    uid=uid,
+                )
+
                 if _spoken_from_bot:
                     spoken_text = _spoken_from_bot
+                elif preserve_sales_surface:
+                    spoken_text = (reply_text or "").strip()
                 else:
                     # Só compõe quando não veio spoken pronto
                     spoken_text = _make_tts_text((reply_text or "").strip(), display_name, add_acervo_cta=(not _is_front))
@@ -2655,7 +2775,12 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
             
 
-                if should_spice and spoken_text:
+                preserve_sales_surface = _keep_sales_surface_from_bot(
+                    wa_out=wa_out if isinstance(wa_out, dict) else {},
+                    uid=uid,
+                )
+
+                if (not preserve_sales_surface) and should_spice and spoken_text:
 
                     low0 = spoken_text[:60].lower()
 
@@ -2789,14 +2914,62 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             _wa_key = str(locals().get("wa_key") or locals().get("waKey") or "").strip()
             _from_e164 = str(locals().get("from_e164") or locals().get("fromE164") or "").strip()
             _disp = str(locals().get("display_name") or locals().get("displayName") or "").strip()
-            _msg_type = str(locals().get("msg_type") or "").strip().lower()
+            _msg_type = str(
+
+                locals().get("msg_type")
+
+                or locals().get("msgType")
+
+                or locals().get("messageType")
+
+                or ""
+
+            ).strip().lower()
             _route_hint = str(locals().get("route_hint") or locals().get("route") or "").strip().lower()
 
+
+            
+
+            # chave canônica do lead: SEMPRE digits-only (docId do institutional_leads)
+
+            _wa_key_digits = _digits_only(_wa_key or _from_e164)
+
+            if _wa_key_digits:
+
+                _wa_key = _wa_key_digits
+
+            
+
+            # fallback de msg_type quando vier vazio (ex.: testes locais)
+
+            if not _msg_type:
+
+                _text_probe = str(locals().get("text_in") or locals().get("text") or locals().get("user_text") or "").strip()
+
+                if _text_probe:
+
+                    _msg_type = "text"
             # Só para VENDAS/LEAD (sem UID). Se você tiver um boolean explícito, use ele aqui.
             # Heurística segura: route_hint contém "sales" e tem wa_key.
             if _wa_key and ("sales" in _route_hint):
                 leads_coll = os.getenv("INSTITUTIONAL_LEADS_COLL", "institutional_leads")
                 prof_coll = os.getenv("PLATFORM_LEAD_PROFILES_COLL", "platform_lead_profiles")
+
+                # ==========================================================
+                # Lookup rápido do lead para hints (segmento / nome)
+                # Não altera fluxo atual — apenas lê se existir
+                # ==========================================================
+                segment_hint = ""
+                name_hint = ""
+                try:
+                    lead_doc = _db().collection(leads_coll).document(_wa_key).get()
+                    if lead_doc.exists:
+                        data = lead_doc.to_dict() or {}
+                        segment_hint = str(data.get("segment") or "").strip()
+                        name_hint = str(data.get("name") or data.get("displayName") or "").strip()
+                except Exception:
+                    pass
+
 
                 base = {
                     "waKey": _wa_key,
@@ -2805,6 +2978,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     "lastMsgType": _msg_type,
                     "lastEventKey": str(event_key or "")[:500],
                 }
+
+                if segment_hint:
+                    base["segment_hint"] = segment_hint
+
+                if name_hint:
+                    base["name_hint"] = name_hint
+
                 if _disp:
                     base["displayName"] = _disp
 
@@ -2831,6 +3011,56 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             )
         except Exception:
             logger.info("[tasks] after_compute (no details)")
+
+        # ==========================================================
+        # TEXTO PRIMÁRIO DO FRONT
+        # - Se a resposta já veio do conversational_front e a entrada é texto,
+        #   envia aqui e sai, sem depender do fellthrough.
+        # - Não mexe na trilha de áudio.
+        # ==========================================================
+        try:
+            _route_hint_now = str(route_hint or "").strip().lower()
+            _reply_now = (reply_text or "").strip()
+            _is_text_in = msg_type in ("text", "chat", "")
+            _came_from_front = _route_hint_now in ("conversational_front", "front")
+
+            if (not sent_ok) and _is_text_in and _came_from_front and _reply_now:
+                try:
+                    _st = send_text
+                    if not _st:
+                        try:
+                            from providers.ycloud import send_text as _send_text  # type: ignore
+                            _st = _send_text
+                            send_text = _st
+                        except Exception:
+                            logger.exception("[tasks] ycloud_provider_import_failed (front_text_primary)")
+                            _st = None
+
+                    if _st:
+                        _rt_front = _clean_url_weirdness(_reply_now)
+                        logger.info("[outbound] send_text (front_text_primary) to=%s chars=%d", from_e164, len(_rt_front))
+                        _ok_front, _ = _st(from_e164, _rt_front)
+                        try:
+                            _wa_log_outbox_deterministic(
+                                route="send_text_front_primary",
+                                to_e164=from_e164,
+                                reply_text=_rt_front,
+                                sent_ok=bool(_ok_front),
+                            )
+                        except Exception:
+                            pass
+                        sent_ok = sent_ok or bool(_ok_front)
+                        if _ok_front:
+                            try:
+                                _try_log_outbox_immediate(True, "send_text_front_primary")
+                            except Exception:
+                                pass
+                            logger.info("[tasks] end eventKey=%s wamid=%s sent_ok=%s", event_key, _wamid, bool(sent_ok))
+                            return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
+                except Exception:
+                    logger.exception("[tasks] front_text_primary_failed")
+        except Exception:
+            pass
 
         # Se entrou por áudio: por padrão não preferir texto.
         # EXCEÇÃO: se o wa_bot pediu prefersText (ex.: para mandar link por escrito), respeitar.
@@ -3237,7 +3467,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                             if is_sales and _SALES_TTS_MODE == "on":
                                 # 🔒 Regra de ouro (VENDAS/uid vazio): o worker NÃO inventa texto.
-                                # Ele apenas fala o que veio do wa_bot (ttsText/spokenText) ou, na falta, o reply_text.
+                                preserve_sales_surface = _keep_sales_surface_from_bot(
+                                    wa_out=wa_out if isinstance(wa_out, dict) else {},
+                                    uid=uid,
+                                )
+
                                 if tts_text_from_bot:
                                     tts_text = tts_text_from_bot
                                     tts_script_source = (tts_text_from_bot_source or "from_bot")
@@ -3245,6 +3479,15 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                     audio_debug["ttsSales"] = {
                                         "ok": True,
                                         "mode": "from_bot",
+                                        "waKind": str(wa_kind or "").strip().lower(),
+                                    }
+                                elif preserve_sales_surface:
+                                    tts_text = (spoken_text or reply_text or "").strip()
+                                    tts_script_source = "preserved_surface"
+                                    audio_debug = dict(audio_debug or {})
+                                    audio_debug["ttsSales"] = {
+                                        "ok": True,
+                                        "mode": "preserved_surface",
                                         "waKind": str(wa_kind or "").strip().lower(),
                                     }
                                 else:
@@ -3256,17 +3499,18 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                         "mode": "reply_text",
                                         "waKind": str(wa_kind or "").strip().lower(),
                                     }
-                                    # corta antes do TTS pra não estourar
-                                    if tts_text and len(tts_text) > _SALES_TTS_MAX_CHARS:
-                                        before = tts_text
-                                        tts_text = _shorten_for_speech(tts_text, _SALES_TTS_MAX_CHARS)
-                                        audio_debug = dict(audio_debug or {})
-                                        audio_debug["ttsInputShortenSales"] = {
-                                            "applied": True,
-                                            "maxChars": _SALES_TTS_MAX_CHARS,
-                                            "beforeLen": len(before),
-                                            "afterLen": len(tts_text),
-                                        }
+
+                                # corta antes do TTS pra não estourar
+                                if tts_text and len(tts_text) > _SALES_TTS_MAX_CHARS:
+                                    before = tts_text
+                                    tts_text = _shorten_for_speech(tts_text, _SALES_TTS_MAX_CHARS)
+                                    audio_debug = dict(audio_debug or {})
+                                    audio_debug["ttsInputShortenSales"] = {
+                                        "applied": True,
+                                        "maxChars": _SALES_TTS_MAX_CHARS,
+                                        "beforeLen": len(before),
+                                        "afterLen": len(tts_text),
+                                    }
                             else:
                                 support_persona = _get_support_persona()
 
@@ -4125,7 +4369,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 return v or default
             audio_debug = dict(audio_debug or {})
             audio_debug["auditAlignment"] = {
-                "note": ("Áudio veio do spokenText do bot (VENDAS)." if (is_sales and _SALES_TTS_MODE == "on" and bool(tts_text_from_bot)) else "Áudio é versão otimizada para fala do replyText (ou do kbContext quando conceptual)."),
+                "note": (
+                    "Áudio veio da superfície entregue pelo bot em vendas."
+                    if (is_sales and _SALES_TTS_MODE == "on" and _keep_sales_surface_from_bot(wa_out=wa_out if isinstance(wa_out, dict) else {}, uid=uid))
+                    else "Áudio é versão otimizada para fala do replyText (ou do kbContext quando conceptual)."
+                ),
                 "spokenSource": _a("spokenSource", "replyText_pipeline"),
                 "replyTextRole": _a("replyTextRole", ""),
                 "spokenTextRole": _a("spokenTextRole", ""),
@@ -4184,6 +4432,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             _rt_final = (reply_text or "").strip()
         except Exception:
             _rt_final = ""
+
+        # ✅ Regra canônica: se a decisão foi SEND_LINK (ex.: policy_link_request),
+        # o fellthrough também precisa carregar o link (FRONTEND_BASE).
+        try:
+            _rt_final = _ensure_send_link_in_reply(_rt_final, ia_next_step)
+        except Exception:
+            pass
 
         # Anti-duplicidade: se já enviamos algo (ex.: send_text(prefersText) ou audio_plus_text_link),
         # NUNCA cair no fellthrough para mandar de novo.

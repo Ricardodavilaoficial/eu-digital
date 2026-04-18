@@ -4,27 +4,37 @@
 
 from __future__ import annotations
 
-from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
-from firebase_admin import firestore as fb_firestore  # type: ignore
-
 import os
 from typing import Any, Dict, Optional
 
 from flask import Blueprint, request, jsonify
-from services.auth import get_uid_from_bearer  # type: ignore
-
-from providers.ycloud import send_text, send_template  # usa o provider que você acabou de preencher
-
 
 admin_ycloud_test_bp = Blueprint("admin_ycloud_test_bp", __name__)
 
+def _ensure_firebase_admin():
+    from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
+    return ensure_firebase_admin()
+
+def _get_fb_firestore():
+    from firebase_admin import firestore as fb_firestore  # type: ignore
+    return fb_firestore
+
+def _get_uid_from_bearer():
+    from services.auth import get_uid_from_bearer  # type: ignore
+    return get_uid_from_bearer
+
+def _get_ycloud_senders():
+    from providers.ycloud import send_text, send_template  # type: ignore
+    return send_text, send_template
+
+
 def _db():
     """Firestore canônico: sempre via firebase-admin."""
-    ensure_firebase_admin()
-    return fb_firestore.client()
+    _ensure_firebase_admin()
+    return _get_fb_firestore().client()
 
 def _now_ts():
-    return fb_firestore.SERVER_TIMESTAMP
+    return _get_fb_firestore().SERVER_TIMESTAMP
 
 def _is_admin(uid: str) -> bool:
     allow = set(
@@ -55,7 +65,7 @@ def _log(doc: Dict[str, Any]):
 def admin_send_test():
     # Auth + admin gate
     try:
-        uid = get_uid_from_bearer(request)
+        uid = _get_uid_from_bearer()(request)
     except Exception:
         return jsonify({"ok": False, "error": "invalid_token"}), 401
 
@@ -82,10 +92,10 @@ def admin_send_test():
             params = data.get("params") or []
             if not template_name:
                 return jsonify({"ok": False, "error": "missing_templateName"}), 400
-            ok, resp = send_template(to_e164, template_name, list(params or []))
+            ok, resp = _get_ycloud_senders()[1](to_e164, template_name, list(params or []))
         else:
             text = (data.get("text") or "Teste MEI Robô ✅").strip()
-            ok, resp = send_text(to_e164, text)
+            ok, resp = _get_ycloud_senders()[0](to_e164, text)
     except Exception as e:
         # não esconder causa real (ex.: missing_YCLOUD_API_KEY)
         msg = f"sender_exception:{type(e).__name__}:{str(e) or 'no_message'}"

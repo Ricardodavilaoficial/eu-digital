@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import os
+import json
 import traceback
 import logging
 from typing import Any, Dict, Optional, Tuple, Callable  # <- acrescentado Callable
@@ -49,6 +50,9 @@ POST5_AI_ENABLED = os.getenv("POST5_AI_ENABLED", "true").strip().lower() in ("1"
 # - O front NÃO consulta Firestore
 # ==========================================================
 FRONT_KB_MAX_CHARS = int(os.getenv("FRONT_KB_MAX_CHARS", "2500") or 2500)
+FRONT_KB_MAX_CHARS_PACKS_V1 = int(
+    os.getenv("FRONT_KB_MAX_CHARS_PACKS_V1", "12000") or 12000
+)
 
 # -------------------------------------------------------------------
 # Legacy deve ser "lazy": só importa quando realmente for necessário
@@ -166,6 +170,33 @@ def _looks_like_link_request(t: str) -> bool:
         return False
 
 
+def _ensure_send_link_in_reply(reply: str, next_step: str) -> str:
+    """
+    Regra canônica: se next_step == SEND_LINK, a resposta precisa conter o link (FRONTEND_BASE).
+    Evita o bug: "vou te mandar o link" sem link.
+    """
+    try:
+        ns = str(next_step or "").strip().upper()
+        if ns != "SEND_LINK":
+            return str(reply or "").strip()
+
+        r = str(reply or "").strip()
+        # Se já tem URL, não mexe
+        if ("http://" in r) or ("https://" in r):
+            return r
+
+        base = (os.getenv("FRONTEND_BASE") or "").strip().rstrip("/")
+        if not base:
+            return r
+
+        if not r:
+            return base
+        return (r + "\n" + base).strip()
+    except Exception:
+        return str(reply or "").strip()
+
+
+
 def _log_sales_lead_fallback(ctx: Optional[Dict[str, Any]], *, reason: str, err: Optional[Exception] = None):
     try:
         ctx = ctx or {}
@@ -245,6 +276,65 @@ def _safe_str(x: Any) -> str:
         return ""
 
 
+def _clip_front_text(x: Any, max_len: int = 180) -> str:
+    try:
+        s = _safe_str(x)
+        if not s:
+            return ""
+        s = " ".join(s.split())
+        return s[:max_len].strip()
+    except Exception:
+        return ""
+
+
+def _compact_front_kb_doc(
+    d: Dict[str, Any],
+    *,
+    include_segment_id: bool = False,
+    include_archetype_id: bool = False,
+) -> Dict[str, Any]:
+    """
+    Compactação mínima e estável para o snapshot packs_v1.
+    Mantém só o que ajuda a:
+    - identificar trilho operacional
+    - hidratar contrato
+    - reconstruir microcena
+    """
+    try:
+        if not isinstance(d, dict):
+            return {}
+
+        out: Dict[str, Any] = {}
+
+        if include_segment_id and d.get("segment_id"):
+            out["segment_id"] = _clip_front_text(d.get("segment_id"), 80)
+
+        if include_archetype_id and d.get("archetype_id"):
+            out["archetype_id"] = _clip_front_text(d.get("archetype_id"), 80)
+
+        if d.get("conversation_mode"):
+            out["conversation_mode"] = _clip_front_text(d.get("conversation_mode"), 80)
+
+        if d.get("one_liner"):
+            out["one_liner"] = _clip_front_text(d.get("one_liner"), 180)
+
+        if d.get("micro_scene"):
+            out["micro_scene"] = _clip_front_text(d.get("micro_scene"), 260)
+
+        if d.get("primary_goal"):
+            out["primary_goal"] = _clip_front_text(d.get("primary_goal"), 120)
+
+        if d.get("service_noun"):
+            out["service_noun"] = _clip_front_text(d.get("service_noun"), 80)
+
+        if d.get("handoff_format"):
+            out["handoff_format"] = _clip_front_text(d.get("handoff_format"), 120)
+
+        return out
+    except Exception:
+        return {}
+
+
 def _fetch_front_kb_sources(topic_hint: str = "") -> Dict[str, Any]:
     """
     Busca poucas fontes canônicas no Firestore (curtas):
@@ -252,7 +342,7 @@ def _fetch_front_kb_sources(topic_hint: str = "") -> Dict[str, Any]:
     - platform_pricing/current
     Retorna dicts (vazios se falhar).
     """
-    out: Dict[str, Any] = {"kb": {}, "pricing": {}}
+    out: Dict[str, Any] = {"kb": {}, "pricing": {}, "segments": {}, "subsegments": {}, "archetypes": {}}
     try:
         from firebase_admin import firestore  # type: ignore
         db = firestore.client()
@@ -266,6 +356,31 @@ def _fetch_front_kb_sources(topic_hint: str = "") -> Dict[str, Any]:
             out["pricing"] = (snap2.to_dict() or {}) if snap2 else {}
         except Exception:
             out["pricing"] = {}
+
+        # NOVO: carregar base operacional
+        try:
+            segs = {}
+            for doc in db.collection("kb_segments_v1").stream():
+                segs[doc.id] = doc.to_dict() or {}
+            out["segments"] = segs
+        except Exception:
+            out["segments"] = {}
+
+        try:
+            subs = {}
+            for doc in db.collection("kb_subsegments_v1").stream():
+                subs[doc.id] = doc.to_dict() or {}
+            out["subsegments"] = subs
+        except Exception:
+            out["subsegments"] = {}
+
+        try:
+            archs = {}
+            for doc in db.collection("kb_archetypes_v1").stream():
+                archs[doc.id] = doc.to_dict() or {}
+            out["archetypes"] = archs
+        except Exception:
+            out["archetypes"] = {}
     except Exception:
         # sem Firestore? snapshot vazio (front ainda funciona, só fica mais “simpático”)
         pass
@@ -454,6 +569,41 @@ def _render_pack_reply(decider: Dict[str, Any], kb: Dict[str, Any]) -> Dict[str,
     }
 
 
+
+def _prefer_structured_front_reply(front_out: Dict[str, Any], rendered: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Decide qual saída usar no front:
+    - se houver render determinístico válido, ele vence
+    - senão mantém o front_out original
+    Safe-by-default: não inventa texto novo aqui
+    """
+    try:
+        out = dict(front_out or {})
+        rend = dict(rendered or {})
+
+        rendered_reply = str(rend.get("replyText") or "").strip()
+        if not rendered_reply:
+            return out
+
+        out["replyText"] = rendered_reply
+
+        rendered_spoken = str(rend.get("spokenText") or "").strip()
+        if rendered_spoken:
+            out["spokenText"] = rendered_spoken
+
+        if rend.get("packId"):
+            out["packId"] = rend.get("packId")
+        if rend.get("renderMode"):
+            out["renderMode"] = rend.get("renderMode")
+        if rend.get("segmentKey"):
+            out["segmentKey"] = rend.get("segmentKey")
+
+        out["replySource"] = "pack_engine"
+        return out
+    except Exception:
+        return dict(front_out or {})
+
+
 def _load_prof_robot_persona_v1(uid: str) -> Dict[str, Any]:
     """Carrega (best-effort) a persona/jeito de atender do profissional.
     - Fontes aceitas (compat):
@@ -480,6 +630,153 @@ def _load_prof_robot_persona_v1(uid: str) -> Dict[str, Any]:
 
 
 
+def _safe_json_dumps_with_limit(payload: dict, limit: int) -> str:
+    """
+    Serializa payload garantindo JSON válido dentro do limite.
+    Nunca corta string no meio.
+    """
+    try:
+        s = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        if len(s) <= limit:
+            return s
+
+        # fallback seguro mínimo:
+        # preserva o banco novo, zera anexos menos críticos
+        minimal = {
+            "answer_playbook_v1": {
+                "runtime_selector_v1": ((payload.get("answer_playbook_v1") or {}).get("runtime_selector_v1") or {}),
+                "pack_selection_policy_v1": {},
+                "segment_template_v1": {},
+                "segment_value_map_v1": {},
+            },
+            "value_packs_v1": {},
+            "platform_pricing": {},
+            "kb_segments_v1": payload.get("kb_segments_v1") or {},
+            "kb_subsegments_v1": payload.get("kb_subsegments_v1") or {},
+            "kb_archetypes_v1": payload.get("kb_archetypes_v1") or {},
+        }
+        s2 = json.dumps(minimal, ensure_ascii=False, separators=(",", ":"))
+        if len(s2) <= limit:
+            return s2
+
+        # último fallback: mantém subsegments primeiro, depois archetypes e segments
+        ultra_minimal = {
+            "answer_playbook_v1": {
+                "runtime_selector_v1": ((payload.get("answer_playbook_v1") or {}).get("runtime_selector_v1") or {}),
+            },
+            "value_packs_v1": {},
+            "platform_pricing": {},
+            "kb_segments_v1": payload.get("kb_segments_v1") or {},
+            "kb_subsegments_v1": payload.get("kb_subsegments_v1") or {},
+            "kb_archetypes_v1": payload.get("kb_archetypes_v1") or {},
+        }
+        s3 = json.dumps(ultra_minimal, ensure_ascii=False, separators=(",", ":"))
+        if len(s3) <= limit:
+            return s3
+
+        # fallback extremo: subsegments sozinhos + archetypes se couber
+        extreme = {
+            "answer_playbook_v1": {
+                "runtime_selector_v1": ((payload.get("answer_playbook_v1") or {}).get("runtime_selector_v1") or {}),
+            },
+            "kb_subsegments_v1": payload.get("kb_subsegments_v1") or {},
+            "kb_archetypes_v1": payload.get("kb_archetypes_v1") or {},
+            "kb_segments_v1": {},
+            "value_packs_v1": {},
+            "platform_pricing": {},
+        }
+        s4 = json.dumps(extreme, ensure_ascii=False, separators=(",", ":"))
+        if len(s4) <= limit:
+            return s4
+
+        # fallback extremo 2: só subsegments
+        ultra_minimal = {
+            "answer_playbook_v1": {
+                "runtime_selector_v1": ((payload.get("answer_playbook_v1") or {}).get("runtime_selector_v1") or {}),
+            },
+            "kb_subsegments_v1": payload.get("kb_subsegments_v1") or {},
+            "kb_archetypes_v1": {},
+            "kb_segments_v1": {},
+            "value_packs_v1": {},
+            "platform_pricing": {},
+        }
+        s5 = json.dumps(ultra_minimal, ensure_ascii=False, separators=(",", ":"))
+        return s5 if len(s5) <= limit else "{}"
+    except Exception:
+        return "{}"
+
+
+def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
+    """
+    Reduz payload por etapas, preservando JSON válido.
+    Remove blocos inteiros, nunca corta no meio.
+    """
+    try:
+        work = dict(payload or {})
+
+        def _size(obj: dict) -> int:
+            return len(json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
+
+        if _size(work) <= limit:
+            return work
+
+        # 1) podar o que menos importa para o lookup do banco novo
+        ap = dict(work.get("answer_playbook_v1") or {})
+        svm = dict(ap.get("segment_value_map_v1") or {})
+        if svm:
+            ap["segment_value_map_v1"] = {}
+            work["answer_playbook_v1"] = ap
+            if _size(work) <= limit:
+                return work
+
+        # 2) corta value packs antes de tocar no banco novo
+        if work.get("value_packs_v1"):
+            work["value_packs_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        # 3) corta pricing antes de tocar no banco novo
+        if work.get("platform_pricing"):
+            work["platform_pricing"] = {}
+            if _size(work) <= limit:
+                return work
+
+        # 4) enxuga answer_playbook pesado, preservando só runtime_selector
+        ap = dict(work.get("answer_playbook_v1") or {})
+        keep_runtime = {
+            "runtime_selector_v1": ap.get("runtime_selector_v1") or {},
+            "pack_selection_policy_v1": {},
+            "segment_template_v1": {},
+            "segment_value_map_v1": {},
+        }
+        work["answer_playbook_v1"] = keep_runtime
+        if _size(work) <= limit:
+            return work
+
+        # 5) agora sim começa a poda do banco novo, do menos crítico para o mais crítico
+        # segments cai antes
+        if work.get("kb_segments_v1"):
+            work["kb_segments_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        # archetypes cai depois
+        if work.get("kb_archetypes_v1"):
+            work["kb_archetypes_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        # subsegments é a última camada a cair
+        if work.get("kb_subsegments_v1"):
+            work["kb_subsegments_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        return work
+    except Exception:
+        return payload or {}
+
+
 def _build_front_kb_snapshot(topic: str) -> str:
     """
     Monta snapshot textual compacto com teto de chars.
@@ -487,6 +784,44 @@ def _build_front_kb_snapshot(topic: str) -> str:
     src = _fetch_front_kb_sources()
     kb = src.get("kb") or {}
     pr = src.get("pricing") or {}
+    segments = src.get("segments") or {}
+    subsegments = src.get("subsegments") or {}
+    archetypes = src.get("archetypes") or {}
+
+    # BASE OPERACIONAL COMPACTA (nomes canônicos esperados pelo front)
+    compact_segments = {}
+    try:
+        for sid, sd in list((segments or {}).items()):
+            if not isinstance(sd, dict):
+                continue
+            compact_segments[sid] = _compact_front_kb_doc(
+                sd,
+                include_archetype_id=True,
+            )
+    except Exception:
+        compact_segments = {}
+
+    compact_subsegments = {}
+    try:
+        for sid, sd in list((subsegments or {}).items()):
+            if not isinstance(sd, dict):
+                continue
+            compact_subsegments[sid] = _compact_front_kb_doc(
+                sd,
+                include_segment_id=True,
+                include_archetype_id=True,
+            )
+    except Exception:
+        compact_subsegments = {}
+
+    compact_archetypes = {}
+    try:
+        for aid, ad in list((archetypes or {}).items()):
+            if not isinstance(ad, dict):
+                continue
+            compact_archetypes[aid] = _compact_front_kb_doc(ad)
+    except Exception:
+        compact_archetypes = {}
 
 
     # ✅ packs_v1: snapshot em JSON compacto (para render determinístico no front)
@@ -496,6 +831,21 @@ def _build_front_kb_snapshot(topic: str) -> str:
         mode = str((rs.get("mode") or "")).strip().lower()
         if mode == "packs_v1":
             import json as _json
+            snapshot_limit = FRONT_KB_MAX_CHARS_PACKS_V1
+            # pricing compacto (canônico: platform_pricing/current)
+            pricing_compact = {}
+            try:
+                if isinstance(pr, dict) and pr:
+                    pricing_compact = {
+                        "billing_model": pr.get("billing_model") or "",
+                        "currency": pr.get("currency") or "BRL",
+                        "display_prices": pr.get("display_prices") or {},
+                        "plans": pr.get("plans") or {},
+                        "notes": pr.get("notes") or "",
+                        "version": pr.get("version") or "",
+                    }
+            except Exception:
+                pricing_compact = {}
             payload = {
                 "answer_playbook_v1": {
                     "runtime_selector_v1": pb.get("runtime_selector_v1") if isinstance(pb, dict) else {},
@@ -504,26 +854,43 @@ def _build_front_kb_snapshot(topic: str) -> str:
                     "segment_value_map_v1": pb.get("segment_value_map_v1") if isinstance(pb, dict) else {},
                 },
                 "value_packs_v1": kb.get("value_packs_v1") or {},
+                "platform_pricing": {"current": pricing_compact} if pricing_compact else {},
+                "kb_segments_v1": compact_segments,
+                "kb_subsegments_v1": compact_subsegments,
+                "kb_archetypes_v1": compact_archetypes,
             }
-            s = _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-            # teto duro
-            if len(s) > FRONT_KB_MAX_CHARS:
-                # fallback: remove tokens pesados, mantém só lista de segmentos + packs
+
+            # garantia mínima: se houver subsegments reais, eles são prioridade máxima
+            # para a arquitetura do front baseada no banco novo
+            if not payload.get("kb_subsegments_v1") and compact_subsegments:
+                payload["kb_subsegments_v1"] = compact_subsegments
+            payload = _prune_front_kb_payload(payload, snapshot_limit)
+            s = _safe_json_dumps_with_limit(payload, snapshot_limit)
+            try:
+                parsed_ok = False
                 try:
-                    svm = payload.get("answer_playbook_v1", {}).get("segment_value_map_v1") or {}
-                    if isinstance(svm, dict):
-                        slim = {}
-                        for seg, sd in list(svm.items())[:24]:
-                            if isinstance(sd, dict):
-                                slim[seg] = {
-                                    "preferred_packs": sd.get("preferred_packs") or [],
-                                    "do_not_use": sd.get("do_not_use") or [],
-                                }
-                        payload["answer_playbook_v1"]["segment_value_map_v1"] = slim
-                    s = _json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                    obj_test = json.loads(s)
+                    parsed_ok = isinstance(obj_test, dict)
                 except Exception:
-                    pass
-            return s[:FRONT_KB_MAX_CHARS]
+                    parsed_ok = False
+
+                logging.info(
+                    "[WA_BOT][KB_SNAPSHOT] topic=%s chars=%s limit=%s valid_json=%s has_segments=%s has_subsegments=%s has_archetypes=%s n_segments=%s n_subsegments=%s n_archetypes=%s",
+                    str(topic or "").strip().upper(),
+                    len(s or ""),
+                    snapshot_limit,
+                    parsed_ok,
+                    bool((payload or {}).get("kb_segments_v1")),
+                    bool((payload or {}).get("kb_subsegments_v1")),
+                    bool((payload or {}).get("kb_archetypes_v1")),
+                    len((payload or {}).get("kb_segments_v1") or {}),
+                    len((payload or {}).get("kb_subsegments_v1") or {}),
+                    len((payload or {}).get("kb_archetypes_v1") or {}),
+                )
+            except Exception:
+                pass
+
+            return s
     except Exception:
         pass
 
@@ -810,6 +1177,24 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             out["audioDebug"].update({"ok": False, "mode": "institutional", "err": (str(e) or "exception")[:180]})
 
 
+    # ✅ Guard-rail final: no máximo 1 pergunta no replyText/spokenText
+    def _final_cut_one_q(out: Dict[str, Any]) -> None:
+        try:
+            def _cut_one_q(s: str) -> str:
+                s = (s or "").strip()
+                if s.count("?") <= 1:
+                    return s
+                p = s.find("?")
+                return (s[: p + 1]).strip()
+            if isinstance(out, dict):
+                if "replyText" in out:
+                    out["replyText"] = _cut_one_q(str(out.get("replyText") or ""))
+                if "spokenText" in out:
+                    out["spokenText"] = _cut_one_q(str(out.get("spokenText") or ""))
+        except Exception:
+            pass
+
+
     # 1) LEAD / VENDAS (uid ausente)
     if not uid:
         # ----------------------------------------------------------
@@ -848,7 +1233,8 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
                 # Gate do Conversational Front (Módulo 1): só roda em packs_v1 e enquanto não forçado ao operacional
                 front_kb_sources = None
-                front_mode = "packs_v1"
+                front_mode = "packs_v1"  # normalizado (lower/strip) mais abaixo
+                front_mode_raw = "packs_v1"
                 force_operational = False
                 try:
                     from services.speaker_state import is_force_operational
@@ -860,12 +1246,30 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                     _kb0 = (front_kb_sources.get("kb") or {}) if isinstance(front_kb_sources, dict) else {}
                     _pb0 = (_kb0.get("answer_playbook_v1") or {}) if isinstance(_kb0, dict) else {}
                     _rs0 = (_pb0.get("runtime_selector_v1") or {}) if isinstance(_pb0, dict) else {}
-                    front_mode = str((_rs0.get("mode") or "packs_v1")).strip()
+                    front_mode_raw = str((_rs0.get("mode") or "packs_v1"))
+                    front_mode = front_mode_raw.strip().lower()
                 except Exception:
                     front_kb_sources = None
+                    front_mode_raw = "packs_v1"
                     front_mode = "packs_v1"
 
-                if ai_turns < MAX_AI_TURNS and (not force_operational) and front_mode == "packs_v1":
+                
+                # ✅ Log do gate com os 3 valores que decidem o turno 2+
+                try:
+                    logging.info(
+                        "[WA_BOT][FRONT_GATE_DECISION] waKey=%s ai_turns=%s max=%s force_operational=%s front_mode=%s",
+                        (wa_key or "")[:32],
+                        ai_turns,
+                        MAX_AI_TURNS,
+                        bool(force_operational),
+                        (front_mode or "")[:32],
+                    )
+                except Exception:
+                    pass
+
+                front_turns_allowed = bool((ai_turns < MAX_AI_TURNS) or POST5_AI_ENABLED)
+
+                if front_turns_allowed and (not force_operational) and front_mode == "packs_v1":
                     try:
                         front_attempted = True
                         from services.conversational_front import handle as _front_handle  # type: ignore
@@ -877,7 +1281,8 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         state_summary = {
                             "ai_turns": ai_turns,
                             "is_lead": True,
-                            "name_hint": ctx.get("displayName") or ctx.get("leadName") or "",
+                            "name_hint": ctx.get("name_hint") or ctx.get("displayName") or ctx.get("leadName") or "",
+                            "segment_hint": ctx.get("segment_hint") or "",
                             # Micro-contexto (best-effort). Se não vier, segue vazio.
                             "last_intent": ctx.get("last_intent") or ctx.get("lastIntent") or "",
                             "last_user_goal": ctx.get("last_user_goal") or ctx.get("lastUserGoal") or "",
@@ -899,34 +1304,46 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             ) or {}
 
 
-                        # ✅ packs_v1: se vier decider (sem replyText), renderiza via Pack Engine (determinístico)
+                        # ✅ packs_v1: render determinístico só entra como RESCUE, não como atropelo da IA
                         try:
                             dec = (front_out.get("decider") or {}) if isinstance(front_out, dict) else {}
-                            if dec and not str(front_out.get("replyText") or "").strip():
+                            current_reply = str((front_out.get("replyText") or "") if isinstance(front_out, dict) else "").strip()
+                            current_source = str((front_out.get("replySource") or "") if isinstance(front_out, dict) else "").strip().lower()
+
+                            should_rescue_with_pack = bool(
+                                dec and (
+                                    (not current_reply)
+                                    or current_source in ("pack_engine_fallback_default", "front_fallback_structural", "fallback")
+                                )
+                            )
+
+                            if should_rescue_with_pack:
                                 kb = ((front_kb_sources or {}).get("kb") or {}) if isinstance(front_kb_sources, dict) else {}
                                 if not kb:
                                     kb = (_fetch_front_kb_sources().get("kb") or {})
                                 rend = _render_pack_reply(dec, kb)
                                 if rend.get("ok"):
-                                    front_out["replyText"] = rend.get("replyText") or ""
-                                    if str(rend.get("spokenText") or "").strip():
-                                        front_out["spokenText"] = rend.get("spokenText") or ""
-                                    front_out["packId"] = rend.get("packId") or ""
-                                    front_out["renderMode"] = rend.get("renderMode") or ""
-                                    front_out["segmentKey"] = rend.get("segmentKey") or ""
-                                    front_out["replySource"] = "pack_engine"
+                                    front_out = _prefer_structured_front_reply(front_out, rend)
                         except Exception:
                             pass
 
-                        # ✅ transição: se o decider já captou intenção operacional com boa confiança, pula front no próximo turno
+                        # ✅ transição: só faz sentido para CUSTOMER FINAL (quando existe uid_owner).
+                        # Para LEAD (uid_owner vazio), NÃO deve pular o Módulo 1, senão derruba a conversa pro fallback cedo.
                         try:
                             dec = (front_out.get("decider") or {}) if isinstance(front_out, dict) else {}
                             _intent = str(dec.get("intent") or "").strip().upper()
                             _conf = str(dec.get("confidence") or "").strip().lower()
                             operational_intents = {"SCHEDULE","BOOK","AGENDA","AGENDAR","ORDERS","ORDER","PEDIDO","PEDIDOS","STATUS","PROCESS","ACTIVATE"}
-                            if _intent in operational_intents and _conf in ("high", "medium"):
+                            # ✅ LEAD (uid_owner vazio) NÃO pode ligar force_operational.
+                            # Só permitimos isso quando houver uid_owner (cliente final / operacional).
+                            if (uid_owner or "").strip() and _intent in operational_intents and _conf in ("high", "medium"):
                                 from services.speaker_state import set_force_operational
-                                set_force_operational(wa_key, True, reason=f"intent={_intent} conf={_conf}", uid_owner=(uid_owner or None))
+                                set_force_operational(
+                                    wa_key,
+                                    True,
+                                    reason=f"intent={_intent} conf={_conf}",
+                                    uid_owner=(uid_owner or None),
+                                )
                         except Exception:
                             pass
 
@@ -953,7 +1370,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             # Telemetria leve (ignorada se o worker não usar)
                             "kbSnapshotSizeChars": len(kb_snapshot or ""),
                             # Auditoria: mata a dúvida "quem respondeu?"
-                            "replySource": "front",
+                            "replySource": str(front_out.get("replySource") or "front"),
                             # Custo (best-effort) vindo do front
                             "tokenUsage": front_out.get("tokenUsage") or {},
                             # Produto: o worker é o dono do áudio. Se entrou por áudio, ele decide falar.
@@ -962,22 +1379,28 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "ttsOwner": "worker",
                         }
                         # ✅ Produto: SEND_LINK = venda fechada (link-only, sem pergunta)
+                        # Guard-rail: NÃO mandar link cedo se o usuário não pediu link/site.
                         try:
                             if str(out.get("planNextStep") or "").strip().upper() == "SEND_LINK":
-                                _url = "https://www.meirobo.com.br"
-                                _rt0 = (out.get("replyText") or "").strip()
-                                if ("http://" not in _rt0) and ("https://" not in _rt0):
-                                    out["replyText"] = f"Perfeito. Aqui está o link pra assinar agora:\n{_url}"
+                                _wants_link = _looks_like_link_request(text or "")
+                                if _wants_link:
+                                    _url = "https://www.meirobo.com.br"
+                                    _rt0 = (out.get("replyText") or "").strip()
+                                    if ("http://" not in _rt0) and ("https://" not in _rt0):
+                                        out["replyText"] = f"Perfeito. Aqui está o link pra assinar agora:\n{_url}"
+                                    else:
+                                        # se já tem link, garante que não termina com pergunta
+                                        qpos = _rt0.find("?")
+                                        if qpos != -1:
+                                            out["replyText"] = (_rt0[: qpos]).rstrip()
+                                    # ÁUDIO (humanizado): o front pode ter montado spokenText (com nome).
+                                    # Se não vier, usamos um fallback curto (sem falar URL).
+                                    out["spokenText"] = (out.get("spokenText") or (
+                                        "Fechado. Te enviei o link no texto agora pra você copiar e assinar."
+                                    )).strip()
                                 else:
-                                    # se já tem link, garante que não termina com pergunta
-                                    qpos = _rt0.find("?")
-                                    if qpos != -1:
-                                        out["replyText"] = (_rt0[: qpos]).rstrip()
-                                # ÁUDIO (humanizado): o front pode ter montado spokenText (com nome).
-                                # Se não vier, usamos um fallback curto (sem falar URL).
-                                out["spokenText"] = (out.get("spokenText") or (
-                                    "Fechado. Te enviei o link no texto agora pra você copiar e assinar."
-                                )).strip()
+                                    # downgrade seguro: mantém reply do front e não força link-only
+                                    out["planNextStep"] = "NONE"
                         except Exception:
                             pass
 
@@ -1018,7 +1441,21 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         except Exception:
                             pass
 
-                        # guard: texto vazio nunca passa nunca passa
+                                                # Fallback de segurança: se o front vier vazio (JSON incompleto / bug raro),
+                        # tenta um pack institucional padrão pra nunca ficar mudo.
+                        if not str(out.get("replyText") or "").strip():
+                            try:
+                                _kb_fb = ((front_kb_sources or {}).get("kb") or {}) if isinstance(front_kb_sources, dict) else {}
+                                if not _kb_fb:
+                                    _kb_fb = (_fetch_front_kb_sources().get("kb") or {})
+                                _rend_fb = _render_pack_reply({"packId": "PACK_A_WHAT_IS", "renderMode": "short"}, _kb_fb)
+                                if _rend_fb.get("ok") and str(_rend_fb.get("replyText") or "").strip():
+                                    out["replyText"] = str(_rend_fb.get("replyText") or "").strip()
+                                    out["replySource"] = "pack_engine_fallback_default"
+                            except Exception:
+                                pass
+
+# guard: texto vazio nunca passa nunca passa
                         if out["replyText"]:
                             # 🔒 Mata a confusão de "IA primeiro vs fallback":
                             # Se o FRONT respondeu, isso é IA-first por definição.
@@ -1026,7 +1463,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 "ia_first": True,
                                 # Mantém compat com telemetria esperada no worker/outbox
                                 "iaSource": str((front_out.get("iaSource") or "front")),
-                                "replySource": "front",
+                                "replySource": str(front_out.get("replySource") or "front"),
                                 "route": "conversational_front",
                                 "fallbackReason": "",
                             }
@@ -1048,6 +1485,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 )
                             except Exception:
                                 pass
+                            _final_cut_one_q(out)
                             return out
                         else:
                             front_reason = "front_empty_reply"
@@ -1065,6 +1503,30 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             )
                         except Exception:
                             pass
+                else:
+                    # ✅ Nunca mais cair em FRONT_FALLBACK reason=unknown:
+                    # registra por que o front NÃO rodou nesse turno.
+                    try:
+                        if not (wa_key or "").strip():
+                            front_reason = "front_missing_wa_key"
+                        elif int(ai_turns) >= int(MAX_AI_TURNS) and (not POST5_AI_ENABLED):
+                            front_reason = "front_max_turns"
+                        elif int(ai_turns) >= int(MAX_AI_TURNS) and POST5_AI_ENABLED:
+                            front_reason = "front_post5_allowed_but_not_used"
+                        elif bool(force_operational):
+                            front_reason = "front_force_operational"
+                        elif str(front_mode or "").strip().lower() != "packs_v1":
+                            _raw = (front_mode_raw or "").strip()
+                            if _raw:
+                                front_reason = ("front_mode_mismatch:" + _raw[:24])
+                            else:
+                                front_reason = "front_mode_mismatch"
+                        else:
+                            front_reason = "front_gate_blocked"
+                    except Exception:
+                        front_reason = front_reason or "front_gate_blocked"
+
+
         except Exception:
             pass
 
@@ -1074,8 +1536,14 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             if not front_reason:
                 if not bool(CONVERSATIONAL_FRONT):
                     front_reason = "front_disabled"
-                elif "ai_turns" in locals() and int(ai_turns) >= int(MAX_AI_TURNS):
+                elif "ai_turns" in locals() and int(ai_turns) >= int(MAX_AI_TURNS) and (not POST5_AI_ENABLED):
                     front_reason = "front_max_turns"
+                elif "ai_turns" in locals() and int(ai_turns) >= int(MAX_AI_TURNS) and POST5_AI_ENABLED:
+                    front_reason = "front_post5_allowed_but_not_used"
+                elif "force_operational" in locals() and bool(force_operational):
+                    front_reason = "front_force_operational"
+                elif "front_mode" in locals() and str(front_mode or "").strip().lower() != "packs_v1":
+                    front_reason = "front_mode_mismatch"
                 else:
                     front_reason = "unknown"
             logging.info(
@@ -1114,15 +1582,20 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 _intent = str(detected_intent or "").strip().upper()
                 _conf = str(confidence or "").strip().lower()
                 operational_intents = {"SCHEDULE","BOOK","AGENDA","AGENDAR","ORDERS","ORDER","PEDIDO","PEDIDOS","STATUS","PROCESS","ACTIVATE"}
-                if _turns >= 5:
-                    mode = "operational"
-                elif _intent in operational_intents and _conf in ("high", "medium"):
-                    mode = "operational"
+                # ✅ Canon: só CUSTOMER FINAL entra em operacional (uid_owner).
+                # Nunca usar ctx["uid"] aqui (pode vazar/contaminar em LEAD).
+                uid_oper = str(ctx.get("uid_owner") or "").strip()
+                if uid_oper:
+                    # Só cliente final (uid_owner) pode entrar em operacional.
+                    if _turns >= 5:
+                        mode = "operational"
+                    elif _intent in operational_intents and _conf in ("high", "medium"):
+                        mode = "operational"
             except Exception:
                 mode = "sales"
 
             if mode == "operational":
-                uid_oper = str(ctx.get("uid_owner") or ctx.get("uid") or "").strip()
+                uid_oper = str(ctx.get("uid_owner") or "").strip()
                 if uid_oper:
                     from services.bot_handlers import customer_final  # novo
                     ctx["force_operational"] = True
@@ -1213,8 +1686,16 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             else:
                 out["ttsOwner"] = "worker"
 
+            # ✅ Bugfix: se o Módulo 2 decidiu SEND_LINK, garante link no texto final
+            try:
+                _ns = str(out.get("planNextStep") or "").strip()
+                out["replyText"] = _ensure_send_link_in_reply(out.get("replyText") or "", _ns)
+            except Exception:
+                pass
+
             # ⚠️ IMPORTANTE: NÃO gerar áudio aqui para LEAD.
             # O worker (routes/ycloud_tasks_bp.py) decide áudio/texto e faz TTS.
+            _final_cut_one_q(out)
             return out
 
         except Exception as e:
@@ -1255,6 +1736,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         },
                         "ttsOwner": "worker",
                     }
+                    _final_cut_one_q(out)
                     return out
             except Exception:
                 pass
@@ -1271,6 +1753,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 },
                 "ttsOwner": "worker",
             }
+            _final_cut_one_q(out)
             return out
     # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
     actor_type = str((ctx.get("actor_type") or "")).strip().lower()
@@ -1336,7 +1819,16 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         out["aiMeta"] = am
                     except Exception:
                         pass
+                                        # ✅ Bugfix: se o Módulo 2 (customer_final) decidiu SEND_LINK, garante link no texto final
+                    try:
+                        _ns = str(out.get("planNextStep") or "").strip()
+                        out["replyText"] = _ensure_send_link_in_reply(out.get("replyText") or "", _ns)
+                    except Exception:
+                        pass
+
+                    _final_cut_one_q(out)
                     return out
+
         except Exception:
             pass
 
@@ -1378,6 +1870,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "ttsOwner": "worker",
                         }
                         # ⚠️ IMPORTANTE: NÃO gerar áudio aqui (evita duplicidade de TTS).
+                        _final_cut_one_q(out)
                         return out
         except Exception as e:
             # Nunca quebrar suporte por causa do v2; cai no legacy
@@ -1419,6 +1912,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             # 🔒 Garante que o áudio será decidido no worker
             "ttsOwner": "worker",
         }
+        _final_cut_one_q(out)
         return out
 
     except Exception as e:
@@ -1433,6 +1927,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             # 🔒 Garante que o áudio será decidido no worker
             "ttsOwner": "worker",
         }
+        _final_cut_one_q(out)
         return out
 
 

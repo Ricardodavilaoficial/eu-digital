@@ -11,7 +11,7 @@ from flask import Flask, jsonify, request, Response, g
 from flask_cors import CORS
 from uuid import uuid4  # <-- usado no req_id do /api/cadastro
 
-print("[boot] app.py fachada enxuta carregado ✓", flush=True)
+print("[boot] app.py fachada enxuta carregado OK", flush=True)
 logging.basicConfig(level=logging.INFO)
 
 # =====================================
@@ -120,11 +120,12 @@ ADMIN_UID_ALLOWLIST = set(
     if x.strip()
 )
 
-try:
-    # Helper canônico do projeto para extrair UID do Bearer (Firebase ID token)
-    from services.auth import get_uid_from_bearer  # type: ignore
-except Exception:
-    get_uid_from_bearer = None  # type: ignore
+def _get_uid_from_bearer_helper():
+    try:
+        from services.auth import get_uid_from_bearer
+        return get_uid_from_bearer
+    except Exception:
+        return None
 
 
 @app.route("/admin/ping", methods=["GET"])
@@ -134,11 +135,11 @@ def admin_ping():
     401 se não tiver token / token inválido.
     403 se não estiver na allowlist de admin.
     """
-    if get_uid_from_bearer is None:
+    if _get_uid_from_bearer_helper() is None:
         return jsonify({"ok": False, "error": "auth_helper_not_available"}), 500
 
     try:
-        uid = get_uid_from_bearer(request)
+        uid = _get_uid_from_bearer_helper()(request) if _get_uid_from_bearer_helper() else None
     except Exception:
         return jsonify({"ok": False, "error": "invalid_token"}), 401
 
@@ -760,7 +761,15 @@ def _link_sender_uid_best_effort(telefone_digits: str, uid: str, nome: str = "",
     except Exception:
         return
 
-from services.wa_send import send_text as wa_send_text
+_WA_SEND_FN = None
+
+def _get_wa_send():
+    global _WA_SEND_FN
+    if _WA_SEND_FN is None:
+        from services.wa_send import send_text as wa_send_text
+        _WA_SEND_FN = wa_send_text
+    return _WA_SEND_FN
+
 
 @app.route("/api/send-text", methods=["GET", "POST"])
 def api_send_text():
@@ -781,7 +790,7 @@ def api_send_text():
 
     last_resp = None
     for cand in cands:
-        ok, resp = wa_send_text(cand, body)
+        ok, resp = _get_wa_send()(cand, body)
         if ok:
             return {"ok": True, "used": cand, "eq_key": eq_key, "resp": resp}, 200
         last_resp = resp
@@ -877,8 +886,20 @@ def verify_turnstile(token: str, client_ip: str) -> Tuple[bool, list, dict]:
     except Exception as e:
         return False, [f"exception:{type(e).__name__}"], {"error": str(e)}
 
-from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
-from services.db import db
+_DB_CLIENT = None
+
+def _get_db():
+    global _DB_CLIENT
+    if _DB_CLIENT is None:
+        from services.db import db
+        _DB_CLIENT = db
+    return _DB_CLIENT
+
+
+def _get_coupons():
+    from services.coupons import find_cupom_by_codigo, validar_consumir_cupom
+    return find_cupom_by_codigo, validar_consumir_cupom
+
 
 # =====================================
 # Admin — geração de cupons
@@ -930,7 +951,7 @@ def _create_admin_coupon(body: dict) -> dict:
     origem  = (body.get("origem") or "admin-cupons").strip()
 
     now = datetime.now(timezone.utc)
-    col = db.collection("cuponsAtivacao")
+    col = _get_db().collection("cuponsAtivacao")
 
     # Gera código único (tenta algumas vezes)
     codigo = None
@@ -1037,7 +1058,7 @@ def admin_cupons_list():
         except Exception:
             limit = 50
 
-        col = db.collection("cuponsAtivacao")
+        col = _get_db().collection("cuponsAtivacao")
         query = col.limit(limit)
         docs = query.stream()
 
@@ -1085,7 +1106,7 @@ def api_cupons_validar_publico():
         data = request.get_json(silent=True) or {}
         codigo = (data.get("codigo") or "").strip()
         if not codigo: return jsonify({"ok": False, "reason": "codigo_obrigatorio"}), 400
-        cupom = find_cupom_by_codigo(codigo)
+        cupom = _get_coupons()[0](codigo)
         if not cupom: return jsonify({"ok": False, "reason": "nao_encontrado"}), 400
 
         status = (cupom.get("status") or "").lower()
@@ -1120,18 +1141,18 @@ def api_cupons_ativar():
         uid = _uid_from_bearer() or (data.get("uid") or "").strip()  # ← TROCA aplicada
         if not uid: return jsonify({"erro": "Não autenticado"}), 401
 
-        cupom = find_cupom_by_codigo(codigo)
+        cupom = _get_coupons()[0](codigo)
         ctx = {
             "ip": request.headers.get("CF-Connecting-IP")
                   or (request.headers.get("X-Forwarded-For","").split(",")[0].strip() if request.headers.get("X-Forwarded-For") else "")
                   or request.remote_addr or "",
             "ua": request.headers.get("User-Agent") or "",
         }
-        ok, msg, plano = validar_consumir_cupom(cupom, uid, ctx=ctx)
+        ok, msg, plano = _get_coupons()[1](cupom, uid, ctx=ctx)
         if not ok: return jsonify({"erro": msg}), 400
 
         now_iso = datetime.now(timezone.utc).isoformat()
-        db.collection("profissionais").document(uid).set({
+        _get_db().collection("profissionais").document(uid).set({
             "plan": (plano or "start"),
             "plano": (plano or "start"),
             "licenca": {"origem": "cupom", "codigo": codigo, "activatedAt": now_iso},
@@ -1153,18 +1174,18 @@ def api_cupons_ativar_legado():
         uid = (data.get("uid") or "").strip()
         if not codigo or not uid: return jsonify({"erro": "Código do cupom é obrigatório e UID também"}), 400
 
-        cupom = find_cupom_by_codigo(codigo)
+        cupom = _get_coupons()[0](codigo)
         ctx = {
             "ip": request.headers.get("CF-Connecting-IP")
                   or (request.headers.get("X-Forwarded-For","").split(",")[0].strip() if request.headers.get("X-Forwarded-For") else "")
                   or request.remote_addr or "",
             "ua": request.headers.get("User-Agent") or "",
         }
-        ok, msg, plano = validar_consumir_cupom(cupom, uid, ctx=ctx)
+        ok, msg, plano = _get_coupons()[1](cupom, uid, ctx=ctx)
         if not ok: return jsonify({"erro": msg}), 400
 
         now_iso = datetime.now(timezone.utc).isoformat()
-        db.collection("profissionais").document(uid).set({
+        _get_db().collection("profissionais").document(uid).set({
             "plan": (plano or "start"),
             "plano": (plano or "start"),
             "licenca": {"origem": "cupom", "codigo": codigo, "activatedAt": now_iso},
@@ -1198,7 +1219,7 @@ def api_cnpj_availability():
 
 def _ensure_profissional_doc(uid: str, nome: str, email: str, cnpj: str):
     now_iso = datetime.now(timezone.utc).isoformat()
-    db.collection("profissionais").document(uid).set({
+    _get_db().collection("profissionais").document(uid).set({
         "nome": nome, "email": email, "cnpj": cnpj,
         "onboarding": {"status": "created", "createdAt": now_iso},
         "updatedAt": now_iso,
@@ -1471,3 +1492,10 @@ def __adc_debug():
 # =====================================
 # EOF
 # =====================================
+if __name__ == "__main__":
+    host = os.getenv("HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", "8080"))
+    dev_local = os.getenv("DEV_LOCAL", "").strip() in ("1", "true", "True", "yes", "on")
+
+    # ✅ Importante no Windows: evita subir 2 processos (reloader)
+    app.run(host=host, port=port, debug=dev_local, use_reloader=False)
