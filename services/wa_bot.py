@@ -1792,6 +1792,34 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         )
                     except Exception:
                         pass
+                    # 🔧 Telemetria enriquecida a partir do contract do FRONT
+                    am = cf.get("aiMeta") or {}
+
+                    contract = cf.get("operationalContract") or {}
+
+                    if isinstance(contract, dict) and contract:
+                        am["kbUsed"] = bool(
+                            contract.get("hydrated_from_docs")
+                            or contract.get("has_example_line")
+                            or contract.get("has_practical_scene")
+                            or contract.get("archetype_id")
+                            or contract.get("segment")
+                        )
+
+                        am["kbExampleUsed"] = bool(contract.get("has_example_line"))
+                        am["kbSceneUsed"] = bool(contract.get("has_practical_scene"))
+
+                        am["kbDocPath"] = (
+                            contract.get("segment")
+                            or contract.get("archetype_id")
+                            or ""
+                        )
+
+                        am["kbRequiredOk"] = bool(contract.get("hydrated_from_docs"))
+
+                        am["kbMissReason"] = "" if am["kbRequiredOk"] else "kb_partial_or_missing"
+                        am["kbMissingFields"] = []
+
                     out = {
                         "ok": True,
                         "route": cf.get("route") or "customer_final",
@@ -1805,7 +1833,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         "replySource": cf.get("replySource") or "customer_final",
                         "decisionDebug": cf.get("decisionDebug") or {},
                         # aiMeta básico (auditoria)
-                        "aiMeta": cf.get("aiMeta") or {"mode": "customer_final"},
+                        "aiMeta": am,
                         "ttsOwner": "worker",
                     }
                     # ✅ complementa aiMeta com carimbo de actor/persona (sem sobrescrever o que já veio)
