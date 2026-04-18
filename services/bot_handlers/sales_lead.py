@@ -5628,44 +5628,63 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
 
         # aiMeta (payload final): worker/outbox/probe podem auditar daqui
         # ==========================================================
+        # 🔧 ENRIQUECE TELEMETRIA DO STATE COM DADOS REAIS DO CONTRACT
+        contract = st.get("contract") or {}
+
+        if isinstance(contract, dict) and contract:
+            contract_kb_used = bool(
+                contract.get("hydrated_from_docs")
+                or contract.get("has_example_line")
+                or contract.get("has_practical_scene")
+                or contract.get("archetype_id")
+                or contract.get("segment_id")
+                or contract.get("segment")
+            )
+
+            st["kb_used"] = bool(st.get("kb_used") is True or contract_kb_used)
+            st["kb_example_used"] = bool(
+                st.get("kb_example_used") is True or bool(contract.get("has_example_line"))
+            )
+            st["kb_scene_used"] = bool(
+                st.get("kb_scene_used") is True or bool(contract.get("has_practical_scene"))
+            )
+
+            if not str(st.get("kb_doc_path") or "").strip():
+                st["kb_doc_path"] = (
+                    contract.get("subsegment_id")
+                    or contract.get("segment_id")
+                    or contract.get("archetype_id")
+                    or ""
+                )
+
+            if (
+                not bool(st.get("kb_required_ok"))
+                and (
+                    contract.get("hydrated_from_docs")
+                    or contract.get("has_example_line")
+                    or contract.get("has_practical_scene")
+                )
+            ):
+                st["kb_required_ok"] = True
+                if not bool(st.get("kb_missing_fields")):
+                    st["kb_miss_reason"] = ""
+
         ai_meta = {
             "iaSource": str(st.get("understand_source") or und.get("source") or "").strip(),
+            "kbDocPath": str(st.get("kb_doc_path") or "").strip(),
+            "kbContractId": str(st.get("kb_contract_id") or "").strip(),
+            "kbSliceFields": list(st.get("kb_slice_fields") or []),
+            "kbSliceSizeChars": int(st.get("kb_slice_size_chars") or 0),
+            "kbRequiredOk": bool(st.get("kb_required_ok") is True),
+            "kbMissReason": str(st.get("kb_miss_reason") or "").strip(),
+            "kbMissingFields": list(st.get("kb_missing_fields") or []),
             "kbUsed": bool(st.get("kb_used") is True),
-            "kbExampleUsed": str(st.get("kb_example_used") or "").strip(),
+            "kbExampleUsed": bool(st.get("kb_example_used") is True),
+            "kbSceneUsed": bool(st.get("kb_scene_used") is True),
             "spokenSource": str(st.get("spoken_source") or spoken_src).strip(),
             "replyTextRole": str(st.get("reply_text_role") or "audit_text").strip(),
             "spokenTextRole": str(st.get("spoken_text_role") or spoken_role).strip(),
             "funnelMoment": str(st.get("funnel_moment") or "").strip(),
-        }
-
-        return {
-            "replyText": rt,
-            "spokenText": spoken,
-            "prefersText": bool(prefers_text),
-            "understanding": und,
-
-            # Campos auxiliares (não quebram nada se o worker ignorar)
-            "planIntent": str(st.get("plan_intent") or und.get("intent") or ""),
-            "planNextStep": str(und.get("next_step") or ""),
-            "nameUse": _name_use_out,
-            "leadName": _lead_name_out,
-            "kbDoc": "platform_kb/sales",
-            "kbVersion": str(st.get("kb_version") or ""),
-            "kbLoaded": bool(st.get("kb_loaded") is True),
-
-            # Telemetria canônica (worker/outbox lê daqui)
-            "aiMeta": ai_meta,
-
-            # Mirrors "flat" (opcional, mas ajuda debug e compat)
-            "kbDocPath": ai_meta.get("kbDocPath", ""),
-            "kbContractId": ai_meta.get("kbContractId", ""),
-            "kbSliceFields": ai_meta.get("kbSliceFields", []),
-            "kbSliceSizeChars": ai_meta.get("kbSliceSizeChars", 0),
-            "kbRequiredOk": ai_meta.get("kbRequiredOk", False),
-            "kbMissReason": ai_meta.get("kbMissReason", ""),
-            "kbMissingFields": ai_meta.get("kbMissingFields", []),
-            "kbUsed": ai_meta.get("kbUsed", False),
-            "kbExampleUsed": ai_meta.get("kbExampleUsed", ""),
         }
 
     # ==========================================================
