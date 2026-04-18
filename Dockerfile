@@ -45,21 +45,7 @@ WORKDIR /app
 # -------------------------
 # Dependncias Python (camada separada = cache saudvel)
 # -------------------------
-# requirements pode estar na raiz OU dentro de mei-robo-whatsapp-webhook/
-# copiamos o que existir, sem quebrar o build.
-COPY requirements*.txt /tmp/req_root/
-COPY mei-robo-whatsapp-webhook/requirements*.txt /tmp/req_webhook/
-
-RUN set -eux; \
-    if [ -f /tmp/req_root/requirements.txt ]; then \
-        cp /tmp/req_root/requirements.txt /app/requirements.txt; \
-    elif [ -f /tmp/req_webhook/requirements.txt ]; then \
-        cp /tmp/req_webhook/requirements.txt /app/requirements.txt; \
-    else \
-        echo "ERROR: requirements.txt not found in build context"; \
-        ls -la /; ls -la /tmp; ls -la /tmp/req_root || true; ls -la /tmp/req_webhook || true; \
-        exit 1; \
-    fi
+COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # -------------------------
