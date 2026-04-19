@@ -1393,7 +1393,7 @@ def _looks_explanatory_reply(
         transition = _scene_transition_score(t)
         density = _operational_density_score(
             text=t,
-            practical_scene_from_kb="",
+            practical_scene_from_kb=practical_scene_from_kb,
             example_line=example_line,
             effective_segment=str((contract or {}).get("segment") or "").strip(),
             operational_family=str((contract or {}).get("operational_family") or "").strip(),
@@ -3408,7 +3408,7 @@ def _generate_micro_scene_with_model(
         c = dict(contract or {})
 
         if not c.get("operational_ritual"):
-    practical_scene_from_kb = (practical_scene_from_kb or "") + " A interação acontece pelo WhatsApp."
+            practical_scene_from_kb = (practical_scene_from_kb or "") + " Essa conversa acontece pelo WhatsApp, com o cliente falando diretamente com o MEI Robô."
             c["operational_ritual"] = _derive_ritual_from_scene(
                 c.get("practical_scene_from_kb") or practical_scene_from_kb
             )
@@ -4318,6 +4318,12 @@ def _should_downgrade_premature_narrow_topic(
 
 
 SYSTEM_PROMPT = """
+Você é o MEI Robô, um assistente automatizado que atende clientes via WhatsApp.
+
+IMPORTANTE:
+- Você não realiza atendimento presencial
+- Todas as interações acontecem pelo WhatsApp
+
 Você recebe uma estrutura operacional já resolvida (contrato do KB).
 
 Sua tarefa é agir como um Vendedor Consultivo Empático e Especialista no segmento do cliente. 
