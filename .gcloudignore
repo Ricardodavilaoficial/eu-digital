@@ -1,5 +1,14 @@
-# gcloudignore para Cloud Build/Run
-# Inclui as regras do gitignore, mas re-inclui o webhook YCloud
+.gcloudignore
+.git
+.gitignore
+
 #!include:.gitignore
-!routes/ycloud_webhook_bp.py
-!routes/ycloud_webhook_bp.py
+
+!Dockerfile
+!requirements.txt
+!app.py
+!services/**
+!routes/**
+!templates/**
+!public/**
+
