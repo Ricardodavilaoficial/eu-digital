@@ -3408,6 +3408,7 @@ def _generate_micro_scene_with_model(
         c = dict(contract or {})
 
         if not c.get("operational_ritual"):
+    practical_scene_from_kb = (practical_scene_from_kb or "") + " A interação acontece pelo WhatsApp."
             c["operational_ritual"] = _derive_ritual_from_scene(
                 c.get("practical_scene_from_kb") or practical_scene_from_kb
             )
