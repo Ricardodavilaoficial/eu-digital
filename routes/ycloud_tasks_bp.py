@@ -20,8 +20,8 @@ def _backend_base(request) -> str:
     host = (getattr(request, "host_url", "") or "").strip().rstrip("/")
 
     if base.startswith("http://"):
-    from google.cloud import storage
-    from services.gcp_creds import get_storage_client
+        from google.cloud import storage
+        from services.gcp_creds import get_storage_client
         base = "https://" + base[len("http://"):]
     if host.startswith("http://"):
         host = "https://" + host[len("http://"):]
