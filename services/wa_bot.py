@@ -1457,16 +1457,70 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
 # guard: texto vazio nunca passa nunca passa
                         if out["replyText"]:
-                            # 🔒 Mata a confusão de "IA primeiro vs fallback":
-                            # Se o FRONT respondeu, isso é IA-first por definição.
-                            out["aiMeta"] = {
-                                "ia_first": True,
-                                # Mantém compat com telemetria esperada no worker/outbox
-                                "iaSource": str((front_out.get("iaSource") or "front")),
-                                "replySource": str(front_out.get("replySource") or "front"),
-                                "route": "conversational_front",
-                                "fallbackReason": "",
-                            }
+                            # 🔒 FRONT respondeu => IA-first por definição.
+                            # Mantém compat com o worker/outbox, mas SEM perder a telemetria
+                            # rica já produzida pelo próprio front e/ou pelo operationalContract.
+                            am = dict(front_out.get("aiMeta") or {})
+                            contract = front_out.get("operationalContract") or {}
+
+                            am.setdefault("ia_first", True)
+                            am["iaSource"] = str(front_out.get("iaSource") or "front")
+                            am["replySource"] = str(front_out.get("replySource") or "front")
+                            am["route"] = "conversational_front"
+                            am["fallbackReason"] = ""
+
+                            if isinstance(contract, dict) and contract:
+                                kb_used = bool(
+                                    contract.get("hydrated_from_docs")
+                                    or contract.get("has_example_line")
+                                    or contract.get("has_practical_scene")
+                                    or contract.get("archetype_id")
+                                    or contract.get("segment")
+                                )
+
+                                am["kbUsed"] = kb_used
+                                am["kbRequiredOk"] = bool(contract.get("hydrated_from_docs"))
+                                am["kbExampleUsed"] = bool(contract.get("has_example_line"))
+                                am["kbSceneUsed"] = bool(contract.get("has_practical_scene"))
+
+                                am["kbDocPath"] = (
+                                    contract.get("segment")
+                                    or contract.get("archetype_id")
+                                    or ""
+                                )
+
+                                am["kbContractId"] = str(
+                                    contract.get("contract_id")
+                                    or contract.get("archetype_id")
+                                    or contract.get("segment")
+                                    or ""
+                                )
+
+                                if am["kbRequiredOk"]:
+                                    am["kbMissReason"] = ""
+                                    am["kbMissingFields"] = []
+                                else:
+                                    missing = []
+                                    if not contract.get("hydrated_from_docs"):
+                                        missing.append("hydrated_from_docs")
+                                    if not (
+                                        contract.get("has_example_line")
+                                        or contract.get("has_practical_scene")
+                                    ):
+                                        missing.append("example_or_scene")
+                                    am["kbMissReason"] = "kb_partial_or_missing"
+                                    am["kbMissingFields"] = missing
+                            else:
+                                am.setdefault("kbUsed", False)
+                                am.setdefault("kbRequiredOk", False)
+                                am.setdefault("kbDocPath", "")
+                                am.setdefault("kbContractId", "")
+                                am.setdefault("kbExampleUsed", False)
+                                am.setdefault("kbSceneUsed", False)
+                                am.setdefault("kbMissReason", "missing_operational_contract")
+                                am.setdefault("kbMissingFields", ["operationalContract"])
+
+                            out["aiMeta"] = am
                             # incrementa contador SOMENTE se o front realmente respondeu
                             try:
                                 from services.speaker_state import bump_ai_turns  # type: ignore
