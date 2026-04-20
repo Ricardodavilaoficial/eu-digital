@@ -196,6 +196,80 @@ def _ensure_send_link_in_reply(reply: str, next_step: str) -> str:
         return str(reply or "").strip()
 
 
+def _is_sales_text_only_closure(out: Dict[str, Any]) -> bool:
+    """
+    Regra soberana de produto (100% estrutural, sem palavras-chave):
+    Se o sistema indicar fechamento/ativação, a resposta deve ser TEXTO ONLY.
+    """
+    try:
+        out = out or {}
+
+        plan_next = str(out.get("planNextStep") or "").strip().upper()
+        intent_final = str(out.get("intentFinal") or out.get("planIntent") or "").strip().upper()
+        prefers_text = bool(out.get("prefersText"))
+
+        und = out.get("understanding") or {}
+        if isinstance(und, dict):
+            und_intent = str(und.get("intent") or "").strip().upper()
+            und_next = str(und.get("next_step") or und.get("nextStep") or "").strip().upper()
+        else:
+            und_intent = ""
+            und_next = ""
+
+        # Fonte principal: fluxo definido pelo sistema
+        if plan_next == "SEND_LINK":
+            return True
+
+        if und_next == "SEND_LINK":
+            return True
+
+        # Fonte secundária: intenção semântica consolidada
+        if intent_final in ("ACTIVATE", "ACTIVATE_SEND_LINK", "SIGNUP_LINK"):
+            return True
+
+        if und_intent in ("ACTIVATE", "ACTIVATE_SEND_LINK", "SIGNUP_LINK"):
+            return True
+
+        # Fonte auxiliar: coerência com decisão já tomada
+        if prefers_text and intent_final:
+            return True
+
+        return False
+
+    except Exception:
+        return False
+
+
+def _apply_sales_text_only_closure(out: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Aplica a regra de canal (sem alterar linguagem gerada pela IA).
+    NÃO cria texto novo.
+    NÃO usa frase fixa.
+    """
+    try:
+        out = dict(out or {})
+
+        if not _is_sales_text_only_closure(out):
+            return out
+
+        out["prefersText"] = True
+        out["textOnlyReason"] = "sales_closure_send_link"
+
+        # Garante que nunca vira áudio
+        out.pop("audioUrl", None)
+        out["spokenText"] = ""
+        out["ttsText"] = ""
+
+        dd = out.get("decisionDebug") or {}
+        if isinstance(dd, dict):
+            dd["text_only_closure_applied"] = True
+            out["decisionDebug"] = dd
+
+        return out
+
+    except Exception:
+        return dict(out or {})
+
 
 def _log_sales_lead_fallback(ctx: Optional[Dict[str, Any]], *, reason: str, err: Optional[Exception] = None):
     try:
@@ -214,6 +288,48 @@ def _log_sales_lead_fallback(ctx: Optional[Dict[str, Any]], *, reason: str, err:
     except Exception:
         # nunca quebrar por log
         pass
+
+
+def _apply_safe_ai_meta(out: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Garantia mínima de aiMeta para auditoria, sem alterar comportamento."""
+    try:
+        aiMeta = out.get("aiMeta") or {}
+        if not isinstance(aiMeta, dict):
+            aiMeta = {}
+    except Exception:
+        aiMeta = {}
+
+    try:
+        ctx = ctx or {}
+    except Exception:
+        ctx = {}
+
+    try:
+        aiMeta.setdefault("channel", "whatsapp")
+        aiMeta.setdefault("entryType", (ctx.get("msg_type") or "").lower())
+    except Exception:
+        pass
+
+    try:
+        aiMeta.setdefault("aiTurns", int((ctx or {}).get("ai_turns") or 0))
+        aiMeta.setdefault("maxAiTurns", int(MAX_AI_TURNS))
+    except Exception:
+        pass
+
+    try:
+        if "responseOrigin" not in aiMeta:
+            aiMeta["responseOrigin"] = (
+                "conversational_front" if (ctx or {}).get("free_mode") else "sales_lead"
+            )
+    except Exception:
+        pass
+
+    try:
+        out["aiMeta"] = aiMeta
+    except Exception:
+        pass
+
+    return out
 
 
 
@@ -1088,6 +1204,10 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
     - uid presente -> delega ao wa_bot_legacy.process_change capturando o texto gerado
     """
     ctx = ctx or {}
+    try:
+        ai_turns = int((ctx or {}).get("ai_turns") or 0)
+    except Exception:
+        ai_turns = 0
     from_e164 = (ctx.get("from_e164") or "").strip()
     uid = (uid or "").strip()
     text = text or ""
@@ -1101,6 +1221,10 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
         - Tenta voz do MEI (uid) via /api/voz/tts (se voiceId existir).
         - Fallback: TTS institucional (gera signed URL).
         """
+        # 🔴 REGRA SOBERANA: fechamento comercial nunca vira áudio
+        if _is_sales_text_only_closure(out):
+            return
+
         msg_type = (ctx.get("msg_type") or "").strip().lower()
         if msg_type not in ("audio", "voice", "ptt"):
             return
@@ -1209,15 +1333,16 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 # leitura segura do contador
                 # fail-safe: se não conseguir ler estado, assume 0 (ENTRA no front),
                 # porque o hard cap é garantido pelo MAX_AI_TURNS + bump (best-effort).
-                ai_turns = 0
                 wa_key = (ctx.get("waKey") or ctx.get("wa_key") or ctx.get("from_e164") or "").strip()
                 uid_owner = (ctx.get("uid_owner") or "").strip()
                 try:
                     from services.speaker_state import get_speaker_state  # type: ignore
                     st = get_speaker_state(wa_key, uid_owner=(uid_owner or None)) if wa_key else {}
-                    ai_turns = int(st.get("ai_turns") or 0)
+                    ai_turns = int(st.get("ai_turns") or ai_turns or 0)
+                    if ctx is not None:
+                        ctx["ai_turns"] = ai_turns
                 except Exception:
-                    ai_turns = 0
+                    pass
 
                 try:
                     logging.info(
@@ -1230,6 +1355,11 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 except Exception:
                     pass
 
+                free_mode = ai_turns < MAX_AI_TURNS
+                if ai_turns >= MAX_AI_TURNS:
+                    use_front = False
+                else:
+                    use_front = True
 
                 # Gate do Conversational Front (Módulo 1): só roda em packs_v1 e enquanto não forçado ao operacional
                 front_kb_sources = None
@@ -1267,9 +1397,9 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 except Exception:
                     pass
 
-                front_turns_allowed = bool((ai_turns < MAX_AI_TURNS) or POST5_AI_ENABLED)
+                front_turns_allowed = bool(free_mode)
 
-                if front_turns_allowed and (not force_operational) and front_mode == "packs_v1":
+                if use_front and free_mode and front_turns_allowed and (not force_operational) and front_mode == "packs_v1":
                     try:
                         front_attempted = True
                         from services.conversational_front import handle as _front_handle  # type: ignore
@@ -1303,6 +1433,12 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 state_summary=state_summary,
                             ) or {}
 
+                        try:
+                            ai_turns += 1
+                            if ctx is not None:
+                                ctx["ai_turns"] = ai_turns
+                        except Exception:
+                            pass
 
                         # ✅ packs_v1: render determinístico só entra como RESCUE, não como atropelo da IA
                         try:
@@ -1378,6 +1514,9 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "prefersText": bool(front_out.get("prefersText", False)),
                             "ttsOwner": "worker",
                         }
+
+                        # ✅ Regra de canal (sem alterar linguagem)
+                        out = _apply_sales_text_only_closure(out)
                         # ✅ Produto: SEND_LINK = venda fechada (link-only, sem pergunta)
                         # Guard-rail: NÃO mandar link cedo se o usuário não pediu link/site.
                         try:
@@ -1521,6 +1660,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 am.setdefault("kbMissingFields", ["operationalContract"])
 
                             out["aiMeta"] = am
+                            out = _apply_safe_ai_meta(out, ctx)
                             # incrementa contador SOMENTE se o front realmente respondeu
                             try:
                                 from services.speaker_state import bump_ai_turns  # type: ignore
@@ -1747,8 +1887,12 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             except Exception:
                 pass
 
+            # ✅ Regra de canal (sem alterar linguagem)
+            out = _apply_sales_text_only_closure(out)
+
             # ⚠️ IMPORTANTE: NÃO gerar áudio aqui para LEAD.
             # O worker (routes/ycloud_tasks_bp.py) decide áudio/texto e faz TTS.
+            out = _apply_safe_ai_meta(out, ctx)
             _final_cut_one_q(out)
             return out
 
@@ -1790,6 +1934,8 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         },
                         "ttsOwner": "worker",
                     }
+                    out = _apply_sales_text_only_closure(out)
+                    out = _apply_safe_ai_meta(out, ctx)
                     _final_cut_one_q(out)
                     return out
             except Exception:
@@ -1807,6 +1953,8 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 },
                 "ttsOwner": "worker",
             }
+            out = _apply_sales_text_only_closure(out)
+            out = _apply_safe_ai_meta(out, ctx)
             _final_cut_one_q(out)
             return out
     # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
@@ -1908,6 +2056,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                     except Exception:
                         pass
 
+                    out = _apply_safe_ai_meta(out, ctx)
                     _final_cut_one_q(out)
                     return out
 
@@ -1994,6 +2143,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             # 🔒 Garante que o áudio será decidido no worker
             "ttsOwner": "worker",
         }
+        out = _apply_safe_ai_meta(out, ctx)
         _final_cut_one_q(out)
         return out
 
@@ -2009,6 +2159,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             # 🔒 Garante que o áudio será decidido no worker
             "ttsOwner": "worker",
         }
+        out = _apply_safe_ai_meta(out, ctx)
         _final_cut_one_q(out)
         return out
 

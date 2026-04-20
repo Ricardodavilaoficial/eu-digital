@@ -328,6 +328,18 @@ def _collect_doc_texts(doc: Dict[str, Any]) -> list[str]:
                 continue
             seen.add(norm)
             out.append(str(part).strip())
+        aiMeta = out.setdefault("aiMeta", {})
+
+        # 🔒 Normalização de tipos (evita string "True"/"False")
+        aiMeta["kbUsed"] = bool(aiMeta.get("kbUsed"))
+        aiMeta["kbRequiredOk"] = bool(aiMeta.get("kbRequiredOk"))
+
+        aiMeta.setdefault("usedFallback", False)
+
+        aiMeta["responseOrigin"] = "conversational_front"
+
+        aiMeta["kbHasContext"] = bool(aiMeta.get("kbDocPath"))
+
         return out
     except Exception:
         return []
@@ -6833,7 +6845,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             reply_text = "Me conta um pouquinho melhor o que você quer resolver?"
             spoken_text = reply_text
 
-        return {
+        error_out = {
             "replyText": reply_text,
             "spokenText": spoken_text,
             "understanding": {
@@ -6849,3 +6861,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             "kbSnapshotSizeChars": len((kb_snapshot or "")),
             "tokenUsage": {},
         }
+
+        aiMeta = error_out.setdefault("aiMeta", {})
+
+        # 🔒 Normalização de tipos (evita string "True"/"False")
+        aiMeta["kbUsed"] = bool(aiMeta.get("kbUsed"))
+        aiMeta["kbRequiredOk"] = bool(aiMeta.get("kbRequiredOk"))
+
+        aiMeta.setdefault("usedFallback", False)
+
+        aiMeta["responseOrigin"] = "conversational_front"
+
+        aiMeta["kbHasContext"] = bool(aiMeta.get("kbDocPath"))
+
+        return error_out
