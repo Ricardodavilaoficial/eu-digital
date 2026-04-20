@@ -196,6 +196,56 @@ def _ensure_send_link_in_reply(reply: str, next_step: str) -> str:
         return str(reply or "").strip()
 
 
+
+def _get_signup_url() -> str:
+    try:
+        base = (
+            os.getenv("FRONTEND_BASE")
+            or os.getenv("FRONTEND_BASE_URL")
+            or "https://www.meirobo.com.br"
+        )
+        base = str(base or "").strip().rstrip("/")
+        if not base:
+            return "https://www.meirobo.com.br"
+        if not base.startswith("http"):
+            base = "https://" + base.lstrip("/")
+        return base
+    except Exception:
+        return "https://www.meirobo.com.br"
+
+
+def _pick_lead_name(out: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None) -> str:
+    try:
+        ctx = ctx or {}
+        candidates = [
+            out.get("nameToSay"),
+            out.get("leadName"),
+            out.get("displayName"),
+            out.get("name"),
+            ctx.get("name_hint"),
+            ctx.get("displayName"),
+            ctx.get("leadName"),
+        ]
+        for v in candidates:
+            s = str(v or "").strip()
+            if s:
+                return s
+        return ""
+    except Exception:
+        return ""
+
+
+def _build_sales_text_only_closure_reply(name: str) -> str:
+    try:
+        link = _get_signup_url()
+        nm = str(name or "").strip()
+        if nm:
+            return f"Perfeito, {nm}. Obrigado pelo seu interesse. Aqui está o link para assinar a plataforma MEI Robô:\n{link}"
+        return f"Perfeito. Obrigado pelo seu interesse. Aqui está o link para assinar a plataforma MEI Robô:\n{link}"
+    except Exception:
+        return "Perfeito. Obrigado pelo seu interesse. Aqui está o link para assinar a plataforma MEI Robô:\nhttps://www.meirobo.com.br"
+
+
 def _is_sales_text_only_closure(out: Dict[str, Any]) -> bool:
     """
     Regra soberana de produto (100% estrutural, sem palavras-chave):
@@ -224,14 +274,16 @@ def _is_sales_text_only_closure(out: Dict[str, Any]) -> bool:
             return True
 
         # Fonte secundária: intenção semântica consolidada
-        if intent_final in ("ACTIVATE", "ACTIVATE_SEND_LINK", "SIGNUP_LINK"):
+        closing_intents = {"ACTIVATE","ACTIVATE_SEND_LINK","SIGNUP_LINK","ATIVAR"}
+
+        if intent_final in closing_intents:
             return True
 
-        if und_intent in ("ACTIVATE", "ACTIVATE_SEND_LINK", "SIGNUP_LINK"):
+        if und_intent in closing_intents:
             return True
 
         # Fonte auxiliar: coerência com decisão já tomada
-        if prefers_text and intent_final:
+        if prefers_text and (intent_final in closing_intents or und_intent in closing_intents):
             return True
 
         return False
@@ -240,7 +292,7 @@ def _is_sales_text_only_closure(out: Dict[str, Any]) -> bool:
         return False
 
 
-def _apply_sales_text_only_closure(out: Dict[str, Any]) -> Dict[str, Any]:
+def _apply_sales_text_only_closure(out: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Aplica a regra de canal (sem alterar linguagem gerada pela IA).
     NÃO cria texto novo.
@@ -252,8 +304,23 @@ def _apply_sales_text_only_closure(out: Dict[str, Any]) -> Dict[str, Any]:
         if not _is_sales_text_only_closure(out):
             return out
 
+        lead_name = _pick_lead_name(out, ctx)
+
         out["prefersText"] = True
         out["textOnlyReason"] = "sales_closure_send_link"
+        out["replyText"] = _build_sales_text_only_closure_reply(lead_name)
+        out["planNextStep"] = "SEND_LINK"
+
+        if not str(out.get("intentFinal") or "").strip():
+            und = out.get("understanding") or {}
+            if isinstance(und, dict):
+                und_intent = str(und.get("intent") or "").strip().upper()
+                if und_intent:
+                    out["intentFinal"] = und_intent
+                else:
+                    out["intentFinal"] = "ATIVAR"
+            else:
+                out["intentFinal"] = "ATIVAR"
 
         # Garante que nunca vira áudio
         out.pop("audioUrl", None)
@@ -263,6 +330,7 @@ def _apply_sales_text_only_closure(out: Dict[str, Any]) -> Dict[str, Any]:
         dd = out.get("decisionDebug") or {}
         if isinstance(dd, dict):
             dd["text_only_closure_applied"] = True
+            dd["text_only_closure_reason"] = "sales_closure_send_link"
             out["decisionDebug"] = dd
 
         return out
@@ -1516,7 +1584,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         }
 
                         # ✅ Regra de canal (sem alterar linguagem)
-                        out = _apply_sales_text_only_closure(out)
+                        out = _apply_sales_text_only_closure(out, ctx)
                         # ✅ Produto: SEND_LINK = venda fechada (link-only, sem pergunta)
                         # Guard-rail: NÃO mandar link cedo se o usuário não pediu link/site.
                         try:
@@ -1888,7 +1956,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 pass
 
             # ✅ Regra de canal (sem alterar linguagem)
-            out = _apply_sales_text_only_closure(out)
+            out = _apply_sales_text_only_closure(out, ctx)
 
             # ⚠️ IMPORTANTE: NÃO gerar áudio aqui para LEAD.
             # O worker (routes/ycloud_tasks_bp.py) decide áudio/texto e faz TTS.
@@ -1934,7 +2002,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         },
                         "ttsOwner": "worker",
                     }
-                    out = _apply_sales_text_only_closure(out)
+                    out = _apply_sales_text_only_closure(out, ctx)
                     out = _apply_safe_ai_meta(out, ctx)
                     _final_cut_one_q(out)
                     return out
@@ -1953,7 +2021,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                 },
                 "ttsOwner": "worker",
             }
-            out = _apply_sales_text_only_closure(out)
+            out = _apply_sales_text_only_closure(out, ctx)
             out = _apply_safe_ai_meta(out, ctx)
             _final_cut_one_q(out)
             return out
