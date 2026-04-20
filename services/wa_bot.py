@@ -496,6 +496,9 @@ def _compact_front_kb_doc(
         if include_archetype_id and d.get("archetype_id"):
             out["archetype_id"] = _clip_front_text(d.get("archetype_id"), 80)
 
+        if d.get("name"):
+            out["name"] = _clip_front_text(d.get("name"), 120)
+
         if d.get("conversation_mode"):
             out["conversation_mode"] = _clip_front_text(d.get("conversation_mode"), 80)
 
@@ -516,6 +519,13 @@ def _compact_front_kb_doc(
 
         if d.get("service_noun"):
             out["service_noun"] = _clip_front_text(d.get("service_noun"), 80)
+
+        if d.get("keywords"):
+            out["keywords"] = [
+                _clip_front_text(x, 40)
+                for x in (d.get("keywords") or [])[:8]
+                if _clip_front_text(x, 40)
+            ]
 
         if d.get("common_intents"):
             out["common_intents"] = [
@@ -969,15 +979,15 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
             return work
 
         # 5) agora sim começa a poda do banco novo, do menos crítico para o mais crítico
-        # segments cai antes
-        if work.get("kb_segments_v1"):
-            work["kb_segments_v1"] = {}
+        # archetypes cai antes de segments
+        if work.get("kb_archetypes_v1"):
+            work["kb_archetypes_v1"] = {}
             if _size(work) <= limit:
                 return work
 
-        # archetypes cai depois
-        if work.get("kb_archetypes_v1"):
-            work["kb_archetypes_v1"] = {}
+        # segments só depois, porque ajudam a hidratar melhor o contrato
+        if work.get("kb_segments_v1"):
+            work["kb_segments_v1"] = {}
             if _size(work) <= limit:
                 return work
 

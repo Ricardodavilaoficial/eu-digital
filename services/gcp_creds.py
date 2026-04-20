@@ -46,6 +46,11 @@ def get_firestore_client(project: Optional[str] = None):
 def get_storage_client():
     from google.cloud import storage
 
+    # PATCH: PRIORIDADE PARA INLINE (tem private_key)
+    creds, project = _inline_creds()
+    if creds:
+        return storage.Client(project=project, credentials=creds)
+
     mode = _mode()
 
     # 1) Cloud Run "certo": Workload Identity (ADC runtime)
@@ -74,3 +79,4 @@ def get_storage_client():
         "Use workload_identity (Cloud Run SA), or set FIREBASE_SERVICE_ACCOUNT_JSON (inline), "
         "or provide GOOGLE_APPLICATION_CREDENTIALS pointing to an existing file."
     )
+ 
