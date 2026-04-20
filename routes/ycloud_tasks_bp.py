@@ -3886,9 +3886,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                     try:
                                         from services.gcp_creds import get_storage_client as _get_storage_client
                                         client = _get_storage_client()
-                                    except Exception:
-                                        # fallback: mantém comportamento anterior
-                                        client = gcs_storage.Client()
+                                    except Exception as e_client:
+                                        raise RuntimeError(
+                                            f"storage_client_unavailable:{type(e_client).__name__}:{str(e_client)[:120]}"
+                                        )
                                     bucket = client.bucket(bucket_name)
                                     blob = bucket.blob(obj)
                                     blob.upload_from_string(b, content_type="audio/mpeg")
