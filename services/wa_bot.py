@@ -474,6 +474,7 @@ def _clip_front_text(x: Any, max_len: int = 180) -> str:
 def _compact_front_kb_doc(
     d: Dict[str, Any],
     *,
+    doc_id: str = "",
     include_segment_id: bool = False,
     include_archetype_id: bool = False,
 ) -> Dict[str, Any]:
@@ -489,6 +490,9 @@ def _compact_front_kb_doc(
             return {}
 
         out: Dict[str, Any] = {}
+
+        if doc_id:
+            out["id"] = _clip_front_text(doc_id, 80)
 
         if include_segment_id and d.get("segment_id"):
             out["segment_id"] = _clip_front_text(d.get("segment_id"), 80)
@@ -979,15 +983,14 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
             return work
 
         # 5) agora sim começa a poda do banco novo, do menos crítico para o mais crítico
-        # archetypes cai antes de segments
-        if work.get("kb_archetypes_v1"):
-            work["kb_archetypes_v1"] = {}
+        # preserva archetypes o máximo possível, porque ajudam microcena/hidratação
+        if work.get("kb_segments_v1"):
+            work["kb_segments_v1"] = {}
             if _size(work) <= limit:
                 return work
 
-        # segments só depois, porque ajudam a hidratar melhor o contrato
-        if work.get("kb_segments_v1"):
-            work["kb_segments_v1"] = {}
+        if work.get("kb_archetypes_v1"):
+            work["kb_archetypes_v1"] = {}
             if _size(work) <= limit:
                 return work
 
@@ -1021,6 +1024,7 @@ def _build_front_kb_snapshot(topic: str) -> str:
                 continue
             compact_segments[sid] = _compact_front_kb_doc(
                 sd,
+                doc_id=sid,
                 include_archetype_id=True,
             )
     except Exception:
@@ -1033,6 +1037,7 @@ def _build_front_kb_snapshot(topic: str) -> str:
                 continue
             compact_subsegments[sid] = _compact_front_kb_doc(
                 sd,
+                doc_id=sid,
                 include_segment_id=True,
                 include_archetype_id=True,
             )
@@ -1044,7 +1049,7 @@ def _build_front_kb_snapshot(topic: str) -> str:
         for aid, ad in list((archetypes or {}).items()):
             if not isinstance(ad, dict):
                 continue
-            compact_archetypes[aid] = _compact_front_kb_doc(ad)
+            compact_archetypes[aid] = _compact_front_kb_doc(ad, doc_id=aid)
     except Exception:
         compact_archetypes = {}
 

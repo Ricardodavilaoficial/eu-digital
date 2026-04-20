@@ -328,18 +328,6 @@ def _collect_doc_texts(doc: Dict[str, Any]) -> list[str]:
                 continue
             seen.add(norm)
             out.append(str(part).strip())
-        aiMeta = out.setdefault("aiMeta", {})
-
-        # 🔒 Normalização de tipos (evita string "True"/"False")
-        aiMeta["kbUsed"] = bool(aiMeta.get("kbUsed"))
-        aiMeta["kbRequiredOk"] = bool(aiMeta.get("kbRequiredOk"))
-
-        aiMeta.setdefault("usedFallback", False)
-
-        aiMeta["responseOrigin"] = "conversational_front"
-
-        aiMeta["kbHasContext"] = bool(aiMeta.get("kbDocPath"))
-
         return out
     except Exception:
         return []
@@ -5008,7 +4996,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         kb_snapshot=kb_snapshot,
         kb_context=kb_context if isinstance(kb_context, dict) else {},
         effective_segment=effective_segment,
-        practical_scene_from_kb="",
+        practical_scene_from_kb=practical_scene_from_kb,
         example_line=example_line,
         operational_family=operational_family,
         topic="OTHER",
@@ -5475,7 +5463,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             kb_snapshot=kb_snapshot,
             kb_context=kb_context if isinstance(kb_context, dict) else {},
             effective_segment=effective_segment,
-            practical_scene_from_kb="",
+            practical_scene_from_kb=practical_scene_from_kb,
             example_line=example_line,
             operational_family=operational_family,
             topic=topic,
