@@ -3428,8 +3428,9 @@ Sua tarefa é agir como um vendedor consultivo e especialista conversando no Wha
 Mostre ao lead, com RIQUEZA DE DETALHES, como o MEI Robô funciona na prática no negócio dele.
 
 Ponto de partida obrigatório da cena:
-A microcena deve começar no momento em que o cliente entra em contato pelo WhatsApp.
-A partir desse contato, descreva como o MEI Robô conduz o atendimento até o próximo passo do processo.
+1. A microcena deve começar no momento em que o cliente entra em contato pelo WhatsApp.A partir desse contato, descreva como o MEI Robô conduz o atendimento até o próximo passo do processo.
+2. Esse contato define o início da lógica operacional e deve orientar toda a construção da resposta.
+3. A partir desse contato, descreva como o MEI Robô conduz o atendimento até o próximo passo do processo.
 
 Regras obrigatórias:
 1. VÁ DIRETO AO PONTO: Proibido usar saudações genéricas (ex: "Oi! Deixa eu te contar..."). Comece direto na cena (ex: "Imagina a cena: o cliente chama...").
