@@ -499,8 +499,14 @@ def _compact_front_kb_doc(
         if d.get("conversation_mode"):
             out["conversation_mode"] = _clip_front_text(d.get("conversation_mode"), 80)
 
+        if d.get("description"):
+            out["description"] = _clip_front_text(d.get("description"), 220)
+
         if d.get("one_liner"):
             out["one_liner"] = _clip_front_text(d.get("one_liner"), 180)
+
+        if d.get("one_question"):
+            out["one_question"] = _clip_front_text(d.get("one_question"), 180)
 
         if d.get("micro_scene"):
             out["micro_scene"] = _clip_front_text(d.get("micro_scene"), 260)
@@ -511,8 +517,33 @@ def _compact_front_kb_doc(
         if d.get("service_noun"):
             out["service_noun"] = _clip_front_text(d.get("service_noun"), 80)
 
+        if d.get("common_intents"):
+            out["common_intents"] = [
+                _clip_front_text(x, 60)
+                for x in (d.get("common_intents") or [])[:6]
+                if _clip_front_text(x, 60)
+            ]
+
+        if d.get("preferred_capabilities"):
+            out["preferred_capabilities"] = [
+                _clip_front_text(x, 60)
+                for x in (d.get("preferred_capabilities") or [])[:6]
+                if _clip_front_text(x, 60)
+            ]
+
+        if d.get("operational_ritual"):
+            out["operational_ritual"] = [
+                _clip_front_text(x, 100)
+                for x in (d.get("operational_ritual") or [])[:5]
+                if _clip_front_text(x, 100)
+            ]
+
         if d.get("handoff_format"):
-            out["handoff_format"] = _clip_front_text(d.get("handoff_format"), 120)
+            out["handoff_format"] = [
+                _clip_front_text(x, 80)
+                for x in (d.get("handoff_format") or [])[:5]
+                if _clip_front_text(x, 80)
+            ]
 
         return out
     except Exception:
