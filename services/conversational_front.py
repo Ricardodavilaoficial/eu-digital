@@ -3870,7 +3870,7 @@ Regras:
 - deve soar como consequência natural do fluxo
 - não invente fatos fora do contrato
 - não repetir etapas já típicas de abertura ou meio
-- preferir fechamento concreto
+- preferir fechamento concreto e curto
 
 Formato JSON:
 {"consequence":"..."}
@@ -4108,10 +4108,10 @@ def _regenerate_more_concrete(
             "Mantenha o mesmo sentido e não invente fatos fora da base.\n"
             "Não explique de fora.\n"
             "Não use sujeito narrador explícito no começo das frases.\n"
-            "Evite construções como cliente, robô, sistema, atendente como narrador da cena.\n"
+            "Evite construções genéricas; quando necessário, use MEI Robô como agente da ação.\n"
             "Comece direto no acontecimento.\n"
             "Mostre uma etapa puxando a próxima.\n"
-            "Feche no último efeito operacional visível.\n"
+            "Feche no último efeito operacional visível, de forma curta e direta.\nQuando envolver resposta em áudio, deixe claro que o MEI Robô responde com a voz do cliente.\nEvite frases finais explicativas ou de benefício; termine na ação concluída.\n"
             "Não use slogan.\n"
             "Não termine com pergunta.\n"
             "Responda somente com o texto final."
@@ -4123,8 +4123,8 @@ def _regenerate_more_concrete(
             f"Confidence atual: {previous_confidence}\n\n"
             f"Resposta atual:\n{previous_reply}\n\n"
             f"Base operacional do KB:\n{kb_seed_reply or ''}\n\n"
-            "Reescreva como trecho de operação acontecendo no WhatsApp, "
-            "sem narrar de fora e sem transformar em apresentação de produto."
+            "Reescreva como uma situação real acontecendo no WhatsApp, "
+            "mostrando a sequência da ação até o resultado, sem transformar em explicação."
         )
 
         if _HAS_OPENAI_CLIENT and _client is not None:
