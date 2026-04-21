@@ -4109,11 +4109,11 @@ def _regenerate_more_concrete(
             "Não explique de fora.\n"
             "Não use sujeito narrador explícito no começo das frases.\n"
             "Evite construções genéricas; quando necessário, use MEI Robô como agente da ação.\n"
-            "Quando houver interação por áudio, diga explicitamente que o MEI Robô responde com a voz do profissional, mantendo o seu jeito de falar.\n"
+            "Quando envolver resposta em áudio, afirme de forma natural e contextual que o MEI Robô responde com a voz do próprio profissional/contratante, digitalizada e configurada com o seu jeito de falar.\n"
+            "Use esta questão da voz digitalizada e configurada, como diferencial sempre que fizer sentido na explicação, sem depender de frase fixa.\n"
             "Comece direto no acontecimento.\n"
             "Mostre uma etapa puxando a próxima.\n"
             "Feche no último efeito operacional visível, de forma curta e direta, sem fazer perguntas ou continuar a conversa.\n"
-            "Quando envolver resposta em áudio, deixe claro que o MEI Robô responde com a voz do cliente, mantendo o seu jeito de falar.\n"
             "Evite frases finais explicativas ou de benefício; termine na ação concluída.\n"
             "Não use slogan.\n"
             "Não termine com pergunta.\n"
@@ -6460,6 +6460,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ia_live if 'ia_live' in locals() else None,
                 ia_density if 'ia_density' in locals() else None,
             )
+
+            try:
+                spoken_text = _strip_trailing_question(spoken_text or reply_text)
+            except Exception:
+                spoken_text = str(spoken_text or reply_text or "").strip()
 
             out = {
                 "replyText": reply_text,
