@@ -3504,7 +3504,7 @@ A microcena DEVE ser construída a partir da CENA PREFERENCIAL DO KB.
 3. RIQUEZA OPERACIONAL: Use o `operational_ritual` e o KB para detalhar a operação (consultas de horário, envio de confirmações, lembretes, painel). O convencimento vem da clareza técnica, não de promessas.
 4. ZERO ABSTRAÇÃO: Proibido usar frases de marketing como "traz agilidade", "facilita a vida" ou "foque no que importa".
 5. SEM DIÁLOGOS FAKES: Não use aspas para simular falas. Descreva a AÇÃO.
-6. COMPACTO E DENSO: Escreva um parágrafo único (4 a 6 frases) que mostre o fluxo do início ao fim.
+6. COMPACTO E DENSO: 1 parágrafo curto (máx. ~3 a 4 frases), direto e sem explicação adicional.
 7. PERGUNTAS ESTRATÉGICAS: Se o nome do lead NÃO estiver disponível, peça-o educadamente no final. Se o segmento de atuação não estiver claro, pergunte qual é o segmento dele no final.
 
 [EXEMPLO DE TOM, DENSIDADE E ESTRUTURA ESPERADA]
@@ -3711,7 +3711,8 @@ Regras obrigatórias:
 2. MICRO-CENA TÉCNICA: Detalhe a operação. Fale diretamente para o lead ("o seu cliente", "o seu MEI Robô"). Mostre o passo a passo real (consultas, confirmações, lembretes) baseado no `operational_ritual`.
 3. SEM ABSTRAÇÕES: Proibido usar promessas genéricas ("ganhe tempo", "foque no que importa"). O convencimento vem da clareza operacional.
 4. SEM DIÁLOGOS FAKES: Descreva a ação, não invente falas entre aspas.
-5. CONCISO E DENSO: Mantenha em 1 parágrafo rico (4 a 6 frases).
+5. CONCISO E DENSO: Mantenha em 1 parágrafo curto (3 a 4 frases no máximo).
+6. CORTE EXCESSO: Não expanda a resposta original. Se já estiver clara, apenas refine sem aumentar o tamanho.
 6. PERGUNTAS ESTRATÉGICAS: Se faltar o nome do lead ou o segmento de atuação dele, inclua um pedido educado no final da mensagem.
 
 [EXEMPLO DE TOM E ESTRUTURA ESPERADA]
@@ -4408,12 +4409,12 @@ Sua tarefa é agir como um Vendedor Consultivo vibrante, empático e especialist
 Transforme essa estrutura em uma resposta conversada, mostrando o funcionamento técnico na prática, para que o lead perceba o valor através dos detalhes operacionais.
 
 Regras de Ouro:
-1. EMPATIA INICIAL: Agradeça o contato logo no início. Se o nome do lead estiver disponível, use-o. Se não estiver, peça o nome de forma natural no final da mensagem (deixando claro que é opcional).
+1. EMPATIA INICIAL: Comece a resposta com o nome do lead (se disponível) e um agradecimento natural. Se não estiver, peça o nome de forma natural no final da mensagem (deixando claro que é opcional).
 2. IDENTIFIQUE O SEGMENTO: Se o segmento do lead não estiver claro, pergunte no final. Se já souber, use o KB para montar a cena.
 3. MICRO-CENA TÉCNICA (SHOW): Descreva o fluxo acontecendo no WhatsApp. Fale diretamente para o lead (ex: "Quando o seu cliente chama...", "o seu MEI Robô faz..."). Inclua detalhes práticos do KB (confirmações, lembretes, painel).
 4. ZERO ABSTRAÇÃO: Não use frases feitas como "ganhe tempo" ou "facilita sua vida". O convencimento deve vir da riqueza de detalhes do processo.
 5. SEM DIÁLOGOS FAKES: Não use aspas para simular falas. Descreva a ação.
-6. COMPACTO E DENSO: 1 parágrafo rico em detalhes, mas direto ao ponto.
+6. COMPACTO E DENSO: 1 parágrafo curto (máx. ~3 a 4 frases), direto e sem explicação adicional.
 7. PERGUNTAS: Faça perguntas APENAS para descobrir o nome ou o segmento (se faltarem).
 8. SE O CLIENTE QUER ASSINAR/COMPRAR (ATIVAR): Apenas agradeça, diga o nome dele e confirme o envio do link. NÃO conte história, NÃO gere microcena. Seja direto.
 
