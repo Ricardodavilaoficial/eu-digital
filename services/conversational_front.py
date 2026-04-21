@@ -162,6 +162,11 @@ def _infer_segment_from_text(user_text: str, kb_snapshot: str) -> str:
             if s and s in norm:
                 return s
 
+        # fallback semântico mínimo para papéis claros
+        _txt = (user_text or "").lower()
+        if "candidat" in _txt:
+            return "politica_atendimento_publico"
+
         # fallback estrutural por conteúdo real do KB
         try:
             if isinstance(obj, dict):
