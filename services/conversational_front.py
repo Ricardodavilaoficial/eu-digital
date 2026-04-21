@@ -3483,7 +3483,7 @@ def _generate_micro_scene_with_model(
 Você recebe um contexto operacional de atendimento já resolvido.
 
 Sua tarefa é responder como um vendedor consultivo, demonstrando o funcionamento na prática.
-Mostre ao lead como o atendimento acontece no dia a dia, em sequência operacional.
+Mostre ao lead uma situação real acontecendo no dia a dia, em sequência operacional.
 
 Ponto de partida obrigatório da cena:
 1. A microcena deve começar no momento em que o cliente entra em contato pelo WhatsApp.A partir desse contato, descreva como o MEI Robô conduz o atendimento até o próximo passo do processo.
@@ -3491,7 +3491,9 @@ Ponto de partida obrigatório da cena:
 3. A partir desse contato, descreva como o MEI Robô conduz o atendimento até o próximo passo do processo.
 
 Regras obrigatórias:
-1. VÁ DIRETO À AÇÃO: Comece direto no acontecimento (ex: "Quando uma mensagem chega no WhatsApp...").
+1. VÁ DIRETO À AÇÃO: Comece direto em uma situação real (ex: "Quando um cliente chama no WhatsApp..." ou similar).
+
+6. ESPECIFICIDADE: use exemplos plausíveis do dia a dia do cliente, evitando descrições genéricas
 2. USE O RITUAL: Transforme os passos do campo `operational_ritual` em um texto corrido. Não invente um fluxo da sua cabeça.
 3. SEM DIÁLOGOS FAKES: É estritamente proibido usar aspas para simular o que o robô ou cliente falam. Descreva a AÇÃO (ex: "o robô atende e mostra o catálogo", em vez de "o robô diz: 'qual você quer?'").
 4. SEJA CONCISO: Escreva 1 parágrafo curto (3 a 5 frases), mantendo progressão clara
@@ -3694,8 +3696,10 @@ def _upgrade_operational_reply_with_model(
         system = """
 Você recebe um texto operacional correto, mas que precisa ser mais rico, detalhado e comercialmente convincente.
 
-Sua tarefa é reescrever esse texto como um vendedor consultivo, deixando o fluxo mais claro e concreto.
+Sua tarefa é reescrever esse texto como um vendedor consultivo, deixando o fluxo mais claro, concreto e específico.
 O objetivo é melhorar a visualização do funcionamento no dia a dia, mantendo a sequência operacional.
+
+6. NÃO GENERALIZAR: se o texto estiver genérico, torne mais específico usando situações reais
 
 Regras obrigatórias:
 1. VÁ DIRETO AO PONTO: Proibido usar saudações genéricas. Comece direto na cena.
@@ -4393,7 +4397,7 @@ Você recebe uma estrutura operacional já resolvida (contrato do KB).
 
 Sua tarefa é agir como um Vendedor Consultivo e Especialista.
 Transforme essa estrutura em uma resposta conversada, natural e convincente, mostrando o funcionamento na prática.
-O objetivo é fazer o lead entender e visualizar como o atendimento acontece no dia a dia.
+O objetivo é fazer o lead visualizar como o atendimento acontece no dia a dia e perceber valor pelo funcionamento.
 
 Regras de Ouro:
 1. Mostre o fluxo acontecendo (Microcena operacional)
@@ -4401,11 +4405,12 @@ Regras de Ouro:
 3. Proibido parecer software
 4. SEM DIÁLOGOS FAKES: Não use aspas para simular falas. Descreva a ação.
 5. SEJA CONCISO: 1 parágrafo curto e direto (econômico).
-6. Fechamento com consequência operacional (sem promessa genérica)
+6. Feche com consequência prática (o que acontece depois)
 7. SE O CLIENTE QUER ASSINAR/COMPRAR (ATIVAR): Apenas agradeça, diga o nome dele e confirme o envio do link. NÃO conte história, NÃO gere microcena. Seja direto.
 8. EMPATIA COM NOME:
    - Se o nome do lead já estiver disponível, use esse nome com moderação em momentos estratégicos.
    - Se o nome do lead NÃO estiver disponível, tente descobrir o nome de forma natural.
+    - Sempre que possível, inicie a resposta usando o nome do lead de forma natural.
    - Nunca faça uma pergunta isolada só para pedir o nome.
    - Sempre combine o pedido do nome com uma resposta útil no mesmo turno.
    - Quando estiver explicando o valor, mostrando microcena ou esclarecendo algo, você pode encaixar o pedido do nome no final da resposta.
