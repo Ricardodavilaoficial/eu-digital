@@ -6274,7 +6274,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and example_line
             )
 
-            _not_explanatory = not _looks_explanatory_reply(str(reply_text or ""))
+            _not_explanatory = not _looks_explanatory_reply(
+                text=str(reply_text or ""),
+                practical_scene_from_kb="",
+                example_line=example_line,
+                contract=operational_contract if 'operational_contract' in locals() else {},
+            )
 
             accepted = bool(
                 str(reply_source or "").strip() in ("front_ia_soberana", "front_operational_upgrade")
@@ -6320,7 +6325,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
 
-                _current_not_explanatory = not _looks_explanatory_reply(current_text)
+                _current_not_explanatory = not _looks_explanatory_reply(
+                    text=current_text,
+                    practical_scene_from_kb="",
+                    example_line=example_line,
+                    contract=operational_contract if 'operational_contract' in locals() else {},
+                )
 
                 if current_show or (
                     current_live and (not _contract_strong or _current_not_explanatory)
