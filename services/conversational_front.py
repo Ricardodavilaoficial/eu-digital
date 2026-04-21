@@ -6303,13 +6303,32 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     )
                 )
 
-                if current_show or current_live:
+                current_is_mild = _looks_explanatory_reply(
+                    text=current_text,
+                    practical_scene_from_kb="",
+                    example_line=example_line,
+                    contract=operational_contract if 'operational_contract' in locals() else {},
+                )
+
+                strong_contract = bool(
+                    isinstance(operational_contract, dict)
+                    and operational_contract.get("hydrated_from_docs")
+                    and operational_contract.get("has_example_line")
+                    and operational_contract.get("has_practical_scene")
+                )
+
+                if current_show or (current_live and not (strong_contract and current_is_mild)):
                     accepted = True
                     if str(reply_source or "").strip() not in ("front_ia_soberana", "front_operational_upgrade"):
                         reply_source = "front_operational_upgrade"
                 else:
                     fallback = ""
-                    if (not current_text) or len(current_text) < 40 or _looks_like_technical_output(current_text):
+                    if (
+                        (not current_text)
+                        or len(current_text) < 40
+                        or _looks_like_technical_output(current_text)
+                        or (strong_contract and current_is_mild)
+                    ):
                         fallback = (
                             _compose_grounded_scene_with_progression(
                                 practical_scene_from_kb="",
