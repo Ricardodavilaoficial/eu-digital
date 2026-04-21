@@ -3491,13 +3491,12 @@ Mostre ao lead uma situação real acontecendo no dia a dia dele, em uma sequên
 
 Regras obrigatórias:
 
-[REGRA CRÍTICA DE GERAÇÃO]
+[REGRA CRÍTICA DE GERAÇÃO - O PONTO DE EQUILÍBRIO]
 A microcena DEVE ser construída a partir da CENA PREFERENCIAL DO KB.
-- O KB é a fonte da verdade.
-- O exemplo abaixo NÃO define comportamento.
-- O exemplo serve apenas para tom e ritmo.
-- Se houver conflito, IGNORE o exemplo.
-- NUNCA invente etapas que não estejam no KB.
+- O KB é a fonte da verdade, mas o texto dele pode estar "seco" ou em tópicos.
+- Sua missão é VALORIZAR essa cena: dê vida, fluidez e tom comercial à explicação, conectando as ações de forma natural.
+- FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB. Embeleze a *forma* de falar, não o *conteúdo* técnico.
+- O exemplo abaixo serve apenas para tom e ritmo. Se houver conflito com o KB, IGNORE o exemplo.
 
 1. EMPATIA INICIAL: Agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
 2. MICRO-CENA TÉCNICA (SHOW): Descreva o fluxo exato no WhatsApp. Fale direcionando a posse ao lead (ex: "Quando o seu cliente chama...", "o seu MEI Robô pergunta...", "na sua conta").
@@ -3540,7 +3539,7 @@ Retorne somente o texto final.
         if _HAS_OPENAI_CLIENT and _client is not None:
             resp = _client.chat.completions.create(
                 model=MODEL,
-                temperature=0.30,
+                temperature=0.40,
                 max_tokens=350,
                 messages=[
                     {"role": "system", "content": system},
@@ -3551,7 +3550,7 @@ Retorne somente o texto final.
         else:
             resp = openai.ChatCompletion.create(
                 model=MODEL,
-                temperature=0.30,
+                temperature=0.40,
                 max_tokens=350,
                 messages=[
                     {"role": "system", "content": system},
@@ -3702,18 +3701,18 @@ def _upgrade_operational_reply_with_model(
         c = contract or {}
 
         system = """
-Você recebe um texto operacional correto, mas que precisa ser mais vibrante, empático e comercialmente convincente através de detalhes técnicos.
+Você recebe um texto operacional correto, mas que pode estar "seco" ou robótico.
 
-Sua tarefa é reescrever esse texto como um vendedor consultivo. O objetivo é fazer o lead visualizar o funcionamento exato e técnico no dia a dia dele.
+Sua tarefa é reescrever esse texto como um vendedor consultivo. O objetivo é dar VIDA e FLUIDEZ à atividade real contada, fazendo o lead visualizar o funcionamento exato no dia a dia dele, valorizando a ferramenta.
 
-Regras obrigatórias:
-1. TOM VIBRANTE E EMPÁTICO: Agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
-2. MICRO-CENA TÉCNICA: Detalhe a operação. Fale diretamente para o lead ("o seu cliente", "o seu MEI Robô"). Mostre o passo a passo real (consultas, confirmações, lembretes) baseado no `operational_ritual`.
-3. SEM ABSTRAÇÕES: Proibido usar promessas genéricas ("ganhe tempo", "foque no que importa"). O convencimento vem da clareza operacional.
-4. SEM DIÁLOGOS FAKES: Descreva a ação, não invente falas entre aspas.
-5. CONCISO E DENSO: Mantenha em 1 parágrafo curto (3 a 4 frases no máximo).
-6. CORTE EXCESSO: Não expanda a resposta original. Se já estiver clara, apenas refine sem aumentar o tamanho.
-6. PERGUNTAS ESTRATÉGICAS: Se faltar o nome do lead ou o segmento de atuação dele, inclua um pedido educado no final da mensagem.
+Regras obrigatórias (O Ponto de Equilíbrio):
+1. VALORIZE A CENA (SHOW): Transforme a sequência de ações em uma narrativa fluida e natural. Faça o lead visualizar o robô trabalhando por ele.
+2. FIDELIDADE ABSOLUTA: NÃO invente funcionalidades, botões ou etapas que não estejam no texto base ou no `operational_ritual`. Embeleze a *forma* de falar, não o *conteúdo* técnico.
+3. TOM VIBRANTE E EMPÁTICO: Agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
+4. SEM ABSTRAÇÕES CLICHÊS: Proibido usar promessas genéricas ("ganhe tempo", "foque no que importa", "facilita a vida"). O encantamento deve vir de como a operação flui bem.
+5. SEM DIÁLOGOS FAKES: Descreva a ação acontecendo, não invente falas entre aspas.
+6. CONCISO, MAS ENVOLVENTE: Mantenha em 1 parágrafo (3 a 4 frases). Conecte as frases, não faça parecer uma lista de tópicos.
+7. PERGUNTAS ESTRATÉGICAS: Se faltar o nome do lead ou o segmento de atuação dele, inclua um pedido educado no final da mensagem.
 
 [EXEMPLO DE TOM E ESTRUTURA ESPERADA]
 "Muito obrigado pelo contato! Quando o seu cliente chama no WhatsApp para pedir um agendamento, o seu MEI Robô pergunta o nome e qual seria o procedimento, consulta na configuração da sua conta o tempo de execução e propõe alternativas de horários. Quando o cliente escolhe, é enviado um texto confirmando o agendamento. Após a confirmação, isso vai para o seu e-mail e, no dia marcado às 06:30, é enviado um resumo dos serviços do dia. O seu cliente também recebe um lembrete 2 horas antes. Você acompanha tudo pelo painel. Me conta, qual é o seu segmento de atuação e como posso te chamar?"
@@ -3743,7 +3742,7 @@ Use a base para enriquecer a resposta.
             system=system,
             user=user,
             max_tokens=350,
-            temperature=0.30,
+            temperature=0.40,
         )
 
         upgraded = str(resp or "").strip()
