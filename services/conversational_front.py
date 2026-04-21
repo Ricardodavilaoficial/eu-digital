@@ -3494,17 +3494,18 @@ Regras obrigatórias:
 [REGRA CRÍTICA DE GERAÇÃO - O PONTO DE EQUILÍBRIO]
 A microcena DEVE ser construída a partir da CENA PREFERENCIAL DO KB.
 - O KB é a fonte da verdade, mas o texto dele pode estar "seco" ou em tópicos.
-- Sua missão é VALORIZAR essa cena: dê vida, fluidez e tom comercial à explicação, conectando as ações de forma natural.
+- Sua missão é DRAMATIZAR essa cena: foque na ação visível que o cliente final experimenta no WhatsApp. Dê vida e fluidez contando a ação operacional prática.
 - FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB. Embeleze a *forma* de falar, não o *conteúdo* técnico.
 - O exemplo abaixo serve apenas para tom e ritmo. Se houver conflito com o KB, IGNORE o exemplo.
 
 1. EMPATIA INICIAL: Agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
 2. MICRO-CENA TÉCNICA (SHOW): Descreva o fluxo exato no WhatsApp. Fale direcionando a posse ao lead (ex: "Quando o seu cliente chama...", "o seu MEI Robô pergunta...", "na sua conta").
-3. RIQUEZA OPERACIONAL: Use o `operational_ritual` e o KB para detalhar a operação (consultas de horário, envio de confirmações, lembretes, painel). O convencimento vem da clareza técnica, não de promessas.
-4. ZERO ABSTRAÇÃO: Proibido usar frases de marketing como "traz agilidade", "facilita a vida" ou "foque no que importa".
-5. SEM DIÁLOGOS FAKES: Não use aspas para simular falas. Descreva a AÇÃO.
-6. COMPACTO E DENSO: 1 parágrafo curto (máx. ~3 a 4 frases), direto e sem explicação adicional.
-7. PERGUNTAS ESTRATÉGICAS: Se o nome do lead NÃO estiver disponível, peça-o educadamente no final. Se o segmento de atuação não estiver claro, pergunte qual é o segmento dele no final.
+3. ZERO LINGUAGEM DE SISTEMA/GESTÃO: Proibido usar termos burocráticos como "registra o tema", "organiza o encaminhamento", "garante o próximo passo", "gerencia". Descreva o que o robô *fala* ou *envia* na prática.
+4. ZERO ABSTRAÇÃO E RESUMOS: Proibido usar frases de marketing ("traz agilidade", "comunicação fluida").
+5. FECHAMENTO SECO E DIRETO: Termine na última ação concreta do robô. NUNCA adicione uma frase de conclusão genérica no final.
+6. SEM DIÁLOGOS FAKES: Não use aspas para simular falas. Descreva a AÇÃO.
+7. COMPACTO E DENSO: 1 parágrafo curto (máx. ~3 a 4 frases), direto e sem explicação adicional.
+8. PERGUNTAS ESTRATÉGICAS: Se o nome do lead NÃO estiver disponível, peça-o educadamente no final. Se o segmento de atuação não estiver claro, pergunte qual é o segmento dele no final.
 
 [EXEMPLO DE TOM, DENSIDADE E ESTRUTURA ESPERADA]
 "Olá [Nome], muito obrigado pelo seu contato! Quando o seu cliente chama no WhatsApp para pedir um agendamento, o seu MEI Robô pergunta o nome e qual seria o procedimento, consulta na configuração que você fez na sua conta qual o tempo de execução e propõe alternativas de horários. Seu cliente escolhe uma ou pede outras opções. Quando é escolhido um horário, é enviado ali mesmo um texto confirmando o que foi agendado. Após a confirmação, este agendamento vai para o seu e-mail e, no dia marcado às 06:30 da manhã, é enviado um resumo de todos os serviços do dia. O seu cliente também recebe um WhatsApp de lembrete 2 horas antes. Você pode consultar tudo no painel da sua conta. A propósito, qual é o seu segmento de atuação para eu te dar exemplos mais precisos?"
@@ -3693,7 +3694,7 @@ def _upgrade_operational_reply_with_model(
 ) -> str:
     """
     Segunda camada:
-    pega um fluxo operacional já correto e reescreve como uma explicação
+    pega um fluxo operacional já correto e reescreve contando a ação
     operacional concreta, encadeada e convincente, sem inventar nada fora
     do contrato.
     """
@@ -3703,16 +3704,17 @@ def _upgrade_operational_reply_with_model(
         system = """
 Você recebe um texto operacional correto, mas que pode estar "seco" ou robótico.
 
-Sua tarefa é reescrever esse texto como um vendedor consultivo. O objetivo é dar VIDA e FLUIDEZ à atividade real contada, fazendo o lead visualizar o funcionamento exato no dia a dia dele, valorizando a ferramenta.
+Sua tarefa é reescrever esse texto como um vendedor consultivo. O objetivo é DRAMATIZAR a atividade real contada, fazendo o lead visualizar o funcionamento exato no dia a dia dele, focando na ação visível.
 
 Regras obrigatórias (O Ponto de Equilíbrio):
-1. VALORIZE A CENA (SHOW): Transforme a sequência de ações em uma narrativa fluida e natural. Faça o lead visualizar o robô trabalhando por ele.
+1. VALORIZE A CENA (SHOW): Transforme a sequência de ações em uma narrativa fluida e natural. Faça o lead visualizar o robô conversando com o cliente dele.
 2. FIDELIDADE ABSOLUTA: NÃO invente funcionalidades, botões ou etapas que não estejam no texto base ou no `operational_ritual`. Embeleze a *forma* de falar, não o *conteúdo* técnico.
 3. TOM VIBRANTE E EMPÁTICO: Agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
-4. SEM ABSTRAÇÕES CLICHÊS: Proibido usar promessas genéricas ("ganhe tempo", "foque no que importa", "facilita a vida"). O encantamento deve vir de como a operação flui bem.
-5. SEM DIÁLOGOS FAKES: Descreva a ação acontecendo, não invente falas entre aspas.
-6. CONCISO, MAS ENVOLVENTE: Mantenha em 1 parágrafo (3 a 4 frases). Conecte as frases, não faça parecer uma lista de tópicos.
-7. PERGUNTAS ESTRATÉGICAS: Se faltar o nome do lead ou o segmento de atuação dele, inclua um pedido educado no final da mensagem.
+4. ZERO LINGUAGEM DE SISTEMA/GESTÃO: Proibido usar termos burocráticos como "registra o tema", "organiza o encaminhamento", "garante o próximo passo". Descreva a ação prática (ex: "ele avisa", "ele envia").
+5. FECHAMENTO SECO E DIRETO: Termine na última ação concreta. NUNCA adicione frases de resumo ou conclusão genérica (ex: "mantendo a comunicação fluida", "facilitando a vida").
+6. SEM DIÁLOGOS FAKES: Descreva a ação acontecendo, não invente falas entre aspas.
+7. CONCISO, MAS ENVOLVENTE: Mantenha em 1 parágrafo (3 a 4 frases). Conecte as frases, não faça parecer uma lista de tópicos.
+8. PERGUNTAS ESTRATÉGICAS: Se faltar o nome do lead ou o segmento de atuação dele, inclua um pedido educado no final da mensagem.
 
 [EXEMPLO DE TOM E ESTRUTURA ESPERADA]
 "Muito obrigado pelo contato! Quando o seu cliente chama no WhatsApp para pedir um agendamento, o seu MEI Robô pergunta o nome e qual seria o procedimento, consulta na configuração da sua conta o tempo de execução e propõe alternativas de horários. Quando o cliente escolhe, é enviado um texto confirmando o agendamento. Após a confirmação, isso vai para o seu e-mail e, no dia marcado às 06:30, é enviado um resumo dos serviços do dia. O seu cliente também recebe um lembrete 2 horas antes. Você acompanha tudo pelo painel. Me conta, qual é o seu segmento de atuação e como posso te chamar?"
@@ -4109,7 +4111,7 @@ def _regenerate_more_concrete(
             "Não use sujeito narrador explícito no começo das frases.\n"
             "Evite construções genéricas; quando necessário, use MEI Robô como agente da ação.\n"
             "Quando envolver resposta em áudio, afirme de forma natural e contextual que o MEI Robô responde com a voz do próprio profissional/contratante, digitalizada e configurada com o seu jeito de falar.\n"
-            "Use esta questão da voz digitalizada e configurada, como diferencial sempre que fizer sentido na explicação, sem depender de frase fixa.\n"
+            "Use esta questão da voz digitalizada e configurada, como diferencial sempre que fizer sentido na conversa, sem depender de frase fixa.\n"
             "Comece direto no acontecimento.\n"
             "Mostre uma etapa puxando a próxima.\n"
             "Feche no último efeito operacional visível, de forma curta e direta, sem fazer perguntas ou continuar a conversa.\n"
