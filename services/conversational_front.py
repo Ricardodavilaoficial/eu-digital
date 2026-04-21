@@ -4114,9 +4114,9 @@ def _regenerate_more_concrete(
             "Use esta questão da voz digitalizada e configurada, como diferencial sempre que fizer sentido na conversa, sem depender de frase fixa.\n"
             "Comece direto no acontecimento.\n"
             "Mostre uma etapa puxando a próxima.\n"
-            "Feche no último efeito operacional visível, de forma curta e direta, sem fazer perguntas ou continuar a conversa.\n"
+            "Feche exatamente no último efeito operacional visível (ação concreta acontecendo ou concluída).\nNão adicione frases de benefício, impacto ou conclusão genérica.\nNão explique o resultado, apenas termine na ação.\nA última frase deve descrever algo acontecendo ou já organizado (ex: encaminhado, registrado, separado, respondido).\n"
             "Evite frases finais explicativas ou de benefício; termine na ação concluída.\n"
-            "Não use slogan.\n"
+            "Não use slogan.\nEvite qualquer frase que soe como conclusão de venda genérica.\nSe a frase final puder ser usada em qualquer segmento, ela está errada.\n"
             "Não termine com pergunta.\n"
             "Responda somente com o texto final."
         )
