@@ -3494,7 +3494,7 @@ Regras obrigatórias:
 [REGRA CRÍTICA DE GERAÇÃO - O PONTO DE EQUILÍBRIO]
 A microcena DEVE ser construída a partir da CENA PREFERENCIAL DO KB.
 - O KB é a fonte da verdade, mas o texto dele pode estar "seco" ou em tópicos.
-- Sua missão é DRAMATIZAR essa cena: foque na ação visível que o cliente final experimenta no WhatsApp. Dê vida e fluidez contando a ação operacional prática.
+- Sua missão é DRAMATIZAR essa cena: foque na ação visível que o cliente final experimenta no WhatsApp. Dê vida e fluidez à explicação.
 - FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB. Embeleze a *forma* de falar, não o *conteúdo* técnico.
 - O exemplo abaixo serve apenas para tom e ritmo. Se houver conflito com o KB, IGNORE o exemplo.
 
@@ -3694,7 +3694,7 @@ def _upgrade_operational_reply_with_model(
 ) -> str:
     """
     Segunda camada:
-    pega um fluxo operacional já correto e reescreve contando a ação
+    pega um fluxo operacional já correto e reescreve como uma explicação
     operacional concreta, encadeada e convincente, sem inventar nada fora
     do contrato.
     """
@@ -4111,12 +4111,12 @@ def _regenerate_more_concrete(
             "Não use sujeito narrador explícito no começo das frases.\n"
             "Evite construções genéricas; quando necessário, use MEI Robô como agente da ação.\n"
             "Quando envolver resposta em áudio, afirme de forma natural e contextual que o MEI Robô responde com a voz do próprio profissional/contratante, digitalizada e configurada com o seu jeito de falar.\n"
-            "Use esta questão da voz digitalizada e configurada, como diferencial sempre que fizer sentido na conversa, sem depender de frase fixa.\n"
+            "Use esta questão da voz digitalizada e configurada, como diferencial sempre que fizer sentido na explicação, sem depender de frase fixa.\n"
             "Comece direto no acontecimento.\n"
             "Mostre uma etapa puxando a próxima.\n"
-            "Feche exatamente no último efeito operacional visível (ação concreta acontecendo ou concluída).\nNão adicione frases de benefício, impacto ou conclusão genérica.\nNão explique o resultado, apenas termine na ação.\nA última frase deve descrever algo acontecendo ou já organizado (ex: encaminhado, registrado, separado, respondido).\n"
+            "Feche no último efeito operacional visível, de forma curta e direta, sem fazer perguntas ou continuar a conversa.\n"
             "Evite frases finais explicativas ou de benefício; termine na ação concluída.\n"
-            "Não use slogan.\nEvite qualquer frase que soe como conclusão de venda genérica.\nSe a frase final puder ser usada em qualquer segmento, ela está errada.\n"
+            "Não use slogan.\n"
             "Não termine com pergunta.\n"
             "Responda somente com o texto final."
         )
@@ -5571,7 +5571,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # Guard semântico:
         # se o modelo escolheu cedo demais um trilho estreito sem ancoragem real,
         # rebaixa para ambiguidade útil e permite UMA pergunta.
-        if (not kb_anchor_strong) and _should_downgrade_premature_narrow_topic(
+        if (
+            (not kb_anchor_strong)
+            and confidence == "low"
+            and _should_downgrade_premature_narrow_topic(
             topic=topic,
             confidence=confidence,
             ai_turns=ai_turns,
@@ -5581,15 +5584,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             example_line=example_line,
             reply_text=reply_text,
             next_step=next_step,
-        ):
+        )):
             topic = "OTHER"
             confidence = "medium"
             needs_clarify = "yes"
             next_step = "NONE"
             if not clarify_q:
                 clarify_q = str(question or "").strip()
-            reply_text = ""
-            spoken_text = ""
 
         # ----------------------------------------------------------
         # ✅ ARQUITETURA: aplica prioridade TRIAL (policy gate)
