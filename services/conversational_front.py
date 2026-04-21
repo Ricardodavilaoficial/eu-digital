@@ -1395,17 +1395,43 @@ def _looks_explanatory_reply(
         if len(sentences) < 2:
             return True
 
+        grounded_scene = str(
+            practical_scene_from_kb
+            or (contract or {}).get("practical_scene_from_kb")
+            or ""
+        ).strip()
+
+        contract_strong = bool(
+            (contract or {}).get("hydrated_from_docs")
+            and str(example_line or "").strip()
+            and grounded_scene
+        )
+
         transition = _scene_transition_score(t)
         density = _operational_density_score(
             text=t,
-            practical_scene_from_kb=practical_scene_from_kb,
+            practical_scene_from_kb=grounded_scene,
             example_line=example_line,
             effective_segment=str((contract or {}).get("segment") or "").strip(),
             operational_family=str((contract or {}).get("operational_family") or "").strip(),
         )
+        progress = _operational_progress_score(
+            text=t,
+            practical_scene_from_kb=grounded_scene,
+            contract=contract or {},
+        )
+        observer_voice = _observer_voice_score(t)
 
         if transition == 0 and density < 2:
             return True
+
+        if contract_strong:
+            if transition <= 1 and progress <= 1:
+                return True
+            if density <= 3 and progress <= 1:
+                return True
+            if observer_voice >= 3 and transition <= 1:
+                return True
 
         return False
     except Exception:
