@@ -5778,15 +5778,30 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         contract=operational_contract if 'operational_contract' in locals() else {},
                     ) if upgraded else False
 
+                    _upgrade_contract_strong = bool(
+                        ((operational_contract if 'operational_contract' in locals() else {}) or {}).get("hydrated_from_docs")
+                        and str(example_line or "").strip()
+                        and str((((operational_contract if 'operational_contract' in locals() else {}) or {}).get("practical_scene_from_kb") or "")).strip()
+                    )
+
                     if upgraded and len(str(upgraded).strip()) > 40:
-                        keep_upgraded = bool(
-                            upgraded_show
-                            or (upgraded_live and not generated_show)
-                            or (
-                                upgraded_live == generated_live
-                                and len(str(upgraded).strip()) > len(str(generated).strip())
+                        if _upgrade_contract_strong:
+                            keep_upgraded = bool(
+                                upgraded_show
+                                or (
+                                    upgraded_show == generated_show
+                                    and len(str(upgraded).strip()) > len(str(generated).strip())
+                                )
                             )
-                        )
+                        else:
+                            keep_upgraded = bool(
+                                upgraded_show
+                                or (upgraded_live and not generated_show)
+                                or (
+                                    upgraded_live == generated_live
+                                    and len(str(upgraded).strip()) > len(str(generated).strip())
+                                )
+                            )
 
                         if keep_upgraded:
                             generated = upgraded
@@ -6298,6 +6313,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             _contract_strong = bool(
                 (operational_contract if 'operational_contract' in locals() else {}).get("hydrated_from_docs")
                 and example_line
+                and str(((operational_contract if 'operational_contract' in locals() else {}) or {}).get("practical_scene_from_kb") or "").strip()
             )
 
             _not_explanatory = not _looks_explanatory_reply(
@@ -6307,13 +6323,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 contract=operational_contract if 'operational_contract' in locals() else {},
             )
 
-            accepted = bool(
-                str(reply_source or "").strip() in ("front_ia_soberana", "front_operational_upgrade")
-                and (
-                    ia_show
-                    or (ia_live_final and (not _contract_strong or _not_explanatory))
+            _source_now = str(reply_source or "").strip()
+
+            if _contract_strong and _source_now == "front_operational_upgrade":
+                accepted = bool(ia_show)
+            else:
+                accepted = bool(
+                    _source_now in ("front_ia_soberana", "front_operational_upgrade")
+                    and (
+                        ia_show
+                        or (ia_live_final and (not _contract_strong or _not_explanatory))
+                    )
                 )
-            )
             ia_accepted = accepted
 
             if accepted:
@@ -6358,9 +6379,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
 
-                if current_show or (
-                    current_live and (not _contract_strong or _current_not_explanatory)
-                ):
+                if _contract_strong and str(reply_source or "").strip() == "front_operational_upgrade":
+                    _accept_current = bool(current_show)
+                else:
+                    _accept_current = bool(
+                        current_show
+                        or (current_live and (not _contract_strong or _current_not_explanatory))
+                    )
+
+                if _accept_current:
                     accepted = True
                     if str(reply_source or "").strip() not in ("front_ia_soberana", "front_operational_upgrade"):
                         reply_source = "front_operational_upgrade"
