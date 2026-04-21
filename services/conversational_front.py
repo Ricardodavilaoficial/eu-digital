@@ -6269,9 +6269,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
             )
 
+            _contract_strong = bool(
+                (operational_contract if 'operational_contract' in locals() else {}).get("hydrated_from_docs")
+                and example_line
+            )
+
+            _not_explanatory = not _looks_explanatory_reply(str(reply_text or ""))
+
             accepted = bool(
                 str(reply_source or "").strip() in ("front_ia_soberana", "front_operational_upgrade")
-                and (ia_show or ia_live_final)
+                and (
+                    ia_show
+                    or (ia_live_final and (not _contract_strong or _not_explanatory))
+                )
             )
             ia_accepted = accepted
 
@@ -6310,14 +6320,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
 
-                strong_contract = bool(
-                    isinstance(operational_contract, dict)
-                    and operational_contract.get("hydrated_from_docs")
-                    and operational_contract.get("has_example_line")
-                    and operational_contract.get("has_practical_scene")
-                )
+                _current_not_explanatory = not _looks_explanatory_reply(current_text)
 
-                if current_show or (current_live and not (strong_contract and current_is_mild)):
+                if current_show or (
+                    current_live and (not _contract_strong or _current_not_explanatory)
+                ):
                     accepted = True
                     if str(reply_source or "").strip() not in ("front_ia_soberana", "front_operational_upgrade"):
                         reply_source = "front_operational_upgrade"
@@ -6327,7 +6334,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         (not current_text)
                         or len(current_text) < 40
                         or _looks_like_technical_output(current_text)
-                        or (strong_contract and current_is_mild)
+                        or (_contract_strong and current_is_mild)
                     ):
                         fallback = (
                             _compose_grounded_scene_with_progression(
