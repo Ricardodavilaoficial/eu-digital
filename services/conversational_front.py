@@ -980,6 +980,7 @@ def _build_user_scene_block(*, practical_scene_from_kb: str, example_line: str, 
         parts = []
 
         if ps:
+            parts.append("[REGRA CRÍTICA DE GERAÇÃO]\nA microcena DEVE ser construída a partir da CENA PREFERENCIAL DO KB.\n- O KB é a fonte da verdade.\n- O exemplo abaixo NÃO define comportamento.\n- O exemplo serve apenas para tom e ritmo.\n- Se houver conflito, IGNORE o exemplo.\n- NUNCA invente etapas que não estejam no KB.")
             parts.append(f"[CENA PREFERENCIAL]\n{ps}")
         elif ex:
             parts.append(f"[EXEMPLO DO SEGMENTO]\n{ex}")
@@ -1401,6 +1402,9 @@ def _looks_explanatory_reply(
             or ""
         ).strip()
 
+        if not grounded_scene:
+            return False
+
         contract_strong = bool(
             (contract or {}).get("hydrated_from_docs")
             and str(example_line or "").strip()
@@ -1688,21 +1692,21 @@ def _build_kb_anchor_reply(
     try:
         stable_scene = _stabilize_scene_base(str(practical_scene_from_kb or "").strip())
         generated = _generate_micro_scene_with_model(
-            practical_scene_from_kb="",
+            practical_scene_from_kb=practical_scene_from_kb,
             contract=contract or {},
         )
 
         scene_text = str(generated or "").strip()
         if not scene_text and stable_scene:
             scene_text = _compose_grounded_scene_with_progression(
-                practical_scene_from_kb="",
+                practical_scene_from_kb=practical_scene_from_kb,
                 contract=contract or {},
                 example_line=str(example_line or "").strip(),
             )
 
         if not scene_text and stable_scene:
             scene_text = _compose_grounded_scene_with_progression(
-                practical_scene_from_kb="",
+                practical_scene_from_kb=practical_scene_from_kb,
                 contract=contract or {},
                 example_line=str(example_line or "").strip(),
             )
@@ -1713,7 +1717,7 @@ def _build_kb_anchor_reply(
         if scene_text:
             if _is_live_operational_reply(
                 text=scene_text,
-                practical_scene_from_kb="",
+                practical_scene_from_kb=practical_scene_from_kb,
                 example_line=str(example_line or "").strip(),
                 contract=contract or {},
             ):
@@ -1754,7 +1758,7 @@ def _build_last_resort_operational_reply(
             return str(clarify_q or "").strip()
 
         rebuilt = _compose_grounded_scene_with_progression(
-            practical_scene_from_kb="",
+            practical_scene_from_kb=practical_scene_from_kb,
             contract=c,
             example_line=ex,
         )
@@ -1770,7 +1774,7 @@ def _build_last_resort_operational_reply(
             return rebuilt.rstrip(".") + "."
 
         generated = _generate_micro_scene_with_model(
-            practical_scene_from_kb="",
+            practical_scene_from_kb=practical_scene_from_kb,
             contract=c,
         )
         generated = _sanitize_user_facing_reply(generated)
@@ -3482,37 +3486,31 @@ def _generate_micro_scene_with_model(
         system = """
 Você recebe um contexto operacional de atendimento já resolvido.
 
-Sua tarefa é responder como um vendedor consultivo, mostrando o funcionamento na prática.
-Mostre ao lead uma situação real acontecendo no dia a dia dele, em sequência operacional.
-
-Ponto de partida obrigatório da cena:
-1. A microcena deve começar no momento em que o cliente entra em contato pelo WhatsApp.
-2. Esse contato define o início da lógica operacional e deve orientar toda a construção da resposta.
-3. A partir desse contato, descreva como o MEI Robô conduz o atendimento até o próximo passo do processo.
+Sua tarefa é agir como um Vendedor Consultivo vibrante, empático e especialista.
+Mostre ao lead uma situação real acontecendo no dia a dia dele, em uma sequência operacional rica em detalhes técnicos.
 
 Regras obrigatórias:
-1. VÁ DIRETO À AÇÃO: Comece direto em uma situação real.
-2. EVENTO CONCRETO: use um evento específico plausível do dia a dia (ex: pedido de horário, dúvida sobre serviço, pedido, orçamento, confirmação, reagendamento, acompanhamento).
-3. USE O RITUAL: Transforme os passos do campo `operational_ritual` em um texto corrido. Não invente um fluxo da sua cabeça.
-4. POSSE E PROXIMIDADE: fale direcionando a posse ao lead, como "o seu cliente", "o seu MEI Robô", "na sua conta", quando isso soar natural.
-5. SEM DIÁLOGOS FAKES: É estritamente proibido usar aspas para simular falas. Descreva a AÇÃO.
-6. ESPECIFICIDADE: use detalhes plausíveis do dia a dia do cliente, evitando descrições genéricas.
-7. COMPACTO E DENSO: escreva 1 parágrafo principal com 4 a 6 frases, mantendo progressão clara.
-8. NÃO termine com pergunta.
-9. NÃO INFLAR O TEXTO: não adicionar explicações genéricas ou promessas abstratas.
-10. VALOR PELO FUNCIONAMENTO: o convencimento deve nascer da clareza do fluxo.
-11. EVITE ABSTRAÇÕES GENÉRICAS: não use construções como "traz agilidade", "facilita o dia a dia" ou "focar no que importa" como eixo principal da resposta.
-12. CONSEQUÊNCIA FINAL OPCIONAL: é permitido fechar com uma consequência prática curta, desde que venha depois da operação e não substitua a microcena.
 
-Importante:
-- Esta etapa existe para gerar a microcena operacional.
-- Não agradeça o contato.
-- Não peça o nome.
-- Não pergunte o segmento.
-- Não faça fechamento comercial fora da cena.
+[REGRA CRÍTICA DE GERAÇÃO]
+A microcena DEVE ser construída a partir da CENA PREFERENCIAL DO KB.
+- O KB é a fonte da verdade.
+- O exemplo abaixo NÃO define comportamento.
+- O exemplo serve apenas para tom e ritmo.
+- Se houver conflito, IGNORE o exemplo.
+- NUNCA invente etapas que não estejam no KB.
 
-Use o KB como base (ritual, objetivo, segmento) para abastecer os detalhes da operação.
+1. EMPATIA INICIAL: Agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
+2. MICRO-CENA TÉCNICA (SHOW): Descreva o fluxo exato no WhatsApp. Fale direcionando a posse ao lead (ex: "Quando o seu cliente chama...", "o seu MEI Robô pergunta...", "na sua conta").
+3. RIQUEZA OPERACIONAL: Use o `operational_ritual` e o KB para detalhar a operação (consultas de horário, envio de confirmações, lembretes, painel). O convencimento vem da clareza técnica, não de promessas.
+4. ZERO ABSTRAÇÃO: Proibido usar frases de marketing como "traz agilidade", "facilita a vida" ou "foque no que importa".
+5. SEM DIÁLOGOS FAKES: Não use aspas para simular falas. Descreva a AÇÃO.
+6. COMPACTO E DENSO: Escreva um parágrafo único (4 a 6 frases) que mostre o fluxo do início ao fim.
+7. PERGUNTAS ESTRATÉGICAS: Se o nome do lead NÃO estiver disponível, peça-o educadamente no final. Se o segmento de atuação não estiver claro, pergunte qual é o segmento dele no final.
 
+[EXEMPLO DE TOM, DENSIDADE E ESTRUTURA ESPERADA]
+"Olá [Nome], muito obrigado pelo seu contato! Quando o seu cliente chama no WhatsApp para pedir um agendamento, o seu MEI Robô pergunta o nome e qual seria o procedimento, consulta na configuração que você fez na sua conta qual o tempo de execução e propõe alternativas de horários. Seu cliente escolhe uma ou pede outras opções. Quando é escolhido um horário, é enviado ali mesmo um texto confirmando o que foi agendado. Após a confirmação, este agendamento vai para o seu e-mail e, no dia marcado às 06:30 da manhã, é enviado um resumo de todos os serviços do dia. O seu cliente também recebe um WhatsApp de lembrete 2 horas antes. Você pode consultar tudo no painel da sua conta. A propósito, qual é o seu segmento de atuação para eu te dar exemplos mais precisos?"
+
+Use o KB como base para abastecer os detalhes da operação.
 Retorne somente o texto final.
 """
 
@@ -3528,7 +3526,7 @@ Retorne somente o texto final.
             "operational_family": str(c.get("operational_family") or "").strip(),
             "practical_scene_from_kb": str(practical_scene_from_kb or c.get("practical_scene_from_kb") or "").strip(),
             "base_scene": str(base_scene or "").strip(),
-            "example_line": str(c.get("example_line") or "").strip(),
+            "example_line": "" if str(practical_scene_from_kb or c.get("practical_scene_from_kb") or "").strip() else str(c.get("example_line") or "").strip(),
             "operational_ritual": c.get("operational_ritual") or [],
             "preferred_capabilities": c.get("preferred_capabilities") or [],
             "common_intents": c.get("common_intents") or [],
@@ -3704,28 +3702,20 @@ def _upgrade_operational_reply_with_model(
         c = contract or {}
 
         system = """
-Você recebe um texto operacional correto, mas que precisa ficar mais rico, concreto e comercialmente convincente.
+Você recebe um texto operacional correto, mas que precisa ser mais vibrante, empático e comercialmente convincente através de detalhes técnicos.
 
-Sua tarefa é reescrever esse texto como um vendedor consultivo, deixando o fluxo mais claro, visual e específico.
-O objetivo é fazer o lead enxergar o funcionamento exato no dia a dia, mantendo a sequência operacional.
+Sua tarefa é reescrever esse texto como um vendedor consultivo. O objetivo é fazer o lead visualizar o funcionamento exato e técnico no dia a dia dele.
 
 Regras obrigatórias:
-1. VÁ DIRETO AO PONTO: comece direto na cena. Não use saudação.
-2. EVENTO CONCRETO: se o texto estiver amplo, torne a abertura mais específica com um evento plausível do dia a dia.
-3. USE O RITUAL: transforme os passos do campo `operational_ritual` em texto corrido, sem inventar fluxo novo.
-4. POSSE E PROXIMIDADE: quando natural, fale como "o seu cliente", "o seu MEI Robô", "na sua conta".
-5. SEM DIÁLOGOS FAKES: descreva a ação; não use aspas para simular falas.
-6. SEM ABSTRAÇÕES GENÉRICAS: evite promessas vagas como "ganhar tempo", "facilitar a vida", "focar no que importa" como eixo da resposta.
-7. VALOR PELO FLUXO: o convencimento deve vir da clareza operacional.
-8. COMPACTO E DENSO: mantenha 1 parágrafo principal com 4 a 6 frases.
-9. CONSEQUÊNCIA FINAL OPCIONAL: pode fechar com uma consequência prática curta, desde que venha depois da microcena.
-10. NÃO termine com pergunta.
+1. TOM VIBRANTE E EMPÁTICO: Agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
+2. MICRO-CENA TÉCNICA: Detalhe a operação. Fale diretamente para o lead ("o seu cliente", "o seu MEI Robô"). Mostre o passo a passo real (consultas, confirmações, lembretes) baseado no `operational_ritual`.
+3. SEM ABSTRAÇÕES: Proibido usar promessas genéricas ("ganhe tempo", "foque no que importa"). O convencimento vem da clareza operacional.
+4. SEM DIÁLOGOS FAKES: Descreva a ação, não invente falas entre aspas.
+5. CONCISO E DENSO: Mantenha em 1 parágrafo rico (4 a 6 frases).
+6. PERGUNTAS ESTRATÉGICAS: Se faltar o nome do lead ou o segmento de atuação dele, inclua um pedido educado no final da mensagem.
 
-Importante:
-- Esta etapa existe para refinar a microcena operacional.
-- Não agradeça o contato.
-- Não peça o nome.
-- Não pergunte o segmento.
+[EXEMPLO DE TOM E ESTRUTURA ESPERADA]
+"Muito obrigado pelo contato! Quando o seu cliente chama no WhatsApp para pedir um agendamento, o seu MEI Robô pergunta o nome e qual seria o procedimento, consulta na configuração da sua conta o tempo de execução e propõe alternativas de horários. Quando o cliente escolhe, é enviado um texto confirmando o agendamento. Após a confirmação, isso vai para o seu e-mail e, no dia marcado às 06:30, é enviado um resumo dos serviços do dia. O seu cliente também recebe um lembrete 2 horas antes. Você acompanha tudo pelo painel. Me conta, qual é o seu segmento de atuação e como posso te chamar?"
 
 Retorne somente o texto final.
 """
@@ -3985,21 +3975,21 @@ def _build_kb_show_reply(
         deterministic_scene = ""
 
         generated = _generate_micro_scene_with_model(
-            practical_scene_from_kb="",
+            practical_scene_from_kb=practical_scene_from_kb,
             contract=contract or {},
         ).strip()
 
         scene_text = str(generated or "").strip()
         if not scene_text and stable_scene:
             scene_text = _compose_grounded_scene_with_progression(
-                practical_scene_from_kb="",
+                practical_scene_from_kb=practical_scene_from_kb,
                 contract=contract or {},
                 example_line=str(example_line or "").strip(),
             )
 
         if not scene_text and stable_scene:
             scene_text = _compose_grounded_scene_with_progression(
-                practical_scene_from_kb="",
+                practical_scene_from_kb=practical_scene_from_kb,
                 contract=contract or {},
                 example_line=str(example_line or "").strip(),
             )
@@ -4016,7 +4006,7 @@ def _build_kb_show_reply(
             return scene_text.rstrip(".") + "."
 
         return _build_last_resort_operational_reply(
-            practical_scene_from_kb="",
+            practical_scene_from_kb=practical_scene_from_kb,
             example_line=str(example_line or "").strip(),
             contract=contract or {},
             clarify_q="",
@@ -4415,30 +4405,17 @@ IMPORTANTE:
 Você recebe uma estrutura operacional já resolvida (contrato do KB).
 
 Sua tarefa é agir como um Vendedor Consultivo vibrante, empático e especialista.
-Transforme essa estrutura em uma resposta conversada, natural e convincente, mostrando o funcionamento técnico na prática.
-O objetivo é fazer o lead visualizar como o atendimento acontece no dia a dia e perceber valor pelo funcionamento.
+Transforme essa estrutura em uma resposta conversada, mostrando o funcionamento técnico na prática, para que o lead perceba o valor através dos detalhes operacionais.
 
 Regras de Ouro:
-1. MOSTRE O FLUXO ACONTECENDO: a resposta deve fazer o lead visualizar a operação no WhatsApp.
-2. VENDA PELA OPERAÇÃO: o valor deve aparecer pelo funcionamento, não por abstração.
-3. EVENTO CONCRETO: sempre que possível, ancore a microcena em um evento específico plausível do dia a dia.
-4. POSSE E PROXIMIDADE: quando natural, fale com construções como "o seu cliente", "o seu MEI Robô", "na sua conta".
-5. PROIBIDO PARECER SOFTWARE.
-6. SEM DIÁLOGOS FAKES: não use aspas para simular falas. Descreva a ação.
-7. COMPACTO E DENSO: priorize 1 parágrafo principal forte. Se necessário, feche com 1 frase curta adicional.
-8. CONSEQUÊNCIA PRÁTICA: o fechamento pode mostrar o que acontece depois, desde que venha como consequência da operação.
-9. EVITE ABSTRAÇÕES GENÉRICAS: não use frases feitas como "ganhe tempo", "facilita sua vida", "foque no que importa" como eixo principal da resposta.
-10. EMPATIA COM NOME:
-   - Se o nome do lead já estiver disponível, use esse nome com moderação em momentos estratégicos.
-   - Se o nome do lead NÃO estiver disponível, tente descobrir o nome de forma natural.
-   - Nunca faça uma pergunta isolada só para pedir o nome.
-   - Sempre combine o pedido do nome com uma resposta útil no mesmo turno.
-   - Quando estiver explicando o valor, mostrando microcena ou esclarecendo algo, você pode encaixar o pedido do nome no final da resposta.
-   - O objetivo é obter o nome sem desperdiçar um turno só com isso.
-11. SEGMENTO:
-   - Se o segmento do lead já estiver claro no contexto, use o KB normalmente.
-   - Se o segmento não estiver claro, você pode perguntar no final, de forma curta e natural, sem desperdiçar a resposta útil.
-12. SE O CLIENTE QUER ASSINAR/COMPRAR (ATIVAR): apenas agradeça, diga o nome dele e confirme o envio do link. NÃO conte história. NÃO gere microcena. Seja direto.
+1. EMPATIA INICIAL: Agradeça o contato logo no início. Se o nome do lead estiver disponível, use-o. Se não estiver, peça o nome de forma natural no final da mensagem (deixando claro que é opcional).
+2. IDENTIFIQUE O SEGMENTO: Se o segmento do lead não estiver claro, pergunte no final. Se já souber, use o KB para montar a cena.
+3. MICRO-CENA TÉCNICA (SHOW): Descreva o fluxo acontecendo no WhatsApp. Fale diretamente para o lead (ex: "Quando o seu cliente chama...", "o seu MEI Robô faz..."). Inclua detalhes práticos do KB (confirmações, lembretes, painel).
+4. ZERO ABSTRAÇÃO: Não use frases feitas como "ganhe tempo" ou "facilita sua vida". O convencimento deve vir da riqueza de detalhes do processo.
+5. SEM DIÁLOGOS FAKES: Não use aspas para simular falas. Descreva a ação.
+6. COMPACTO E DENSO: 1 parágrafo rico em detalhes, mas direto ao ponto.
+7. PERGUNTAS: Faça perguntas APENAS para descobrir o nome ou o segmento (se faltarem).
+8. SE O CLIENTE QUER ASSINAR/COMPRAR (ATIVAR): Apenas agradeça, diga o nome dele e confirme o envio do link. NÃO conte história, NÃO gere microcena. Seja direto.
 
 IMPORTANTE: Responda SEMPRE em formato JSON com a seguinte estrutura:
 {
