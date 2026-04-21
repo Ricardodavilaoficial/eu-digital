@@ -3482,8 +3482,8 @@ def _generate_micro_scene_with_model(
         system = """
 Você recebe um contexto operacional de atendimento já resolvido.
 
-Sua tarefa é agir como um vendedor consultivo e especialista conversando no WhatsApp.
-Mostre ao lead, com RIQUEZA DE DETALHES, como o MEI Robô funciona na prática no negócio dele.
+Sua tarefa é responder como um vendedor consultivo, demonstrando o funcionamento na prática.
+Mostre ao lead como o atendimento acontece no dia a dia, em sequência operacional.
 
 Ponto de partida obrigatório da cena:
 1. A microcena deve começar no momento em que o cliente entra em contato pelo WhatsApp.A partir desse contato, descreva como o MEI Robô conduz o atendimento até o próximo passo do processo.
@@ -3491,11 +3491,13 @@ Ponto de partida obrigatório da cena:
 3. A partir desse contato, descreva como o MEI Robô conduz o atendimento até o próximo passo do processo.
 
 Regras obrigatórias:
-1. VÁ DIRETO AO PONTO: Proibido usar saudações genéricas (ex: "Oi! Deixa eu te contar..."). Comece direto na cena (ex: "Imagina a cena: o cliente chama...").
+1. VÁ DIRETO À AÇÃO: Comece direto no acontecimento (ex: "Quando uma mensagem chega no WhatsApp...").
 2. USE O RITUAL: Transforme os passos do campo `operational_ritual` em um texto corrido. Não invente um fluxo da sua cabeça.
 3. SEM DIÁLOGOS FAKES: É estritamente proibido usar aspas para simular o que o robô ou cliente falam. Descreva a AÇÃO (ex: "o robô atende e mostra o catálogo", em vez de "o robô diz: 'qual você quer?'").
-4. SEJA CONCISO E ECONÔMICO: Escreva apenas 1 parágrafo curto (3 a 4 frases). Vá direto ao valor.
+4. SEJA CONCISO: Escreva 1 parágrafo curto (3 a 5 frases), mantendo progressão clara
 5. NÃO termine o texto com uma pergunta para o usuário.
+6. NÃO INFLAR O TEXTO: não adicionar explicações genéricas ou promessas abstratas
+6. EVITE ABSTRAÇÕES: não use construções genéricas como "traz agilidade", "facilita o dia a dia", "focar no que importa"
 
 Use o KB como base (ritual, objetivo, segmento) para abastecer os detalhes da operação.
 
@@ -3692,14 +3694,14 @@ def _upgrade_operational_reply_with_model(
         system = """
 Você recebe um texto operacional correto, mas que precisa ser mais rico, detalhado e comercialmente convincente.
 
-Sua tarefa é reescrever esse texto como uma mensagem de WhatsApp de um vendedor consultivo e especialista no segmento do cliente.
-O objetivo é fazer o lead enxergar exatamente como o robô vai funcionar no dia a dia dele, com riqueza de detalhes.
+Sua tarefa é reescrever esse texto como um vendedor consultivo, deixando o fluxo mais claro e concreto.
+O objetivo é melhorar a visualização do funcionamento no dia a dia, mantendo a sequência operacional.
 
 Regras obrigatórias:
 1. VÁ DIRETO AO PONTO: Proibido usar saudações genéricas. Comece direto na cena.
 2. USE O RITUAL: Transforme os passos do campo `operational_ritual` em um texto corrido.
 3. SEM DIÁLOGOS FAKES: É estritamente proibido usar aspas para simular falas. Descreva a AÇÃO.
-4. SEJA CONCISO E ECONÔMICO: Escreva apenas 1 parágrafo curto (3 a 4 frases).
+4. SEJA CONCISO: Escreva 1 parágrafo curto (3 a 5 frases)
 5. NÃO termine o texto com uma pergunta para o usuário.
 
 Retorne somente o texto final.
@@ -4389,16 +4391,17 @@ IMPORTANTE:
 
 Você recebe uma estrutura operacional já resolvida (contrato do KB).
 
-Sua tarefa é agir como um Vendedor Consultivo Empático e Especialista no segmento do cliente. 
-Transforme essa estrutura em uma explicação CONVERSADA, NATURAL e SHOW. O objetivo é fazer o lead imaginar o alívio e a praticidade de ter o MEI Robô no dia a dia dele.
+Sua tarefa é agir como um Vendedor Consultivo e Especialista.
+Transforme essa estrutura em uma resposta conversada, natural e convincente, mostrando o funcionamento na prática.
+O objetivo é fazer o lead entender e visualizar como o atendimento acontece no dia a dia.
 
 Regras de Ouro:
-1. Pinte um quadro mental (Microcena operacional)
-2. Foco no benefício real e no passo a passo do KB
+1. Mostre o fluxo acontecendo (Microcena operacional)
+2. Venda através da operação: o valor deve aparecer pelo funcionamento, não por abstração
 3. Proibido parecer software
 4. SEM DIÁLOGOS FAKES: Não use aspas para simular falas. Descreva a ação.
 5. SEJA CONCISO: 1 parágrafo curto e direto (econômico).
-6. Fechamento quente
+6. Fechamento com consequência operacional (sem promessa genérica)
 7. SE O CLIENTE QUER ASSINAR/COMPRAR (ATIVAR): Apenas agradeça, diga o nome dele e confirme o envio do link. NÃO conte história, NÃO gere microcena. Seja direto.
 8. EMPATIA COM NOME:
    - Se o nome do lead já estiver disponível, use esse nome com moderação em momentos estratégicos.
@@ -5082,8 +5085,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # ----------------------------------------------------------
         system_prompt += (
             "\nAntes de responder, entenda a situação real do cliente.\n"
-            "Imagine como seria a conversa acontecendo no WhatsApp.\n"
-            "Mostre naturalmente o robô atuando dentro da situação\n"
+            "Visualize a conversa acontecendo no WhatsApp.\n"
+            "Mostre o fluxo acontecendo em sequência real\n"
             "Evite explicar software; descreva a cena prática acontecendo.\n"
         )
     family_hint = _build_free_mode_family_hint(user_text, effective_segment)
@@ -5813,21 +5816,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                     if upgraded and len(str(upgraded).strip()) > 40:
                         if _upgrade_contract_strong:
+                            # Contrato forte: preservar a primeira microcena boa.
+                            # Upgrade só entra se elevar de fato (SHOW quando antes não era).
                             keep_upgraded = bool(
-                                upgraded_show
-                                or (
-                                    upgraded_show == generated_show
-                                    and len(str(upgraded).strip()) > len(str(generated).strip())
-                                )
+                                upgraded_show and not generated_show
                             )
                         else:
+                            # Sem contrato forte: ainda permitimos upgrade,
+                            # mas removemos completamente o incentivo por tamanho.
                             keep_upgraded = bool(
-                                upgraded_show
-                                or (upgraded_live and not generated_show)
-                                or (
-                                    upgraded_live == generated_live
-                                    and len(str(upgraded).strip()) > len(str(generated).strip())
-                                )
+                                (upgraded_show and not generated_show)
+                                or (upgraded_live and not generated_live)
                             )
 
                         if keep_upgraded:
