@@ -5084,6 +5084,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     except Exception:
         inferred_segment = ""
 
+    sticky_segment_hint = (
+        str(state_summary.get("subsegment_hint") or "").strip()
+        or str(state_summary.get("segment_hint") or "").strip()
+        or str(state_summary.get("effective_segment") or "").strip()
+        or str(state_summary.get("last_effective_segment") or "").strip()
+        or str(state_summary.get("last_segment_hint") or "").strip()
+    )
+
     kb_segment_hint = ""
     try:
         if isinstance(kb_context, dict):
@@ -5097,6 +5105,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     effective_segment = (
         str((kb_context or {}).get("subsegment_hint") or "").strip()
+        or str(sticky_segment_hint or "").strip()
         or str(segment_hint or "").strip()
         or str(kb_segment_hint or "").strip()
         or str(inferred_segment or "").strip()
@@ -5835,6 +5844,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             micro_scene_allowed = False
 
         try:
+            hydrated = bool((operational_contract or {}).get("hydrated_from_docs"))
+            has_scene = bool(str((operational_contract or {}).get("operational_reference") or "").strip())
+            has_example = bool(str((operational_contract or {}).get("reference_example") or "").strip())
+
+            if (
+                ai_turns >= 1
+                and hydrated
+                and has_scene
+                and has_example
+                and str(topic or "").strip().upper() not in ("PRECO", "TRIAL", "ATIVAR")
+                and str(next_step or "").strip().upper() != "SEND_LINK"
+            ):
+                micro_scene_allowed = True
+        except Exception:
+            pass
+
+        try:
             if isinstance(operational_contract, dict):
                 operational_contract["micro_scene_allowed"] = micro_scene_allowed
             if isinstance(base_operational_contract, dict):
@@ -5925,7 +5951,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # usa apenas o topic já decidido pela IA.
         # ----------------------------------------------------------
         try:
-            if str(topic or "").strip().upper() == "PRECO":
+            price_context_active = any([
+                str(topic or "").strip().upper() == "PRECO",
+                str(last_intent or "").strip().upper() == "PRECO",
+                str((kb_context or {}).get("intent_hint") or "").strip().upper() == "PRECO",
+            ])
+            if price_context_active:
                 needs_price_repair = (
                     (not str(reply_text or "").strip())
                     or ("r$" not in str(reply_text or "").lower())
