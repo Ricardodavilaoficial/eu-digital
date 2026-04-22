@@ -4843,6 +4843,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     # kb_compact já foi preparado acima:
     # - snapshot completo para lookup/runtime
+
+    if not found_seg and not found_sub and not found_arch:
+        # 🔧 FIX: manter contexto anterior se já identificado antes
+        prev_seg = (user_context_data or {}).get("segment_id")
+        prev_arch = (user_context_data or {}).get("archetype_id")
+
+        if prev_seg:
+            found_seg = True
+            segment_id = prev_seg
+
+        if prev_arch:
+            found_arch = True
+            archetype_id = prev_arch
     # - snapshot curto para o prompt
 
     # Seletor de fatos do KB (menos tokens, menos "chute")
