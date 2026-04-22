@@ -424,8 +424,8 @@ def _stable_variant_index(seed_text: str, modulo: int) -> int:
         return 0
 
 
-def _kb_get_example_line(kb_snapshot: str, segment: str, pack_id: str) -> str:
-    """Pull example_line for segment+pack from kb_snapshot (JSON if possible; heuristic fallback)."""
+def _kb_get_reference_example(kb_snapshot: str, segment: str, pack_id: str) -> str:
+    """Pull reference_example for segment+pack from kb_snapshot (JSON if possible; heuristic fallback)."""
     try:
         if not kb_snapshot or not segment or not pack_id:
             return ""
@@ -454,11 +454,11 @@ def _kb_get_example_line(kb_snapshot: str, segment: str, pack_id: str) -> str:
             if isinstance(m, dict) and segment in m:
                 tokens = (m.get(segment) or {}).get("tokens") or {}
                 p = tokens.get(pack_id) or {}
-                ex = p.get("example_line") or ""
+                ex = p.get("reference_example") or ""
                 return str(ex).strip()
 
         # Heuristic fallback: works with common Firestore export / pretty prints like:
-        # dentista (map) ... PACK_A_AGENDA ... example_line (string) ... "Pra consultório..."
+        # dentista (map) ... PACK_A_AGENDA ... reference_example (string) ... "Pra consultório..."
         kb = kb_snapshot
         kb_low = kb.lower()
         seg_low = (segment or "").lower()
@@ -466,7 +466,7 @@ def _kb_get_example_line(kb_snapshot: str, segment: str, pack_id: str) -> str:
 
         seg_pos = kb_low.find(seg_low)
         if seg_pos < 0:
-            # last resort: search whole snapshot for pack+example_line
+            # last resort: search whole snapshot for pack+reference_example
             seg_pos = 0
 
         # Limit scan window to keep it fast
@@ -480,16 +480,16 @@ def _kb_get_example_line(kb_snapshot: str, segment: str, pack_id: str) -> str:
         else:
             window2 = window
 
-        # Find 'example_line' within the narrowed window
+        # Find 'reference_example' within the narrowed window
         w2_low = window2.lower()
-        e_pos = w2_low.find("example_line")
+        e_pos = w2_low.find("reference_example")
         if e_pos < 0:
             return ""
 
         tail = window2[e_pos: e_pos + 1200]
 
         # Strategy:
-        # 1) Prefer quoted text after example_line
+        # 1) Prefer quoted text after reference_example
         q = re.search(r'"([^\n\"]{12,240})"', tail, re.DOTALL)
         if q:
             return q.group(1).strip()
@@ -665,8 +665,8 @@ def _needs_discovery_question(
     effective_segment: str = "",
     needs_clarify: str = "",
     clarify_q: str = "",
-    practical_scene_from_kb: str = "",
-    example_line: str = "",
+    operational_reference: str = "",
+    reference_example: str = "",
     reply_text: str = "",
 ) -> bool:
     """
@@ -684,8 +684,8 @@ def _needs_discovery_question(
         seg = str(effective_segment or "").strip().lower()
         needs_clarify = str(needs_clarify or "").strip().lower()
         clarify_q = str(clarify_q or "").strip()
-        practical_scene_from_kb = str(practical_scene_from_kb or "").strip()
-        example_line = str(example_line or "").strip()
+        operational_reference = str(operational_reference or "").strip()
+        reference_example = str(reference_example or "").strip()
         reply_text = str(reply_text or "").strip()
 
         if ai_turns > 0:
@@ -693,9 +693,9 @@ def _needs_discovery_question(
 
         # Se já temos ancoragem forte suficiente, não abrir discovery.
         # Mas segmento sozinho não basta se ainda não houver cena/exemplo/fluxo.
-        if practical_scene_from_kb:
+        if operational_reference:
             return False
-        if example_line:
+        if reference_example:
             return False
         if seg and operational_family:
             return False
@@ -873,21 +873,21 @@ def _parse_free_mode_text_response(
         return {}
 
 
-def _build_scene_hint_block(*, family_hint: str, micro_scene: str, example_line: str, practical_scene_from_kb: str) -> str:
+def _build_scene_hint_block(*, family_hint: str, micro_scene: str, reference_example: str, operational_reference: str) -> str:
     """
     Enxuga contexto adicional de cena antes de injetar no system_prompt.
     Prioridade:
-    1) practical_scene_from_kb
-    2) example_line + micro_scene
+    1) operational_reference
+    2) reference_example + micro_scene
     3) micro_scene
-    4) example_line
+    4) reference_example
     family_hint entra só como apoio, sem duplicar a mesma cena.
     """
     try:
         fh = str(family_hint or "").strip()
         ms = str(micro_scene or "").strip()
-        ex = str(example_line or "").strip()
-        ps = str(practical_scene_from_kb or "").strip()
+        ex = str(reference_example or "").strip()
+        ps = str(operational_reference or "").strip()
 
         parts = []
 
@@ -962,25 +962,25 @@ def build_dynamic_context_frame(segment: str, kb_text: str) -> str:
     )
 
 
-def _build_user_scene_block(*, practical_scene_from_kb: str, example_line: str, kb_section: str, kb_compact: str) -> str:
+def _build_user_scene_block(*, operational_reference: str, reference_example: str, kb_section: str, kb_compact: str) -> str:
     """
     Enxuga o payload do usuário para evitar duplicação entre:
-    - practical_scene_from_kb
-    - example_line
+    - operational_reference
+    - reference_example
     - KB Context
     - KB SNAPSHOT COMPACTO
     Mantém fallback do snapshot, mas prioriza o que já foi selecionado.
     """
     try:
-        ps = str(practical_scene_from_kb or "").strip()
-        ex = str(example_line or "").strip()
+        ps = str(operational_reference or "").strip()
+        ex = str(reference_example or "").strip()
         ks = str(kb_section or "").strip()
         kc = str(kb_compact or "").strip()
 
         parts = []
 
         if ps:
-            parts.append("[REGRA CRÍTICA DE GERAÇÃO]\nUse a CENA PREFERENCIAL DO KB como referência quando a IA entender que vale mostrar valor prático neste turno.\n- Em Vendas, quando o segmento estiver claro, prefira usar o KB para demonstrar na prática como o MEI Robô funciona naquele contexto.\n- Se o segmento ainda não estiver claro, a IA pode conduzir a conversa para descobrir isso e então mostrar valor com mais precisão.\n- O KB é a fonte da verdade para fatos operacionais.\n- O exemplo abaixo NÃO define comportamento sozinho.\n- O exemplo serve apenas para tom e ritmo.\n- Se a pergunta for institucional, ampla ou exploratória, não force microcena.\n- Se houver conflito, siga o entendimento soberano da IA e preserve os fatos do KB.\n- NUNCA invente etapas que não estejam no KB.\n- O KB é a fonte da verdade para fatos operacionais.\n- O exemplo abaixo NÃO define comportamento sozinho.\n- O exemplo serve apenas para tom e ritmo.\n- Se a pergunta for institucional, ampla ou exploratória, não force microcena.\n- Se houver conflito, siga o entendimento soberano da IA e preserve os fatos do KB.\n- NUNCA invente etapas que não estejam no KB.")
+            parts.append("[REGRA CRÍTICA DE GERAÇÃO]\nUse a CENA PREFERENCIAL DO KB como apoio quando a IA decidir demonstrar valor prático.\n- A decisão de usar microcena é da IA, não é obrigatória.\n- Se a pergunta for institucional, direta ou exploratória, responda primeiro com clareza.\n- Use o KB como fonte de verdade, nunca como roteiro obrigatório.\n- Nunca invente etapas fora do KB.\n- O exemplo serve apenas como referência de tom, não de comportamento.")
             parts.append(f"[CENA PREFERENCIAL]\n{ps}")
         elif ex:
             parts.append(f"[EXEMPLO DO SEGMENTO]\n{ex}")
@@ -1084,8 +1084,8 @@ def _has_strong_kb_anchor(
     kb_context: Dict[str, Any],
     effective_segment: str,
     operational_family: str,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     selected_pack_id: str,
 ) -> bool:
     """
@@ -1103,9 +1103,9 @@ def _has_strong_kb_anchor(
             score += 2
         if str(operational_family or "").strip():
             score += 1
-        if str(practical_scene_from_kb or "").strip():
+        if str(operational_reference or "").strip():
             score += 3
-        if str(example_line or "").strip():
+        if str(reference_example or "").strip():
             score += 2
         if str(selected_pack_id or "").strip():
             score += 1
@@ -1189,8 +1189,8 @@ def _scene_transition_score(text: str) -> int:
 def _operational_density_score(
     *,
     text: str,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     effective_segment: str,
     operational_family: str,
 ) -> int:
@@ -1226,9 +1226,9 @@ def _operational_density_score(
         if last and len(last) >= 28:
             score += 1
 
-        if str(practical_scene_from_kb or "").strip():
+        if str(operational_reference or "").strip():
             score += 1
-        if str(example_line or "").strip():
+        if str(reference_example or "").strip():
             score += 1
         if str(effective_segment or "").strip():
             score += 1
@@ -1244,7 +1244,7 @@ def _operational_density_score(
 def _operational_progress_score(
     *,
     text: str,
-    practical_scene_from_kb: str,
+    operational_reference: str,
     contract: Dict[str, Any] | None = None,
 ) -> int:
     """
@@ -1298,7 +1298,7 @@ def _operational_progress_score(
             elif overlap == 1:
                 score += 1
         else:
-            scene = str(practical_scene_from_kb or "").strip().lower()
+            scene = str(operational_reference or "").strip().lower()
             if scene:
                 scene_tokens = [tok for tok in re.findall(r"\w+", scene) if len(tok) >= 5]
                 hit_count = sum(1 for tok in scene_tokens[:8] if tok in low)
@@ -1376,8 +1376,8 @@ def _observer_voice_score(text: str) -> int:
 def _looks_explanatory_reply(
     *,
     text: str,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     contract: Dict[str, Any] | None = None,
 ) -> bool:
     """
@@ -1397,8 +1397,8 @@ def _looks_explanatory_reply(
             return True
 
         grounded_scene = str(
-            practical_scene_from_kb
-            or (contract or {}).get("practical_scene_from_kb")
+            operational_reference
+            or (contract or {}).get("operational_reference")
             or ""
         ).strip()
 
@@ -1407,21 +1407,21 @@ def _looks_explanatory_reply(
 
         contract_strong = bool(
             (contract or {}).get("hydrated_from_docs")
-            and str(example_line or "").strip()
+            and str(reference_example or "").strip()
             and grounded_scene
         )
 
         transition = _scene_transition_score(t)
         density = _operational_density_score(
             text=t,
-            practical_scene_from_kb=grounded_scene,
-            example_line=example_line,
+            operational_reference=grounded_scene,
+            reference_example=reference_example,
             effective_segment=str((contract or {}).get("segment") or "").strip(),
             operational_family=str((contract or {}).get("operational_family") or "").strip(),
         )
         progress = _operational_progress_score(
             text=t,
-            practical_scene_from_kb=grounded_scene,
+            operational_reference=grounded_scene,
             contract=contract or {},
         )
         observer_voice = _observer_voice_score(t)
@@ -1443,8 +1443,8 @@ def _looks_explanatory_reply(
 def _is_live_operational_reply(
     *,
     text: str,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     contract: Dict[str, Any] | None = None,
 ) -> bool:
     """
@@ -1483,8 +1483,8 @@ def _is_live_operational_reply(
 def _is_show_micro_scene(
     *,
     text: str,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     contract: Dict[str, Any] | None = None,
 ) -> bool:
     """
@@ -1498,21 +1498,21 @@ def _is_show_micro_scene(
             return False
 
         grounded_scene = str(
-            practical_scene_from_kb
-            or (contract or {}).get("practical_scene_from_kb")
+            operational_reference
+            or (contract or {}).get("operational_reference")
             or ""
         ).strip()
 
         contract_strong = bool(
             (contract or {}).get("hydrated_from_docs")
-            and str(example_line or "").strip()
+            and str(reference_example or "").strip()
             and grounded_scene
         )
 
         if not _is_live_operational_reply(
             text=t,
-            practical_scene_from_kb=grounded_scene,
-            example_line=example_line,
+            operational_reference=grounded_scene,
+            reference_example=reference_example,
             contract=contract or {},
         ):
             return False
@@ -1530,21 +1530,21 @@ def _is_show_micro_scene(
         transition = _scene_transition_score(t)
         density = _operational_density_score(
             text=t,
-            practical_scene_from_kb=grounded_scene,
-            example_line=example_line,
+            operational_reference=grounded_scene,
+            reference_example=reference_example,
             effective_segment=str((contract or {}).get("segment") or "").strip(),
             operational_family=str((contract or {}).get("operational_family") or "").strip(),
         )
         progress = _operational_progress_score(
             text=t,
-            practical_scene_from_kb=grounded_scene,
+            operational_reference=grounded_scene,
             contract=contract or {},
         )
         observer_voice = _observer_voice_score(t)
         explanatory = _looks_explanatory_reply(
             text=t,
-            practical_scene_from_kb=grounded_scene,
-            example_line=example_line,
+            operational_reference=grounded_scene,
+            reference_example=reference_example,
             contract=contract or {},
         )
 
@@ -1576,8 +1576,8 @@ def _should_force_kb_rebuild(
     *,
     text: str,
     kb_anchor_strong: bool,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     effective_segment: str,
     operational_family: str,
     contract: Dict[str, Any] | None = None,
@@ -1605,8 +1605,8 @@ def _should_force_kb_rebuild(
 
         if _looks_explanatory_reply(
             text=t,
-            practical_scene_from_kb="",
-            example_line=example_line,
+            operational_reference="",
+            reference_example=reference_example,
             contract=contract or {},
         ):
             return True
@@ -1680,35 +1680,35 @@ def _preferred_topic_from_kb(*, kb_context: Dict[str, Any], current_topic: str) 
 
 def _build_kb_anchor_reply(
     *,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     clarify_q: str = "",
     contract: Dict[str, Any] | None = None,
 ) -> str:
     """
     Fallback mínimo e alinhado ao princípio de IA soberana:
-    usa o que o banco já trouxe, sem transformar example_line em resposta final.
+    usa o que o banco já trouxe, sem transformar reference_example em resposta final.
     """
     try:
-        stable_scene = _stabilize_scene_base(str(practical_scene_from_kb or "").strip())
+        stable_scene = _stabilize_scene_base(str(operational_reference or "").strip())
         generated = _generate_micro_scene_with_model(
-            practical_scene_from_kb=practical_scene_from_kb,
+            operational_reference=operational_reference,
             contract=contract or {},
         )
 
         scene_text = str(generated or "").strip()
         if not scene_text and stable_scene:
             scene_text = _compose_grounded_scene_with_progression(
-                practical_scene_from_kb=practical_scene_from_kb,
+                operational_reference=operational_reference,
                 contract=contract or {},
-                example_line=str(example_line or "").strip(),
+                reference_example=str(reference_example or "").strip(),
             )
 
         if not scene_text and stable_scene:
             scene_text = _compose_grounded_scene_with_progression(
-                practical_scene_from_kb=practical_scene_from_kb,
+                operational_reference=operational_reference,
                 contract=contract or {},
-                example_line=str(example_line or "").strip(),
+                reference_example=str(reference_example or "").strip(),
             )
 
         scene_text = _sanitize_user_facing_reply(scene_text)
@@ -1717,15 +1717,15 @@ def _build_kb_anchor_reply(
         if scene_text:
             if _is_live_operational_reply(
                 text=scene_text,
-                practical_scene_from_kb=practical_scene_from_kb,
-                example_line=str(example_line or "").strip(),
+                operational_reference=operational_reference,
+                reference_example=str(reference_example or "").strip(),
                 contract=contract or {},
             ):
                 return scene_text.rstrip(".") + "."
 
         rebuilt = _build_last_resort_operational_reply(
-            practical_scene_from_kb="",
-            example_line=str(example_line or "").strip(),
+            operational_reference="",
+            reference_example=str(reference_example or "").strip(),
             contract=contract or {},
             clarify_q=clarify_q,
         )
@@ -1739,8 +1739,8 @@ def _build_kb_anchor_reply(
 
 def _build_last_resort_operational_reply(
     *,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     contract: Dict[str, Any] | None = None,
     clarify_q: str = "",
 ) -> str:
@@ -1751,30 +1751,30 @@ def _build_last_resort_operational_reply(
     """
     try:
         c = dict(contract or {})
-        stable_scene = _stabilize_scene_base(str(practical_scene_from_kb or "").strip())
-        ex = str(example_line or "").strip()
+        stable_scene = _stabilize_scene_base(str(operational_reference or "").strip())
+        ex = str(reference_example or "").strip()
 
         if not stable_scene:
             return str(clarify_q or "").strip()
 
         rebuilt = _compose_grounded_scene_with_progression(
-            practical_scene_from_kb=practical_scene_from_kb,
+            operational_reference=operational_reference,
             contract=c,
-            example_line=ex,
+            reference_example=ex,
         )
         rebuilt = _sanitize_user_facing_reply(rebuilt)
         rebuilt = re.sub(r"\s{2,}", " ", str(rebuilt or "")).strip(" .")
 
         if rebuilt and _is_live_operational_reply(
             text=rebuilt,
-            practical_scene_from_kb="",
-            example_line=ex,
+            operational_reference="",
+            reference_example=ex,
             contract=c,
         ):
             return rebuilt.rstrip(".") + "."
 
         generated = _generate_micro_scene_with_model(
-            practical_scene_from_kb=practical_scene_from_kb,
+            operational_reference=operational_reference,
             contract=c,
         )
         generated = _sanitize_user_facing_reply(generated)
@@ -1866,8 +1866,8 @@ def _refresh_operational_anchor(
         ).strip()
         pack_id = str(selected_pack_id or "").strip().upper()
 
-        example_line = str((kb_context or {}).get("segment_example_line") or "").strip()
-        practical_scene = str((kb_context or {}).get("practical_scene_from_kb") or "").strip()
+        reference_example = str((kb_context or {}).get("segment_reference_example") or "").strip()
+        practical_scene = str((kb_context or {}).get("operational_reference") or "").strip()
         micro_scene = str((kb_context or {}).get("pack_micro_scene") or "").strip()
         family = str(
             (kb_context or {}).get("operational_family")
@@ -1875,8 +1875,8 @@ def _refresh_operational_anchor(
             or ""
         ).strip()
 
-        if seg and not example_line:
-            example_line = _kb_get_example_line(kb_snapshot, seg, pack_id)
+        if seg and not reference_example:
+            reference_example = _kb_get_reference_example(kb_snapshot, seg, pack_id)
 
         if seg and not practical_scene:
             practical_scene = _kb_get_segment_scene(kb_snapshot, seg)
@@ -1892,14 +1892,14 @@ def _refresh_operational_anchor(
             )
 
         return {
-            "example_line": str(example_line or "").strip(),
-            "practical_scene_from_kb": str(practical_scene or "").strip(),
+            "reference_example": str(reference_example or "").strip(),
+            "operational_reference": str(practical_scene or "").strip(),
             "operational_family": str(family or "").strip(),
         }
     except Exception:
         return {
-            "example_line": str((kb_context or {}).get("segment_example_line") or "").strip(),
-            "practical_scene_from_kb": str((kb_context or {}).get("practical_scene_from_kb") or "").strip(),
+            "reference_example": str((kb_context or {}).get("segment_reference_example") or "").strip(),
+            "operational_reference": str((kb_context or {}).get("operational_reference") or "").strip(),
             "operational_family": str((kb_context or {}).get("operational_family") or operational_family or "").strip(),
         }
 
@@ -1971,8 +1971,8 @@ def _kb_lookup_operational_docs(
                 str(effective_segment or "").strip(),
                 str((kb_context or {}).get("segment_hint") or "").strip(),
                 str((kb_context or {}).get("subsegment_hint") or "").strip(),
-                str((kb_context or {}).get("segment_example_line") or "").strip(),
-                str((kb_context or {}).get("practical_scene_from_kb") or "").strip(),
+                str((kb_context or {}).get("segment_reference_example") or "").strip(),
+                str((kb_context or {}).get("operational_reference") or "").strip(),
             ]
         ).strip()
 
@@ -2275,7 +2275,7 @@ def _merge_real_kb_operational_context(
 
         if not cleaned_ritual:
             derived_scene = _pick(
-                ctx.get("practical_scene_from_kb"),
+                ctx.get("operational_reference"),
                 sub_doc.get("micro_scene"),
                 arch_doc.get("micro_scene"),
                 seg_doc.get("micro_scene"),
@@ -2334,23 +2334,23 @@ def _merge_real_kb_operational_context(
         if segment_profile:
             ctx["segment_profile"] = segment_profile
 
-        if not str(ctx.get("segment_example_line") or "").strip():
+        if not str(ctx.get("segment_reference_example") or "").strip():
             one_liner = _pick(
                 sub_doc.get("one_liner"),
                 arch_doc.get("one_liner"),
                 (seg_doc.get("one_liner") if use_seg else ""),
             )
             if one_liner:
-                ctx["segment_example_line"] = one_liner
+                ctx["segment_reference_example"] = one_liner
 
-        if not str(ctx.get("practical_scene_from_kb") or "").strip():
+        if not str(ctx.get("operational_reference") or "").strip():
             micro_scene = _pick(
                 sub_doc.get("micro_scene"),
                 arch_doc.get("micro_scene"),
                 (seg_doc.get("micro_scene") if use_seg else ""),
             )
             if micro_scene:
-                ctx["practical_scene_from_kb"] = micro_scene
+                ctx["operational_reference"] = micro_scene
 
         if not str(ctx.get("operational_family") or "").strip():
             family = _pick(
@@ -2372,8 +2372,8 @@ def _build_operational_contract(
     kb_snapshot: str,
     kb_context: Dict[str, Any],
     effective_segment: str,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     operational_family: str,
     topic: str,
 ) -> Dict[str, Any]:
@@ -2456,7 +2456,7 @@ def _build_operational_contract(
         if not ritual_steps:
             ritual_steps = _derive_ritual_from_scene(
                 _pick_str(
-                    practical_scene_from_kb,
+                    operational_reference,
                     (sub_doc or {}).get("micro_scene"),
                     (arch_doc or {}).get("micro_scene"),
                     (seg_doc or {}).get("micro_scene"),
@@ -2508,15 +2508,15 @@ def _build_operational_contract(
         ).lower()
 
         # exemplo/cena reais do banco
-        has_example_line = bool(
-            str(example_line or "").strip()
+        has_reference_example = bool(
+            str(reference_example or "").strip()
             or str((sub_doc or {}).get("one_liner") or "").strip()
             or str(((seg_doc or {}).get("one_liner") if use_seg else "") or "").strip()
             or str((arch_doc or {}).get("one_liner") or "").strip()
         )
 
         has_practical_scene = bool(
-            str(practical_scene_from_kb or "").strip()
+            str(operational_reference or "").strip()
             or str((sub_doc or {}).get("micro_scene") or "").strip()
             or str((arch_doc or {}).get("micro_scene") or "").strip()
             or str(((seg_doc or {}).get("micro_scene") if use_seg else "") or "").strip()
@@ -2570,12 +2570,12 @@ def _build_operational_contract(
             "common_intents": intent_list,
             "catalog_groups": group_list,
             "operational_rules": rule_map,
-            "has_example_line": has_example_line,
+            "has_reference_example": has_reference_example,
             "has_practical_scene": has_practical_scene,
             "allowed_next_step": allowed_next_step,
             "hydrated_from_docs": bool(sub_doc or seg_doc or arch_doc),
-            "practical_scene_from_kb": str(practical_scene_from_kb or "").strip(),
-            "example_line": str(example_line or "").strip(),
+            "operational_reference": str(operational_reference or "").strip(),
+            "reference_example": str(reference_example or "").strip(),
         }
     except Exception:
         return {
@@ -2598,12 +2598,12 @@ def _build_operational_contract(
             "common_intents": [],
             "catalog_groups": [],
             "operational_rules": {},
-            "has_example_line": bool(str(example_line or "").strip()),
-            "has_practical_scene": bool(str(practical_scene_from_kb or "").strip()),
+            "has_reference_example": bool(str(reference_example or "").strip()),
+            "has_practical_scene": bool(str(operational_reference or "").strip()),
             "allowed_next_step": "none",
             "hydrated_from_docs": False,
-            "practical_scene_from_kb": str(practical_scene_from_kb or "").strip(),
-            "example_line": str(example_line or "").strip(),
+            "operational_reference": str(operational_reference or "").strip(),
+            "reference_example": str(reference_example or "").strip(),
         }
 
 
@@ -2635,13 +2635,13 @@ def _audit_operational_reply(
         if not _has_operational_shape(t):
             return {"ok": False, "reason": "weak_shape"}
 
-        practical_scene = str((contract or {}).get("practical_scene_from_kb") or "").strip()
-        example_line = str((contract or {}).get("example_line") or "").strip()
+        practical_scene = str((contract or {}).get("operational_reference") or "").strip()
+        reference_example = str((contract or {}).get("reference_example") or "").strip()
 
         if not _is_live_operational_reply(
             text=t,
-            practical_scene_from_kb="",
-            example_line=example_line,
+            operational_reference="",
+            reference_example=reference_example,
             contract=contract or {},
         ):
             return {"ok": False, "reason": "non_live_operational_form"}
@@ -2861,15 +2861,15 @@ def _strip_scene_narrator(text: str) -> str:
 
 def _expand_scene_steps(
     *,
-    practical_scene_from_kb: str,
+    operational_reference: str,
     contract: Dict[str, Any] | None = None,
 ) -> list[str]:
     """
     Expande a cena em micro-etapas encadeadas.
     Não cria fatos novos; apenas reaproveita:
-    - practical_scene_from_kb
+    - operational_reference
     - operational_ritual
-    - example_line
+    - reference_example
     """
     try:
         c = dict(contract or {})
@@ -2880,11 +2880,11 @@ def _expand_scene_steps(
             steps.extend([re.sub(r"\s{2,}", " ", str(x).strip(" .")) for x in ritual if str(x).strip()])
 
         if not steps:
-            steps.extend(_split_scene_steps(practical_scene_from_kb))
+            steps.extend(_split_scene_steps(operational_reference))
 
-        example_line = str(c.get("example_line") or "").strip()
-        if example_line and not steps:
-            ex_steps = _split_scene_steps(example_line)
+        reference_example = str(c.get("reference_example") or "").strip()
+        if reference_example and not steps:
+            ex_steps = _split_scene_steps(reference_example)
             if ex_steps:
                 first_ex = ex_steps[0]
                 if first_ex and first_ex.lower() not in {s.lower() for s in steps}:
@@ -2905,12 +2905,12 @@ def _expand_scene_steps(
 
         return cleaned[:8]
     except Exception:
-        return _split_scene_steps(practical_scene_from_kb)
+        return _split_scene_steps(operational_reference)
 
 
 def _select_structured_scene_steps(
     *,
-    practical_scene_from_kb: str,
+    operational_reference: str,
     contract: Dict[str, Any] | None = None,
     model_steps: list[str] | None = None,
 ) -> list[str]:
@@ -2935,7 +2935,7 @@ def _select_structured_scene_steps(
         if isinstance(ritual, list):
             sources.append([str(x).strip() for x in ritual if str(x).strip()])
 
-        base_steps = _split_scene_steps(practical_scene_from_kb)
+        base_steps = _split_scene_steps(operational_reference)
         if base_steps:
             sources.append(base_steps)
 
@@ -2952,8 +2952,8 @@ def _select_structured_scene_steps(
                 out.append(s)
 
         # garante que sempre tenta puxar do texto do usuário
-        if len(out) < 3 and practical_scene_from_kb:
-            extra = _split_scene_steps(practical_scene_from_kb)
+        if len(out) < 3 and operational_reference:
+            extra = _split_scene_steps(operational_reference)
             for s in extra:
                 key = re.sub(r"\W+", "", s).lower()
                 if key not in seen:
@@ -2967,9 +2967,9 @@ def _select_structured_scene_steps(
 
 def _expand_structural_steps_from_contract_with_model(
     *,
-    practical_scene_from_kb: str,
+    operational_reference: str,
     contract: Dict[str, Any] | None = None,
-    example_line: str = "",
+    reference_example: str = "",
 ) -> list[str]:
     """
     Expande a microcena em mais passos estruturais usando apenas
@@ -2986,7 +2986,7 @@ def _expand_structural_steps_from_contract_with_model(
         c = dict(contract or {})
 
         base_steps = _select_structured_scene_steps(
-            practical_scene_from_kb="",
+            operational_reference="",
             contract=c,
             model_steps=None,
         )
@@ -3009,8 +3009,8 @@ def _expand_structural_steps_from_contract_with_model(
             "common_intents": c.get("common_intents") or [],
             "catalog_groups": c.get("catalog_groups") or [],
             "allowed_next_step": str(c.get("allowed_next_step") or "").strip(),
-            "practical_scene_from_kb": str(practical_scene_from_kb or "").strip(),
-            "example_line": str(example_line or c.get("example_line") or "").strip(),
+            "operational_reference": str(operational_reference or "").strip(),
+            "reference_example": str(reference_example or c.get("reference_example") or "").strip(),
             "base_steps": base_steps,
         }
 
@@ -3117,9 +3117,9 @@ Formato:
 
 def _compose_grounded_scene_with_progression(
     *,
-    practical_scene_from_kb: str,
+    operational_reference: str,
     contract: Dict[str, Any] | None = None,
-    example_line: str = "",
+    reference_example: str = "",
 ) -> str:
     """
     Monta microcena operacional a partir de estrutura.
@@ -3127,17 +3127,17 @@ def _compose_grounded_scene_with_progression(
     """
     try:
         c = dict(contract or {})
-        stable_scene = _stabilize_scene_base(practical_scene_from_kb)
-        ex = str(example_line or c.get("example_line") or "").strip()
+        stable_scene = _stabilize_scene_base(operational_reference)
+        ex = str(reference_example or c.get("reference_example") or "").strip()
 
         model_expanded_steps = _expand_structural_steps_from_contract_with_model(
-            practical_scene_from_kb="",
+            operational_reference="",
             contract=c,
-            example_line=ex,
+            reference_example=ex,
         )
 
         steps = _select_structured_scene_steps(
-            practical_scene_from_kb="",
+            operational_reference="",
             contract=c,
             model_steps=model_expanded_steps if model_expanded_steps else None,
         )
@@ -3406,7 +3406,7 @@ def _render_progressive_operational_flow(steps: list[str]) -> str:
 
 def _build_structural_last_resort_reply(
     *,
-    practical_scene_from_kb: str,
+    operational_reference: str,
     contract: Dict[str, Any] | None = None,
 ) -> str:
     """
@@ -3417,17 +3417,17 @@ def _build_structural_last_resort_reply(
     try:
         c = dict(contract or {})
 
-        stable_scene = _stabilize_scene_base(practical_scene_from_kb)
-        ex = str(c.get("example_line") or "").strip()
+        stable_scene = _stabilize_scene_base(operational_reference)
+        ex = str(c.get("reference_example") or "").strip()
 
         model_expanded_steps = _expand_structural_steps_from_contract_with_model(
-            practical_scene_from_kb="",
+            operational_reference="",
             contract=c,
-            example_line=ex,
+            reference_example=ex,
         )
 
         steps = _select_structured_scene_steps(
-            practical_scene_from_kb="",
+            operational_reference="",
             contract=c,
             model_steps=model_expanded_steps if model_expanded_steps else None,
         )
@@ -3460,7 +3460,7 @@ def _build_structural_last_resort_reply(
 
 def _generate_micro_scene_with_model(
     *,
-    practical_scene_from_kb: str,
+    operational_reference: str,
     contract: Dict[str, Any] | None = None,
 ) -> str:
     try:
@@ -3475,18 +3475,18 @@ def _generate_micro_scene_with_model(
         if not micro_scene_allowed:
             return ""
 
-        if topic in ("WHAT_IS", "OTHER", "TRIAL", "ATIVAR") and not str(practical_scene_from_kb or "").strip():
+        if topic in ("WHAT_IS", "OTHER", "TRIAL", "ATIVAR") and not str(operational_reference or "").strip():
             return ""
 
         if not c.get("operational_ritual"):
-            practical_scene_from_kb = (practical_scene_from_kb or "") + " Esse atendimento acontece diretamente pelo WhatsApp, com o cliente conversando com o MEI Robô."
+            operational_reference = (operational_reference or "") + " Esse atendimento acontece diretamente pelo WhatsApp, com o cliente conversando com o MEI Robô."
             c["operational_ritual"] = _derive_ritual_from_scene(
-                c.get("practical_scene_from_kb") or practical_scene_from_kb
+                c.get("operational_reference") or operational_reference
             )
 
         base_scene = _render_progressive_operational_flow(
             _select_structured_scene_steps(
-                practical_scene_from_kb="",
+                operational_reference="",
                 contract=c,
                 model_steps=None,
             )[:8]
@@ -3495,29 +3495,39 @@ def _generate_micro_scene_with_model(
         system = """
 Você recebe um contexto operacional de atendimento já resolvido.
 
-Sua tarefa é agir como um Vendedor Consultivo vibrante, empático e especialista.
-Mostre ao lead uma situação real acontecendo no dia a dia dele, em uma sequência operacional rica em detalhes técnicos.
+Sua tarefa é gerar uma microcena operacional clara e direta,
+apenas quando este bloco for acionado.
 
 Regras obrigatórias:
 
 [REGRA CRÍTICA DE GERAÇÃO - O PONTO DE EQUILÍBRIO]
-Use a CENA PREFERENCIAL DO KB como referência quando a IA entender que demonstrar a operação ajuda a vender com mais clareza neste turno.\n- Em Vendas, quando o segmento estiver claro, prefira mostrar valor prático no contexto real do lead.\n- Se o segmento ainda não estiver claro, a IA pode conduzir a conversa para descobrir isso e então usar o KB com mais precisão.\n- O KB é a fonte da verdade para fatos operacionais, mas não deve forçar microcena em pergunta institucional, ampla ou exploratória.\n- Sua missão é DRAMATIZAR a operação quando isso ajudar o lead a visualizar valor no dia a dia.\n- FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB. Embeleze a forma de falar, não o conteúdo técnico.\n- O exemplo abaixo serve apenas para tom e ritmo. Se houver conflito com o entendimento soberano da IA, preserve o entendimento e os fatos do KB.
-- O KB é a fonte da verdade para fatos operacionais, mas não deve forçar microcena em pergunta institucional, ampla ou exploratória.
-- Sua missão é DRAMATIZAR a operação somente quando isso ajudar o lead a visualizar valor no dia a dia.
-- FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB. Embeleze a forma de falar, não o conteúdo técnico.
-- O exemplo abaixo serve apenas para tom e ritmo. Se houver conflito com o entendimento soberano da IA, preserve o entendimento e os fatos do KB.
+Use a CENA PREFERENCIAL DO KB apenas quando houver contexto suficiente para descrever o funcionamento prático.
+- Primeiro decida exatamente uma ação principal para este turno:
+- responder diretamente
+- pedir nome
+- pedir segmento
+- usar microcena
+- avançar para link
+Nunca combine múltiplas ações conflitantes.
+- Se nome e segmento ainda não estiverem claros, peça isso junto com uma resposta útil; nunca faça uma mensagem só para perguntar.
+- Se o segmento ainda não estiver claro, não force microcena.
+- Se a pergunta for institucional, ampla ou direta, responda primeiro a dúvida.
+- O KB é a fonte da verdade para fatos operacionais.
+- FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB.
+- O exemplo abaixo serve apenas como referência de densidade técnica e estrutura.
 
-1. EMPATIA INICIAL: Agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
-2. MICRO-CENA TÉCNICA (SHOW): Descreva o fluxo exato no WhatsApp. Fale direcionando a posse ao lead (ex: "Quando o seu cliente chama...", "o seu MEI Robô pergunta...", "na sua conta").
-3. ZERO LINGUAGEM DE SISTEMA/GESTÃO: Proibido usar termos burocráticos como "registra o tema", "organiza o encaminhamento", "garante o próximo passo", "gerencia". Descreva o que o robô *fala* ou *envia* na prática.
-4. ZERO ABSTRAÇÃO E RESUMOS: Proibido usar frases de marketing ("traz agilidade", "comunicação fluida").
-5. FECHAMENTO SECO E DIRETO: Termine na última ação concreta do robô. NUNCA adicione uma frase de conclusão genérica no final.
-6. SEM DIÁLOGOS FAKES: Não use aspas para simular falas. Descreva a AÇÃO.
-7. COMPACTO E DENSO: 1 parágrafo curto (máx. ~3 a 4 frases), direto e sem explicação adicional.
-8. PERGUNTAS ESTRATÉGICAS: Se o nome do lead NÃO estiver disponível, peça-o educadamente no final. Se o segmento de atuação não estiver claro, pergunte qual é o segmento dele no final.
+1. EMPATIA INICIAL: agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
+2. MICROCENA TÉCNICA: descreva o fluxo exato no WhatsApp, em sequência prática.
+3. ZERO LINGUAGEM DE SISTEMA: não use termos burocráticos como "registra", "organiza", "gerencia" ou "garante".
+4. ZERO ABSTRAÇÃO: não use frases de marketing nem resumos de benefício.
+5. FECHAMENTO SECO: termine na última ação concreta do fluxo.
+6. SEM DIÁLOGOS FAKES: não use aspas para simular falas.
+7. COMPACTO E DENSO: 1 parágrafo curto, direto e técnico.
+8. PERGUNTAS RESTRITAS: só pergunte nome, segmento ou intenção, quando isso realmente estiver faltando.
+9. QUANDO FALTAR NOME OU SEGMENTO: incorpore isso no mesmo texto útil; nunca desperdice o turno só com a pergunta.
 
 [EXEMPLO DE TOM, DENSIDADE E ESTRUTURA ESPERADA]
-"Olá [Nome], muito obrigado pelo seu contato! Quando o seu cliente chama no WhatsApp para pedir um agendamento, o seu MEI Robô pergunta o nome e qual seria o procedimento, consulta na configuração que você fez na sua conta qual o tempo de execução e propõe alternativas de horários. Seu cliente escolhe uma ou pede outras opções. Quando é escolhido um horário, é enviado ali mesmo um texto confirmando o que foi agendado. Após a confirmação, este agendamento vai para o seu e-mail e, no dia marcado às 06:30 da manhã, é enviado um resumo de todos os serviços do dia. O seu cliente também recebe um WhatsApp de lembrete 2 horas antes. Você pode consultar tudo no painel da sua conta. A propósito, qual é o seu segmento de atuação para eu te dar exemplos mais precisos?"
+"João, muito obrigado pelo teu contato! Um cliente teu manda mensagem no WhatsApp pedindo um agendamento. O teu MEI Robô confirma o tipo de serviço, consulta o tempo que tu deixou configurado, verifica os horários disponíveis e apresenta opções. O cliente escolhe, ele confirma ali mesmo e envia a confirmação por escrito. No dia, dispara o lembrete pelo WhatsApp. Se eu ainda não souber teu segmento, eu junto isso na resposta e te peço essa informação no mesmo texto."
 
 Use o KB como base para abastecer os detalhes da operação.
 Retorne somente o texto final.
@@ -3533,9 +3543,9 @@ Retorne somente o texto final.
             "conversion_noun": str(c.get("conversion_noun") or "").strip(),
             "allowed_next_step": str(c.get("allowed_next_step") or "").strip(),
             "operational_family": str(c.get("operational_family") or "").strip(),
-            "practical_scene_from_kb": str(practical_scene_from_kb or c.get("practical_scene_from_kb") or "").strip(),
+            "operational_reference": str(operational_reference or c.get("operational_reference") or "").strip(),
             "base_scene": str(base_scene or "").strip(),
-            "example_line": "" if str(practical_scene_from_kb or c.get("practical_scene_from_kb") or "").strip() else str(c.get("example_line") or "").strip(),
+            "reference_example": "" if str(operational_reference or c.get("operational_reference") or "").strip() else str(c.get("reference_example") or "").strip(),
             "operational_ritual": c.get("operational_ritual") or [],
             "preferred_capabilities": c.get("preferred_capabilities") or [],
             "common_intents": c.get("common_intents") or [],
@@ -3573,7 +3583,7 @@ Retorne somente o texto final.
         if not raw_text:
             return base_scene
 
-        scene_base = str(practical_scene_from_kb or "").strip()
+        scene_base = str(operational_reference or "").strip()
         if len(scene_base) > 1200:
             scene_base = scene_base[:1200]
 
@@ -3592,8 +3602,8 @@ Retorne somente o texto final.
 
             if rebuilt and _is_live_operational_reply(
                 text=rebuilt,
-                practical_scene_from_kb="",
-                example_line=str(c.get("example_line") or "").strip(),
+                operational_reference="",
+                reference_example=str(c.get("reference_example") or "").strip(),
                 contract=c,
             ):
                 micro_scene = rebuilt
@@ -3615,23 +3625,23 @@ Retorne somente o texto final.
 
         density = _operational_density_score(
             text=micro_scene,
-            practical_scene_from_kb="",
-            example_line=str(c.get("example_line") or "").strip(),
+            operational_reference="",
+            reference_example=str(c.get("reference_example") or "").strip(),
             effective_segment=str(c.get("segment") or "").strip(),
             operational_family=str(c.get("operational_family") or "").strip(),
         )
 
         progress = _operational_progress_score(
             text=micro_scene,
-            practical_scene_from_kb="",
+            operational_reference="",
             contract=c,
         )
 
         try:
             if micro_scene and _looks_explanatory_reply(
                 text=micro_scene,
-                practical_scene_from_kb="",
-                example_line=str(c.get("example_line") or "").strip(),
+                operational_reference="",
+                reference_example=str(c.get("reference_example") or "").strip(),
                 contract=c,
             ):
                 micro_scene = ""
@@ -3654,9 +3664,9 @@ Retorne somente o texto final.
     except Exception:
         try:
             return _compose_grounded_scene_with_progression(
-                practical_scene_from_kb="",
+                operational_reference="",
                 contract=contract or {},
-                example_line=str((contract or {}).get("example_line") or "").strip(),
+                reference_example=str((contract or {}).get("reference_example") or "").strip(),
             )
         except Exception:
             return ""
@@ -3697,8 +3707,8 @@ def _sanitize_user_facing_reply(text: str) -> str:
 def _upgrade_operational_reply_with_model(
     *,
     base_text: str,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     contract: Dict[str, Any] | None = None,
 ) -> str:
     """
@@ -3713,20 +3723,21 @@ def _upgrade_operational_reply_with_model(
         system = """
 Você recebe um texto operacional correto, mas que pode estar "seco" ou robótico.
 
-Sua tarefa é reescrever esse texto como um vendedor consultivo. O objetivo é DRAMATIZAR a atividade real contada, fazendo o lead visualizar o funcionamento exato no dia a dia dele, focando na ação visível.
+Sua tarefa é reescrever esse texto como um vendedor consultivo, mantendo a operação concreta e mais clara.
 
 Regras obrigatórias (O Ponto de Equilíbrio):
-1. VALORIZE A CENA (SHOW): Transforme a sequência de ações em uma narrativa fluida e natural. Faça o lead visualizar o robô conversando com o cliente dele.
-2. FIDELIDADE ABSOLUTA: NÃO invente funcionalidades, botões ou etapas que não estejam no texto base ou no `operational_ritual`. Embeleze a *forma* de falar, não o *conteúdo* técnico.
-3. TOM VIBRANTE E EMPÁTICO: Agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
-4. ZERO LINGUAGEM DE SISTEMA/GESTÃO: Proibido usar termos burocráticos como "registra o tema", "organiza o encaminhamento", "garante o próximo passo". Descreva a ação prática (ex: "ele avisa", "ele envia").
-5. FECHAMENTO SECO E DIRETO: Termine na última ação concreta. NUNCA adicione frases de resumo ou conclusão genérica (ex: "mantendo a comunicação fluida", "facilitando a vida").
-6. SEM DIÁLOGOS FAKES: Descreva a ação acontecendo, não invente falas entre aspas.
-7. CONCISO, MAS ENVOLVENTE: Mantenha em 1 parágrafo (3 a 4 frases). Conecte as frases, não faça parecer uma lista de tópicos.
-8. PERGUNTAS ESTRATÉGICAS: Se faltar o nome do lead ou o segmento de atuação dele, inclua um pedido educado no final da mensagem.
+1. MANTENHA A OPERAÇÃO CONCRETA: preserve a sequência prática do texto base.
+2. FIDELIDADE ABSOLUTA: NÃO invente funcionalidades, botões ou etapas que não estejam no texto base ou no `operational_ritual`.
+3. TOM VIBRANTE E EMPÁTICO: agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
+4. ZERO LINGUAGEM DE SISTEMA: não use termos burocráticos como "registra", "organiza" ou "garante".
+5. FECHAMENTO SECO: termine na última ação concreta, sem resumo final.
+6. SEM DIÁLOGOS FAKES: descreva a ação acontecendo.
+7. CONCISO: mantenha em 1 parágrafo curto e ligado.
+8. PERGUNTAS RESTRITAS: só pergunte nome, segmento ou intenção, quando isso estiver realmente faltando.
+9. QUANDO FALTAR NOME OU SEGMENTO: não faça pergunta isolada; responda algo útil e inclua a pergunta no mesmo texto.
 
 [EXEMPLO DE TOM E ESTRUTURA ESPERADA]
-"Muito obrigado pelo contato! Quando o seu cliente chama no WhatsApp para pedir um agendamento, o seu MEI Robô pergunta o nome e qual seria o procedimento, consulta na configuração da sua conta o tempo de execução e propõe alternativas de horários. Quando o cliente escolhe, é enviado um texto confirmando o agendamento. Após a confirmação, isso vai para o seu e-mail e, no dia marcado às 06:30, é enviado um resumo dos serviços do dia. O seu cliente também recebe um lembrete 2 horas antes. Você acompanha tudo pelo painel. Me conta, qual é o seu segmento de atuação e como posso te chamar?"
+"Muito obrigado pelo contato! O MEI Robô é um atendente virtual que responde no teu WhatsApp usando a tua própria voz digitalizada e teu jeito de falar. Ele consulta as informações que tu configurou e responde automaticamente, tanto em áudio quanto em texto. Pode informar serviços, valores, enviar orçamentos e organizar atendimentos conforme o teu padrão. Se eu ainda não souber teu nome ou teu segmento, eu peço isso no mesmo texto."
 
 Retorne somente o texto final.
 """
@@ -3736,8 +3747,8 @@ Retorne somente o texto final.
 {str(base_text or '').strip()}
 
 [BASE OPERACIONAL DO KB]
-practical_scene_from_kb: {str(practical_scene_from_kb or '').strip()}
-example_line: {str(example_line or '').strip()}
+operational_reference: {str(operational_reference or '').strip()}
+reference_example: {str(reference_example or '').strip()}
 primary_goal: {str(c.get('primary_goal') or '').strip()}
 allowed_next_step: {str(c.get('allowed_next_step') or '').strip()}
 operational_ritual: {json.dumps(c.get('operational_ritual') or [], ensure_ascii=False)}
@@ -3745,8 +3756,7 @@ service_noun: {str(c.get('service_noun') or '').strip()}
 operational_family: {str(c.get('operational_family') or '').strip()}
 
 [INSTRUÇÃO FINAL]
-Reescreva detalhando a operação no dia a dia do cliente.
-Use a base para enriquecer a resposta.
+Reescreva mantendo a operação concreta, usando a base apenas para reforçar fidelidade técnica.
 """
 
         resp = _call_openai_for_front(
@@ -3932,8 +3942,8 @@ def _build_contract_consequence(contract: Dict[str, Any] | None) -> str:
 def _compose_operational_reply(
     *,
     reply_text: str,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     operational_family: str,
     contract: Dict[str, Any] | None = None,
 ) -> str:
@@ -3970,39 +3980,39 @@ def wrap_show_response(text: str) -> str:
 def _build_kb_show_reply(
     *,
     kb_context: Dict[str, Any],
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     effective_segment: str,
     operational_family: str,
     contract: Dict[str, Any] | None = None,
 ) -> str:
     """
     Quando o KB ancora forte, devolve a microcena viva.
-    Não cola example_line como cabeçalho explicativo.
+    Não cola reference_example como cabeçalho explicativo.
     """
     try:
-        stable_scene = _stabilize_scene_base(str(practical_scene_from_kb or "").strip())
+        stable_scene = _stabilize_scene_base(str(operational_reference or "").strip())
 
         deterministic_scene = ""
 
         generated = _generate_micro_scene_with_model(
-            practical_scene_from_kb=practical_scene_from_kb,
+            operational_reference=operational_reference,
             contract=contract or {},
         ).strip()
 
         scene_text = str(generated or "").strip()
         if not scene_text and stable_scene:
             scene_text = _compose_grounded_scene_with_progression(
-                practical_scene_from_kb=practical_scene_from_kb,
+                operational_reference=operational_reference,
                 contract=contract or {},
-                example_line=str(example_line or "").strip(),
+                reference_example=str(reference_example or "").strip(),
             )
 
         if not scene_text and stable_scene:
             scene_text = _compose_grounded_scene_with_progression(
-                practical_scene_from_kb=practical_scene_from_kb,
+                operational_reference=operational_reference,
                 contract=contract or {},
-                example_line=str(example_line or "").strip(),
+                reference_example=str(reference_example or "").strip(),
             )
 
         scene_text = _sanitize_user_facing_reply(scene_text)
@@ -4010,15 +4020,15 @@ def _build_kb_show_reply(
 
         if scene_text and _is_show_micro_scene(
             text=scene_text,
-            practical_scene_from_kb="",
-            example_line=str(example_line or "").strip(),
+            operational_reference="",
+            reference_example=str(reference_example or "").strip(),
             contract=contract or {},
         ):
             return scene_text.rstrip(".") + "."
 
         return _build_last_resort_operational_reply(
-            practical_scene_from_kb=practical_scene_from_kb,
-            example_line=str(example_line or "").strip(),
+            operational_reference=operational_reference,
+            reference_example=str(reference_example or "").strip(),
             contract=contract or {},
             clarify_q="",
         )
@@ -4027,11 +4037,11 @@ def _build_kb_show_reply(
 def _compose_practical_scene(*, kb_snapshot: str, segment_key: str, pack_id: str) -> str:
     """
     Monta o 'Na prática:' a partir de:
-    - example_line do segmento (quando houver)
+    - reference_example do segmento (quando houver)
     - micro_scene do pack (quando houver)
     """
     try:
-        ex = _kb_get_example_line(kb_snapshot, segment_key, pack_id).strip()
+        ex = _kb_get_reference_example(kb_snapshot, segment_key, pack_id).strip()
         ms = _kb_get_micro_scene(kb_snapshot, pack_id).strip()
 
         parts = []
@@ -4063,7 +4073,7 @@ def _merge_value_and_scene(value_line: str, practical_scene: str, question: str 
 
         if v:
             out.append(v.rstrip(".!?") + ".")
-        if p:
+        if p and len(p) > 80:
             out.append(p)
         if q:
             out.append(q)
@@ -4179,8 +4189,8 @@ def _resolve_best_operational_reply(
     effective_segment: str,
     operational_family: str,
     selected_pack_id: str,
-    practical_scene_from_kb: str,
-    example_line: str,
+    operational_reference: str,
+    reference_example: str,
     question: str,
     topic: str,
     confidence: str,
@@ -4209,8 +4219,8 @@ def _resolve_best_operational_reply(
             operational_family=operational_family,
         )
 
-        refreshed_example_line = str((refreshed_anchor or {}).get("example_line") or example_line or "").strip()
-        refreshed_scene = str((refreshed_anchor or {}).get("practical_scene_from_kb") or practical_scene_from_kb or "").strip()
+        refreshed_reference_example = str((refreshed_anchor or {}).get("reference_example") or reference_example or "").strip()
+        refreshed_scene = str((refreshed_anchor or {}).get("operational_reference") or operational_reference or "").strip()
 
         if current_reply:
             current_audit = _audit_operational_reply(
@@ -4219,11 +4229,11 @@ def _resolve_best_operational_reply(
             )
             current_is_mild = _looks_explanatory_reply(
                 text=current_reply,
-                practical_scene_from_kb=refreshed_scene or practical_scene_from_kb,
-                example_line=refreshed_example_line or example_line,
+                operational_reference=refreshed_scene or operational_reference,
+                reference_example=refreshed_reference_example or reference_example,
                 contract=contract,
             )
-            current_is_echo = _is_scene_echo(current_reply, refreshed_example_line or example_line) or _is_scene_echo(
+            current_is_echo = _is_scene_echo(current_reply, refreshed_reference_example or reference_example) or _is_scene_echo(
                 current_reply,
                 user_text,
             )
@@ -4234,8 +4244,8 @@ def _resolve_best_operational_reply(
                 and not current_is_echo
                 and _is_live_operational_reply(
                     text=current_reply,
-                    practical_scene_from_kb=refreshed_scene or practical_scene_from_kb,
-                    example_line=refreshed_example_line or example_line,
+                    operational_reference=refreshed_scene or operational_reference,
+                    reference_example=refreshed_reference_example or reference_example,
                     contract=contract,
                 )
             ):
@@ -4261,15 +4271,15 @@ def _resolve_best_operational_reply(
         kb_seed_reply = (
             _build_kb_show_reply(
                 kb_context=kb_context if isinstance(kb_context, dict) else {},
-                practical_scene_from_kb="",
-                example_line=refreshed_example_line,
+                operational_reference="",
+                reference_example=refreshed_reference_example,
                 effective_segment=effective_segment,
                 operational_family=operational_family,
                 contract=contract,
             )
             or _build_kb_anchor_reply(
-                practical_scene_from_kb="",
-                example_line=refreshed_example_line,
+                operational_reference="",
+                reference_example=refreshed_reference_example,
                 clarify_q=(question if not effective_segment else ""),
                 contract=contract,
             )
@@ -4277,12 +4287,12 @@ def _resolve_best_operational_reply(
 
         best_effort = (
             _compose_grounded_scene_with_progression(
-                practical_scene_from_kb=refreshed_scene or practical_scene_from_kb,
+                operational_reference=refreshed_scene or operational_reference,
                 contract=contract,
-                example_line=refreshed_example_line or example_line,
+                reference_example=refreshed_reference_example or reference_example,
             ).strip()
             or _generate_micro_scene_with_model(
-                practical_scene_from_kb=refreshed_scene or practical_scene_from_kb,
+                operational_reference=refreshed_scene or operational_reference,
                 contract=contract,
             ).strip()
         )
@@ -4355,8 +4365,8 @@ def _should_downgrade_premature_narrow_topic(
     ai_turns: int,
     effective_segment: str = "",
     operational_family: str = "",
-    practical_scene_from_kb: str = "",
-    example_line: str = "",
+    operational_reference: str = "",
+    reference_example: str = "",
     reply_text: str = "",
     next_step: str = "",
 ) -> bool:
@@ -4375,8 +4385,8 @@ def _should_downgrade_premature_narrow_topic(
         confidence = str(confidence or "").strip().lower()
         seg = str(effective_segment or "").strip()
         fam = str(operational_family or "").strip()
-        ps = str(practical_scene_from_kb or "").strip()
-        ex = str(example_line or "").strip()
+        ps = str(operational_reference or "").strip()
+        ex = str(reference_example or "").strip()
         rt = str(reply_text or "").strip()
         ns = str(next_step or "").strip().upper()
 
@@ -4418,18 +4428,49 @@ IMPORTANTE:
 
 Você recebe uma estrutura operacional já resolvida (contrato do KB).
 
-Sua tarefa é agir como um Vendedor Consultivo vibrante, empático e especialista.
-Transforme essa estrutura em uma resposta conversada, mostrando o funcionamento técnico na prática, para que o lead perceba o valor através dos detalhes operacionais.
+Sua tarefa é agir como um Vendedor Consultivo Empático e Especialista.
+Você é responsável por conduzir a conversa, entender a intenção do lead e decidir entre:
+- solicitar o nome, se ele ainda não foi informado
+- identificar o segmento, se isso for necessário para personalizar valor
+- responder diretamente a dúvida com base no KB
+- apresentar uma microcena prática, quando houver contexto suficiente e isso ajudar a demonstrar funcionamento
 
 Regras de Ouro:
-1. EMPATIA INICIAL: Comece a resposta com o nome do lead (se disponível) e um agradecimento natural. Se não estiver, peça o nome de forma natural no final da mensagem (deixando claro que é opcional).
-2. IDENTIFIQUE O SEGMENTO: Se o segmento do lead não estiver claro, pergunte no final. Se já souber, use o KB para montar a cena.
-3. MICRO-CENA TÉCNICA (SHOW): Descreva o fluxo acontecendo no WhatsApp. Fale diretamente para o lead (ex: "Quando o seu cliente chama...", "o seu MEI Robô faz..."). Inclua detalhes práticos do KB (confirmações, lembretes, painel).
-4. ZERO ABSTRAÇÃO: Não use frases feitas como "ganhe tempo" ou "facilita sua vida". O convencimento deve vir da riqueza de detalhes do processo.
-5. SEM DIÁLOGOS FAKES: Não use aspas para simular falas. Descreva a ação.
-6. COMPACTO E DENSO: 1 parágrafo curto (máx. ~3 a 4 frases), direto e sem explicação adicional.
-7. PERGUNTAS: Faça perguntas APENAS para descobrir o nome ou o segmento (se faltarem).
-8. SE O CLIENTE QUER ASSINAR/COMPRAR (ATIVAR): Apenas agradeça, diga o nome dele e confirme o envio do link. NÃO conte história, NÃO gere microcena. Seja direto.
+1. ENTENDA PRIMEIRO: interprete a intenção do lead antes de escolher a resposta.
+2. NOME É PRIORIDADE: se o nome ainda não foi informado, peça na próxima interação.
+3. SEGMENTO É PRIORIDADE JUNTO COM O NOME: se nome e segmento ainda não apareceram, tente buscar os dois.
+4. NUNCA DESPERDICE O TURNO: quando faltar nome ou segmento, responda algo útil e inclua a pergunta no mesmo texto; nunca mande uma mensagem só para perguntar.
+5. RESPOSTA DIRETA TEM PRIORIDADE: se a dúvida for objetiva, responda primeiro com base no KB.
+6. MICROCENA É DECISÃO, NÃO HÁBITO: use apenas quando houver contexto suficiente e oportunidade clara de mostrar funcionamento prático.
+7. PERGUNTAS SÃO RESTRITAS: só faça perguntas para obter nome, identificar segmento ou esclarecer a intenção do lead.
+8. NÃO FORCE CONTINUIDADE: não faça perguntas vazias no final.
+9. PROIBIDO PARECER SOFTWARE: fale como humano, com clareza e objetividade.
+10. SEJA CONCISO: entregue a resposta em 1 parágrafo curto e direto.
+11. FECHAMENTO COM NOME: quando o nome for conhecido, use-o no fechamento.
+12. SE O CLIENTE QUER ASSINAR: agradeça, use o nome e informe o link. Não explique mais nada.
+13. QUANDO FALAR DE ÁUDIO: deixe claro que mensagens em áudio podem ser respondidas com a própria voz digitalizada do profissional, configurada na conta.
+
+[EXEMPLOS CANÔNICOS — REFERÊNCIA DE TOM E ESTRUTURA]
+
+[ABERTURA / SEM NOME E SEM SEGMENTO]
+"Bom dia! Aqui está sempre tempo bom 😊 Valeu por chamar! Me diz teu nome e com o que tu trabalhas pra eu te mostrar como o MEI Robô entra no teu dia a dia."
+
+[DESCOBERTA / FALTA SEGMENTO]
+"Perfeito! Me diz com o que tu trabalhas pra eu te explicar como o atendimento funciona no teu caso."
+
+[RESPOSTA DIRETA / SEM MICROCENA]
+"O MEI Robô é um atendente virtual que responde no teu WhatsApp usando a tua própria voz digitalizada e teu jeito de falar. Ele consulta as informações que tu configurou e responde automaticamente, tanto em áudio quanto em texto. Pode informar serviços, valores, enviar orçamentos e organizar atendimentos conforme o teu padrão."
+
+[MICROCENA TÉCNICA]
+"João, um cliente teu manda mensagem pedindo um agendamento. O MEI Robô confirma o tipo de serviço, consulta o tempo que tu deixou configurado, verifica os horários disponíveis e apresenta opções. O cliente escolhe, ele confirma ali mesmo e envia a confirmação por escrito. No dia, dispara o lembrete pelo WhatsApp."
+
+[FECHAMENTO / INTENÇÃO DE COMPRA]
+"Perfeito, João! Obrigado pela confiança. Pode fazer tua assinatura direto por aqui: https://meirobo.com.br"
+
+[RESPOSTA HÍBRIDA]
+"O MEI Robô responde como tu responderia. No painel, tu configura o jeito de atendimento, pode ajustar por tipo de cliente e definir como orçamentos são enviados. Ele usa isso para manter padrão nas respostas, enviar propostas organizadas e conduzir o atendimento até onde tu quiser assumir."
+
+IMPORTANTE: os exemplos acima são referência de execução, tom e densidade. Não copie mecanicamente. Use o KB como fonte da verdade.
 
 IMPORTANTE: Responda SEMPRE em formato JSON com a seguinte estrutura:
 {
@@ -4447,9 +4488,12 @@ IMPORTANTE: Responda SEMPRE em formato JSON com a seguinte estrutura:
 
 FREE_MODE_APPEND_PROMPT = """
 MODO IA TOTAL:
-- Encantar e demonstrar valor rápido
-- Mostrar na prática
-- Conversar de forma natural
+- Entender rapidamente a intenção do lead
+- Decidir se deve pedir nome, identificar segmento, responder diretamente ou demonstrar funcionamento
+- Quando faltar nome ou segmento, responder algo útil e pedir isso no mesmo texto
+- Dar prioridade a respostas diretas quando a dúvida for objetiva
+- Quando falar de áudio, deixar claro que o MEI Robô pode responder com a voz digitalizada do profissional
+- Manter objetividade, tom humano e direção comercial
 """
 
 
@@ -4682,7 +4726,7 @@ def _pick_pack_for_intent(intent: str, pack_id: str = "") -> str:
     return ""
 
 
-def _segment_example_line(kb: Dict[str, Any], segment_key: str, pack_id: str) -> str:
+def _segment_reference_example(kb: Dict[str, Any], segment_key: str, pack_id: str) -> str:
     try:
         seg = (segment_key or "").strip().lower()
         if not seg:
@@ -4705,7 +4749,7 @@ def _segment_example_line(kb: Dict[str, Any], segment_key: str, pack_id: str) ->
         seg_obj = svm.get(seg) or svm.get(seg.lower()) or {}
         tokens = (seg_obj.get("tokens") or {})
         pack_obj = tokens.get((pack_id or "").strip().upper()) or {}
-        ex = str(pack_obj.get("example_line") or "").strip()
+        ex = str(pack_obj.get("reference_example") or "").strip()
         return ex
     except Exception:
         return ""
@@ -4719,7 +4763,7 @@ def _pack_practical_add(pack_id: str) -> str:
 def _segment_micro_flow(kb: Dict[str, Any], segment_key: str, intent: str, pack_id: str) -> str:
     """Gera um 'SHOW' curto: 1 frase de exemplo + 1 frase de micro-fluxo (sem tutorial)."""
     try:
-        ex = _segment_example_line(kb, segment_key, pack_id)
+        ex = _segment_reference_example(kb, segment_key, pack_id)
         if not ex:
             return ""        
         add = _pack_practical_add(pack_id)
@@ -4945,8 +4989,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             str(effective_segment or "").strip(),
             str((kb_context or {}).get("archetype_id") or "").strip(),
             str((kb_context or {}).get("segment_id") or "").strip(),
-            bool(str((kb_context or {}).get("segment_example_line") or "").strip()),
-            bool(str((kb_context or {}).get("practical_scene_from_kb") or "").strip()),
+            bool(str((kb_context or {}).get("segment_reference_example") or "").strip()),
+            bool(str((kb_context or {}).get("operational_reference") or "").strip()),
             str((kb_context or {}).get("operational_family") or "").strip(),
         )
     except Exception:
@@ -5002,8 +5046,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     try:
         if (
             not str((kb_context or {}).get("discovery_question_hint") or "").strip()
-            and not practical_scene_from_kb
-            and not example_line
+            and not operational_reference
+            and not reference_example
             and not operational_family
         ):
             kb_context["discovery_question_hint"] = ""
@@ -5035,16 +5079,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     selected_pack_id = str((kb_context or {}).get("pack_id") or "").strip().upper()
     micro_scene = str((kb_context or {}).get("pack_micro_scene") or "").strip()
-    practical_scene_from_kb = str((kb_context or {}).get("practical_scene_from_kb") or "").strip()
-    example_line = str((kb_context or {}).get("segment_example_line") or "").strip()
+    operational_reference = str((kb_context or {}).get("operational_reference") or "").strip()
+    reference_example = str((kb_context or {}).get("segment_reference_example") or "").strip()
     if selected_pack_id and not micro_scene:
         micro_scene = _kb_get_micro_scene(kb_snapshot, selected_pack_id)
-    if selected_pack_id and not example_line:
-        example_line = _kb_get_example_line(kb_snapshot, effective_segment, selected_pack_id)
-    if effective_segment and not practical_scene_from_kb:
-        practical_scene_from_kb = _kb_get_segment_scene(kb_snapshot, effective_segment)
-    if not practical_scene_from_kb and micro_scene:
-        practical_scene_from_kb = micro_scene
+    if selected_pack_id and not reference_example:
+        reference_example = _kb_get_reference_example(kb_snapshot, effective_segment, selected_pack_id)
+    if effective_segment and not operational_reference:
+        operational_reference = _kb_get_segment_scene(kb_snapshot, effective_segment)
+    if not operational_reference and micro_scene:
+        operational_reference = micro_scene
 
     # ----------------------------------------------------------
     # REFRESH DA ÂNCORA OPERACIONAL
@@ -5058,15 +5102,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         selected_pack_id=selected_pack_id,
         operational_family=operational_family,
     )
-    example_line = str((refreshed_anchor or {}).get("example_line") or example_line or "").strip()
-    practical_scene_from_kb = str((refreshed_anchor or {}).get("practical_scene_from_kb") or practical_scene_from_kb or "").strip()
+    reference_example = str((refreshed_anchor or {}).get("reference_example") or reference_example or "").strip()
+    operational_reference = str((refreshed_anchor or {}).get("operational_reference") or operational_reference or "").strip()
     operational_family = str((refreshed_anchor or {}).get("operational_family") or operational_family or "").strip()
 
-    # o example_line só nasce de cena real do KB; nunca do relato do usuário
-    if not example_line and practical_scene_from_kb and not _is_scene_echo(practical_scene_from_kb, user_text):
-        derived_steps = _split_scene_steps(practical_scene_from_kb)
+    # o reference_example só nasce de cena real do KB; nunca do relato do usuário
+    if not reference_example and operational_reference and not _is_scene_echo(operational_reference, user_text):
+        derived_steps = _split_scene_steps(operational_reference)
         if len(derived_steps) >= 2:
-            example_line = str(derived_steps[0] or "").strip()
+            reference_example = str(derived_steps[0] or "").strip()
 
     # ----------------------------------------------------------
     # CONTRATO OPERACIONAL BASE (consolidado cedo)
@@ -5077,8 +5121,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         kb_snapshot=kb_snapshot,
         kb_context=kb_context if isinstance(kb_context, dict) else {},
         effective_segment=effective_segment,
-        practical_scene_from_kb=practical_scene_from_kb,
-        example_line=example_line,
+        operational_reference=operational_reference,
+        reference_example=reference_example,
         operational_family=operational_family,
         topic="OTHER",
     )
@@ -5089,8 +5133,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # como base da resposta e deixamos a IA apenas adaptar.
     # ----------------------------------------------------------
     kb_anchor_available = bool(
-        practical_scene_from_kb
-        or example_line
+        operational_reference
+        or reference_example
         or operational_family
         or selected_pack_id
     )
@@ -5105,26 +5149,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # ----------------------------------------------------------
         system_prompt += (
             "\nAntes de responder, entenda a situação real do cliente.\n"
-            "Visualize a conversa acontecendo no WhatsApp.\n"
-            "Mostre o fluxo acontecendo em sequência real\n"
-            "Evite explicar software; descreva a cena prática acontecendo.\n"
+            "Se decidir demonstrar na prática, descreva o fluxo acontecendo no WhatsApp em sequência real.\n"
+            "Caso contrário, responda diretamente sem criar cena.\n"
         )
     family_hint = _build_free_mode_family_hint(user_text, effective_segment)
-    scene_hint_block = _build_scene_hint_block(
-        family_hint=family_hint,
-        micro_scene=micro_scene,
-        example_line=example_line,
-        practical_scene_from_kb="",
-    )
-    if scene_hint_block:
-        system_prompt += "\n" + scene_hint_block + "\n"
-
-    user_scene_block = _build_user_scene_block(
-        practical_scene_from_kb="",
-        example_line=example_line,
-        kb_section=kb_section,
-        kb_compact=kb_compact,
-    )
+    scene_hint_block = ""
+    user_scene_block = ""
 
     try:
         if not operational_family:
@@ -5136,28 +5166,58 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         operational_family = operational_family or ""
 
     kb_anchor_available = bool(
-        practical_scene_from_kb
-        or example_line
+        operational_reference
+        or reference_example
         or operational_family
         or selected_pack_id
     )
-    real_scene_for_anchor = practical_scene_from_kb if not _is_scene_echo(practical_scene_from_kb, user_text) else ""
-    real_example_for_anchor = example_line if not _is_scene_echo(example_line, user_text) else ""
+    real_scene_for_anchor = operational_reference if not _is_scene_echo(operational_reference, user_text) else ""
+    real_example_for_anchor = reference_example if not _is_scene_echo(reference_example, user_text) else ""
 
     kb_anchor_strong = _has_strong_kb_anchor(
         kb_context=kb_context if isinstance(kb_context, dict) else {},
         effective_segment=effective_segment,
         operational_family=operational_family,
-        practical_scene_from_kb=real_scene_for_anchor,
-        example_line=real_example_for_anchor,
+        operational_reference=real_scene_for_anchor,
+        reference_example=real_example_for_anchor,
         selected_pack_id=selected_pack_id,
     )
 
+    # Etapa 1 — a cena do KB só entra forte no prompt quando a própria
+    # arquitetura já liberou demonstração prática para este turno.
+    allow_scene_prompting = bool(
+        free_mode
+        and kb_anchor_strong
+        and effective_segment
+        and bool((base_operational_contract or {}).get("micro_scene_allowed"))
+    )
+
+    if allow_scene_prompting:
+        scene_hint_block = _build_scene_hint_block(
+            family_hint=family_hint,
+            micro_scene=micro_scene,
+            reference_example=reference_example,
+            operational_reference="",
+        )
+        if scene_hint_block:
+            system_prompt += "\n" + scene_hint_block + "\n"
+
+        user_scene_block = _build_user_scene_block(
+            operational_reference="",
+            reference_example=reference_example,
+            kb_section=kb_section,
+            kb_compact=kb_compact,
+        )
+    else:
+        # Mantém os fatos selecionados do KB, mas sem empurrar cena
+        # antes da decisão soberana do modelo.
+        user_scene_block = kb_section or ""
+
     kb_show_reply_seed = ""
     kb_forced_topic = ""
-    if not practical_scene_from_kb:
-        practical_scene_from_kb = ""
-    if free_mode and kb_anchor_strong and effective_segment and bool((base_operational_contract or {}).get("micro_scene_allowed")):
+    if not operational_reference:
+        operational_reference = ""
+    if allow_scene_prompting:
         kb_forced_topic = _preferred_topic_from_kb(
             kb_context=kb_context if isinstance(kb_context, dict) else {},
             current_topic="OTHER",
@@ -5175,8 +5235,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         kb_show_reply_seed = _build_kb_show_reply(
             kb_context=kb_context if isinstance(kb_context, dict) else {},
-            practical_scene_from_kb="",
-            example_line=example_line,
+            operational_reference="",
+            reference_example=reference_example,
             effective_segment=effective_segment,
             operational_family=operational_family,
             contract=base_operational_contract if 'base_operational_contract' in locals() else {},
@@ -5187,6 +5247,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 kb_context["topic_hint_from_kb"] = kb_forced_topic
         except Exception:
             pass
+
+    allow_kb_payload_scene = bool(
+        free_mode
+        and bool((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get("micro_scene_allowed"))
+        and allow_scene_prompting
+    )
 
     user_payload = (
         f"[MENSAGEM DO USUÁRIO]\n{user_text}\n\n"
@@ -5200,15 +5266,25 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         + f"last_intent={last_intent or 'NONE'}\n"
         + f"last_user_goal={last_user_goal or 'NONE'}\n\n"
         + (
-            "[BASE OPERACIONAL DO KB]\n"
-            f"practical_scene_from_kb: {str(practical_scene_from_kb or '').strip()}\n"
-            f"example_line: {str(example_line or '').strip()}\n"
-            f"primary_goal: {str((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('primary_goal') or '').strip()}\n"
-            f"allowed_next_step: {str((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('allowed_next_step') or '').strip()}\n"
-            f"operational_ritual: {json.dumps((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('operational_ritual') or [], ensure_ascii=False)}\n\n"
+            (
+                "[BASE OPERACIONAL DO KB]\n"
+                + (
+                    f"operational_reference: {str(operational_reference or '').strip()}\n"
+                    f"reference_example: {str(reference_example or '').strip()}\n"
+                    if allow_kb_payload_scene else ""
+                )
+                + f"primary_goal: {str((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('primary_goal') or '').strip()}\n"
+                + f"allowed_next_step: {str((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('allowed_next_step') or '').strip()}\n"
+                + f"operational_ritual: {json.dumps((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('operational_ritual') or [], ensure_ascii=False)}\n\n"
+            )
             if (
-                str(practical_scene_from_kb or '').strip()
-                or str(example_line or '').strip()
+                (
+                    allow_kb_payload_scene
+                    and (
+                        str(operational_reference or '').strip()
+                        or str(reference_example or '').strip()
+                    )
+                )
                 or ((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('primary_goal'))
                 or ((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('allowed_next_step'))
                 or ((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('operational_ritual'))
@@ -5548,8 +5624,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             kb_snapshot=kb_snapshot,
             kb_context=kb_context if isinstance(kb_context, dict) else {},
             effective_segment=effective_segment,
-            practical_scene_from_kb=practical_scene_from_kb,
-            example_line=example_line,
+            operational_reference=operational_reference,
+            reference_example=reference_example,
             operational_family=operational_family,
             topic=topic,
         )
@@ -5603,7 +5679,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             if (
                 isinstance(operational_contract, dict)
                 and isinstance(base_operational_contract, dict)
-                and not str(operational_contract.get("practical_scene_from_kb") or "").strip()
+                and not str(operational_contract.get("operational_reference") or "").strip()
                 and not list(operational_contract.get("operational_ritual") or [])
             ):
                 base_ritual = [
@@ -5629,8 +5705,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             ai_turns=ai_turns,
             effective_segment=effective_segment,
             operational_family=operational_family,
-            practical_scene_from_kb="",
-            example_line=example_line,
+            operational_reference="",
+            reference_example=reference_example,
             reply_text=reply_text,
             next_step=next_step,
         )):
@@ -5785,8 +5861,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 effective_segment=effective_segment,
                 needs_clarify=needs_clarify,
                 clarify_q=clarify_q,
-                practical_scene_from_kb="",
-                example_line=example_line,
+                operational_reference="",
+                reference_example=reference_example,
                 reply_text=reply_text,
             ):
                 discovery_q = ""
@@ -5798,7 +5874,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if not discovery_q:
                     try:
                         # só cria discovery se realmente não houver trilho operacional suficiente
-                        has_anchor = bool(practical_scene_from_kb or example_line or operational_family)
+                        has_anchor = bool(operational_reference or reference_example or operational_family)
                         if not has_anchor:
                             discovery_q = str(clarify_q or "").strip()
                     except Exception:
@@ -5824,22 +5900,22 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             generated = ""
             if next_step != "SEND_LINK" and bool((operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed")):
                 generated = _generate_micro_scene_with_model(
-                    practical_scene_from_kb="",
+                    operational_reference="",
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 ).strip()
 
             if generated:
                 generated_live = _is_live_operational_reply(
                     text=generated,
-                    practical_scene_from_kb="",
-                    example_line=example_line,
+                    operational_reference="",
+                    reference_example=reference_example,
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
 
                 generated_show = _is_show_micro_scene(
                     text=generated,
-                    practical_scene_from_kb="",
-                    example_line=example_line,
+                    operational_reference="",
+                    reference_example=reference_example,
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
 
@@ -5850,29 +5926,29 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if generated:
                     upgraded = _upgrade_operational_reply_with_model(
                         base_text=generated,
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         contract=operational_contract if 'operational_contract' in locals() else {},
                     )
 
                     upgraded_live = _is_live_operational_reply(
                         text=upgraded,
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         contract=operational_contract if 'operational_contract' in locals() else {},
                     ) if upgraded else False
 
                     upgraded_show = _is_show_micro_scene(
                         text=upgraded,
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         contract=operational_contract if 'operational_contract' in locals() else {},
                     ) if upgraded else False
 
                     _upgrade_contract_strong = bool(
                         ((operational_contract if 'operational_contract' in locals() else {}) or {}).get("hydrated_from_docs")
-                        and str(example_line or "").strip()
-                        and str((((operational_contract if 'operational_contract' in locals() else {}) or {}).get("practical_scene_from_kb") or "")).strip()
+                        and str(reference_example or "").strip()
+                        and str((((operational_contract if 'operational_contract' in locals() else {}) or {}).get("operational_reference") or "")).strip()
                     )
 
                     if upgraded and len(str(upgraded).strip()) > 40:
@@ -5902,28 +5978,28 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 # fallback estrutural só entra se a IA principal falhar de verdade
                 if not generated or len(str(generated).strip()) < 40:
                     structured = _compose_grounded_scene_with_progression(
-                        practical_scene_from_kb="",
+                        operational_reference="",
                         contract=operational_contract if 'operational_contract' in locals() else {},
-                        example_line=example_line,
+                        reference_example=reference_example,
                     )
 
                     if not structured:
                         structured = _build_structural_last_resort_reply(
-                            practical_scene_from_kb="",
+                            operational_reference="",
                             contract=operational_contract if 'operational_contract' in locals() else {},
                         )
 
                     if structured:
                         structured_live = _is_live_operational_reply(
                             text=structured,
-                            practical_scene_from_kb="",
-                            example_line=example_line,
+                            operational_reference="",
+                            reference_example=reference_example,
                             contract=operational_contract if 'operational_contract' in locals() else {},
                         )
                         structured_show = _is_show_micro_scene(
                             text=structured,
-                            practical_scene_from_kb="",
-                            example_line=example_line,
+                            operational_reference="",
+                            reference_example=reference_example,
                             contract=operational_contract if 'operational_contract' in locals() else {},
                         )
 
@@ -5948,68 +6024,37 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     spoken_text = reply_text
                     reply_source = "front_free_mode_empty"
 
+            allow_kb_runtime_fallback = bool(
+                kb_anchor_strong
+                and bool((operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed"))
+            )
+
             kb_reply = ""
-            if bool((operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed")):
+            if allow_kb_runtime_fallback:
                 kb_reply = _build_kb_anchor_reply(
-                    practical_scene_from_kb="",
-                    example_line=example_line,
+                    operational_reference="",
+                    reference_example=reference_example,
                     clarify_q=(question if not effective_segment else ""),
                     contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
                 )
 
-            if kb_anchor_strong and kb_reply:
-                needs_resolution = (
-                    (not str(reply_text or "").strip())
-                    or _looks_like_technical_output(reply_text)
-                    or (
-                        _looks_like_bureaucratic_stub(reply_text)
-                        and not str(reply_source or "").strip().startswith(("front_free_text", "front_raw_fallback"))
+            if allow_kb_runtime_fallback and kb_reply:
+                try:
+                    rescue_needed = (
+                        (not str(reply_text or "").strip())
+                        or _looks_like_technical_output(reply_text)
                     )
-                    or (
-                        _should_force_kb_rebuild(
-                            text=reply_text,
-                            kb_anchor_strong=kb_anchor_strong,
-                            practical_scene_from_kb="",
-                            example_line=example_line,
-                            effective_segment=effective_segment,
-                            operational_family=operational_family,
-                            contract=operational_contract if 'operational_contract' in locals() else {},
-                        )
-                        and not str(reply_source or "").strip().startswith(("front_free_text", "front_raw_fallback", "front_free_mode"))
-                    )
-                )
-
-                if needs_resolution:
-                    resolved = _resolve_best_operational_reply(
-                        current_reply=reply_text,
-                        current_spoken=spoken_text,
-                        user_text=user_text,
-                        state_summary=state_summary,
-                        kb_snapshot=kb_snapshot,
-                        kb_context=kb_context if isinstance(kb_context, dict) else {},
-                        effective_segment=effective_segment,
-                        operational_family=operational_family,
-                        selected_pack_id=selected_pack_id,
-                        practical_scene_from_kb="",
-                        example_line=example_line,
-                        question=question,
-                        topic=topic,
-                        confidence=confidence,
-                        kb_anchor_strong=kb_anchor_strong,
-                        operational_contract=operational_contract if 'operational_contract' in locals() else {},
-                        base_operational_contract=base_operational_contract if 'base_operational_contract' in locals() else {},
-                    )
-
-                    reply_text = str((resolved or {}).get("reply_text") or "").strip()
-                    spoken_text = str((resolved or {}).get("spoken_text") or reply_text).strip()
-                    reply_source = str((resolved or {}).get("reply_source") or "front_resolved").strip()
-
-                    if not spoken_text:
-                        spoken_text = reply_text
-
-                    should_end = False
-                    if next_step != "SEND_LINK":
-                        next_step = "NONE"
+                    if rescue_needed:
+                        reply_text = kb_show_reply_seed or kb_reply
+                    if _looks_like_technical_output(spoken_text) or not str(spoken_text or "").strip():
+                        spoken_text = kb_show_reply_seed or kb_reply
+                    if rescue_needed:
+                        reply_source = "front_free_mode_fallback"
+                        should_end = False
+                        if next_step != "SEND_LINK":
+                            next_step = "NONE"
+                except Exception:
+                    pass
             elif not reply_text:
                 reply_text = kb_reply
                 if not reply_text and question and not effective_segment:
@@ -6041,11 +6086,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 # Nunca deixar o saneamento burocrático matar a resposta de vitrine.
                 if _looks_like_bureaucratic_stub(reply_text):
-                    kb_fallback = _build_kb_anchor_reply(
-                        practical_scene_from_kb="",
-                        example_line=example_line,
-                        clarify_q=(question if not effective_segment else ""),
-                    )
+                    kb_fallback = ""
+                    if allow_kb_runtime_fallback:
+                        kb_fallback = _build_kb_anchor_reply(
+                            operational_reference="",
+                            reference_example=reference_example,
+                            clarify_q=(question if not effective_segment else ""),
+                            contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
+                        )
                     reply_text = (
                         kb_fallback
                         or _reply_before_sanitize
@@ -6053,11 +6101,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         or "Hoje no WhatsApp, o que você precisa responder ou organizar manualmente para os clientes?"
                     )
                 if _looks_like_bureaucratic_stub(spoken_text):
-                    kb_fallback = _build_kb_anchor_reply(
-                        practical_scene_from_kb="",
-                        example_line=example_line,
-                        clarify_q=(question if not effective_segment else ""),
-                    )
+                    kb_fallback = ""
+                    if allow_kb_runtime_fallback:
+                        kb_fallback = _build_kb_anchor_reply(
+                            operational_reference="",
+                            reference_example=reference_example,
+                            clarify_q=(question if not effective_segment else ""),
+                            contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
+                        )
                     spoken_text = (
                         kb_fallback
                         or _spoken_before_sanitize
@@ -6080,8 +6131,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     str(reply_source or "").strip() == "front_ia_soberana"
                     and (ia_accepted or _is_show_micro_scene(
                         text=reply_text,
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         contract=operational_contract if 'operational_contract' in locals() else {},
                     ))
                 ):
@@ -6091,7 +6142,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if not ia_locked:
                 try:
-                    grounded_scene = str(practical_scene_from_kb or "").strip()
+                    grounded_scene = str(operational_reference or "").strip()
                     grounded_ritual = [
                         str(x).strip()
                         for x in ((operational_contract if 'operational_contract' in locals() else {}) or {}).get("operational_ritual", [])
@@ -6110,8 +6161,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         and len(reply_text.strip()) >= 60
                         and _is_show_micro_scene(
                             text=reply_text,
-                            practical_scene_from_kb="",
-                            example_line=example_line,
+                            operational_reference="",
+                            reference_example=reference_example,
                             contract=operational_contract if 'operational_contract' in locals() else {},
                         )
                     ):
@@ -6128,8 +6179,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 try:
                     composed_reply = _compose_operational_reply(
                         reply_text=reply_text,
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         operational_family=operational_family,
                         contract=operational_contract if 'operational_contract' in locals() else {},
                     )
@@ -6143,8 +6194,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 try:
                     final_live = _is_live_operational_reply(
                         text=reply_text,
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         contract=operational_contract if 'operational_contract' in locals() else {},
                     )
                     if final_live and reply_text:
@@ -6159,8 +6210,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     bool(
                         True if ia_accepted else _is_live_operational_reply(
                             text=reply_text,
-                            practical_scene_from_kb="",
-                            example_line=example_line,
+                            operational_reference="",
+                            reference_example=reference_example,
                             contract=operational_contract if 'operational_contract' in locals() else {},
                         )
                     ),
@@ -6175,63 +6226,26 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 pass
 
             try:
-                if kb_anchor_strong and kb_reply:
-                    if _looks_like_technical_output(reply_text) or not str(reply_text or "").strip():
+                if allow_kb_runtime_fallback and kb_reply:
+                    rescue_needed = (
+                        (not str(reply_text or "").strip())
+                        or _looks_like_technical_output(reply_text)
+                    )
+                    if rescue_needed:
                         reply_text = kb_show_reply_seed or kb_reply
                     if _looks_like_technical_output(spoken_text) or not str(spoken_text or "").strip():
                         spoken_text = kb_show_reply_seed or kb_reply
+                    if rescue_needed:
+                        reply_source = "front_free_mode_fallback"
+                        should_end = False
+                        if next_step != "SEND_LINK":
+                            next_step = "NONE"
             except Exception:
                 pass
 
-            # Fase 3:
-            # não abrir uma segunda cascata completa de rebuild aqui.
-            # A resolução principal já aconteceu no resolvedor único acima.
-            if practical_scene_from_kb and len(str(reply_text or "")) > 40:
-                try:
-                    if _should_force_kb_rebuild(
-                        text=reply_text,
-                        kb_anchor_strong=kb_anchor_strong,
-                        practical_scene_from_kb="",
-                        example_line=example_line,
-                        effective_segment=effective_segment,
-                        operational_family=operational_family,
-                        contract=operational_contract if 'operational_contract' in locals() else {},
-                    ):
-                        resolved = _resolve_best_operational_reply(
-                            current_reply=reply_text,
-                            current_spoken=spoken_text,
-                            user_text=user_text,
-                            state_summary=state_summary,
-                            kb_snapshot=kb_snapshot,
-                            kb_context=kb_context if isinstance(kb_context, dict) else {},
-                            effective_segment=effective_segment,
-                            operational_family=operational_family,
-                            selected_pack_id=selected_pack_id,
-                            practical_scene_from_kb="",
-                            example_line=example_line,
-                            question=question,
-                            topic=topic,
-                            confidence=confidence,
-                            kb_anchor_strong=kb_anchor_strong,
-                            operational_contract=operational_contract if 'operational_contract' in locals() else {},
-                            base_operational_contract=base_operational_contract if 'base_operational_contract' in locals() else {},
-                        )
-                        candidate = str((resolved or {}).get("reply_text") or "").strip()
-
-                        if (
-                            candidate
-                            and not (ia_accepted or _is_live_operational_reply(
-                                text=reply_text,
-                                practical_scene_from_kb="",
-                                example_line=example_line,
-                                contract=operational_contract if 'operational_contract' in locals() else {},
-                            ))
-                        ):
-                            reply_text = candidate
-                            spoken_text = str((resolved or {}).get("spoken_text") or spoken_text or candidate).strip()
-                            reply_source = str((resolved or {}).get("reply_source") or reply_source or "front_resolved_retry").strip()
-                except Exception:
-                    pass
+            # Etapa 4:
+            # não reabrir rebuild tardio depois que a resolução principal já ocorreu.
+            # daqui em diante, só aceitamos rescue mínimo de saída vazia/técnica.
 
             try:
                 # IA TOTAL: não remontar pergunta, não injetar proposta, não trocar fechamento.
@@ -6267,8 +6281,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if _looks_like_technical_output(reply_text):
                 fallback_specific = _build_kb_anchor_reply(
-                    practical_scene_from_kb="",
-                    example_line=example_line,
+                    operational_reference="",
+                    reference_example=reference_example,
                     clarify_q=(question if not effective_segment else ""),
                     contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
                 )
@@ -6294,8 +6308,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     if operational_contract:
                         forced = _build_kb_show_reply(
                             kb_context=kb_context if isinstance(kb_context, dict) else {},
-                            practical_scene_from_kb="",
-                            example_line=example_line,
+                            operational_reference="",
+                            reference_example=reference_example,
                             effective_segment=effective_segment,
                             operational_family=operational_family,
                             contract=operational_contract,
@@ -6304,8 +6318,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     if (not forced or len(forced.strip()) < 40) and base_operational_contract:
                         forced = _build_kb_show_reply(
                             kb_context=kb_context if isinstance(kb_context, dict) else {},
-                            practical_scene_from_kb="",
-                            example_line=example_line,
+                            operational_reference="",
+                            reference_example=reference_example,
                             effective_segment=effective_segment,
                             operational_family=operational_family,
                             contract=base_operational_contract,
@@ -6313,8 +6327,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                     if not forced or len(forced.strip()) < 40:
                         forced = _build_kb_anchor_reply(
-                            practical_scene_from_kb="",
-                            example_line=example_line,
+                            operational_reference="",
+                            reference_example=reference_example,
                             clarify_q="",
                             contract=operational_contract if operational_contract else base_operational_contract,
                         )
@@ -6353,8 +6367,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     reply_source,
                     True if ia_accepted else _is_live_operational_reply(
                         text=reply_text,
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         contract=operational_contract if 'operational_contract' in locals() else {},
                     ),
                     len(reply_text or ""),
@@ -6365,16 +6379,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             ia_live = bool(
                 _is_live_operational_reply(
                     text=reply_text,
-                    practical_scene_from_kb="",
-                    example_line=example_line,
+                    operational_reference="",
+                    reference_example=reference_example,
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
             )
 
             ia_density = _operational_density_score(
                 text=reply_text,
-                practical_scene_from_kb="",
-                example_line=example_line,
+                operational_reference="",
+                reference_example=reference_example,
                 effective_segment=str((operational_contract if 'operational_contract' in locals() else {}).get("segment") or "").strip(),
                 operational_family=str((operational_contract if 'operational_contract' in locals() else {}).get("operational_family") or "").strip(),
             )
@@ -6384,8 +6398,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             ia_show = bool(
                 _is_show_micro_scene(
                     text=ia_text,
-                    practical_scene_from_kb="",
-                    example_line=example_line,
+                    operational_reference="",
+                    reference_example=reference_example,
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
             )
@@ -6393,22 +6407,22 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             ia_live_final = bool(
                 _is_live_operational_reply(
                     text=ia_text,
-                    practical_scene_from_kb="",
-                    example_line=example_line,
+                    operational_reference="",
+                    reference_example=reference_example,
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
             )
 
             _contract_strong = bool(
                 (operational_contract if 'operational_contract' in locals() else {}).get("hydrated_from_docs")
-                and example_line
-                and str(((operational_contract if 'operational_contract' in locals() else {}) or {}).get("practical_scene_from_kb") or "").strip()
+                and reference_example
+                and str(((operational_contract if 'operational_contract' in locals() else {}) or {}).get("operational_reference") or "").strip()
             )
 
             _not_explanatory = not _looks_explanatory_reply(
                 text=str(reply_text or ""),
-                practical_scene_from_kb="",
-                example_line=example_line,
+                operational_reference="",
+                reference_example=reference_example,
                 contract=operational_contract if 'operational_contract' in locals() else {},
             )
 
@@ -6439,8 +6453,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 current_show = bool(
                     current_text and _is_show_micro_scene(
                         text=current_text,
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         contract=operational_contract if 'operational_contract' in locals() else {},
                     )
                 )
@@ -6448,23 +6462,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 current_live = bool(
                     current_text and _is_live_operational_reply(
                         text=current_text,
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         contract=operational_contract if 'operational_contract' in locals() else {},
                     )
                 )
 
                 current_is_mild = _looks_explanatory_reply(
                     text=current_text,
-                    practical_scene_from_kb="",
-                    example_line=example_line,
+                    operational_reference="",
+                    reference_example=reference_example,
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
 
                 _current_not_explanatory = not _looks_explanatory_reply(
                     text=current_text,
-                    practical_scene_from_kb="",
-                    example_line=example_line,
+                    operational_reference="",
+                    reference_example=reference_example,
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
 
@@ -6490,12 +6504,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     ):
                         fallback = (
                             _compose_grounded_scene_with_progression(
-                                practical_scene_from_kb="",
+                                operational_reference="",
                                 contract=operational_contract if 'operational_contract' in locals() else {},
-                                example_line=example_line,
+                                reference_example=reference_example,
                             ).strip()
                             or _build_structural_last_resort_reply(
-                                practical_scene_from_kb="",
+                                operational_reference="",
                                 contract=operational_contract if 'operational_contract' in locals() else {},
                             ).strip()
                         )
@@ -6675,12 +6689,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if not reply_text or len(str(reply_text).strip()) < 40:
             try:
                 if operational_contract or base_operational_contract:
-                    if not practical_scene_from_kb:
-                        practical_scene_from_kb = ""
+                    if not operational_reference:
+                        operational_reference = ""
                     forced = _build_kb_show_reply(
                         kb_context=kb_context if isinstance(kb_context, dict) else {},
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         effective_segment=effective_segment,
                         operational_family=operational_family,
                         contract=operational_contract or base_operational_contract,
@@ -6841,28 +6855,32 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # 🔒 GUARDA FINAL — impedir saída vazia ou fallback burro
         try:
             _rt = str(reply_text or "").strip()
+            allow_final_kb_show = bool(
+                (operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed")
+                or (base_operational_contract if 'base_operational_contract' in locals() else {}).get("micro_scene_allowed")
+            )
 
             if not _rt or len(_rt) < 40:
-                if operational_contract:
-                    if not practical_scene_from_kb:
-                        practical_scene_from_kb = ""
+                if allow_final_kb_show and operational_contract:
+                    if not operational_reference:
+                        operational_reference = ""
                     forced = _build_kb_show_reply(
                         kb_context=kb_context if isinstance(kb_context, dict) else {},
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         effective_segment=effective_segment,
                         operational_family=operational_family,
                         contract=operational_contract,
                     )
                     if forced and len(forced.strip()) >= 40:
                         reply_text = forced
-                elif base_operational_contract:
-                    if not practical_scene_from_kb:
-                        practical_scene_from_kb = ""
+                elif allow_final_kb_show and base_operational_contract:
+                    if not operational_reference:
+                        operational_reference = ""
                     forced = _build_kb_show_reply(
                         kb_context=kb_context if isinstance(kb_context, dict) else {},
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+                        operational_reference="",
+                        reference_example=reference_example,
                         effective_segment=effective_segment,
                         operational_family=operational_family,
                         contract=base_operational_contract,
@@ -6883,23 +6901,33 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # 🔒 última garantia: não sair com resposta fraca quando há contexto
         try:
             if not reply_text or len(reply_text.strip()) < 40:
-                forced = (
-                    kb_show_reply_seed
-                    or _build_kb_show_reply(
-                        kb_context=kb_context if isinstance(kb_context, dict) else {},
-                        practical_scene_from_kb="",
-                        example_line=example_line,
-                        effective_segment=effective_segment,
-                        operational_family=operational_family,
-                        contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
+                allow_final_kb_show = bool(
+                    (operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed")
+                    or (base_operational_contract if 'base_operational_contract' in locals() else {}).get("micro_scene_allowed")
+                )
+
+                forced = ""
+                if allow_final_kb_show:
+                    forced = (
+                        kb_show_reply_seed
+                        or _build_kb_show_reply(
+                            kb_context=kb_context if isinstance(kb_context, dict) else {},
+                            operational_reference="",
+                            reference_example=reference_example,
+                            effective_segment=effective_segment,
+                            operational_family=operational_family,
+                            contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
+                        )
                     )
-                    or _build_kb_anchor_reply(
-                        practical_scene_from_kb="",
-                        example_line=example_line,
+
+                if not forced:
+                    forced = _build_kb_anchor_reply(
+                        operational_reference="",
+                        reference_example=reference_example,
                         clarify_q="",
                         contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
                     )
-                )
+
                 if forced and len(forced.strip()) >= 40:
                     reply_text = forced
                     spoken_text = forced
@@ -6991,15 +7019,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 kb_fallback = (
                     _build_kb_show_reply(
                         kb_context=kb_context if isinstance(kb_context, dict) else {},
-                        practical_scene_from_kb="" if 'practical_scene_from_kb' in locals() else "",
-                        example_line=example_line if 'example_line' in locals() else "",
+                        operational_reference="" if 'operational_reference' in locals() else "",
+                        reference_example=reference_example if 'reference_example' in locals() else "",
                         effective_segment=effective_segment if 'effective_segment' in locals() else "",
                         operational_family=operational_family if 'operational_family' in locals() else "",
                         contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
                     )
                     or _build_kb_anchor_reply(
-                        practical_scene_from_kb="" if 'practical_scene_from_kb' in locals() else "",
-                        example_line=example_line if 'example_line' in locals() else "",
+                        operational_reference="" if 'operational_reference' in locals() else "",
+                        reference_example=reference_example if 'reference_example' in locals() else "",
                         clarify_q=question if 'question' in locals() else "",
                         contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
                     )
