@@ -5086,6 +5086,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     sticky_segment_hint = (
         str(state_summary.get("subsegment_hint") or "").strip()
+        or str(state_summary.get("kb_segment_hint") or "").strip()
+        or str(state_summary.get("kb_subsegment_hint") or "").strip()
+        or str(state_summary.get("segment_from_kb") or "").strip()
         or str(state_summary.get("segment_hint") or "").strip()
         or str(state_summary.get("effective_segment") or "").strip()
         or str(state_summary.get("last_effective_segment") or "").strip()
@@ -5847,14 +5850,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             hydrated = bool((operational_contract or {}).get("hydrated_from_docs"))
             has_scene = bool(str((operational_contract or {}).get("operational_reference") or "").strip())
             has_example = bool(str((operational_contract or {}).get("reference_example") or "").strip())
+            archetype_id_local = str((operational_contract or {}).get("archetype_id") or "").strip()
 
             if (
-                ai_turns >= 1
-                and hydrated
+                hydrated
                 and has_scene
                 and has_example
-                and str(topic or "").strip().upper() not in ("PRECO", "TRIAL", "ATIVAR")
+                and archetype_id_local
                 and str(next_step or "").strip().upper() != "SEND_LINK"
+                and str(topic or "").strip().upper() not in ("PRECO", "TRIAL", "ATIVAR")
             ):
                 micro_scene_allowed = True
         except Exception:
@@ -6660,14 +6664,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             _source_now = str(reply_source or "").strip()
 
-            if _contract_strong and _source_now == "front_operational_upgrade":
+            if _contract_strong:
                 accepted = bool(ia_show)
             else:
                 accepted = bool(
                     _source_now in ("front_ia_soberana", "front_operational_upgrade")
                     and (
                         ia_show
-                        or (ia_live_final and (not _contract_strong or _not_explanatory))
+                        or (ia_live_final and _not_explanatory)
                     )
                 )
             ia_accepted = accepted
@@ -6714,12 +6718,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
 
-                if _contract_strong and str(reply_source or "").strip() == "front_operational_upgrade":
+                if _contract_strong:
                     _accept_current = bool(current_show)
                 else:
                     _accept_current = bool(
                         current_show
-                        or (current_live and (not _contract_strong or _current_not_explanatory))
+                        or (current_live and _current_not_explanatory)
                     )
 
                 if _accept_current:
