@@ -1090,7 +1090,11 @@ def _kb_slice_for_box(intent: str, *, segment: str = "") -> Dict[str, Any]:
     ]
 
     if i == "PRICE":
-        fields = base_fields + ["sales_pills.cta_one_liners"]
+        fields = base_fields + [
+            "pricing_facts",
+            "pricing_behavior",
+            "sales_pills.cta_one_liners",
+        ]
         # cache mínimo (Firestore) — evita reler sempre se estiver quente
         ck = _kb_slice_cache_key(i, segment)
         cached = _fs_cache_get(ck)
@@ -1276,7 +1280,11 @@ def _kb_slice_fields_for_intent(intent: str, *, segment: str = "") -> list[str]:
     ]
 
     if i == "PRICE":
-        return base_fields + ["sales_pills.cta_one_liners"]
+        return base_fields + [
+            "pricing_facts",
+            "pricing_behavior",
+            "sales_pills.cta_one_liners",
+        ]
 
     if i == "ACTIVATE_SEND_LINK":
         return base_fields + [

@@ -102,6 +102,173 @@ def _split_sentences_pt(text: str) -> list[str]:
     except Exception:
         return [str(text or "").strip()]
 
+
+
+def _front_fs_client():
+    """
+    Firestore canônico via firebase_admin.
+    Best-effort: nunca quebra o front.
+    """
+    try:
+        from services.firebase_admin_init import ensure_firebase_admin  # type: ignore
+        ensure_firebase_admin()
+        from firebase_admin import firestore as fb_firestore  # type: ignore
+        return fb_firestore.client()
+    except Exception:
+        return None
+
+
+def _front_fmt_brl_from_cents(cents: Any) -> str:
+    try:
+        c = int(cents)
+        if c <= 0:
+            return ""
+        return f"R$ {c // 100},{c % 100:02d}"
+    except Exception:
+        return ""
+
+
+def _front_get_platform_pricing() -> Dict[str, Any]:
+    """
+    Fonte única de preço da plataforma.
+    """
+    try:
+        client = _front_fs_client()
+        if client is None:
+            return {}
+
+        doc = client.collection("platform_pricing").document("current").get()
+        if not doc or not doc.exists:
+            return {}
+
+        data = doc.to_dict() or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _front_build_price_facts_block() -> str:
+    """
+    Monta um bloco factual curto para o prompt/repair,
+    sem detector lexical e sem resposta pronta por segmento.
+    """
+    try:
+        data = _front_get_platform_pricing()
+        if not isinstance(data, dict) or not data:
+            return ""
+
+        starter = ""
+        starter_plus = ""
+        starter_storage = ""
+        starter_plus_storage = ""
+
+        dp = data.get("display_prices") or {}
+        if isinstance(dp, dict):
+            starter = str(dp.get("starter") or "").strip()
+            starter_plus = str(dp.get("starter_plus") or "").strip()
+
+        plans = data.get("plans") or {}
+        if isinstance(plans, dict):
+            st = plans.get("starter") or {}
+            sp = plans.get("starter_plus") or {}
+
+            if isinstance(st, dict):
+                if not starter:
+                    starter = _front_fmt_brl_from_cents(st.get("price_cents"))
+                if st.get("storage_gb") is not None:
+                    starter_storage = str(st.get("storage_gb"))
+
+            if isinstance(sp, dict):
+                if not starter_plus:
+                    starter_plus = _front_fmt_brl_from_cents(sp.get("price_cents"))
+                if sp.get("storage_gb") is not None:
+                    starter_plus_storage = str(sp.get("storage_gb"))
+
+        if not starter and not starter_plus:
+            return ""
+
+        parts = []
+        if starter:
+            parts.append(f"starter={starter}")
+        if starter_plus:
+            parts.append(f"starter_plus={starter_plus}")
+        if starter_storage:
+            parts.append(f"starter_storage_gb={starter_storage}")
+        if starter_plus_storage:
+            parts.append(f"starter_plus_storage_gb={starter_plus_storage}")
+
+        return "platform_pricing_current: " + ", ".join(parts)
+    except Exception:
+        return ""
+
+
+def _front_repair_price_reply(reply_text: str, name_hint: str = "") -> str:
+    """
+    Repair factual de preço.
+    Não usa keyword matching.
+    Não depende de segmento.
+    """
+    try:
+        data = _front_get_platform_pricing()
+        if not isinstance(data, dict) or not data:
+            return str(reply_text or "").strip()
+
+        starter = ""
+        starter_plus = ""
+        starter_storage = ""
+        starter_plus_storage = ""
+
+        dp = data.get("display_prices") or {}
+        if isinstance(dp, dict):
+            starter = str(dp.get("starter") or "").strip()
+            starter_plus = str(dp.get("starter_plus") or "").strip()
+
+        plans = data.get("plans") or {}
+        if isinstance(plans, dict):
+            st = plans.get("starter") or {}
+            sp = plans.get("starter_plus") or {}
+
+            if isinstance(st, dict):
+                if not starter:
+                    starter = _front_fmt_brl_from_cents(st.get("price_cents"))
+                if st.get("storage_gb") is not None:
+                    starter_storage = str(st.get("storage_gb"))
+
+            if isinstance(sp, dict):
+                if not starter_plus:
+                    starter_plus = _front_fmt_brl_from_cents(sp.get("price_cents"))
+                if sp.get("storage_gb") is not None:
+                    starter_plus_storage = str(sp.get("storage_gb"))
+
+        if not starter and not starter_plus:
+            return str(reply_text or "").strip()
+
+        parts = []
+        if starter:
+            parts.append(f"Starter: {starter}.")
+        if starter_plus:
+            parts.append(f"Starter Plus: {starter_plus}.")
+
+        if starter_storage or starter_plus_storage:
+            mem = "A diferença entre os planos é a memória."
+            if starter_storage and starter_plus_storage:
+                mem += f" Starter com {starter_storage} GB e Starter Plus com {starter_plus_storage} GB."
+            parts.append(mem)
+
+        repaired = " ".join([p for p in parts if p]).strip()
+        if not repaired:
+            return str(reply_text or "").strip()
+
+        tail = ""
+        nm = str(name_hint or "").strip()
+        if nm:
+            tail = f" {nm}, se quiser, eu te explico qual dos dois encaixa melhor no teu caso."
+        else:
+            tail = " Se quiser, eu te explico qual dos dois encaixa melhor no teu caso."
+
+        return (repaired + tail).strip()
+    except Exception:
+        return str(reply_text or "").strip()
 def _looks_explanatory_sentence(text: str) -> bool:
     try:
         t = str(text or "").strip().lower()
@@ -4844,18 +5011,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # kb_compact já foi preparado acima:
     # - snapshot completo para lookup/runtime
 
-    if not found_seg and not found_sub and not found_arch:
-        # 🔧 FIX: manter contexto anterior se já identificado antes
-        prev_seg = (user_context_data or {}).get("segment_id")
-        prev_arch = (user_context_data or {}).get("archetype_id")
-
-        if prev_seg:
-            found_seg = True
-            segment_id = prev_seg
-
-        if prev_arch:
-            found_arch = True
-            archetype_id = prev_arch
     # - snapshot curto para o prompt
 
     # Seletor de fatos do KB (menos tokens, menos "chute")
@@ -5305,6 +5460,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             else ""
         )
         + (user_scene_block + "\n\n" if user_scene_block else "")
+        + (
+            "[PLATFORM PRICING FACTS]\n"
+            + _front_build_price_facts_block()
+            + "\n\n"
+            if str((kb_context or {}).get("intent_hint") or "").strip().upper() == "PRECO"
+            and _front_build_price_facts_block()
+            else ""
+        )
     )
 
     # ----------------------------------------------------------
@@ -5755,6 +5918,31 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         name_use = str(data.get("nameUse") or "none").strip().lower()
         if name_use not in ("none", "greet", "empathy", "clarify"):
             name_use = "none"
+
+        # ----------------------------------------------------------
+        # PREÇO CANÔNICO DA PLATAFORMA
+        # Sem keyword matching local:
+        # usa apenas o topic já decidido pela IA.
+        # ----------------------------------------------------------
+        try:
+            if str(topic or "").strip().upper() == "PRECO":
+                needs_price_repair = (
+                    (not str(reply_text or "").strip())
+                    or ("r$" not in str(reply_text or "").lower())
+                )
+                if needs_price_repair:
+                    repaired_price_reply = _front_repair_price_reply(
+                        reply_text=reply_text,
+                        name_hint=name_hint,
+                    )
+                    if str(repaired_price_reply or "").strip():
+                        reply_text = repaired_price_reply
+                        if not spoken_text:
+                            spoken_text = repaired_price_reply
+                        reply_source = "front_platform_pricing"
+                        confidence = "high"
+        except Exception:
+            pass
 
         # Se for decider-only, seguimos para fail-safe.
         # Nos primeiros turnos (free_mode), a prioridade é a IA falar com texto próprio.
