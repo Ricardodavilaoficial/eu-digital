@@ -980,7 +980,7 @@ def _build_user_scene_block(*, practical_scene_from_kb: str, example_line: str, 
         parts = []
 
         if ps:
-            parts.append("[REGRA CRÍTICA DE GERAÇÃO]\nA microcena DEVE ser construída a partir da CENA PREFERENCIAL DO KB.\n- O KB é a fonte da verdade.\n- O exemplo abaixo NÃO define comportamento.\n- O exemplo serve apenas para tom e ritmo.\n- Se houver conflito, IGNORE o exemplo.\n- NUNCA invente etapas que não estejam no KB.")
+            parts.append("[REGRA CRÍTICA DE GERAÇÃO]\nUse a CENA PREFERENCIAL DO KB como referência quando a intenção do lead pedir demonstração prática.\n- O KB é a fonte da verdade para fatos operacionais.\n- O exemplo abaixo NÃO define comportamento sozinho.\n- O exemplo serve apenas para tom e ritmo.\n- Se a pergunta for institucional, ampla ou exploratória, não force microcena.\n- Se houver conflito, siga o entendimento soberano da IA e preserve os fatos do KB.\n- NUNCA invente etapas que não estejam no KB.")
             parts.append(f"[CENA PREFERENCIAL]\n{ps}")
         elif ex:
             parts.append(f"[EXEMPLO DO SEGMENTO]\n{ex}")
@@ -3469,6 +3469,15 @@ def _generate_micro_scene_with_model(
 
         c = dict(contract or {})
 
+        topic = str(c.get("topic") or "").strip().upper()
+        micro_scene_allowed = bool(c.get("micro_scene_allowed"))
+
+        if not micro_scene_allowed:
+            return ""
+
+        if topic in ("WHAT_IS", "OTHER", "TRIAL", "ATIVAR") and not str(practical_scene_from_kb or "").strip():
+            return ""
+
         if not c.get("operational_ritual"):
             practical_scene_from_kb = (practical_scene_from_kb or "") + " Esse atendimento acontece diretamente pelo WhatsApp, com o cliente conversando com o MEI Robô."
             c["operational_ritual"] = _derive_ritual_from_scene(
@@ -3492,11 +3501,11 @@ Mostre ao lead uma situação real acontecendo no dia a dia dele, em uma sequên
 Regras obrigatórias:
 
 [REGRA CRÍTICA DE GERAÇÃO - O PONTO DE EQUILÍBRIO]
-A microcena DEVE ser construída a partir da CENA PREFERENCIAL DO KB.
-- O KB é a fonte da verdade, mas o texto dele pode estar "seco" ou em tópicos.
-- Sua missão é DRAMATIZAR essa cena: foque na ação visível que o cliente final experimenta no WhatsApp. Dê vida e fluidez à explicação.
-- FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB. Embeleze a *forma* de falar, não o *conteúdo* técnico.
-- O exemplo abaixo serve apenas para tom e ritmo. Se houver conflito com o KB, IGNORE o exemplo.
+Use a CENA PREFERENCIAL DO KB como referência quando a intenção do lead pedir demonstração prática.
+- O KB é a fonte da verdade para fatos operacionais, mas não deve forçar microcena em pergunta institucional, ampla ou exploratória.
+- Sua missão é DRAMATIZAR a operação somente quando isso ajudar o lead a visualizar valor no dia a dia.
+- FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB. Embeleze a forma de falar, não o conteúdo técnico.
+- O exemplo abaixo serve apenas para tom e ritmo. Se houver conflito com o entendimento soberano da IA, preserve o entendimento e os fatos do KB.
 
 1. EMPATIA INICIAL: Agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
 2. MICRO-CENA TÉCNICA (SHOW): Descreva o fluxo exato no WhatsApp. Fale direcionando a posse ao lead (ex: "Quando o seu cliente chama...", "o seu MEI Robô pergunta...", "na sua conta").
@@ -5148,7 +5157,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     kb_forced_topic = ""
     if not practical_scene_from_kb:
         practical_scene_from_kb = ""
-    if free_mode and kb_anchor_strong and effective_segment:
+    if free_mode and kb_anchor_strong and effective_segment and bool((base_operational_contract or {}).get("micro_scene_allowed")):
         kb_forced_topic = _preferred_topic_from_kb(
             kb_context=kb_context if isinstance(kb_context, dict) else {},
             current_topic="OTHER",
@@ -5216,13 +5225,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     if kb_anchor_available:
         system_prompt += (
             "\n\nREGRA ADICIONAL:\n"
-            "Se o KB trouxer archetype, ritual, capabilities, cena ou exemplo, trate isso como a melhor representação operacional do caso neste turno.\n"
-            "Você continua soberano para redigir com naturalidade.\n"
-            "Evite trocar por outro tipo de fluxo quando a ancoragem do KB estiver clara.\n"
-            "Se houver subsegmento claro, trate-o como confirmado neste turno.\n"
-            "Se houver archetype consultivo, preserve visita ou especialista quando isso vier do KB.\n"
-            "Se houver archetype de visita técnica, preserve triagem mínima antes de confirmar a visita.\n"
-            "Mostre a conversa acontecendo.\n"
+            "Se o KB trouxer archetype, ritual, capabilities, cena ou exemplo, use isso como referência factual e operacional.\n"
+            "Você continua soberano para entender a intenção do lead e decidir se este turno pede explicação, discovery, demonstração prática ou encaminhamento.\n"
+            "Não force microcena quando a pergunta for institucional, ampla, exploratória ou lateral.\n"
+            "Quando o segmento estiver claro e a intenção pedir demonstração prática, use o KB para mostrar valor real no dia a dia.\n"
+            "Evite trocar por outro tipo de fluxo quando a ancoragem do KB estiver clara e a intenção já estiver prática.\n"
         )
 
     messages = [
@@ -5524,7 +5531,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or str((kb_context or {}).get("archetype_id") or "").strip()
         )
 
-        if has_kb_direction and preferred_topic in TOPICS and preferred_topic not in ("OTHER", "WHAT_IS"):
+        if (
+            has_kb_direction
+            and preferred_topic in TOPICS
+            and preferred_topic not in ("OTHER", "WHAT_IS")
+            and topic in ("OTHER", "")
+            and confidence in ("low", "")
+        ):
             topic = preferred_topic
             if confidence == "low":
                 confidence = "medium"
@@ -5540,6 +5553,42 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             operational_family=operational_family,
             topic=topic,
         )
+
+        # ----------------------------------------------------------
+        # GATE SOBERANO DE MICROCENA / KB OPERACIONAL
+        # A IA entende primeiro; o código só decide se pode usar
+        # demonstração prática neste turno.
+        # ----------------------------------------------------------
+        micro_scene_allowed = False
+
+        try:
+            current_topic = str(topic or "").strip().upper()
+            current_confidence = str(confidence or "").strip().lower()
+            current_needs_clarify = str(needs_clarify or "").strip().lower()
+
+            # permite microcena quando a própria IA já caiu num trilho
+            # de demonstração prática com confiança razoável
+            if current_topic in ("SERVICOS", "PROCESSO", "AGENDA", "PEDIDOS", "PRODUTO") and current_confidence in ("high", "medium"):
+                micro_scene_allowed = True
+
+            # mas não forçar microcena quando a IA ainda está clarificando
+            if current_needs_clarify == "yes":
+                micro_scene_allowed = False
+
+            # perguntas de ativação/link não devem virar cena
+            if str(next_step or "").strip().upper() == "SEND_LINK":
+                micro_scene_allowed = False
+
+        except Exception:
+            micro_scene_allowed = False
+
+        try:
+            if isinstance(operational_contract, dict):
+                operational_contract["micro_scene_allowed"] = micro_scene_allowed
+            if isinstance(base_operational_contract, dict):
+                base_operational_contract["micro_scene_allowed"] = micro_scene_allowed
+        except Exception:
+            pass
 
         try:
             if isinstance(operational_contract, dict):
@@ -5773,7 +5822,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 }
 
             generated = ""
-            if next_step != "SEND_LINK":
+            if next_step != "SEND_LINK" and bool((operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed")):
                 generated = _generate_micro_scene_with_model(
                     practical_scene_from_kb="",
                     contract=operational_contract if 'operational_contract' in locals() else {},
@@ -5899,12 +5948,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     spoken_text = reply_text
                     reply_source = "front_free_mode_empty"
 
-            kb_reply = _build_kb_anchor_reply(
-                practical_scene_from_kb="",
-                example_line=example_line,
-                clarify_q=(question if not effective_segment else ""),
-                contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
-            )
+            kb_reply = ""
+            if bool((operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed")):
+                kb_reply = _build_kb_anchor_reply(
+                    practical_scene_from_kb="",
+                    example_line=example_line,
+                    clarify_q=(question if not effective_segment else ""),
+                    contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
+                )
 
             if kb_anchor_strong and kb_reply:
                 needs_resolution = (
