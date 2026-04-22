@@ -6251,10 +6251,30 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     reply_text = structured
                     spoken_text = structured
                     reply_source = "front_fallback_structural"
-                elif structured_live:
+                elif structured_live and not _contract_strong:
                     reply_text = structured
                     spoken_text = structured
                     reply_source = "front_fallback_structural"
+                elif structured_live and _contract_strong:
+                    forced_scene = (
+                        _compose_grounded_scene_with_progression(
+                            operational_reference="",
+                            contract=operational_contract if 'operational_contract' in locals() else {},
+                            reference_example=reference_example,
+                        ).strip()
+                        or _build_structural_last_resort_reply(
+                            operational_reference="",
+                            contract=operational_contract if 'operational_contract' in locals() else {},
+                        ).strip()
+                    )
+                    if forced_scene:
+                        reply_text = forced_scene
+                        spoken_text = forced_scene
+                        reply_source = "front_fallback_structural"
+                    else:
+                        reply_text = structured
+                        spoken_text = structured
+                        reply_source = "front_fallback_structural"
                 else:
                     reply_text = str(question or clarify_q or "").strip()
                     spoken_text = reply_text
