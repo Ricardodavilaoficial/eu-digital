@@ -980,7 +980,7 @@ def _build_user_scene_block(*, practical_scene_from_kb: str, example_line: str, 
         parts = []
 
         if ps:
-            parts.append("[REGRA CRÍTICA DE GERAÇÃO]\nUse a CENA PREFERENCIAL DO KB como referência quando a intenção do lead pedir demonstração prática.\n- O KB é a fonte da verdade para fatos operacionais.\n- O exemplo abaixo NÃO define comportamento sozinho.\n- O exemplo serve apenas para tom e ritmo.\n- Se a pergunta for institucional, ampla ou exploratória, não force microcena.\n- Se houver conflito, siga o entendimento soberano da IA e preserve os fatos do KB.\n- NUNCA invente etapas que não estejam no KB.")
+            parts.append("[REGRA CRÍTICA DE GERAÇÃO]\nUse a CENA PREFERENCIAL DO KB como referência quando a IA entender que vale mostrar valor prático neste turno.\n- Em Vendas, quando o segmento estiver claro, prefira usar o KB para demonstrar na prática como o MEI Robô funciona naquele contexto.\n- Se o segmento ainda não estiver claro, a IA pode conduzir a conversa para descobrir isso e então mostrar valor com mais precisão.\n- O KB é a fonte da verdade para fatos operacionais.\n- O exemplo abaixo NÃO define comportamento sozinho.\n- O exemplo serve apenas para tom e ritmo.\n- Se a pergunta for institucional, ampla ou exploratória, não force microcena.\n- Se houver conflito, siga o entendimento soberano da IA e preserve os fatos do KB.\n- NUNCA invente etapas que não estejam no KB.\n- O KB é a fonte da verdade para fatos operacionais.\n- O exemplo abaixo NÃO define comportamento sozinho.\n- O exemplo serve apenas para tom e ritmo.\n- Se a pergunta for institucional, ampla ou exploratória, não force microcena.\n- Se houver conflito, siga o entendimento soberano da IA e preserve os fatos do KB.\n- NUNCA invente etapas que não estejam no KB.")
             parts.append(f"[CENA PREFERENCIAL]\n{ps}")
         elif ex:
             parts.append(f"[EXEMPLO DO SEGMENTO]\n{ex}")
@@ -3501,7 +3501,7 @@ Mostre ao lead uma situação real acontecendo no dia a dia dele, em uma sequên
 Regras obrigatórias:
 
 [REGRA CRÍTICA DE GERAÇÃO - O PONTO DE EQUILÍBRIO]
-Use a CENA PREFERENCIAL DO KB como referência quando a intenção do lead pedir demonstração prática.
+Use a CENA PREFERENCIAL DO KB como referência quando a IA entender que demonstrar a operação ajuda a vender com mais clareza neste turno.\n- Em Vendas, quando o segmento estiver claro, prefira mostrar valor prático no contexto real do lead.\n- Se o segmento ainda não estiver claro, a IA pode conduzir a conversa para descobrir isso e então usar o KB com mais precisão.\n- O KB é a fonte da verdade para fatos operacionais, mas não deve forçar microcena em pergunta institucional, ampla ou exploratória.\n- Sua missão é DRAMATIZAR a operação quando isso ajudar o lead a visualizar valor no dia a dia.\n- FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB. Embeleze a forma de falar, não o conteúdo técnico.\n- O exemplo abaixo serve apenas para tom e ritmo. Se houver conflito com o entendimento soberano da IA, preserve o entendimento e os fatos do KB.
 - O KB é a fonte da verdade para fatos operacionais, mas não deve forçar microcena em pergunta institucional, ampla ou exploratória.
 - Sua missão é DRAMATIZAR a operação somente quando isso ajudar o lead a visualizar valor no dia a dia.
 - FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB. Embeleze a forma de falar, não o conteúdo técnico.
@@ -5228,7 +5228,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             "Se o KB trouxer archetype, ritual, capabilities, cena ou exemplo, use isso como referência factual e operacional.\n"
             "Você continua soberano para entender a intenção do lead e decidir se este turno pede explicação, discovery, demonstração prática ou encaminhamento.\n"
             "Não force microcena quando a pergunta for institucional, ampla, exploratória ou lateral.\n"
-            "Quando o segmento estiver claro e a intenção pedir demonstração prática, use o KB para mostrar valor real no dia a dia.\n"
+            "Quando o segmento estiver claro e a IA entender que vale demonstrar na prática, use o KB para mostrar valor real no dia a dia.\nSe o segmento ainda não estiver claro, a IA pode conduzir a conversa para descobrir isso antes de demonstrar.\n"
             "Evite trocar por outro tipo de fluxo quando a ancoragem do KB estiver clara e a intenção já estiver prática.\n"
         )
 
