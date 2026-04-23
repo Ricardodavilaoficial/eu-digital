@@ -1124,7 +1124,7 @@ def build_dynamic_context_frame(segment: str, kb_text: str) -> str:
         "A resposta deve mostrar como o robô ajuda na conversa real com o cliente. "
         "Mostre de forma natural o que acontece quando o cliente manda mensagem "
         "e como o robô conduz o próximo passo. "
-        "Evite explicar software; descreva a cena prática. "
+        "Responda como se estivesse falando diretamente com o lead no WhatsApp. Não descreva o que acontece. Não narre situações. Não use terceira pessoa. A resposta deve ser uma fala direta. "
         f"\n\nContexto disponível:\n{kb_text}"
     )
 
@@ -3669,7 +3669,7 @@ Regras obrigatórias:
 - use somente fatos do contrato e do KB
 - o KB serve como fonte factual; não copie o formato do KB
 - não invente etapas, botões, telas ou funcionalidades
-- descreva o fluxo acontecendo no WhatsApp, em sequência prática
+- mostre na prática como funciona, falando diretamente com o lead, como se estivesse respondendo agora
 - cada frase deve puxar a próxima ação
 - termine na última ação concreta do fluxo
 - não explicar de fora
@@ -4212,28 +4212,21 @@ def _compose_practical_scene(*, kb_snapshot: str, segment_key: str, pack_id: str
 
 
 def _merge_value_and_scene(value_line: str, practical_scene: str, question: str = "") -> str:
-    """
-    Resposta final:
-    1) valor em 1 frase
-    2) Na prática: microcena fiel ao produto
-    3) pergunta útil, se existir
-    """
     try:
-        out = []
-        v = (value_line or "").strip()
-        p = (practical_scene or "").strip()
-        q = (question or "").strip()
+        parts = []
 
-        if v:
-            out.append(v.rstrip(".!?") + ".")
-        if p and len(p) > 80:
-            out.append(p)
-        if q:
-            out.append(q)
-        return " ".join([x for x in out if x]).strip()
+        if value_line:
+            parts.append(str(value_line).strip())
+
+        if practical_scene:
+            parts.append(str(practical_scene).strip())
+
+        if question:
+            parts.append(str(question).strip())
+
+        return "\n\n".join(parts)
     except Exception:
-        return " ".join([x for x in [(value_line or "").strip(), (practical_scene or "").strip(), (question or "").strip()] if x]).strip()
-
+        return "\n\n".join([str(x).strip() for x in [value_line, practical_scene, question] if str(x or "").strip()])
 
 def _replace_last_question(text: str, new_question: str) -> str:
     try:
@@ -4574,6 +4567,15 @@ def _should_downgrade_premature_narrow_topic(
 
 SYSTEM_PROMPT = """
 Você é o MEI Robô, um assistente automatizado que atende clientes via WhatsApp.
+
+Você está conversando com um lead real no WhatsApp.
+
+Você NÃO está explicando um sistema.
+Você NÃO está descrevendo um processo.
+
+Você está respondendo diretamente ao lead.
+
+Se a resposta soar como narração ou explicação genérica, ela está errada.
 
 IMPORTANTE:
 - Você não realiza atendimento presencial
@@ -6143,11 +6145,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 }
 
             generated = ""
-            if next_step != "SEND_LINK" and bool((operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed")):
-                generated = _generate_micro_scene_with_model(
+            practical_scene = None
+            intent_for_scene = str(intent or "").strip().lower()
+            if intent_for_scene in ["descoberta", "interesse", "exploracao", "duvida_funcionamento"]:
+                practical_scene = _generate_micro_scene_with_model(
                     operational_reference="",
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 ).strip()
+
+            if practical_scene:
+                generated = practical_scene
 
             if generated:
                 generated_live = _is_live_operational_reply(
