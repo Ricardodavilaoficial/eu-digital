@@ -5846,7 +5846,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and has_example
                 and archetype_id_local
                 and str(next_step or "").strip().upper() != "SEND_LINK"
-                and str(topic or "").strip().upper() not in ("PRECO", "TRIAL", "ATIVAR")
+                and str(topic or "").strip().upper() not in ("PRECO", "TRIAL", "ATIVAR", "WHAT_IS")
             ):
                 micro_scene_allowed = True
         except Exception:
@@ -6754,17 +6754,28 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         reply_source = "front_operational_upgrade"
                 else:
                     fallback = ""
-                    if (
+                    if _contract_strong:
+                        fallback = (
+                            _compose_grounded_scene_with_progression(
+                                operational_reference="",
+                                contract=operational_contract if 'operational_contract' in locals() else {},
+                                reference_example=reference_example,
+                            ).strip()
+                            or _build_structural_last_resort_reply(
+                                operational_reference="",
+                                contract=operational_contract if 'operational_contract' in locals() else {},
+                            ).strip()
+                            or _build_kb_anchor_reply(
+                                operational_reference="",
+                                reference_example=reference_example,
+                                clarify_q="",
+                                contract=operational_contract if 'operational_contract' in locals() else {},
+                            ).strip()
+                        )
+                    elif (
                         (not current_text)
                         or len(current_text) < 40
                         or _looks_like_technical_output(current_text)
-                        or (
-                            _contract_strong
-                            and (
-                                current_is_mild
-                                or not current_show
-                            )
-                        )
                     ):
                         fallback = (
                             _compose_grounded_scene_with_progression(
@@ -6776,12 +6787,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 operational_reference="",
                                 contract=operational_contract if 'operational_contract' in locals() else {},
                             ).strip()
+                            or _build_kb_anchor_reply(
+                                operational_reference="",
+                                reference_example=reference_example,
+                                clarify_q="",
+                                contract=operational_contract if 'operational_contract' in locals() else {},
+                            ).strip()
                         )
 
                     if fallback:
                         reply_text = fallback
                         spoken_text = fallback
                         reply_source = "front_fallback_structural"
+                        accepted = True
 
             logging.info(
                 "[IA_FINAL_DECISION] source=%s accepted=%s len=%s live=%s density=%s",
