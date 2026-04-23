@@ -6673,7 +6673,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             _source_now = str(reply_source or "").strip()
 
             if _contract_strong:
-                accepted = bool(ia_show)
+                accepted = bool(
+                    ia_show
+                    and _not_explanatory
+                    and (ia_density >= 7)
+                )
             else:
                 accepted = bool(
                     _source_now in ("front_ia_soberana", "front_operational_upgrade")
@@ -6727,7 +6731,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
                 if _contract_strong:
-                    _accept_current = bool(current_show)
+                    _accept_current = bool(
+                        current_show
+                        and _current_not_explanatory
+                        and (_operational_density_score(
+                            text=current_text,
+                            operational_reference="",
+                            reference_example=reference_example,
+                            effective_segment=str((operational_contract if 'operational_contract' in locals() else {}).get("segment") or "").strip(),
+                            operational_family=str((operational_contract if 'operational_contract' in locals() else {}).get("operational_family") or "").strip(),
+                        ) >= 7)
+                    )
                 else:
                     _accept_current = bool(
                         current_show
@@ -6744,7 +6758,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         (not current_text)
                         or len(current_text) < 40
                         or _looks_like_technical_output(current_text)
-                        or (_contract_strong and current_is_mild)
+                        or (
+                            _contract_strong
+                            and (
+                                current_is_mild
+                                or not current_show
+                            )
+                        )
                     ):
                         fallback = (
                             _compose_grounded_scene_with_progression(
