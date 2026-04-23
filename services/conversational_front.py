@@ -5094,6 +5094,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     except Exception:
         kb_segment_hint = ""
 
+    # ----------------------------------------------------------
+    # SOBERANIA DA IA NO TURNO 0
+    # Se ainda não há segmento explícito/sticky, não promover
+    # subsegmento operacional antes da IA entender a intenção.
+    # ----------------------------------------------------------
+    explicit_segment_present = bool(
+        str(segment_hint or "").strip()
+        or str(sticky_segment_hint or "").strip()
+    )
+
     effective_segment = (
         str((kb_context or {}).get("subsegment_hint") or "").strip()
         or str(sticky_segment_hint or "").strip()
@@ -5104,7 +5114,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     # se ainda estivermos num macro conhecido, tenta promover para subsegmento real
     try:
-        if effective_segment and "__" not in effective_segment:
+        if explicit_segment_present and effective_segment and "__" not in effective_segment:
             promoted_segment = _infer_segment_from_docs(
                 user_text=user_text,
                 kb_snapshot=kb_snapshot,
@@ -5121,19 +5131,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # com as chaves reais do KB antes da hidratação principal.
     # ----------------------------------------------------------
     try:
-        inferred_from_docs = _infer_segment_from_docs(
-            user_text=user_text,
-            kb_snapshot=kb_snapshot,
-            kb_context=kb_context if isinstance(kb_context, dict) else {},
-        )
-        if inferred_from_docs:
-            inferred_from_docs = str(inferred_from_docs).strip()
+        if explicit_segment_present:
+            inferred_from_docs = _infer_segment_from_docs(
+                user_text=user_text,
+                kb_snapshot=kb_snapshot,
+                kb_context=kb_context if isinstance(kb_context, dict) else {},
+            )
+            if inferred_from_docs:
+                inferred_from_docs = str(inferred_from_docs).strip()
 
-            # sempre promove subsegmento sobre macro
-            if "__" in inferred_from_docs:
-                effective_segment = inferred_from_docs
-            elif not effective_segment:
-                effective_segment = inferred_from_docs
+                # sempre promove subsegmento sobre macro
+                if "__" in inferred_from_docs:
+                    effective_segment = inferred_from_docs
+                elif not effective_segment:
+                    effective_segment = inferred_from_docs
     except Exception:
         pass
 
@@ -5143,23 +5154,26 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # qualquer refresh de âncora ou montagem de contrato.
     # ----------------------------------------------------------
     try:
-        real_kb_docs = _kb_lookup_operational_docs(
-            kb_snapshot=kb_snapshot,
-            effective_segment=effective_segment,
-            kb_context=kb_context if isinstance(kb_context, dict) else {},
-        )
-        kb_context = _merge_real_kb_operational_context(
-            kb_context=kb_context if isinstance(kb_context, dict) else {},
-            docs=real_kb_docs,
-        )
+        real_kb_docs = {"subsegment_doc": {}, "segment_doc": {}, "archetype_doc": {}}
+        if explicit_segment_present and effective_segment:
+            real_kb_docs = _kb_lookup_operational_docs(
+                kb_snapshot=kb_snapshot,
+                effective_segment=effective_segment,
+                kb_context=kb_context if isinstance(kb_context, dict) else {},
+            )
+            kb_context = _merge_real_kb_operational_context(
+                kb_context=kb_context if isinstance(kb_context, dict) else {},
+                docs=real_kb_docs,
+            )
         logging.info(
-            "[CONVERSATIONAL_FRONT][KB_CTX_ENRICH] seg=%s archetype=%s segment_id=%s example=%s scene=%s family=%s",
+            "[CONVERSATIONAL_FRONT][KB_CTX_ENRICH] seg=%s archetype=%s segment_id=%s example=%s scene=%s family=%s explicit_segment_present=%s",
             str(effective_segment or "").strip(),
             str((kb_context or {}).get("archetype_id") or "").strip(),
             str((kb_context or {}).get("segment_id") or "").strip(),
             bool(str((kb_context or {}).get("segment_reference_example") or "").strip()),
             bool(str((kb_context or {}).get("operational_reference") or "").strip()),
             str((kb_context or {}).get("operational_family") or "").strip(),
+            explicit_segment_present,
         )
     except Exception:
         pass
@@ -5179,7 +5193,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
         )
 
-        if not docs_hydrated:
+        if explicit_segment_present and not docs_hydrated:
             reinforced_segment = _infer_segment_from_docs(
                 user_text=user_text,
                 kb_snapshot=kb_snapshot,
@@ -5249,11 +5263,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     micro_scene = str((kb_context or {}).get("pack_micro_scene") or "").strip()
     operational_reference = str((kb_context or {}).get("operational_reference") or "").strip()
     reference_example = str((kb_context or {}).get("segment_reference_example") or "").strip()
-    if selected_pack_id and not micro_scene:
+    if explicit_segment_present and selected_pack_id and not micro_scene:
         micro_scene = _kb_get_micro_scene(kb_snapshot, selected_pack_id)
-    if selected_pack_id and not reference_example:
+    if explicit_segment_present and selected_pack_id and not reference_example:
         reference_example = _kb_get_reference_example(kb_snapshot, effective_segment, selected_pack_id)
-    if effective_segment and not operational_reference:
+    if explicit_segment_present and effective_segment and not operational_reference:
         operational_reference = _kb_get_segment_scene(kb_snapshot, effective_segment)
     if not operational_reference and micro_scene:
         operational_reference = micro_scene
@@ -5263,19 +5277,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # Antes da resposta final, revisitamos o banco para reforçar
     # a melhor cena e o melhor exemplo disponível.
     # ----------------------------------------------------------
-    refreshed_anchor = _refresh_operational_anchor(
-        kb_snapshot=kb_snapshot,
-        kb_context=kb_context if isinstance(kb_context, dict) else {},
-        effective_segment=effective_segment,
-        selected_pack_id=selected_pack_id,
-        operational_family=operational_family,
-    )
-    reference_example = str((refreshed_anchor or {}).get("reference_example") or reference_example or "").strip()
-    operational_reference = str((refreshed_anchor or {}).get("operational_reference") or operational_reference or "").strip()
-    operational_family = str((refreshed_anchor or {}).get("operational_family") or operational_family or "").strip()
+    refreshed_anchor = {}
+    if explicit_segment_present:
+        refreshed_anchor = _refresh_operational_anchor(
+            kb_snapshot=kb_snapshot,
+            kb_context=kb_context if isinstance(kb_context, dict) else {},
+            effective_segment=effective_segment,
+            selected_pack_id=selected_pack_id,
+            operational_family=operational_family,
+        )
+        reference_example = str((refreshed_anchor or {}).get("reference_example") or reference_example or "").strip()
+        operational_reference = str((refreshed_anchor or {}).get("operational_reference") or operational_reference or "").strip()
+        operational_family = str((refreshed_anchor or {}).get("operational_family") or operational_family or "").strip()
 
     # o reference_example só nasce de cena real do KB; nunca do relato do usuário
-    if not reference_example and operational_reference and not _is_scene_echo(operational_reference, user_text):
+    if explicit_segment_present and not reference_example and operational_reference and not _is_scene_echo(operational_reference, user_text):
         derived_steps = _split_scene_steps(operational_reference)
         if len(derived_steps) >= 2:
             reference_example = str(derived_steps[0] or "").strip()
@@ -5778,9 +5794,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         has_kb_direction = bool(
             kb_anchor_strong
-            or str(effective_segment or "").strip()
-            or str((kb_context or {}).get("subsegment_hint") or "").strip()
-            or str((kb_context or {}).get("archetype_id") or "").strip()
+            or (
+                explicit_segment_present
+                and (
+                    str(effective_segment or "").strip()
+                    or str((kb_context or {}).get("subsegment_hint") or "").strip()
+                    or str((kb_context or {}).get("archetype_id") or "").strip()
+                )
+            )
         )
 
         if (
