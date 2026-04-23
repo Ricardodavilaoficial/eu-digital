@@ -1124,7 +1124,7 @@ def build_dynamic_context_frame(segment: str, kb_text: str) -> str:
         "A resposta deve mostrar como o robô ajuda na conversa real com o cliente. "
         "Mostre de forma natural o que acontece quando o cliente manda mensagem "
         "e como o robô conduz o próximo passo. "
-        "Responda como se estivesse falando diretamente com o lead no WhatsApp. Não descreva o que acontece. Não narre situações. Não use terceira pessoa. A resposta deve ser uma fala direta. "
+        "Evite explicar software; descreva a cena prática. "
         f"\n\nContexto disponível:\n{kb_text}"
     )
 
@@ -3662,27 +3662,41 @@ def _generate_micro_scene_with_model(
         system = """
 Você recebe um contexto operacional de atendimento já resolvido.
 
-Sua tarefa é gerar apenas a microcena operacional final deste turno.
-Este bloco não decide estratégia. A decisão de usar microcena já foi tomada antes.
+Sua tarefa é gerar uma microcena operacional clara e direta,
+apenas quando este bloco for acionado.
 
 Regras obrigatórias:
-- use somente fatos do contrato e do KB
-- o KB serve como fonte factual; não copie o formato do KB
-- não invente etapas, botões, telas ou funcionalidades
-- mostre na prática como funciona, falando diretamente com o lead, como se estivesse respondendo agora
-- cada frase deve puxar a próxima ação
-- termine na última ação concreta do fluxo
-- não explicar de fora
-- não resumir benefício
-- não usar diálogo
-- não usar linguagem burocrática de sistema
-- manter 1 parágrafo curto
-- se houver nome do lead, pode usar com naturalidade na abertura ou no fechamento
-- não faça pergunta, a menos que o próprio contrato dependa disso de forma explícita
 
-Estrutura esperada:
-ação inicial → resposta do MEI Robô → encaminhamento → consequência prática visível
+[REGRA CRÍTICA DE GERAÇÃO - O PONTO DE EQUILÍBRIO]
+Use a CENA PREFERENCIAL DO KB apenas quando houver contexto suficiente para descrever o funcionamento prático.
+- Primeiro decida exatamente uma ação principal para este turno:
+- responder diretamente
+- pedir nome
+- pedir segmento
+- usar microcena
+- avançar para link
+Nunca combine múltiplas ações conflitantes.
+- Se nome e segmento ainda não estiverem claros, peça isso junto com uma resposta útil; nunca faça uma mensagem só para perguntar.
+- Se o segmento ainda não estiver claro, não force microcena.
+- Se a pergunta for institucional, ampla ou direta, responda primeiro a dúvida.
+- O KB é a fonte da verdade para fatos operacionais.
+- FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB.
+- O exemplo abaixo serve apenas como referência de densidade técnica e estrutura.
 
+1. EMPATIA INICIAL: agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
+2. MICROCENA TÉCNICA: descreva o fluxo exato no WhatsApp, em sequência prática.
+3. ZERO LINGUAGEM DE SISTEMA: não use termos burocráticos como "registra", "organiza", "gerencia" ou "garante".
+4. ZERO ABSTRAÇÃO: não use frases de marketing nem resumos de benefício.
+5. FECHAMENTO SECO: termine na última ação concreta do fluxo.
+6. SEM DIÁLOGOS FAKES: não use aspas para simular falas.
+7. COMPACTO E DENSO: 1 parágrafo curto, direto e técnico.
+8. PERGUNTAS RESTRITAS: só pergunte nome, segmento ou intenção, quando isso realmente estiver faltando.
+9. QUANDO FALTAR NOME OU SEGMENTO: incorpore isso no mesmo texto útil; nunca desperdice o turno só com a pergunta.
+
+[EXEMPLO DE TOM, DENSIDADE E ESTRUTURA ESPERADA]
+"João, muito obrigado pelo teu contato! Um cliente teu manda mensagem no WhatsApp pedindo um agendamento. O teu MEI Robô confirma o tipo de serviço, consulta o tempo que tu deixou configurado, verifica os horários disponíveis e apresenta opções. O cliente escolhe, ele confirma ali mesmo e envia a confirmação por escrito. No dia, dispara o lembrete pelo WhatsApp. Se eu ainda não souber teu segmento, eu junto isso na resposta e te peço essa informação no mesmo texto."
+
+Use o KB como base para abastecer os detalhes da operação.
 Retorne somente o texto final.
 """
 
@@ -3712,7 +3726,7 @@ Retorne somente o texto final.
         if _HAS_OPENAI_CLIENT and _client is not None:
             resp = _client.chat.completions.create(
                 model=MODEL,
-                temperature=0.20,
+                temperature=0.40,
                 max_tokens=350,
                 messages=[
                     {"role": "system", "content": system},
@@ -3723,7 +3737,7 @@ Retorne somente o texto final.
         else:
             resp = openai.ChatCompletion.create(
                 model=MODEL,
-                temperature=0.20,
+                temperature=0.40,
                 max_tokens=350,
                 messages=[
                     {"role": "system", "content": system},
@@ -4212,21 +4226,28 @@ def _compose_practical_scene(*, kb_snapshot: str, segment_key: str, pack_id: str
 
 
 def _merge_value_and_scene(value_line: str, practical_scene: str, question: str = "") -> str:
+    """
+    Resposta final:
+    1) valor em 1 frase
+    2) Na prática: microcena fiel ao produto
+    3) pergunta útil, se existir
+    """
     try:
-        parts = []
+        out = []
+        v = (value_line or "").strip()
+        p = (practical_scene or "").strip()
+        q = (question or "").strip()
 
-        if value_line:
-            parts.append(str(value_line).strip())
-
-        if practical_scene:
-            parts.append(str(practical_scene).strip())
-
-        if question:
-            parts.append(str(question).strip())
-
-        return "\n\n".join(parts)
+        if v:
+            out.append(v.rstrip(".!?") + ".")
+        if p and len(p) > 80:
+            out.append(p)
+        if q:
+            out.append(q)
+        return " ".join([x for x in out if x]).strip()
     except Exception:
-        return "\n\n".join([str(x).strip() for x in [value_line, practical_scene, question] if str(x or "").strip()])
+        return " ".join([x for x in [(value_line or "").strip(), (practical_scene or "").strip(), (question or "").strip()] if x]).strip()
+
 
 def _replace_last_question(text: str, new_question: str) -> str:
     try:
@@ -4568,15 +4589,6 @@ def _should_downgrade_premature_narrow_topic(
 SYSTEM_PROMPT = """
 Você é o MEI Robô, um assistente automatizado que atende clientes via WhatsApp.
 
-Você está conversando com um lead real no WhatsApp.
-
-Você NÃO está explicando um sistema.
-Você NÃO está descrevendo um processo.
-
-Você está respondendo diretamente ao lead.
-
-Se a resposta soar como narração ou explicação genérica, ela está errada.
-
 IMPORTANTE:
 - Você não realiza atendimento presencial
 - Todas as interações acontecem pelo WhatsApp
@@ -4596,15 +4608,14 @@ Regras de Ouro:
 3. SEGMENTO É PRIORIDADE JUNTO COM O NOME: se nome e segmento ainda não apareceram, tente buscar os dois.
 4. NUNCA DESPERDICE O TURNO: quando faltar nome ou segmento, responda algo útil e inclua a pergunta no mesmo texto; nunca mande uma mensagem só para perguntar.
 5. RESPOSTA DIRETA TEM PRIORIDADE: se a dúvida for objetiva, responda primeiro com base no KB.
-6. MICROCENA É DECISÃO DA IA, MAS QUANDO O KB VIER HIDRATADO COM CENA OPERACIONAL, EXEMPLO E CONTEXTO PRÁTICO, E A PERGUNTA JÁ ESTIVER NO CAMPO OPERACIONAL, A RESPOSTA DEVE PREFERIR MICROCENA.
-7. BLOQUEIO EXPLÍCITO: perguntas técnicas, institucionais, de preço, confirmação curta, cumprimento ou dúvida objetiva devem ser respondidas diretamente; não use microcena nesses casos.
-8. PERGUNTAS SÃO RESTRITAS: só faça perguntas para obter nome, identificar segmento ou esclarecer a intenção do lead.
-9. NÃO FORCE CONTINUIDADE: não faça perguntas vazias no final.
-10. PROIBIDO PARECER SOFTWARE: fale como humano, com clareza e objetividade.
-11. SEJA CONCISO: entregue a resposta em 1 parágrafo curto e direto.
-12. FECHAMENTO COM NOME: quando o nome for conhecido, use-o no fechamento.
-13. SE O CLIENTE QUER ASSINAR: agradeça, use o nome e informe o link. Não explique mais nada.
-14. QUANDO FALAR DE ÁUDIO: deixe claro que mensagens em áudio podem ser respondidas com a própria voz digitalizada do profissional, configurada na conta.
+6. MICROCENA É DECISÃO, NÃO HÁBITO: use apenas quando houver contexto suficiente e oportunidade clara de mostrar funcionamento prático.
+7. PERGUNTAS SÃO RESTRITAS: só faça perguntas para obter nome, identificar segmento ou esclarecer a intenção do lead.
+8. NÃO FORCE CONTINUIDADE: não faça perguntas vazias no final.
+9. PROIBIDO PARECER SOFTWARE: fale como humano, com clareza e objetividade.
+10. SEJA CONCISO: entregue a resposta em 1 parágrafo curto e direto.
+11. FECHAMENTO COM NOME: quando o nome for conhecido, use-o no fechamento.
+12. SE O CLIENTE QUER ASSINAR: agradeça, use o nome e informe o link. Não explique mais nada.
+13. QUANDO FALAR DE ÁUDIO: deixe claro que mensagens em áudio podem ser respondidas com a própria voz digitalizada do profissional, configurada na conta.
 
 [EXEMPLOS CANÔNICOS — REFERÊNCIA DE TOM E ESTRUTURA]
 
@@ -4627,7 +4638,6 @@ Regras de Ouro:
 "O MEI Robô responde como tu responderia. No painel, tu configura o jeito de atendimento, pode ajustar por tipo de cliente e definir como orçamentos são enviados. Ele usa isso para manter padrão nas respostas, enviar propostas organizadas e conduzir o atendimento até onde tu quiser assumir."
 
 IMPORTANTE: os exemplos acima são referência de execução, tom e densidade. Não copie mecanicamente. Use o KB como fonte da verdade.
-IMPORTANTE: o KB serve como fonte factual e operacional. O KB não impõe formato, tom nem obriga microcena.
 
 IMPORTANTE: Responda SEMPRE em formato JSON com a seguinte estrutura:
 {
@@ -5096,16 +5106,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     except Exception:
         kb_segment_hint = ""
 
-    # ----------------------------------------------------------
-    # SOBERANIA DA IA NO TURNO 0
-    # Se ainda não há segmento explícito/sticky, não promover
-    # subsegmento operacional antes da IA entender a intenção.
-    # ----------------------------------------------------------
-    explicit_segment_present = bool(
-        str(segment_hint or "").strip()
-        or str(sticky_segment_hint or "").strip()
-    )
-
     effective_segment = (
         str((kb_context or {}).get("subsegment_hint") or "").strip()
         or str(sticky_segment_hint or "").strip()
@@ -5116,7 +5116,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     # se ainda estivermos num macro conhecido, tenta promover para subsegmento real
     try:
-        if explicit_segment_present and effective_segment and "__" not in effective_segment:
+        if effective_segment and "__" not in effective_segment:
             promoted_segment = _infer_segment_from_docs(
                 user_text=user_text,
                 kb_snapshot=kb_snapshot,
@@ -5133,20 +5133,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # com as chaves reais do KB antes da hidratação principal.
     # ----------------------------------------------------------
     try:
-        if explicit_segment_present:
-            inferred_from_docs = _infer_segment_from_docs(
-                user_text=user_text,
-                kb_snapshot=kb_snapshot,
-                kb_context=kb_context if isinstance(kb_context, dict) else {},
-            )
-            if inferred_from_docs:
-                inferred_from_docs = str(inferred_from_docs).strip()
+        inferred_from_docs = _infer_segment_from_docs(
+            user_text=user_text,
+            kb_snapshot=kb_snapshot,
+            kb_context=kb_context if isinstance(kb_context, dict) else {},
+        )
+        if inferred_from_docs:
+            inferred_from_docs = str(inferred_from_docs).strip()
 
-                # sempre promove subsegmento sobre macro
-                if "__" in inferred_from_docs:
-                    effective_segment = inferred_from_docs
-                elif not effective_segment:
-                    effective_segment = inferred_from_docs
+            # sempre promove subsegmento sobre macro
+            if "__" in inferred_from_docs:
+                effective_segment = inferred_from_docs
+            elif not effective_segment:
+                effective_segment = inferred_from_docs
     except Exception:
         pass
 
@@ -5156,26 +5155,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # qualquer refresh de âncora ou montagem de contrato.
     # ----------------------------------------------------------
     try:
-        real_kb_docs = {"subsegment_doc": {}, "segment_doc": {}, "archetype_doc": {}}
-        if explicit_segment_present and effective_segment:
-            real_kb_docs = _kb_lookup_operational_docs(
-                kb_snapshot=kb_snapshot,
-                effective_segment=effective_segment,
-                kb_context=kb_context if isinstance(kb_context, dict) else {},
-            )
-            kb_context = _merge_real_kb_operational_context(
-                kb_context=kb_context if isinstance(kb_context, dict) else {},
-                docs=real_kb_docs,
-            )
+        real_kb_docs = _kb_lookup_operational_docs(
+            kb_snapshot=kb_snapshot,
+            effective_segment=effective_segment,
+            kb_context=kb_context if isinstance(kb_context, dict) else {},
+        )
+        kb_context = _merge_real_kb_operational_context(
+            kb_context=kb_context if isinstance(kb_context, dict) else {},
+            docs=real_kb_docs,
+        )
         logging.info(
-            "[CONVERSATIONAL_FRONT][KB_CTX_ENRICH] seg=%s archetype=%s segment_id=%s example=%s scene=%s family=%s explicit_segment_present=%s",
+            "[CONVERSATIONAL_FRONT][KB_CTX_ENRICH] seg=%s archetype=%s segment_id=%s example=%s scene=%s family=%s",
             str(effective_segment or "").strip(),
             str((kb_context or {}).get("archetype_id") or "").strip(),
             str((kb_context or {}).get("segment_id") or "").strip(),
             bool(str((kb_context or {}).get("segment_reference_example") or "").strip()),
             bool(str((kb_context or {}).get("operational_reference") or "").strip()),
             str((kb_context or {}).get("operational_family") or "").strip(),
-            explicit_segment_present,
         )
     except Exception:
         pass
@@ -5195,7 +5191,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
         )
 
-        if explicit_segment_present and not docs_hydrated:
+        if not docs_hydrated:
             reinforced_segment = _infer_segment_from_docs(
                 user_text=user_text,
                 kb_snapshot=kb_snapshot,
@@ -5265,11 +5261,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     micro_scene = str((kb_context or {}).get("pack_micro_scene") or "").strip()
     operational_reference = str((kb_context or {}).get("operational_reference") or "").strip()
     reference_example = str((kb_context or {}).get("segment_reference_example") or "").strip()
-    if explicit_segment_present and selected_pack_id and not micro_scene:
+    if selected_pack_id and not micro_scene:
         micro_scene = _kb_get_micro_scene(kb_snapshot, selected_pack_id)
-    if explicit_segment_present and selected_pack_id and not reference_example:
+    if selected_pack_id and not reference_example:
         reference_example = _kb_get_reference_example(kb_snapshot, effective_segment, selected_pack_id)
-    if explicit_segment_present and effective_segment and not operational_reference:
+    if effective_segment and not operational_reference:
         operational_reference = _kb_get_segment_scene(kb_snapshot, effective_segment)
     if not operational_reference and micro_scene:
         operational_reference = micro_scene
@@ -5279,21 +5275,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # Antes da resposta final, revisitamos o banco para reforçar
     # a melhor cena e o melhor exemplo disponível.
     # ----------------------------------------------------------
-    refreshed_anchor = {}
-    if explicit_segment_present:
-        refreshed_anchor = _refresh_operational_anchor(
-            kb_snapshot=kb_snapshot,
-            kb_context=kb_context if isinstance(kb_context, dict) else {},
-            effective_segment=effective_segment,
-            selected_pack_id=selected_pack_id,
-            operational_family=operational_family,
-        )
-        reference_example = str((refreshed_anchor or {}).get("reference_example") or reference_example or "").strip()
-        operational_reference = str((refreshed_anchor or {}).get("operational_reference") or operational_reference or "").strip()
-        operational_family = str((refreshed_anchor or {}).get("operational_family") or operational_family or "").strip()
+    refreshed_anchor = _refresh_operational_anchor(
+        kb_snapshot=kb_snapshot,
+        kb_context=kb_context if isinstance(kb_context, dict) else {},
+        effective_segment=effective_segment,
+        selected_pack_id=selected_pack_id,
+        operational_family=operational_family,
+    )
+    reference_example = str((refreshed_anchor or {}).get("reference_example") or reference_example or "").strip()
+    operational_reference = str((refreshed_anchor or {}).get("operational_reference") or operational_reference or "").strip()
+    operational_family = str((refreshed_anchor or {}).get("operational_family") or operational_family or "").strip()
 
     # o reference_example só nasce de cena real do KB; nunca do relato do usuário
-    if explicit_segment_present and not reference_example and operational_reference and not _is_scene_echo(operational_reference, user_text):
+    if not reference_example and operational_reference and not _is_scene_echo(operational_reference, user_text):
         derived_steps = _split_scene_steps(operational_reference)
         if len(derived_steps) >= 2:
             reference_example = str(derived_steps[0] or "").strip()
@@ -5369,14 +5363,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         selected_pack_id=selected_pack_id,
     )
 
-    # Etapa 1 — a cena do KB só entra forte no prompt quando a própria
-    # arquitetura já liberou demonstração prática para este turno.
-    allow_scene_prompting = bool(
-        free_mode
-        and kb_anchor_strong
-        and effective_segment
-        and bool((base_operational_contract or {}).get("micro_scene_allowed"))
-    )
+    # Etapa 1 — não empurrar cena do KB no entendimento inicial do turno.
+    # A IA entende primeiro; microcena só entra depois, se a própria IA
+    # realmente cair num trilho prático.
+    allow_scene_prompting = False
 
     if allow_scene_prompting:
         scene_hint_block = _build_scene_hint_block(
@@ -5403,41 +5393,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     kb_forced_topic = ""
     if not operational_reference:
         operational_reference = ""
-    if allow_scene_prompting:
-        kb_forced_topic = _preferred_topic_from_kb(
-            kb_context=kb_context if isinstance(kb_context, dict) else {},
-            current_topic="OTHER",
-        )
-        if kb_forced_topic not in TOPICS or kb_forced_topic in ("OTHER", "WHAT_IS"):
-            archetype_id = str((kb_context or {}).get("archetype_id") or "").strip().lower()
-            if archetype_id in ("servico_tecnico_visita", "atendimento_profissional_triagem"):
-                kb_forced_topic = "PROCESSO"
-            elif archetype_id in ("servico_agendado", "servico_agendado_com_encaixe"):
-                kb_forced_topic = "AGENDA"
-            elif archetype_id == "alimentacao_pedido":
-                kb_forced_topic = "PEDIDOS"
-            else:
-                kb_forced_topic = "SERVICOS"
-
-        kb_show_reply_seed = _build_kb_show_reply(
-            kb_context=kb_context if isinstance(kb_context, dict) else {},
-            operational_reference="",
-            reference_example=reference_example,
-            effective_segment=effective_segment,
-            operational_family=operational_family,
-            contract=base_operational_contract if 'base_operational_contract' in locals() else {},
-        )
-
-        try:
-            if kb_forced_topic and isinstance(kb_context, dict):
-                kb_context["topic_hint_from_kb"] = kb_forced_topic
-        except Exception:
-            pass
 
     allow_kb_payload_scene = bool(
-        free_mode
-        and bool((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get("micro_scene_allowed"))
-        and allow_scene_prompting
+        False
     )
 
     user_payload = (
@@ -5786,39 +5744,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             next_step=next_step,
         )
 
-        preferred_topic = _preferred_topic_from_kb(
-            kb_context=kb_context if isinstance(kb_context, dict) else {},
-            current_topic=topic,
-        )
-
-        if kb_forced_topic and kb_forced_topic in TOPICS and kb_forced_topic not in ("OTHER", "WHAT_IS"):
-            preferred_topic = kb_forced_topic
-
-        has_kb_direction = bool(
-            kb_anchor_strong
-            or (
-                explicit_segment_present
-                and (
-                    str(effective_segment or "").strip()
-                    or str((kb_context or {}).get("subsegment_hint") or "").strip()
-                    or str((kb_context or {}).get("archetype_id") or "").strip()
-                )
-            )
-        )
-
-        if (
-            has_kb_direction
-            and preferred_topic in TOPICS
-            and preferred_topic not in ("OTHER", "WHAT_IS")
-            and topic in ("OTHER", "")
-            and confidence in ("low", "")
-        ):
-            topic = preferred_topic
-            if confidence == "low":
-                confidence = "medium"
-            if kb_anchor_strong and confidence == "medium":
-                confidence = "high"
-
         operational_contract = _build_operational_contract(
             kb_snapshot=kb_snapshot,
             kb_context=kb_context if isinstance(kb_context, dict) else {},
@@ -5857,23 +5782,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             micro_scene_allowed = False
 
-        try:
-            hydrated = bool((operational_contract or {}).get("hydrated_from_docs"))
-            has_scene = bool(str((operational_contract or {}).get("operational_reference") or "").strip())
-            has_example = bool(str((operational_contract or {}).get("reference_example") or "").strip())
-            archetype_id_local = str((operational_contract or {}).get("archetype_id") or "").strip()
-
-            if (
-                hydrated
-                and has_scene
-                and has_example
-                and archetype_id_local
-                and str(next_step or "").strip().upper() != "SEND_LINK"
-                and str(topic or "").strip().upper() not in ("PRECO", "TRIAL", "ATIVAR", "WHAT_IS")
-            ):
-                micro_scene_allowed = True
-        except Exception:
-            pass
+        # Importante:
+        # não liberar microcena só porque o KB veio forte.
+        # A liberação precisa nascer do entendimento da IA neste turno.
 
         try:
             if isinstance(operational_contract, dict):
@@ -6145,16 +6056,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 }
 
             generated = ""
-            practical_scene = None
-            intent_for_scene = str(intent or "").strip().lower()
-            if intent_for_scene in ["descoberta", "interesse", "exploracao", "duvida_funcionamento"]:
-                practical_scene = _generate_micro_scene_with_model(
+            if next_step != "SEND_LINK" and bool((operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed")):
+                generated = _generate_micro_scene_with_model(
                     operational_reference="",
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 ).strip()
-
-            if practical_scene:
-                generated = practical_scene
 
             if generated:
                 generated_live = _is_live_operational_reply(
@@ -6701,11 +6607,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             _source_now = str(reply_source or "").strip()
 
             if _contract_strong:
-                accepted = bool(
-                    ia_show
-                    and _not_explanatory
-                    and (ia_density >= 7)
-                )
+                accepted = bool(ia_show)
             else:
                 accepted = bool(
                     _source_now in ("front_ia_soberana", "front_operational_upgrade")
@@ -6759,17 +6661,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
                 if _contract_strong:
-                    _accept_current = bool(
-                        current_show
-                        and _current_not_explanatory
-                        and (_operational_density_score(
-                            text=current_text,
-                            operational_reference="",
-                            reference_example=reference_example,
-                            effective_segment=str((operational_contract if 'operational_contract' in locals() else {}).get("segment") or "").strip(),
-                            operational_family=str((operational_contract if 'operational_contract' in locals() else {}).get("operational_family") or "").strip(),
-                        ) >= 7)
-                    )
+                    _accept_current = bool(current_show)
                 else:
                     _accept_current = bool(
                         current_show
@@ -6782,28 +6674,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         reply_source = "front_operational_upgrade"
                 else:
                     fallback = ""
-                    if _contract_strong:
-                        fallback = (
-                            _compose_grounded_scene_with_progression(
-                                operational_reference="",
-                                contract=operational_contract if 'operational_contract' in locals() else {},
-                                reference_example=reference_example,
-                            ).strip()
-                            or _build_structural_last_resort_reply(
-                                operational_reference="",
-                                contract=operational_contract if 'operational_contract' in locals() else {},
-                            ).strip()
-                            or _build_kb_anchor_reply(
-                                operational_reference="",
-                                reference_example=reference_example,
-                                clarify_q="",
-                                contract=operational_contract if 'operational_contract' in locals() else {},
-                            ).strip()
-                        )
-                    elif (
+                    if (
                         (not current_text)
                         or len(current_text) < 40
                         or _looks_like_technical_output(current_text)
+                        or (_contract_strong and current_is_mild)
                     ):
                         fallback = (
                             _compose_grounded_scene_with_progression(
@@ -6815,19 +6690,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 operational_reference="",
                                 contract=operational_contract if 'operational_contract' in locals() else {},
                             ).strip()
-                            or _build_kb_anchor_reply(
-                                operational_reference="",
-                                reference_example=reference_example,
-                                clarify_q="",
-                                contract=operational_contract if 'operational_contract' in locals() else {},
-                            ).strip()
                         )
 
                     if fallback:
                         reply_text = fallback
                         spoken_text = fallback
                         reply_source = "front_fallback_structural"
-                        accepted = True
 
             logging.info(
                 "[IA_FINAL_DECISION] source=%s accepted=%s len=%s live=%s density=%s",
