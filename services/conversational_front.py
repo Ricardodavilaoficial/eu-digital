@@ -88,6 +88,13 @@ TOPICS = {
     "OTHER",
 }
 
+RESPONSE_MODES = {
+    "DIRECT",
+    "SCENE",
+    "DISCOVERY",
+    "CLOSING",
+}
+
 # -----------------------------
 # Funções Utilitárias de Texto
 # -----------------------------
@@ -980,6 +987,7 @@ def _salvage_free_mode_payload(raw: str) -> Dict[str, Any]:
         confidence = str((understanding or {}).get("confidence") or "").strip().lower() or "medium"
         if reply:
             return {
+                "response_mode": _normalize_response_mode(_extract_json_string_field(raw, "response_mode")) or "DIRECT",
                 "replyText": reply,
                 "spokenText": spoken or reply,
                 "understanding": {"topic": topic, "confidence": confidence},
@@ -1024,6 +1032,7 @@ def _parse_free_mode_text_response(
             confidence = "medium"
 
         return {
+            "response_mode": "DIRECT",
             "replyText": txt,
             "spokenText": txt,
             "understanding": {
@@ -1857,6 +1866,9 @@ def _build_kb_anchor_reply(
     usa o que o banco já trouxe, sem transformar reference_example em resposta final.
     """
     try:
+        if not _contract_allows_scene_runtime(contract or {}):
+            return str(clarify_q or "").strip()
+
         stable_scene = _stabilize_scene_base(str(operational_reference or "").strip())
         generated = _generate_micro_scene_with_model(
             operational_reference=operational_reference,
@@ -1918,6 +1930,9 @@ def _build_last_resort_operational_reply(
     """
     try:
         c = dict(contract or {})
+        if not _contract_allows_scene_runtime(c):
+            return str(clarify_q or "").strip()
+
         stable_scene = _stabilize_scene_base(str(operational_reference or "").strip())
         ex = str(reference_example or "").strip()
 
@@ -3294,6 +3309,9 @@ def _compose_grounded_scene_with_progression(
     """
     try:
         c = dict(contract or {})
+        if not _contract_allows_scene_runtime(c):
+            return ""
+
         stable_scene = _stabilize_scene_base(operational_reference)
         ex = str(reference_example or c.get("reference_example") or "").strip()
 
@@ -3583,6 +3601,8 @@ def _build_structural_last_resort_reply(
     """
     try:
         c = dict(contract or {})
+        if not _contract_allows_scene_runtime(c):
+            return ""
 
         stable_scene = _stabilize_scene_base(operational_reference)
         ex = str(c.get("reference_example") or "").strip()
@@ -3639,7 +3659,7 @@ def _generate_micro_scene_with_model(
         topic = str(c.get("topic") or "").strip().upper()
         micro_scene_allowed = bool(c.get("micro_scene_allowed"))
 
-        if not micro_scene_allowed:
+        if not micro_scene_allowed or str(c.get("response_mode") or "").strip().upper() not in ("", "SCENE"):
             return ""
 
         if topic in ("WHAT_IS", "OTHER", "TRIAL", "ATIVAR") and not str(operational_reference or "").strip():
@@ -3667,21 +3687,16 @@ apenas quando este bloco for acionado.
 
 Regras obrigatórias:
 
-[REGRA CRÍTICA DE GERAÇÃO - O PONTO DE EQUILÍBRIO]
-Use a CENA PREFERENCIAL DO KB apenas quando houver contexto suficiente para descrever o funcionamento prático.
-- Primeiro decida exatamente uma ação principal para este turno:
-- responder diretamente
-- pedir nome
-- pedir segmento
-- usar microcena
-- avançar para link
-Nunca combine múltiplas ações conflitantes.
-- Se nome e segmento ainda não estiverem claros, peça isso junto com uma resposta útil; nunca faça uma mensagem só para perguntar.
-- Se o segmento ainda não estiver claro, não force microcena.
-- Se a pergunta for institucional, ampla ou direta, responda primeiro a dúvida.
+[REGRA CRÍTICA]
+Este bloco só é chamado quando response_mode=SCENE.
+Não decida outro modo aqui.
+Não responda preço, suporte, configuração, trial ou link.
 - O KB é a fonte da verdade para fatos operacionais.
 - FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB.
 - O exemplo abaixo serve apenas como referência de densidade técnica e estrutura.
+- Você está falando com o lead/profissional/dono do negócio.
+- O cliente citado na microcena é sempre o cliente do lead, nunca o próprio lead.
+- Não responda como atendente do segmento para o lead; use o segmento para demonstrar como o MEI Robô atende os clientes dele.
 
 1. EMPATIA INICIAL: agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
 2. MICROCENA TÉCNICA: descreva o fluxo exato no WhatsApp, em sequência prática.
@@ -3690,11 +3705,10 @@ Nunca combine múltiplas ações conflitantes.
 5. FECHAMENTO SECO: termine na última ação concreta do fluxo.
 6. SEM DIÁLOGOS FAKES: não use aspas para simular falas.
 7. COMPACTO E DENSO: 1 parágrafo curto, direto e técnico.
-8. PERGUNTAS RESTRITAS: só pergunte nome, segmento ou intenção, quando isso realmente estiver faltando.
-9. QUANDO FALTAR NOME OU SEGMENTO: incorpore isso no mesmo texto útil; nunca desperdice o turno só com a pergunta.
+8. NÃO FAÇA PERGUNTA FINAL: termine na última ação concreta da operação.
 
 [EXEMPLO DE TOM, DENSIDADE E ESTRUTURA ESPERADA]
-"João, muito obrigado pelo teu contato! Um cliente teu manda mensagem no WhatsApp pedindo um agendamento. O teu MEI Robô confirma o tipo de serviço, consulta o tempo que tu deixou configurado, verifica os horários disponíveis e apresenta opções. O cliente escolhe, ele confirma ali mesmo e envia a confirmação por escrito. No dia, dispara o lembrete pelo WhatsApp. Se eu ainda não souber teu segmento, eu junto isso na resposta e te peço essa informação no mesmo texto."
+"João, muito obrigado pelo teu contato! Um cliente teu manda mensagem no WhatsApp pedindo um agendamento. O teu MEI Robô confirma o tipo de serviço, consulta o tempo que tu deixou configurado, verifica os horários disponíveis e apresenta opções. O cliente escolhe, ele confirma ali mesmo e envia a confirmação por escrito. No dia, dispara o lembrete pelo WhatsApp."
 
 Use o KB como base para abastecer os detalhes da operação.
 Retorne somente o texto final.
@@ -4158,6 +4172,9 @@ def _build_kb_show_reply(
     Não cola reference_example como cabeçalho explicativo.
     """
     try:
+        if not _contract_allows_scene_runtime(contract or {}):
+            return ""
+
         stable_scene = _stabilize_scene_base(str(operational_reference or "").strip())
 
         deterministic_scene = ""
@@ -4282,8 +4299,8 @@ def _regenerate_more_concrete(
     kb_seed_reply: str = "",
 ) -> str:
     """
-    Segunda tentativa curta: a IA reescreve a própria resposta,
-    mais concreta e menos publicitária.
+    Segunda tentativa: tornar resposta mais concreta,
+    sem forçar microcena quando não necessário.
     """
     try:
         if _HAS_OPENAI_CLIENT and _client is None:
@@ -4313,8 +4330,8 @@ def _regenerate_more_concrete(
             f"Confidence atual: {previous_confidence}\n\n"
             f"Resposta atual:\n{previous_reply}\n\n"
             f"Base operacional do KB:\n{kb_seed_reply or ''}\n\n"
-            "Reescreva como uma situação real acontecendo no WhatsApp, "
-            "mostrando a sequência da ação até o resultado, sem transformar em explicação."
+            "Reescreva com concretude, preservando resposta direta quando for o caso. "
+            "Só mantenha microcena se ela estiver realmente ancorada na base operacional."
         )
 
         if _HAS_OPENAI_CLIENT and _client is not None:
@@ -4377,6 +4394,13 @@ def _resolve_best_operational_reply(
         contract = operational_contract if isinstance(operational_contract, dict) and operational_contract else (
             base_operational_contract if isinstance(base_operational_contract, dict) else {}
         )
+
+        if not _contract_allows_scene_runtime(contract):
+            return {
+                "reply_text": current_reply,
+                "spoken_text": current_spoken or current_reply,
+                "reply_source": "front_keep_non_scene",
+            }
 
         refreshed_anchor = _refresh_operational_anchor(
             kb_snapshot=kb_snapshot,
@@ -4525,6 +4549,88 @@ def _infer_understanding_temperature(
 
 
 
+def _normalize_response_mode(value: Any) -> str:
+    try:
+        mode = str(value or "").strip().upper()
+        return mode if mode in RESPONSE_MODES else ""
+    except Exception:
+        return ""
+
+
+def _infer_response_mode_from_signals(
+    *,
+    topic: str,
+    confidence: str,
+    needs_clarify: str,
+    clarify_q: str,
+    next_step: str,
+    effective_segment: str,
+    kb_anchor_strong: bool,
+    operational_contract: Dict[str, Any] | None = None,
+) -> str:
+    """
+    Decide o formato da resposta sem palavras-chave.
+    Hierarquia:
+    1) CLOSING
+    2) DISCOVERY
+    3) DIRECT
+    4) SCENE
+    """
+    try:
+        t = str(topic or "").strip().upper()
+        c = str(confidence or "").strip().lower()
+        nc = str(needs_clarify or "").strip().lower()
+        cq = str(clarify_q or "").strip()
+        ns = str(next_step or "").strip().upper()
+        seg = str(effective_segment or "").strip()
+        contract = operational_contract if isinstance(operational_contract, dict) else {}
+
+        if ns == "SEND_LINK":
+            return "CLOSING"
+
+        if nc == "yes" or cq:
+            return "DISCOVERY"
+
+        has_operational_base = bool(
+            str(contract.get("operational_reference") or "").strip()
+            or str(contract.get("reference_example") or "").strip()
+            or list(contract.get("operational_ritual") or [])
+        )
+
+        practical_topic = t in ("SERVICOS", "PROCESSO", "AGENDA", "PEDIDOS", "PRODUTO")
+        blocked_scene_topic = t in ("PRECO", "TRIAL", "ATIVAR", "WHAT_IS", "SOCIAL", "VOZ")
+
+        if (
+            practical_topic
+            and not blocked_scene_topic
+            and c in ("high", "medium")
+            and seg
+            and kb_anchor_strong
+            and has_operational_base
+        ):
+            return "SCENE"
+
+        return "DIRECT"
+    except Exception:
+        return "DIRECT"
+
+
+
+def _contract_allows_scene_runtime(contract: Dict[str, Any] | None) -> bool:
+    """
+    Trava final contra microcena fora do modo SCENE.
+    Não decide intenção; apenas impede que fallbacks antigos ressuscitem cena.
+    """
+    try:
+        c = contract if isinstance(contract, dict) else {}
+        return (
+            str(c.get("response_mode") or "").strip().upper() == "SCENE"
+            and bool(c.get("micro_scene_allowed"))
+        )
+    except Exception:
+        return False
+
+
 def _should_downgrade_premature_narrow_topic(
     *,
     topic: str,
@@ -4587,66 +4693,88 @@ def _should_downgrade_premature_narrow_topic(
 
 
 SYSTEM_PROMPT = """
-Você é o MEI Robô, um assistente automatizado que atende clientes via WhatsApp.
+Você é o assistente de vendas do MEI Robô.
+Você conversa com DONOS DE NEGÓCIOS para explicar como o MEI Robô automatiza o WhatsApp deles.
 
 IMPORTANTE:
 - Você não realiza atendimento presencial
 - Todas as interações acontecem pelo WhatsApp
+- Você não atende o cliente final do negócio
+- Você vende, explica e conduz a contratação do MEI Robô para o lead
 
-Você recebe uma estrutura operacional já resolvida (contrato do KB).
+IDENTIDADE DE CONVERSA:
+- Você está sempre conversando com o DONO DO NEGÓCIO (lead)
+- O cliente citado é sempre o cliente dele
+- Você nunca responde como se fosse o negócio dele
+- Você explica como o MEI Robô funciona PARA o negócio dele
 
-Sua tarefa é agir como um Vendedor Consultivo Empático e Especialista.
-Você é responsável por conduzir a conversa, entender a intenção do lead e decidir entre:
-- solicitar o nome, se ele ainda não foi informado
-- identificar o segmento, se isso for necessário para personalizar valor
-- responder diretamente a dúvida com base no KB
-- apresentar uma microcena prática, quando houver contexto suficiente e isso ajudar a demonstrar funcionamento
+Sua tarefa é conduzir a conversa como um vendedor consultivo:
+- entender a intenção
+- responder com base no KB
+- decidir o melhor próximo passo
 
-Regras de Ouro:
-1. ENTENDA PRIMEIRO: interprete a intenção do lead antes de escolher a resposta.
-2. NOME É PRIORIDADE: se o nome ainda não foi informado, peça na próxima interação.
-3. SEGMENTO É PRIORIDADE JUNTO COM O NOME: se nome e segmento ainda não apareceram, tente buscar os dois.
-4. NUNCA DESPERDICE O TURNO: quando faltar nome ou segmento, responda algo útil e inclua a pergunta no mesmo texto; nunca mande uma mensagem só para perguntar.
-5. RESPOSTA DIRETA TEM PRIORIDADE: se a dúvida for objetiva, responda primeiro com base no KB.
-6. MICROCENA É DECISÃO, NÃO HÁBITO: use apenas quando houver contexto suficiente e oportunidade clara de mostrar funcionamento prático.
-7. PERGUNTAS SÃO RESTRITAS: só faça perguntas para obter nome, identificar segmento ou esclarecer a intenção do lead.
-8. NÃO FORCE CONTINUIDADE: não faça perguntas vazias no final.
-9. PROIBIDO PARECER SOFTWARE: fale como humano, com clareza e objetividade.
-10. SEJA CONCISO: entregue a resposta em 1 parágrafo curto e direto.
-11. FECHAMENTO COM NOME: quando o nome for conhecido, use-o no fechamento.
-12. SE O CLIENTE QUER ASSINAR: agradeça, use o nome e informe o link. Não explique mais nada.
-13. QUANDO FALAR DE ÁUDIO: deixe claro que mensagens em áudio podem ser respondidas com a própria voz digitalizada do profissional, configurada na conta.
+REGRAS PRINCIPAIS:
 
-[EXEMPLOS CANÔNICOS — REFERÊNCIA DE TOM E ESTRUTURA]
+1. ENTENDA PRIMEIRO
+Interprete a intenção antes de responder
 
-[ABERTURA / SEM NOME E SEM SEGMENTO]
-"Bom dia! Aqui está sempre tempo bom 😊 Valeu por chamar! Me diz teu nome e com o que tu trabalhas pra eu te mostrar como o MEI Robô entra no teu dia a dia."
+Antes de escrever a resposta, escolha exatamente um response_mode:
+- CLOSING: quando o lead quer contratar/ativar/receber o link
+- DISCOVERY: quando falta nome, segmento ou intenção essencial; responda algo útil e peça a informação no mesmo texto
+- DIRECT: quando a pergunta é objetiva, institucional, técnica, preço, suporte, voz, configuração ou funcionamento geral
+- SCENE: quando há contexto suficiente e uma microcena baseada no KB ajuda a demonstrar funcionamento prático
 
-[DESCOBERTA / FALTA SEGMENTO]
-"Perfeito! Me diz com o que tu trabalhas pra eu te explicar como o atendimento funciona no teu caso."
+2. NOME E SEGMENTO SÃO PRIORIDADE
+Se não tiver, peça dentro de uma resposta útil (nunca isolado)
 
-[RESPOSTA DIRETA / SEM MICROCENA]
-"O MEI Robô é um atendente virtual que responde no teu WhatsApp usando a tua própria voz digitalizada e teu jeito de falar. Ele consulta as informações que tu configurou e responde automaticamente, tanto em áudio quanto em texto. Pode informar serviços, valores, enviar orçamentos e organizar atendimentos conforme o teu padrão."
+3. RESPOSTA DIRETA TEM PRIORIDADE
+Se a pergunta for objetiva, use response_mode DIRECT e responda direto, sem microcena
 
-[MICROCENA TÉCNICA]
-"João, um cliente teu manda mensagem pedindo um agendamento. O MEI Robô confirma o tipo de serviço, consulta o tempo que tu deixou configurado, verifica os horários disponíveis e apresenta opções. O cliente escolhe, ele confirma ali mesmo e envia a confirmação por escrito. No dia, dispara o lembrete pelo WhatsApp."
+4. MICROCENA É DECISÃO
+Use response_mode SCENE apenas quando:
+- houver contexto suficiente
+- ajudar a demonstrar funcionamento
+- o segmento estiver claro
+- o KB trouxer cena, ritual ou base operacional suficiente
 
-[FECHAMENTO / INTENÇÃO DE COMPRA]
-"Perfeito, João! Obrigado pela confiança. Pode fazer tua assinatura direto por aqui: https://meirobo.com.br"
+5. QUANDO USAR MICROCENA:
+- um cliente chama no WhatsApp dele
+- o MEI Robô responde com base no configurado
+- conduz para próximo passo
+- mostra consequência prática
 
-[RESPOSTA HÍBRIDA]
-"O MEI Robô responde como tu responderia. No painel, tu configura o jeito de atendimento, pode ajustar por tipo de cliente e definir como orçamentos são enviados. Ele usa isso para manter padrão nas respostas, enviar propostas organizadas e conduzir o atendimento até onde tu quiser assumir."
+Nunca:
+- simular diálogo
+- falar como atendente do negócio
 
-IMPORTANTE: os exemplos acima são referência de execução, tom e densidade. Não copie mecanicamente. Use o KB como fonte da verdade.
+6. PERGUNTAS SÃO RESTRITAS:
+- nome
+- segmento
+- esclarecer intenção
 
-IMPORTANTE: Responda SEMPRE em formato JSON com a seguinte estrutura:
+7. PROIBIDO PARECER SOFTWARE
+
+8. SEJA CONCISO
+1 parágrafo direto
+
+9. FECHAMENTO COM NOME (se disponível)
+
+10. INTENÇÃO DE COMPRA:
+resposta direta + link
+sem explicação
+
+11. ÁUDIO:
+deixe claro que pode responder com a voz digitalizada do profissional
+
+IMPORTANTE: Responda SEMPRE em JSON:
 {
-  "replyText": "sua resposta aqui",
+  "response_mode": "DIRECT|SCENE|DISCOVERY|CLOSING",
+  "replyText": "...",
   "understanding": {
-    "topic": "ATIVAR se o cliente quiser comprar/assinar, senão OTHER",
-    "confidence": "high, medium ou low"
+    "topic": "...",
+    "confidence": "high|medium|low"
   },
-  "nextStep": "SEND_LINK se o cliente pediu o link/assinatura, senão NONE"
+  "nextStep": "SEND_LINK|NONE"
 }
 """
 
@@ -4656,10 +4784,13 @@ IMPORTANTE: Responda SEMPRE em formato JSON com a seguinte estrutura:
 FREE_MODE_APPEND_PROMPT = """
 MODO IA TOTAL:
 - Entender rapidamente a intenção do lead
-- Decidir se deve pedir nome, identificar segmento, responder diretamente ou demonstrar funcionamento
+- Primeiro escolher response_mode: CLOSING, DISCOVERY, DIRECT ou SCENE
+- Hierarquia obrigatória: CLOSING > DISCOVERY > DIRECT > SCENE
 - Quando faltar nome ou segmento, responder algo útil e pedir isso no mesmo texto
 - Dar prioridade a respostas diretas quando a dúvida for objetiva
 - Quando falar de áudio, deixar claro que o MEI Robô pode responder com a voz digitalizada do profissional
+- Em vendas, falar sempre com o lead/profissional/dono do negócio; o cliente final é sempre o cliente dele
+- Só usar SCENE quando o segmento estiver claro e houver cena/ritual no KB como matéria-prima para demonstrar funcionamento prático no WhatsApp
 - Manter objetividade, tom humano e direção comercial
 """
 
@@ -4981,6 +5112,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     name_use = "none"
     reply_text = ""
     spoken_text = ""
+    response_mode = "DIRECT"
     _final_candidate = None
 
     last_intent = str(state_summary.get("last_intent") or "").strip().upper()
@@ -5366,20 +5498,30 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # Etapa 1 — não empurrar cena do KB no entendimento inicial do turno.
     # A IA entende primeiro; microcena só entra depois, se a própria IA
     # realmente cair num trilho prático.
-    allow_scene_prompting = False
+    allow_scene_prompting = bool(
+        free_mode
+        and ai_turns > 0
+        and kb_anchor_strong
+        and effective_segment
+        and (
+            str(operational_reference or "").strip()
+            or str(reference_example or "").strip()
+            or bool((base_operational_contract or {}).get("operational_ritual"))
+        )
+    )
 
     if allow_scene_prompting:
         scene_hint_block = _build_scene_hint_block(
             family_hint=family_hint,
             micro_scene=micro_scene,
             reference_example=reference_example,
-            operational_reference="",
+            operational_reference=operational_reference,
         )
         if scene_hint_block:
             system_prompt += "\n" + scene_hint_block + "\n"
 
         user_scene_block = _build_user_scene_block(
-            operational_reference="",
+            operational_reference=operational_reference,
             reference_example=reference_example,
             kb_section=kb_section,
             kb_compact=kb_compact,
@@ -5395,7 +5537,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         operational_reference = ""
 
     allow_kb_payload_scene = bool(
-        False
+        free_mode
+        and ai_turns > 0
+        and allow_scene_prompting
+        and (
+            str(operational_reference or "").strip()
+            or str(reference_example or "").strip()
+        )
     )
 
     user_payload = (
@@ -5457,6 +5605,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             "Você continua soberano para entender a intenção do lead e decidir se este turno pede explicação, discovery, demonstração prática ou encaminhamento.\n"
             "Não force microcena quando a pergunta for institucional, ampla, exploratória ou lateral.\n"
             "Quando o segmento estiver claro e a IA entender que vale demonstrar na prática, use o KB para mostrar valor real no dia a dia.\nSe o segmento ainda não estiver claro, a IA pode conduzir a conversa para descobrir isso antes de demonstrar.\n"
+            "Em vendas, nunca responda como se o lead fosse o cliente final do segmento; fale com o dono/profissional e mostre o cliente dele sendo atendido pelo MEI Robô no WhatsApp.\n"
             "Evite trocar por outro tipo de fluxo quando a ancoragem do KB estiver clara e a intenção já estiver prática.\n"
         )
 
@@ -5551,6 +5700,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                     if raw_text_candidate:
                         data = {
+                            "response_mode": "DIRECT",
                             "replyText": raw_text_candidate,
                             "spokenText": raw_text_candidate,
                             "understanding": {
@@ -5618,6 +5768,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                                 if raw_text_candidate:
                                     data = {
+                                        "response_mode": "DIRECT",
                                         "replyText": raw_text_candidate,
                                         "spokenText": raw_text_candidate,
                                         "understanding": {
@@ -5662,6 +5813,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # Parse canônico do decider (packs_v1): por padrão pode vir sem replyText final.
         # ----------------------------------------------------------
         understanding = data.get("understanding") or {}
+
+        response_mode = _normalize_response_mode(
+            data.get("response_mode")
+            or data.get("responseMode")
+            or understanding.get("response_mode")
+            or understanding.get("responseMode")
+        )
 
         intent = str(
             data.get("intent")
@@ -5754,43 +5912,62 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             topic=topic,
         )
 
+        if not response_mode:
+            response_mode = _infer_response_mode_from_signals(
+                topic=topic,
+                confidence=confidence,
+                needs_clarify=needs_clarify,
+                clarify_q=clarify_q,
+                next_step=next_step,
+                effective_segment=effective_segment,
+                kb_anchor_strong=kb_anchor_strong,
+                operational_contract=operational_contract,
+            )
+
+        # Hierarquia de risco: o código pode rebaixar/elevar o modo quando
+        # sinais estruturais fortes contradizem o JSON do modelo.
+        if str(next_step or "").strip().upper() == "SEND_LINK":
+            response_mode = "CLOSING"
+        elif str(needs_clarify or "").strip().lower() == "yes" or str(clarify_q or "").strip():
+            response_mode = "DISCOVERY"
+        elif str(topic or "").strip().upper() in ("PRECO", "TRIAL", "ATIVAR", "WHAT_IS", "SOCIAL", "VOZ"):
+            if response_mode == "SCENE":
+                response_mode = "DIRECT"
+
         # ----------------------------------------------------------
         # GATE SOBERANO DE MICROCENA / KB OPERACIONAL
-        # A IA entende primeiro; o código só decide se pode usar
-        # demonstração prática neste turno.
+        # response_mode decide o formato; microcena só existe em SCENE.
         # ----------------------------------------------------------
         micro_scene_allowed = False
 
         try:
-            current_topic = str(topic or "").strip().upper()
-            current_confidence = str(confidence or "").strip().lower()
-            current_needs_clarify = str(needs_clarify or "").strip().lower()
+            contract_has_operational_base = bool(
+                str((operational_contract or {}).get("operational_reference") or "").strip()
+                or str((operational_contract or {}).get("reference_example") or "").strip()
+                or list((operational_contract or {}).get("operational_ritual") or [])
+            )
 
-            # permite microcena quando a própria IA já caiu num trilho
-            # de demonstração prática com confiança razoável
-            if current_topic in ("SERVICOS", "PROCESSO", "AGENDA", "PEDIDOS", "PRODUTO") and current_confidence in ("high", "medium"):
+            if (
+                response_mode == "SCENE"
+                and effective_segment
+                and kb_anchor_strong
+                and contract_has_operational_base
+            ):
                 micro_scene_allowed = True
 
-            # mas não forçar microcena quando a IA ainda está clarificando
-            if current_needs_clarify == "yes":
-                micro_scene_allowed = False
-
-            # perguntas de ativação/link não devem virar cena
-            if str(next_step or "").strip().upper() == "SEND_LINK":
+            if response_mode in ("DIRECT", "DISCOVERY", "CLOSING"):
                 micro_scene_allowed = False
 
         except Exception:
             micro_scene_allowed = False
 
-        # Importante:
-        # não liberar microcena só porque o KB veio forte.
-        # A liberação precisa nascer do entendimento da IA neste turno.
-
         try:
             if isinstance(operational_contract, dict):
                 operational_contract["micro_scene_allowed"] = micro_scene_allowed
+                operational_contract["response_mode"] = response_mode
             if isinstance(base_operational_contract, dict):
                 base_operational_contract["micro_scene_allowed"] = micro_scene_allowed
+                base_operational_contract["response_mode"] = response_mode
         except Exception:
             pass
 
@@ -5799,6 +5976,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 operational_contract["user_context"] = str(user_text or "").strip()
         except Exception:
             pass
+
+        allow_scene_runtime = bool(
+            response_mode == "SCENE"
+            and micro_scene_allowed
+        )
 
         if not isinstance(operational_contract, dict) or not operational_contract:
             operational_contract = base_operational_contract if 'base_operational_contract' in locals() else {}
@@ -5852,6 +6034,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if force_trial:
             intent = "TRIAL"
             topic = "TRIAL"
+            response_mode = "DIRECT"
             # Nunca fechar/mandar link em TRIAL
             next_step = "NONE"
             should_end = False
@@ -5909,6 +6092,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if (not free_mode) and next_step != "SEND_LINK":
             decider_only = True
             decider = {
+                "response_mode": response_mode,
                 "intent": intent,
                 "confidence": confidence,
                 "needsClarify": needs_clarify,
@@ -5921,11 +6105,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             }
             # NOTE: fora do free_mode ainda pode seguir para render/Fail-safe.
             out = {
+                "response_mode": response_mode,
                 "replyText": "",
                 "spokenText": "",
                 "understanding": {
                     "topic": topic,
                     "intent": intent,
+                    "response_mode": response_mode,
                     "confidence": confidence,
                     "needsClarify": needs_clarify,
                     "clarifyQuestion": clarify_q,
@@ -5974,6 +6160,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         )
 
         if allow_send_link:
+            response_mode = "CLOSING"
             base = str((kb_context or {}).get("signup_url") or "").strip()
             if not base:
                 base = (os.getenv("FRONTEND_BASE") or "https://www.meirobo.com.br").strip()
@@ -6001,6 +6188,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         elif next_step == "SEND_LINK" and not allow_send_link:
             # Bloqueia SEND_LINK automático quando não houve pedido explícito / sinais fortes
             next_step = "NONE"
+            if response_mode == "CLOSING":
+                response_mode = "DIRECT"
             should_end = False
 
 
@@ -6039,6 +6228,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         pass
 
                 return {
+                    "response_mode": "DISCOVERY",
                     "replyText": discovery_q,
                     "spokenText": discovery_q,
                     "understanding": {
@@ -6056,9 +6246,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 }
 
             generated = ""
-            if next_step != "SEND_LINK" and bool((operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed")):
+            if (
+                response_mode == "SCENE"
+                and next_step != "SEND_LINK"
+                and bool((operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed"))
+            ):
                 generated = _generate_micro_scene_with_model(
-                    operational_reference="",
+                    operational_reference=operational_reference,
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 ).strip()
 
@@ -6134,7 +6328,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 structured_show = False
 
                 # fallback estrutural só entra se a IA principal falhar de verdade
-                if not generated or len(str(generated).strip()) < 40:
+                if allow_scene_runtime and (not generated or len(str(generated).strip()) < 40):
                     structured = _compose_grounded_scene_with_progression(
                         operational_reference="",
                         contract=operational_contract if 'operational_contract' in locals() else {},
@@ -6169,15 +6363,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     reply_text = generated
                     spoken_text = generated
                     reply_source = "front_operational_upgrade"
-                elif structured_show:
+                elif allow_scene_runtime and structured_show:
                     reply_text = structured
                     spoken_text = structured
                     reply_source = "front_fallback_structural"
-                elif structured_live and not _contract_strong:
+                elif allow_scene_runtime and structured_live and not _contract_strong:
                     reply_text = structured
                     spoken_text = structured
                     reply_source = "front_fallback_structural"
-                elif structured_live and _contract_strong:
+                elif allow_scene_runtime and structured_live and _contract_strong:
                     forced_scene = (
                         _compose_grounded_scene_with_progression(
                             operational_reference="",
@@ -6203,7 +6397,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     reply_source = "front_free_mode_empty"
 
             allow_kb_runtime_fallback = bool(
-                kb_anchor_strong
+                allow_scene_runtime
+                and response_mode == "SCENE"
+                and kb_anchor_strong
                 and bool((operational_contract if 'operational_contract' in locals() else {}).get("micro_scene_allowed"))
             )
 
@@ -6458,12 +6654,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             spoken_text = _smart_truncate_text(spoken_text, FRONT_REPLY_MAX_CHARS)
 
             if _looks_like_technical_output(reply_text):
-                fallback_specific = _build_kb_anchor_reply(
-                    operational_reference="",
-                    reference_example=reference_example,
-                    clarify_q=(question if not effective_segment else ""),
-                    contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
-                )
+                fallback_specific = ""
+                if allow_scene_runtime:
+                    fallback_specific = _build_kb_anchor_reply(
+                        operational_reference="",
+                        reference_example=reference_example,
+                        clarify_q=(question if not effective_segment else ""),
+                        contract=operational_contract if 'operational_contract' in locals() else (base_operational_contract if 'base_operational_contract' in locals() else {}),
+                    )
                 reply_text = fallback_specific or _build_contract_consequence(
                     operational_contract if 'operational_contract' in locals() else
                     (base_operational_contract if 'base_operational_contract' in locals() else {})
@@ -6480,7 +6678,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             try:
                 _rt = str(reply_text or "").strip()
 
-                if not _rt or len(_rt) < 40:
+                if allow_scene_runtime and (not _rt or len(_rt) < 40):
                     forced = ""
 
                     if operational_contract:
@@ -6526,7 +6724,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 pass
 
-            if not str(reply_text or "").strip():
+            if allow_scene_runtime and not str(reply_text or "").strip():
                 steps = _split_scene_steps(user_text)
 
                 if len(steps) >= 2:
@@ -6819,7 +7017,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 pack_id=_pack,
                             )
 
-                        if practical_scene:
+                        # Só usa microcena se já houver contexto claro
+                        if practical_scene and intent in ("WHAT_IS", "PROCESSO"):
                             value_line = _extract_value_line(reply_text)
                             reply_text = _merge_value_and_scene(value_line, practical_scene, question)
 
@@ -6827,8 +7026,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             ms = _kb_get_micro_scene(kb_snapshot, _pack)
                             if ms:
                                 practical_scene = ms if ms.lower().startswith("na prática:") else f"Na prática: {ms}"
+                        # NÃO inventar microcena se não veio do contexto real
                         if not practical_scene:
-                            practical_scene = _pack_practical_add(_pack)
+                            practical_scene = ""
 
                         value_line = _extract_value_line(reply_text)
                         if not value_line:
@@ -6840,11 +7040,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         elif not has_name and ai_turns >= 1:
                             ask_tail = question
 
-                        reply_text = _merge_value_and_scene(value_line, practical_scene, ask_tail)
+                        if practical_scene:
+                            reply_text = _merge_value_and_scene(value_line, practical_scene, ask_tail)
+                        else:
+                            reply_text = f"{value_line} {ask_tail}".strip()
                         if not spoken_text:
                             spoken_text = reply_text
                         else:
-                            spoken_text = _merge_value_and_scene(_extract_value_line(spoken_text), practical_scene, ask_tail)
+                            spoken_value_line = _extract_value_line(spoken_text)
+                            if practical_scene:
+                                spoken_text = _merge_value_and_scene(spoken_value_line, practical_scene, ask_tail)
+                            else:
+                                spoken_text = f"{spoken_value_line} {ask_tail}".strip()
                         reply_source = 'scene_composed'
             except Exception:
                 pass
