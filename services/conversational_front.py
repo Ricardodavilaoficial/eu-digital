@@ -907,6 +907,17 @@ def _should_allow_question(*, user_text: str, kb_context: Dict[str, Any], reply_
         if "?" not in rt:
             return False
 
+        response_mode = str(
+            (decider or {}).get("response_mode")
+            or (decider or {}).get("responseMode")
+            or (understanding or {}).get("response_mode")
+            or (understanding or {}).get("responseMode")
+            or ""
+        ).strip().upper()
+
+        if response_mode == "DISCOVERY":
+            return True
+
         question_type = str((decider or {}).get("questionType") or "").strip().lower()
         if question_type in ("clarify", "name", "segment", "link_permission"):
             return True
@@ -3682,36 +3693,21 @@ def _generate_micro_scene_with_model(
         system = """
 Você recebe um contexto operacional de atendimento já resolvido.
 
-Sua tarefa é gerar uma microcena operacional clara e direta,
-apenas quando este bloco for acionado.
+Sua tarefa é gerar uma demonstração prática clara quando este bloco for acionado.
 
 Regras obrigatórias:
+- Este bloco só é chamado quando response_mode=SCENE.
+- Não decida outro modo aqui.
+- Use o KB como fonte da verdade.
+- Gere uma sequência prática e objetiva do que acontece no uso real.
+- Comece direto na ação.
+- Evite explicações abstratas.
+- Não use adjetivos.
+- Não invente etapas, botões ou funcionalidades fora do KB.
+- Não simule diálogo.
+- Não faça pergunta final.
+- Termine na última ação concreta do fluxo.
 
-[REGRA CRÍTICA]
-Este bloco só é chamado quando response_mode=SCENE.
-Não decida outro modo aqui.
-Não responda preço, suporte, configuração, trial ou link.
-- O KB é a fonte da verdade para fatos operacionais.
-- FIDELIDADE ABSOLUTA: NUNCA invente etapas, botões ou funcionalidades que não estejam no KB.
-- O exemplo abaixo serve apenas como referência de densidade técnica e estrutura.
-- Você está falando com o lead/profissional/dono do negócio.
-- O cliente citado na microcena é sempre o cliente do lead, nunca o próprio lead.
-- Não responda como atendente do segmento para o lead; use o segmento para demonstrar como o MEI Robô atende os clientes dele.
-
-1. CONTINUIDADE: escreva como continuação da conversa, sem reiniciar atendimento.
-2. ABERTURA DA MICROCENA: se tiver o nome do lead, use no máximo 1 vez; depois vá direto ao fluxo.
-3. MICROCENA TÉCNICA: descreva o fluxo exato no WhatsApp, em sequência prática.
-4. ZERO LINGUAGEM DE SISTEMA: não use termos burocráticos como "registra", "organiza", "gerencia" ou "garante".
-5. ZERO ABSTRAÇÃO: não use frases de marketing nem resumos de benefício.
-6. FECHAMENTO SECO: termine na última ação concreta do fluxo.
-7. SEM DIÁLOGOS FAKES: não use aspas para simular falas.
-8. COMPACTO E DENSO: 1 parágrafo curto, direto e técnico.
-9. NÃO FAÇA PERGUNTA FINAL: termine na última ação concreta da operação.
-
-[EXEMPLO DE TOM, DENSIDADE E ESTRUTURA ESPERADA]
-"João, um cliente teu manda mensagem no WhatsApp pedindo um agendamento. O teu MEI Robô confirma o tipo de serviço, consulta o tempo que tu deixou configurado, verifica os horários disponíveis e apresenta opções. O cliente escolhe, ele confirma ali mesmo e envia a confirmação por escrito. No dia, dispara o lembrete pelo WhatsApp."
-
-Use o KB como base para abastecer os detalhes da operação.
 Retorne somente o texto final.
 """
 
@@ -4683,7 +4679,7 @@ def _ensure_discovery_identity_request(
             # Não força frase nova se a resposta já perguntou o segmento de outro modo.
             if not re.search(r"\b(área|ramo|negócio|atividade|profissão|atua|trabalha)\b", reply.lower()):
                 reply = reply.rstrip(".! ")
-                reply += ". E me diz também qual é o teu segmento."
+                reply += ". E me diz também em que área tu atua, para eu te mostrar do jeito certo."
 
         spoken = reply
         return reply, spoken, "clarify"
@@ -4771,7 +4767,15 @@ IDENTIDADE DE CONVERSA:
 Sua tarefa é conduzir a conversa como um vendedor consultivo:
 - entender a intenção
 - responder com base no KB
+- decidir o melhor formato de resposta: direto, explicativo ou demonstração prática
+- usar demonstração prática apenas quando isso ajudar a mostrar funcionamento real
 - decidir o melhor próximo passo
+
+Regras de comportamento positivo:
+- Seja direto, claro e útil
+- Responda primeiro, depois complemente se necessário
+- Use linguagem natural de WhatsApp
+- Sempre entregue algum valor na resposta
 
 REGRAS PRINCIPAIS:
 
@@ -4848,21 +4852,7 @@ IMPORTANTE: Responda SEMPRE em JSON:
 
 
 
-FREE_MODE_APPEND_PROMPT = """
-MODO IA TOTAL:
-- Entender rapidamente a intenção do lead
-- Primeiro escolher response_mode: CLOSING, DISCOVERY, DIRECT ou SCENE
-- Hierarquia obrigatória: CLOSING > DISCOVERY > DIRECT > SCENE
-- Quando faltar nome ou segmento, responder algo útil e pedir isso no mesmo texto
-- Dar prioridade a respostas diretas quando a dúvida for objetiva
-- Quando falar de áudio, deixar claro que o MEI Robô pode responder com a voz digitalizada do profissional
-- Em vendas, falar sempre com o lead/profissional/dono do negócio; o cliente final é sempre o cliente dele
-- Só usar SCENE quando o segmento estiver claro e houver cena/ritual no KB como matéria-prima para demonstrar funcionamento prático no WhatsApp
-- Manter continuidade: não tratar cada turno como uma nova abertura
-- Após o primeiro turno, começar direto na resposta ou na demonstração prática
-- Usar o nome no máximo 1 vez por resposta
-- Manter objetividade, tom humano, profissional e direção comercial
-"""
+FREE_MODE_APPEND_PROMPT = ""
 
 
 def _truncate(s: str, max_chars: int) -> str:
@@ -5316,6 +5306,26 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         or str(inferred_segment or "").strip()
     )
 
+    # ----------------------------------------------------------
+    # SEGMENTO PARA PROMPT vs SEGMENTO PARA RUNTIME
+    # O runtime pode manter sticky/contexto para lookup interno,
+    # mas o prompt inicial não deve tratar isso como segmento
+    # confirmado se o turno atual ainda não confirmou intenção.
+    # Evita ancoragem prematura sem apagar a memória operacional.
+    # ----------------------------------------------------------
+    segment_confirmed_for_prompt = False
+    try:
+        if inferred_segment:
+            segment_confirmed_for_prompt = True
+        if segment_hint and ai_turns > 0:
+            segment_confirmed_for_prompt = True
+        if ai_turns > 0 and sticky_segment_hint:
+            segment_confirmed_for_prompt = True
+    except Exception:
+        segment_confirmed_for_prompt = False
+
+    segment_for_prompt = str(effective_segment or "").strip() if segment_confirmed_for_prompt else ""
+
     # se ainda estivermos num macro conhecido, tenta promover para subsegmento real
     try:
         if effective_segment and "__" not in effective_segment:
@@ -5421,7 +5431,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 kb_context["subsegment_hint"] = str(effective_segment).strip()
             else:
                 kb_context["segment_hint"] = str(effective_segment).strip()
-            kb_context["needs_segment_discovery"] = False
+            kb_context["needs_segment_discovery"] = not bool(segment_for_prompt)
     except Exception:
         pass
 
@@ -5524,16 +5534,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     system_prompt = SYSTEM_PROMPT
     if free_mode:
-        system_prompt += "\n" + FREE_MODE_APPEND_PROMPT + "\n"
-
-        # ----------------------------------------------------------
-        # RACIOCÍNIO SITUACIONAL (faz a IA pensar na conversa real)
-        # ----------------------------------------------------------
-        system_prompt += (
-            "\nAntes de responder, entenda a situação real do cliente.\n"
-            "Se decidir demonstrar na prática, descreva o fluxo acontecendo no WhatsApp em sequência real.\n"
-            "Caso contrário, responda diretamente sem criar cena.\n"
-        )
+        pass
     family_hint = _build_free_mode_family_hint(user_text, effective_segment)
     scene_hint_block = ""
     user_scene_block = ""
@@ -5623,8 +5624,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         f"is_lead={'true' if is_lead else 'false'}\n"
         f"has_name={'true' if has_name else 'false'}\n"
         + (f"name_hint={name_hint}\n" if has_name else "")
-        + (f"segment_hint={effective_segment}\n" if effective_segment else "")
-        + (f"operational_family={operational_family}\n" if operational_family else "")
+        + (f"segment_hint={segment_for_prompt}\n" if segment_for_prompt else "")
+        + (f"operational_family={operational_family}\n" if segment_for_prompt and operational_family else "")
+        + (
+            "segment_context_status=unconfirmed_context_only\n"
+            if effective_segment and not segment_for_prompt else ""
+        )
         + f"last_intent={last_intent or 'NONE'}\n"
         + f"last_user_goal={last_user_goal or 'NONE'}\n\n"
         + (
@@ -6358,30 +6363,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
                 # ============================================================
-                # SEGUNDA CAMADA — REESCRITA OPERACIONAL CONCRETA
-                # entra no caminho principal da IA, não no fallback
+                # SEGUNDA CAMADA REMOVIDA
+                # Mantém a resposta gerada sem rewrite final.
                 # ============================================================
                 if generated:
-                    upgraded = _upgrade_operational_reply_with_model(
-                        base_text=generated,
-                        operational_reference="",
-                        reference_example=reference_example,
-                        contract=operational_contract if 'operational_contract' in locals() else {},
-                    )
-
-                    upgraded_live = _is_live_operational_reply(
-                        text=upgraded,
-                        operational_reference="",
-                        reference_example=reference_example,
-                        contract=operational_contract if 'operational_contract' in locals() else {},
-                    ) if upgraded else False
-
-                    upgraded_show = _is_show_micro_scene(
-                        text=upgraded,
-                        operational_reference="",
-                        reference_example=reference_example,
-                        contract=operational_contract if 'operational_contract' in locals() else {},
-                    ) if upgraded else False
+                    upgraded = ""
+                    upgraded_live = False
+                    upgraded_show = False
 
                     _upgrade_contract_strong = bool(
                         ((operational_contract if 'operational_contract' in locals() else {}) or {}).get("hydrated_from_docs")
@@ -7239,8 +7227,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     user_text=user_text,
                     kb_context=kb_context if isinstance(kb_context, dict) else {},
                     reply_text=reply_text,
-                    understanding=understanding if isinstance(understanding, dict) else {},
-                    decider=decider if isinstance(decider, dict) else {},
+                    understanding={
+                        **(understanding if isinstance(understanding, dict) else {}),
+                        "response_mode": response_mode,
+                    },
+                    decider={
+                        **(decider if isinstance(decider, dict) else {}),
+                        "response_mode": response_mode,
+                    },
                 ):
                     reply_text = _strip_trailing_question(reply_text)
                     try:
@@ -7257,8 +7251,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     user_text=user_text,
                     kb_context=kb_context if isinstance(kb_context, dict) else {},
                     reply_text=spoken_text,
-                    understanding=understanding if isinstance(understanding, dict) else {},
-                    decider=decider if isinstance(decider, dict) else {},
+                    understanding={
+                        **(understanding if isinstance(understanding, dict) else {}),
+                        "response_mode": response_mode,
+                    },
+                    decider={
+                        **(decider if isinstance(decider, dict) else {}),
+                        "response_mode": response_mode,
+                    },
                 ):
                     spoken_text = _strip_trailing_question(spoken_text)
             except Exception:
@@ -7372,6 +7372,42 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        # ----------------------------------------------------------
+        # CONTROLE LIMPO VIA response_mode
+        # ----------------------------------------------------------
+        try:
+            response_mode = _normalize_response_mode(response_mode) or "DIRECT"
+
+            if response_mode == "DIRECT":
+                reply_text = str(reply_text or "").strip()
+                spoken_text = str(spoken_text or reply_text or "").strip()
+
+            elif response_mode == "DISCOVERY":
+                if "?" not in str(reply_text or ""):
+                    reply_text = str(reply_text or "").strip() + " Me conta teu segmento e teu nome pra eu te ajudar melhor."
+                spoken_text = str(reply_text or spoken_text or "").strip()
+
+            elif response_mode == "SCENE":
+                reply_text = str(reply_text or "").lstrip()
+                spoken_text = str(spoken_text or reply_text or "").lstrip()
+
+            elif response_mode == "CLOSING":
+                reply_text = str(reply_text or "").strip()
+                spoken_text = str(spoken_text or reply_text or "").strip()
+
+            if response_mode != "CLOSING" and next_step != "SEND_LINK":
+                missing_name = not bool(has_name)
+                missing_segment = not bool(str(effective_segment or "").strip())
+                if (missing_name or missing_segment) and str(reply_text or "").strip():
+                    low_reply = str(reply_text or "").lower()
+                    already_asks_name = _reply_mentions_name_request(reply_text)
+                    already_asks_segment = bool(re.search(r"\b(segmento|área|ramo|negócio|atividade|profissão|atua|trabalha)\b", low_reply))
+                    if (missing_name and not already_asks_name) or (missing_segment and not already_asks_segment):
+                        reply_text = str(reply_text or "").rstrip(" .!?") + ". Me diz teu nome e o segmento que tu atua pra eu te orientar melhor."
+                        spoken_text = reply_text
+        except Exception:
+            pass
+
         # 🔒 última garantia: não sair com resposta fraca quando há contexto
         try:
             if not reply_text or len(reply_text.strip()) < 40:
@@ -7394,7 +7430,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         )
                     )
 
-                if not forced:
+                if not forced and allow_scene_runtime:
                     forced = _build_kb_anchor_reply(
                         operational_reference="",
                         reference_example=reference_example,
