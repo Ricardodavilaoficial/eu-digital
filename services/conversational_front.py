@@ -5694,7 +5694,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 + f"allowed_next_step: {str((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('allowed_next_step') or '').strip()}\n"
                 + f"operational_ritual: {json.dumps((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('operational_ritual') or [], ensure_ascii=False)}\n\n"
             )
-            if (
+            if segment_for_prompt and (
                 (
                     allow_kb_payload_scene
                     and (
@@ -6106,22 +6106,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             response_mode == "SCENE"
             and micro_scene_allowed
         )
-
-        # Guarda determinística de DISCOVERY:
-        # nome/segmento são prioridade comercial, mas sem ativar cena nem alterar KB.
-        try:
-            reply_text, spoken_text, _identity_name_use = _ensure_discovery_identity_request(
-                reply_text=reply_text,
-                spoken_text=spoken_text,
-                has_name=has_name,
-                effective_segment=segment_for_prompt,
-                response_mode=response_mode,
-            )
-            if _identity_name_use == "clarify":
-                name_use = "clarify"
-                needs_clarify = "yes"
-        except Exception:
-            pass
 
         if not isinstance(operational_contract, dict) or not operational_contract:
             operational_contract = base_operational_contract if 'base_operational_contract' in locals() else {}
@@ -7036,7 +7020,35 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
+            # --- NOVO: GARANTIA DE DISCOVERY ANTES DO EARLY RETURN ---
+            if response_mode == "DISCOVERY":
+                reply_text, spoken_text, _identity_name_use = _ensure_discovery_identity_request(
+                    reply_text=reply_text,
+                    spoken_text=spoken_text,
+                    has_name=has_name,
+                    effective_segment=segment_for_prompt,
+                    response_mode=response_mode,
+                )
+                if _identity_name_use == "clarify":
+                    name_use = "clarify"
+                    needs_clarify = "yes"
+
+                # Safety Net Determinístico
+                if "?" not in str(reply_text or ""):
+                    base_reply = str(reply_text or "").strip()
+                    if not has_name and not segment_for_prompt:
+                        fallback_q = " Com quem eu falo e qual é o segmento do seu negócio?"
+                    elif not has_name:
+                        fallback_q = " Qual é o seu nome?"
+                    else:
+                        fallback_q = " Qual é o segmento do seu negócio?"
+
+                    reply_text = f"{base_reply}{fallback_q}"
+                    spoken_text = str(spoken_text or base_reply).strip() + fallback_q
+            # ---------------------------------------------------------
+
             out = {
+                "response_mode": response_mode,
                 "replyText": reply_text,
                 "spokenText": spoken_text,
                 "understanding": {
@@ -7494,7 +7506,38 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        # ----------------------------------------------------------
+        # GUARDA FINAL ABSOLUTA (POST-GENERATION ENFORCEMENT)
+        # ----------------------------------------------------------
+        if response_mode == "DISCOVERY":
+            reply_text, spoken_text, _identity_name_use = _ensure_discovery_identity_request(
+                reply_text=reply_text,
+                spoken_text=spoken_text,
+                has_name=has_name,
+                effective_segment=segment_for_prompt,
+                response_mode=response_mode,
+            )
+
+            if _identity_name_use == "clarify":
+                name_use = "clarify"
+                needs_clarify = "yes"
+
+            # SAFETY NET FINAL (determinístico)
+            if "?" not in str(reply_text or ""):
+                base_reply = str(reply_text or "").strip()
+
+                if not has_name and not segment_for_prompt:
+                    fallback_q = " Com quem eu falo e qual é o segmento do seu negócio?"
+                elif not has_name:
+                    fallback_q = " Qual é o seu nome?"
+                else:
+                    fallback_q = " Qual é o segmento do seu negócio?"
+
+                reply_text = f"{base_reply}{fallback_q}"
+                spoken_text = str(spoken_text or base_reply).strip() + fallback_q
+
         out = {
+            "response_mode": response_mode,
             "replyText": reply_text,
             "spokenText": spoken_text,
             "understanding": {
@@ -7504,6 +7547,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "confidence": confidence,
                 "needsClarify": needs_clarify,
                 "clarifyQuestion": clarify_q,
+                "response_mode": response_mode,
             },
             "nextStep": next_step,
             "shouldEnd": should_end,
