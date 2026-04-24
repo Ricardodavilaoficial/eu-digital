@@ -4631,6 +4631,65 @@ def _contract_allows_scene_runtime(contract: Dict[str, Any] | None) -> bool:
         return False
 
 
+def _reply_mentions_name_request(text: str) -> bool:
+    try:
+        t = str(text or "").strip().lower()
+        if not t:
+            return False
+        return bool(
+            re.search(r"\b(nome|teu nome|seu nome|como tu te chama|como você se chama)\b", t)
+        )
+    except Exception:
+        return False
+
+
+def _ensure_discovery_identity_request(
+    *,
+    reply_text: str,
+    spoken_text: str,
+    has_name: bool,
+    effective_segment: str,
+    response_mode: str,
+) -> tuple[str, str, str]:
+    """
+    Guarda determinística mínima para discovery.
+    Não decide intenção, não usa KB, não gera microcena.
+    Apenas impede que a IA esqueça nome/segmento quando estão faltando.
+    """
+    try:
+        mode = str(response_mode or "").strip().upper()
+        reply = str(reply_text or "").strip()
+        spoken = str(spoken_text or reply or "").strip()
+
+        if mode != "DISCOVERY" or not reply:
+            return reply, spoken, "none"
+
+        missing_name = not bool(has_name)
+        missing_segment = not bool(str(effective_segment or "").strip())
+
+        if not missing_name and not missing_segment:
+            return reply, spoken, "none"
+
+        if missing_name and not _reply_mentions_name_request(reply):
+            if reply.endswith("?"):
+                reply = reply[:-1].rstrip()
+                reply += ", e qual é o teu nome?"
+            else:
+                reply = reply.rstrip(".! ")
+                reply += ". E qual é o teu nome?"
+
+        if missing_segment and "segment" not in reply.lower():
+            # Não força frase nova se a resposta já perguntou o segmento de outro modo.
+            if not re.search(r"\b(área|ramo|negócio|atividade|profissão|atua|trabalha)\b", reply.lower()):
+                reply = reply.rstrip(".! ")
+                reply += ". E me diz também qual é o teu segmento."
+
+        spoken = reply
+        return reply, spoken, "clarify"
+    except Exception:
+        return str(reply_text or "").strip(), str(spoken_text or reply_text or "").strip(), "none"
+
+
 def _should_downgrade_premature_narrow_topic(
     *,
     topic: str,
@@ -5982,6 +6041,22 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             and micro_scene_allowed
         )
 
+        # Guarda determinística de DISCOVERY:
+        # nome/segmento são prioridade comercial, mas sem ativar cena nem alterar KB.
+        try:
+            reply_text, spoken_text, _identity_name_use = _ensure_discovery_identity_request(
+                reply_text=reply_text,
+                spoken_text=spoken_text,
+                has_name=has_name,
+                effective_segment=effective_segment,
+                response_mode=response_mode,
+            )
+            if _identity_name_use == "clarify":
+                name_use = "clarify"
+                needs_clarify = "yes"
+        except Exception:
+            pass
+
         if not isinstance(operational_contract, dict) or not operational_contract:
             operational_contract = base_operational_contract if 'base_operational_contract' in locals() else {}
 
@@ -6905,7 +6980,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
 
             try:
-                spoken_text = _strip_trailing_question(spoken_text or reply_text)
+                if response_mode == "DISCOVERY":
+                    spoken_text = str(spoken_text or reply_text or "").strip()
+                else:
+                    spoken_text = _strip_trailing_question(spoken_text or reply_text)
             except Exception:
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
