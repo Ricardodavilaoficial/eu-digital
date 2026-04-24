@@ -5369,9 +5369,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     try:
         if inferred_segment:
             segment_confirmed_for_prompt = True
-        if segment_hint and ai_turns > 0:
-            segment_confirmed_for_prompt = True
-        if ai_turns > 0 and sticky_segment_hint:
+        elif segment_hint:
             segment_confirmed_for_prompt = True
     except Exception:
         segment_confirmed_for_prompt = False
@@ -6046,7 +6044,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 needs_clarify=needs_clarify,
                 clarify_q=clarify_q,
                 next_step=next_step,
-                effective_segment=effective_segment,
+                effective_segment=segment_for_prompt,
                 kb_anchor_strong=kb_anchor_strong,
                 operational_contract=operational_contract,
             )
@@ -6076,7 +6074,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if (
                 response_mode == "SCENE"
-                and effective_segment
+                and segment_for_prompt
                 and kb_anchor_strong
                 and contract_has_operational_base
             ):
@@ -6116,7 +6114,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 reply_text=reply_text,
                 spoken_text=spoken_text,
                 has_name=has_name,
-                effective_segment=effective_segment,
+                effective_segment=segment_for_prompt,
                 response_mode=response_mode,
             )
             if _identity_name_use == "clarify":
@@ -6156,7 +6154,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             topic=topic,
             confidence=confidence,
             ai_turns=ai_turns,
-            effective_segment=effective_segment,
+            effective_segment=segment_for_prompt,
             operational_family=operational_family,
             operational_reference="",
             reference_example=reference_example,
