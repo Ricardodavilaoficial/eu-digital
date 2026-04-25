@@ -750,14 +750,10 @@ def _extract_value_line(reply_text: str) -> str:
 def _strip_trailing_question(text: str) -> str:
     try:
         t = str(text or "").strip()
-        if not t:
-            return ""
-        if "?" not in t:
+        qpos = t.rfind("?")
+        if qpos == -1:
             return t
-        # remove só a última pergunta/bloco interrogativo no fim
-        t = re.sub(r"\s*[^.!\n?]{0,220}\?\s*$", "", t, flags=re.DOTALL).strip()
-        t = re.sub(r"\s{2,}", " ", t).strip()
-        return t.rstrip(" -–—,;:")
+        return t[:qpos].strip()
     except Exception:
         return str(text or "").strip()
 
@@ -3213,26 +3209,12 @@ Você recebe um contrato operacional já resolvido.
 Sua tarefa é expandir a microcena em passos estruturais curtos e encadeados.
 
 Regras:
-- não escrever resposta final
-- não explicar
-- não resumir de fora
-- não usar diálogo
-- não usar fala de personagem
-- não inventar fatos fora do contrato
-- aproveitar ritual, capabilities, handoff, goal e next_step
-- cada passo deve puxar o próximo
-- a sequência deve ficar mais rica e mais concreta
-- depois da interação inicial, continue a cadeia operacional
-- inclua consequência visível quando ela estiver implícita no contrato
-- prefira continuidade operacional a resumo curto
-- a sequência deve soar natural e próxima da fala do dia a dia
-- evitar linguagem técnica, burocrática ou com cara de manual
-- preferir passos que o lead consiga visualizar acontecendo
-- não incluir emoção, sentimento ou reação do cliente
-- não incluir narrador ou descrição externa
-- não usar linguagem figurativa ou expressiva
-- cada passo deve representar uma ação concreta do fluxo
-- devolver somente JSON
+- Escreva exclusivamente os passos da ação.
+- Baseie-se estritamente no contrato fornecido (ritual, capabilities, handoff, goal e next_step).
+- Formule cada passo como uma ação concreta que puxa a próxima (ex: "O cliente envia mensagem", "O robô identifica o pedido").
+- Use linguagem prática, visual e do dia a dia.
+- Descreva o fluxo de forma objetiva, focando apenas nas ações do cliente e do robô.
+- Retorne EXCLUSIVAMENTE o JSON solicitado.
 
 Formato:
 {"steps":["passo 1","passo 2","passo 3","passo 4"]}
@@ -3696,19 +3678,12 @@ Você recebe um contexto operacional de atendimento já resolvido.
 Sua tarefa é gerar uma demonstração prática clara quando este bloco for acionado.
 
 Regras obrigatórias:
-- Este bloco só é chamado quando response_mode=SCENE.
-- Não decida outro modo aqui.
-- Use o KB como fonte da verdade.
-- Gere uma sequência prática e objetiva do que acontece no uso real.
-- Comece direto na ação.
-- Evite explicações abstratas.
-- Não use adjetivos.
-- Não invente etapas, botões ou funcionalidades fora do KB.
-- Não simule diálogo.
-- Não faça pergunta final.
-- Termine na última ação concreta do fluxo.
-
-Retorne somente o texto final.
+- Use o KB fornecido como fonte única da verdade.
+- Gere uma sequência prática e objetiva do uso real.
+- Inicie o texto diretamente na ação (ex: "O cliente manda mensagem...").
+- Descreva o fluxo em terceira pessoa, focando nas ações do robô e do cliente.
+- Encerre o texto na última ação concreta do fluxo, com um ponto final.
+- Retorne EXCLUSIVAMENTE o texto final da cena.
 """
 
         payload = {
@@ -3905,17 +3880,13 @@ Sua tarefa é reescrever esse texto como um vendedor consultivo, mantendo a oper
 
 Regras obrigatórias (O Ponto de Equilíbrio):
 1. MANTENHA A OPERAÇÃO CONCRETA: preserve a sequência prática do texto base.
-2. FIDELIDADE ABSOLUTA: NÃO invente funcionalidades, botões ou etapas que não estejam no texto base ou no `operational_ritual`.
-3. TOM VIBRANTE E EMPÁTICO: agradeça o contato na primeira frase. Se tiver o nome do lead, use-o.
-4. ZERO LINGUAGEM DE SISTEMA: não use termos burocráticos como "registra", "organiza" ou "garante".
-5. FECHAMENTO SECO: termine na última ação concreta, sem resumo final.
-6. SEM DIÁLOGOS FAKES: descreva a ação acontecendo.
-7. CONCISO: mantenha em 1 parágrafo curto e ligado.
-8. PERGUNTAS RESTRITAS: só pergunte nome, segmento ou intenção, quando isso estiver realmente faltando.
-9. QUANDO FALTAR NOME OU SEGMENTO: usar obrigatoriamente a estrutura de DISCOVERY:
-- resposta curta
-- conexão com o MEI Robô
-- pergunta final pedindo nome e segmento
+2. FIDELIDADE ABSOLUTA: Baseie-se exclusivamente no texto base e no `operational_ritual`.
+3. TOM VIBRANTE E EMPÁTICO: Agradeça o contato na primeira frase. Se o nome do lead for fornecido, utilize-o uma vez.
+4. LINGUAGEM PRÁTICA: Use verbos de ação claros (ex: atende, envia, anota).
+5. FECHAMENTO SECO: Encerre o texto na última ação concreta.
+6. AÇÃO DIRETA: Descreva o fluxo acontecendo na prática, em terceira pessoa.
+7. CONCISO: Escreva exatamente 1 parágrafo curto e fluido.
+8. DISCOVERY OBRIGATÓRIO: Se faltar o nome ou o segmento, encerre o texto com uma única pergunta solicitando essas informações.
 
 [EXEMPLO DE TOM E ESTRUTURA ESPERADA]
 "Muito obrigado pelo contato! O MEI Robô é um atendente virtual que responde no teu WhatsApp usando a tua própria voz digitalizada e teu jeito de falar. Ele consulta as informações que tu configurou e responde automaticamente, tanto em áudio quanto em texto. Pode informar serviços, valores, enviar orçamentos e organizar atendimentos conforme o teu padrão. Se eu ainda não souber teu nome ou teu segmento, eu peço isso no mesmo texto."
@@ -4059,19 +4030,11 @@ Você recebe um contrato operacional.
 Sua tarefa é devolve apenas UM passo final de consequência operacional.
 
 Regras:
-- uma única frase curta
-- sem explicar
-- sem slogan
-- sem personagem
-- sem diálogo
-- sem linguagem de software
-- não usar linguagem interna de processo
-- não mencionar contrato, encerramento, conclusão formal ou validação
-- não escrever como status administrativo
-- deve soar como consequência natural do fluxo
-- não invente fatos fora do contrato
-- não repetir etapas já típicas de abertura ou meio
-- preferir fechamento concreto e curto
+- Escreva exatamente uma frase curta.
+- Descreva exclusivamente o resultado prático e final da ação.
+- Use linguagem natural e direta (ex: "O pedido fica anotado para a equipe").
+- Baseie-se estritamente no contrato fornecido.
+- Retorne EXCLUSIVAMENTE o JSON solicitado.
 
 Formato JSON:
 {"consequence":"..."}
@@ -4751,109 +4714,34 @@ def _should_downgrade_premature_narrow_topic(
 
 
 
+
+
+
+
 SYSTEM_PROMPT = """
 Você é o assistente de vendas do MEI Robô.
-Você conversa com DONOS DE NEGÓCIOS para explicar como o MEI Robô automatiza o WhatsApp deles.
-
-IMPORTANTE:
-- Você não realiza atendimento presencial
-- Todas as interações acontecem pelo WhatsApp
-- Você não atende o cliente final do negócio
-- Você vende, explica e conduz a contratação do MEI Robô para o lead
-
-IDENTIDADE DE CONVERSA:
-- Você está sempre conversando com o DONO DO NEGÓCIO (lead)
-- O cliente citado é sempre o cliente dele
-- Você nunca responde como se fosse o negócio dele
-- Você explica como o MEI Robô funciona PARA o negócio dele
+Seu papel exclusivo é vender o MEI Robô via WhatsApp para DONOS DE NEGÓCIOS.
+Fale sempre com o dono sobre como o robô atenderá os clientes dele.
 
 Sua tarefa é conduzir a conversa como um vendedor consultivo:
-- entender a intenção
-- responder com base no KB
-- decidir o melhor formato de resposta: direto, explicativo ou demonstração prática
-- usar demonstração prática apenas quando isso ajudar a mostrar funcionamento real
-- decidir o melhor próximo passo
+1. Entender a intenção do usuário.
+2. Escolher o formato de resposta adequado (response_mode).
+3. Responder com base estrita no KB fornecido.
 
-Regras de comportamento positivo:
-- Seja direto, claro e útil
-- Responda primeiro, depois complemente se necessário
-- Use linguagem natural de WhatsApp
-- Sempre entregue algum valor na resposta
+ESCOLHA O RESPONSE_MODE OBRIGATORIAMENTE ENTRE:
+- CLOSING: O lead quer contratar, ativar ou pede o link. Responda de forma direta e afirmativa.
+- DISCOVERY: Falta o nome ou o segmento do lead. Gere apenas 1 parágrafo contendo: uma resposta breve ao usuário, a afirmação de que o robô automatiza o WhatsApp, e exatamente uma pergunta pedindo o nome e o segmento.
+- DIRECT: A pergunta é objetiva (preço, suporte, voz, configuração). Responda diretamente a dúvida.
+- SCENE: O segmento está confirmado e o KB possui uma cena prática. Descreva o fluxo de atendimento acontecendo na prática.
 
-REGRAS PRINCIPAIS:
+REGRAS DE ESTILO E CONTINUIDADE (OBRIGATÓRIO):
+- Mantenha a fluidez da conversa. Se o turno for maior que 0, vá direto ao ponto e omita saudações iniciais (como "Olá" ou "Tudo bem?").
+- Use o nome do lead no máximo 1 vez por resposta, com naturalidade.
+- Escreva em parágrafos curtos, com ritmo de WhatsApp profissional.
+- Em caso de áudio, afirme que o MEI Robô responde com a voz digitalizada do próprio profissional.
+- Para SCENE: Descreva a ação em terceira pessoa (ex: "O cliente chama, o robô atende e organiza o pedido"). Encerre o texto na última ação concluída.
 
-1. ENTENDA PRIMEIRO
-Interprete a intenção antes de responder
-
-Antes de escrever a resposta, escolha exatamente um response_mode:
-- CLOSING: quando o lead quer contratar/ativar/receber o link
-- DISCOVERY: quando falta nome, segmento ou intenção essencial.
-  Neste modo, a resposta deve seguir 3 partes obrigatórias:
-  1. responder brevemente ao que o lead disse;
-  2. conectar com o contexto dizendo que o MEI Robô automatiza o WhatsApp de empresas;
-  3. terminar com uma única pergunta pedindo nome e segmento do lead.
-  Não use microcena em DISCOVERY.
-
-REGRA CRÍTICA:
-Quando response_mode = DISCOVERY:
-- NÃO usar microcena
-- NÃO tentar demonstrar funcionamento detalhado
-- NÃO aplicar regras de SCENE
-- NÃO evitar perguntas
-- O objetivo único é identificar o lead
-- DIRECT: quando a pergunta é objetiva, institucional, técnica, preço, suporte, voz, configuração ou funcionamento geral
-- SCENE: quando há contexto suficiente e uma microcena baseada no KB ajuda a demonstrar funcionamento prático
-
-2. NOME E SEGMENTO SÃO PRIORIDADE
-Se não tiver, peça dentro de uma resposta útil (nunca isolado)
-
-3. RESPOSTA DIRETA TEM PRIORIDADE
-Se a pergunta for objetiva, use response_mode DIRECT e responda direto, sem microcena
-
-4. MICROCENA É DECISÃO
-Use response_mode SCENE apenas quando:
-- houver contexto suficiente
-- ajudar a demonstrar funcionamento
-- o segmento estiver claro
-- o KB trouxer cena, ritual ou base operacional suficiente
-
-5. QUANDO USAR MICROCENA:
-- um cliente chama no WhatsApp dele
-- o MEI Robô responde com base no configurado
-- conduz para próximo passo
-- mostra consequência prática
-
-Nunca:
-- simular diálogo
-- falar como atendente do negócio
-
-6. PERGUNTAS SÃO RESTRITAS:
-- nome
-- segmento
-- esclarecer intenção
-
-7. PROIBIDO PARECER SOFTWARE
-
-8. ESTILO CONVERSACIONAL
-- Continue a conversa considerando o que já foi dito
-- Após o primeiro turno, não reinicie atendimento com saudação ou agradecimento
-- Use o nome do lead no máximo 1 vez por resposta
-- Prefira frases curtas, diretas e com ritmo de WhatsApp profissional
-- Evite blocos longos, gírias, emojis excessivos e exclamações exageradas
-- Não use listas com "-" na resposta final ao lead
-- Em respostas explicativas, técnicas ou microcenas, preserve a clareza mesmo que precise de mais de 3 frases
-
-9. FECHAMENTO COM NOME (se disponível)
-Use o nome com naturalidade, sem repetir de forma mecânica.
-
-10. INTENÇÃO DE COMPRA:
-resposta direta + link
-sem explicação
-
-11. ÁUDIO:
-deixe claro que pode responder com a voz digitalizada do profissional
-
-IMPORTANTE: Responda SEMPRE em JSON:
+IMPORTANTE: Responda EXCLUSIVAMENTE em JSON válido:
 {
   "response_mode": "DIRECT|SCENE|DISCOVERY|CLOSING",
   "replyText": "...",
@@ -4865,32 +4753,19 @@ IMPORTANTE: Responda SEMPRE em JSON:
 }
 """
 
-
-
-
 DISCOVERY_PROMPT = """
 Você é o assistente de vendas do MEI Robô.
 
-OBJETIVO DESTE TURNO:
-Identificar quem é o lead.
+OBJETIVO DESTE TURNO: Identificar o lead.
 
 Mensagem do usuário: "{user_text}"
 
-Sua resposta DEVE seguir exatamente esta estrutura:
+Sua resposta DEVE seguir exatamente esta estrutura em um único parágrafo:
+1. Responda brevemente ao que o usuário disse (máx 1 frase).
+2. Afirme que o MEI Robô automatiza o WhatsApp de empresas.
+3. Faça UMA pergunta solicitando o nome e o segmento do negócio.
 
-1. Responder brevemente ao que o usuário disse (máx 1 frase).
-2. Dizer que o MEI Robô automatiza o WhatsApp de empresas.
-3. Fazer UMA pergunta pedindo o nome e o segmento do negócio.
-
-REGRAS:
-- resposta em um único parágrafo
-- linguagem simples de WhatsApp
-- não criar microcena
-- não explicar demais
-- não usar listas
-- sempre terminar com pergunta
-
-Retorne SEMPRE em JSON válido:
+Retorne EXCLUSIVAMENTE em JSON válido:
 {
   "response_mode": "DISCOVERY",
   "replyText": "resposta seguindo as 3 partes obrigatórias",
@@ -4902,6 +4777,7 @@ Retorne SEMPRE em JSON válido:
   "nextStep": "NONE"
 }
 """
+
 
 
 FREE_MODE_APPEND_PROMPT = ""
@@ -5186,6 +5062,7 @@ def _segment_micro_flow(kb: Dict[str, Any], segment_key: str, intent: str, pack_
 # -----------------------------
 # Função principal
 # -----------------------------
+
 def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = "") -> Dict[str, Any]:
     """
     Entrada:
@@ -5230,6 +5107,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     last_intent = str(state_summary.get("last_intent") or "").strip().upper()
     last_user_goal = str(state_summary.get("last_user_goal") or "").strip()
     name_hint = str(state_summary.get("name_hint") or "").strip()
+
+    # Sanitização leve: evita capturas inválidas de áudio
+    if name_hint:
+        tokens = name_hint.split()
+        if len(tokens) > 2 or len(name_hint) > 20:
+            name_hint = ""
+
     segment_hint = str(state_summary.get("segment_hint") or "").strip()
     is_lead = bool(state_summary.get("is_lead") or False)
     kb_snapshot, kb_compact, kb_snapshot_json_ok = _prepare_kb_snapshot_buffers(kb_snapshot)
@@ -5650,7 +5534,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     else:
         # Mantém os fatos selecionados do KB, mas sem empurrar cena
         # antes da decisão soberana do modelo.
-        user_scene_block = kb_section or ""
+        # ARQUITETURA: NÃO vazar KB antes da confirmação de segmento
+        user_scene_block = kb_section if segment_for_prompt else ""
 
     kb_show_reply_seed = ""
     kb_forced_topic = ""
@@ -7020,31 +6905,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
-            # --- NOVO: GARANTIA DE DISCOVERY ANTES DO EARLY RETURN ---
+            # --- GARANTIA DE DISCOVERY ANTES DO EARLY RETURN ---
             if response_mode == "DISCOVERY":
-                reply_text, spoken_text, _identity_name_use = _ensure_discovery_identity_request(
-                    reply_text=reply_text,
-                    spoken_text=spoken_text,
-                    has_name=has_name,
-                    effective_segment=segment_for_prompt,
-                    response_mode=response_mode,
-                )
-                if _identity_name_use == "clarify":
+                missing_name = not bool(has_name)
+                missing_segment = not bool(segment_for_prompt)
+
+                if missing_name or missing_segment:
+                    if not _has_question(reply_text):
+                        needs_clarify = "yes"
+
                     name_use = "clarify"
-                    needs_clarify = "yes"
-
-                # Safety Net Determinístico
-                if "?" not in str(reply_text or ""):
-                    base_reply = str(reply_text or "").strip()
-                    if not has_name and not segment_for_prompt:
-                        fallback_q = " Com quem eu falo e qual é o segmento do seu negócio?"
-                    elif not has_name:
-                        fallback_q = " Qual é o seu nome?"
-                    else:
-                        fallback_q = " Qual é o segmento do seu negócio?"
-
-                    reply_text = f"{base_reply}{fallback_q}"
-                    spoken_text = str(spoken_text or base_reply).strip() + fallback_q
             # ---------------------------------------------------------
 
             out = {
@@ -7445,9 +7315,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
             elif response_mode == "DISCOVERY":
-                if "?" not in str(reply_text or ""):
-                    reply_text = str(reply_text or "").strip() + " Me conta teu segmento e teu nome pra eu te ajudar melhor."
-                spoken_text = str(reply_text or spoken_text or "").strip()
+                missing_name = not bool(has_name)
+                missing_segment = not bool(segment_for_prompt)
+
+                if missing_name or missing_segment:
+                    if not _has_question(reply_text):
+                        needs_clarify = "yes"
+
+                    name_use = "clarify"
+
+                spoken_text = str(spoken_text or reply_text or "").strip()
 
             elif response_mode == "SCENE":
                 reply_text = str(reply_text or "").lstrip()
@@ -7457,16 +7334,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 reply_text = str(reply_text or "").strip()
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
-            if response_mode != "CLOSING" and next_step != "SEND_LINK":
+            if response_mode == "DISCOVERY":
                 missing_name = not bool(has_name)
-                missing_segment = not bool(str(effective_segment or "").strip())
-                if (missing_name or missing_segment) and str(reply_text or "").strip():
-                    low_reply = str(reply_text or "").lower()
-                    already_asks_name = _reply_mentions_name_request(reply_text)
-                    already_asks_segment = bool(re.search(r"\b(segmento|área|ramo|negócio|atividade|profissão|atua|trabalha)\b", low_reply))
-                    if (missing_name and not already_asks_name) or (missing_segment and not already_asks_segment):
-                        reply_text = str(reply_text or "").rstrip(" .!?") + ". Me diz teu nome e o segmento que tu atua pra eu te orientar melhor."
-                        spoken_text = reply_text
+                missing_segment = not bool(segment_for_prompt)
+
+                if missing_name or missing_segment:
+                    if not _has_question(reply_text):
+                        needs_clarify = "yes"
+
+                    name_use = "clarify"
         except Exception:
             pass
 
@@ -7510,31 +7386,24 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # GUARDA FINAL ABSOLUTA (POST-GENERATION ENFORCEMENT)
         # ----------------------------------------------------------
         if response_mode == "DISCOVERY":
-            reply_text, spoken_text, _identity_name_use = _ensure_discovery_identity_request(
-                reply_text=reply_text,
-                spoken_text=spoken_text,
-                has_name=has_name,
-                effective_segment=segment_for_prompt,
-                response_mode=response_mode,
-            )
+            missing_name = not bool(has_name)
+            missing_segment = not bool(segment_for_prompt)
 
-            if _identity_name_use == "clarify":
+            if missing_name or missing_segment:
+                if not _has_question(reply_text):
+                    needs_clarify = "yes"
+
                 name_use = "clarify"
-                needs_clarify = "yes"
 
-            # SAFETY NET FINAL (determinístico)
-            if "?" not in str(reply_text or ""):
-                base_reply = str(reply_text or "").strip()
+        spoken_text = str(spoken_text or reply_text or "").strip()
 
-                if not has_name and not segment_for_prompt:
-                    fallback_q = " Com quem eu falo e qual é o segmento do seu negócio?"
-                elif not has_name:
-                    fallback_q = " Qual é o seu nome?"
-                else:
-                    fallback_q = " Qual é o segmento do seu negócio?"
-
-                reply_text = f"{base_reply}{fallback_q}"
-                spoken_text = str(spoken_text or base_reply).strip() + fallback_q
+        if FRONT_TRACE_ENABLED:
+            logging.info({
+                "mode": response_mode,
+                "has_name": has_name,
+                "segment": segment_for_prompt,
+                "clarify": needs_clarify
+            })
 
         out = {
             "response_mode": response_mode,
@@ -7690,3 +7559,24 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         aiMeta["kbHasContext"] = bool(aiMeta.get("kbDocPath"))
 
         return error_out
+
+
+# --- helpers added ---
+def _has_question(text: str) -> bool:
+    try:
+        return "?" in str(text or "")
+    except Exception:
+        return False
+
+def _is_weak_reply(text: str) -> bool:
+    try:
+        t = str(text or "").lower()
+        weak_patterns = [
+            "posso te ajudar",
+            "como posso ajudar",
+            "me diga mais",
+            "em que posso ajudar"
+        ]
+        return any(p in t for p in weak_patterns)
+    except Exception:
+        return False
