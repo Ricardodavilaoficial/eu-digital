@@ -4738,8 +4738,6 @@ ESCOLHA O RESPONSE_MODE OBRIGATORIAMENTE ENTRE:
 REGRAS DE ESTILO E CONTINUIDADE (OBRIGATÓRIO):
 - Mantenha a fluidez da conversa. Se o turno for maior que 0, vá direto ao ponto e omita saudações iniciais (como "Olá" ou "Tudo bem?").
 - Use o nome do lead no máximo 1 vez por resposta, com naturalidade.
-- Se for o primeiro turno útil da conversa e o lead já informou nome e segmento na própria mensagem, inicie com uma frase curta de acolhimento usando o nome uma única vez. Depois siga direto para a resposta.
-- Em turnos seguintes, não repita agradecimento nem saudação, salvo se o lead estiver fechando assinatura.
 - Escreva em parágrafos curtos, com ritmo de WhatsApp profissional.
 - Em caso de áudio, afirme que o MEI Robô responde com a voz digitalizada do próprio profissional.
 - Para SCENE: Descreva a ação em terceira pessoa (ex: "O cliente chama, o robô atende e organiza o pedido"). Encerre o texto na última ação concluída com um ponto final.
@@ -5165,7 +5163,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     kb_snapshot=kb_snapshot,
                     user_text=user_text,
                     last_intent=(last_intent or ""),
-                    segment_hint=(segment_hint or inferred_segment_for_kb or ""),
+                    # Prioridade estrutural:
+                    # o segmento inferido do turno atual vence memória/contexto antigo.
+                    # Se não houver inferência nova, preserva continuidade com segment_hint.
+                    segment_hint=(inferred_segment_for_kb or segment_hint or ""),
                     operational_family_hint=operational_family_hint,
                     topic_hint=(last_intent or ""),
                 )
@@ -5210,8 +5211,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     inferred_segment = ""
     try:
-        if not segment_hint:
-            inferred_segment = _infer_segment_from_text(user_text, kb_snapshot)
+        # O texto atual deve sempre ter chance de declarar/alterar o segmento.
+        # Não usa palavras-chave novas; reaproveita a inferência semântica já existente.
+        inferred_segment = _infer_segment_from_text(user_text, kb_snapshot)
     except Exception:
         inferred_segment = ""
 
@@ -5238,11 +5240,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         kb_segment_hint = ""
 
     effective_segment = (
-        str((kb_context or {}).get("subsegment_hint") or "").strip()
-        or str(sticky_segment_hint or "").strip()
+        # 1) Presente: o que foi inferido da mensagem atual.
+        str(inferred_segment or "").strip()
+        # 2) KB já resolvido neste turno.
+        or str((kb_context or {}).get("subsegment_hint") or "").strip()
+        # 3) Contexto explícito atual.
         or str(segment_hint or "").strip()
         or str(kb_segment_hint or "").strip()
-        or str(inferred_segment or "").strip()
+        # 4) Memória anterior só como fallback.
+        or str(sticky_segment_hint or "").strip()
     )
 
     # ----------------------------------------------------------
