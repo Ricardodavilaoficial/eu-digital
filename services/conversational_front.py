@@ -3682,6 +3682,7 @@ Regras obrigatórias:
 - Gere uma sequência prática e objetiva do uso real.
 - Inicie o texto diretamente na ação (ex: "O cliente manda mensagem...").
 - Descreva o fluxo em terceira pessoa, focando nas ações do robô e do cliente.
+- Escreva no máximo 3 frases curtas.
 - Encerre o texto na última ação concreta do fluxo, com um ponto final.
 - Retorne EXCLUSIVAMENTE o texto final da cena.
 """
@@ -3713,7 +3714,7 @@ Regras obrigatórias:
             resp = _client.chat.completions.create(
                 model=MODEL,
                 temperature=0.40,
-                max_tokens=350,
+                max_tokens=450,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user_prompt},
@@ -3724,7 +3725,7 @@ Regras obrigatórias:
             resp = openai.ChatCompletion.create(
                 model=MODEL,
                 temperature=0.40,
-                max_tokens=350,
+                max_tokens=450,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user_prompt},
@@ -3914,7 +3915,7 @@ Reescreva mantendo a operação concreta, usando a base apenas para reforçar fi
         resp = _call_openai_for_front(
             system=system,
             user=user,
-            max_tokens=350,
+            max_tokens=450,
             temperature=0.40,
         )
 
@@ -4729,17 +4730,17 @@ Sua tarefa é conduzir a conversa como um vendedor consultivo:
 3. Responder com base estrita no KB fornecido.
 
 ESCOLHA O RESPONSE_MODE OBRIGATORIAMENTE ENTRE:
-- CLOSING: O lead quer contratar, ativar ou pede o link. Responda de forma direta e afirmativa.
+- CLOSING: O lead quer contratar, ativar ou pede o link. Escreva exatamente 1 parágrafo contendo: um agradecimento, o nome do lead (se disponível), uma confirmação animada de envio e, obrigatoriamente, a URL fornecida em 'signup_url' no final do texto.
 - DISCOVERY: Falta o nome ou o segmento do lead. Gere apenas 1 parágrafo contendo: uma resposta breve ao usuário, a afirmação de que o robô automatiza o WhatsApp, e exatamente uma pergunta pedindo o nome e o segmento.
 - DIRECT: A pergunta é objetiva (preço, suporte, voz, configuração). Responda diretamente a dúvida.
-- SCENE: O segmento está confirmado e o KB possui uma cena prática. Descreva o fluxo de atendimento acontecendo na prática.
+- SCENE: O segmento está confirmado e o KB possui uma cena prática. Descreva o fluxo de atendimento acontecendo na prática. Escreva no máximo 3 frases curtas.
 
 REGRAS DE ESTILO E CONTINUIDADE (OBRIGATÓRIO):
 - Mantenha a fluidez da conversa. Se o turno for maior que 0, vá direto ao ponto e omita saudações iniciais (como "Olá" ou "Tudo bem?").
 - Use o nome do lead no máximo 1 vez por resposta, com naturalidade.
 - Escreva em parágrafos curtos, com ritmo de WhatsApp profissional.
 - Em caso de áudio, afirme que o MEI Robô responde com a voz digitalizada do próprio profissional.
-- Para SCENE: Descreva a ação em terceira pessoa (ex: "O cliente chama, o robô atende e organiza o pedido"). Encerre o texto na última ação concluída.
+- Para SCENE: Descreva a ação em terceira pessoa (ex: "O cliente chama, o robô atende e organiza o pedido"). Encerre o texto na última ação concluída com um ponto final.
 
 IMPORTANTE: Responda EXCLUSIVAMENTE em JSON válido:
 {
@@ -5552,6 +5553,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         )
     )
 
+    signup_url = str((kb_context or {}).get("signup_url") or os.getenv("FRONTEND_BASE") or "https://www.meirobo.com.br").strip()
+
     user_payload = (
         f"[MENSAGEM DO USUÁRIO]\n{user_text}\n\n"
         f"[ESTADO]\n"
@@ -5559,6 +5562,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         f"is_lead={'true' if is_lead else 'false'}\n"
         f"has_name={'true' if has_name else 'false'}\n"
         + (f"name_hint={name_hint}\n" if has_name else "")
+        + f"signup_url={signup_url}\n"
         + (f"segment_hint={segment_for_prompt}\n" if segment_for_prompt else "")
         + (f"operational_family={operational_family}\n" if segment_for_prompt and operational_family else "")
         + (
