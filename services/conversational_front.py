@@ -571,6 +571,36 @@ def _best_doc_match(query: str, docs_map: Dict[str, Any], min_score: int = 2) ->
         return ""
 
 
+def _doc_match_is_compatible_with_current_text(
+    *,
+    user_text: str,
+    doc: Dict[str, Any],
+    doc_key: str = "",
+    min_score: int = 3,
+) -> bool:
+    """
+    Valida se um documento do KB é realmente compatível com o texto atual.
+
+    Não usa palavras-chave por segmento.
+    Não força profissão.
+    Não cria fallback específico.
+
+    Objetivo:
+    - impedir que um segmento declarado no turno atual caia em outro subsegmento
+      apenas por aproximação fraca;
+    - permitir que, sem subsegmento específico, o fluxo use o KB global/plataforma.
+    """
+    try:
+        q = str(user_text or "").strip()
+        if not q or not isinstance(doc, dict):
+            return False
+
+        score = _score_query_against_doc(q, doc, str(doc_key or ""))
+        return score >= int(min_score)
+    except Exception:
+        return False
+
+
 def _family_to_pack_id(family: str) -> str:
     f = str(family or "").strip().lower()
     if f == "agenda":
@@ -2344,12 +2374,26 @@ def _infer_segment_from_docs(
         if isinstance(kb_sub, dict) and kb_sub:
             best_sub = _best_doc_match(search_text, kb_sub, min_score=2)
             if best_sub:
-                return str(best_sub).strip().lower()
+                best_doc = kb_sub.get(best_sub) or {}
+                if _doc_match_is_compatible_with_current_text(
+                    user_text=user_text,
+                    doc=best_doc if isinstance(best_doc, dict) else {},
+                    doc_key=str(best_sub),
+                    min_score=3,
+                ):
+                    return str(best_sub).strip().lower()
 
         if isinstance(kb_seg, dict) and kb_seg:
             best_seg = _best_doc_match(search_text, kb_seg, min_score=2)
             if best_seg:
-                return str(best_seg).strip().lower()
+                best_doc = kb_seg.get(best_seg) or {}
+                if _doc_match_is_compatible_with_current_text(
+                    user_text=user_text,
+                    doc=best_doc if isinstance(best_doc, dict) else {},
+                    doc_key=str(best_seg),
+                    min_score=3,
+                ):
+                    return str(best_seg).strip().lower()
 
         candidates = []
         if isinstance(kb_sub, dict):
@@ -2358,7 +2402,7 @@ def _infer_segment_from_docs(
             candidates.extend([str(k).strip() for k in kb_seg.keys() if str(k).strip()])
 
         best = _best_lookup_key_match(search_text, candidates, min_score=2)
-        return str(best or "").strip().lower()
+        return str(best or "").strip().lower() if best and not user_text else ""
     except Exception:
         return ""
 
