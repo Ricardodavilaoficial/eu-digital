@@ -652,6 +652,22 @@ def _clear_incompatible_kb_context_for_current_text(
     except Exception:
         return dict(kb_context or {})
 
+
+
+def _kb_context_segment_was_cleared(kb_context: Dict[str, Any]) -> bool:
+    """
+    Sinaliza que o resolver trouxe uma ancoragem segmentada incompatível
+    e que ela foi removida para este turno.
+
+    Não decide segmento.
+    Não usa palavras-chave.
+    Apenas impede re-hidratação do contrato removido.
+    """
+    try:
+        return str((kb_context or {}).get("segment_context_status") or "").strip() == "cleared_incompatible_for_current_text"
+    except Exception:
+        return False
+
 def _family_to_pack_id(family: str) -> str:
     f = str(family or "").strip().lower()
     if f == "agenda":
@@ -5281,6 +5297,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     except Exception:
         kb_context = {}
 
+    segment_context_cleared = _kb_context_segment_was_cleared(
+        kb_context if isinstance(kb_context, dict) else {}
+    )
+
     operational_family = ""
     try:
         operational_family = str((kb_context or {}).get("operational_family", "") or "")
@@ -5343,13 +5363,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     effective_segment = (
         # 1) Presente: o que foi inferido da mensagem atual.
         str(inferred_segment or "").strip()
-        # 2) KB já resolvido neste turno.
-        or str((kb_context or {}).get("subsegment_hint") or "").strip()
+        # 2) KB já resolvido neste turno — somente se não foi limpo por incompatibilidade.
+        or (str((kb_context or {}).get("subsegment_hint") or "").strip() if not segment_context_cleared else "")
         # 3) Contexto explícito atual.
         or str(segment_hint or "").strip()
-        or str(kb_segment_hint or "").strip()
-        # 4) Memória anterior só como fallback.
-        or str(sticky_segment_hint or "").strip()
+        or (str(kb_segment_hint or "").strip() if not segment_context_cleared else "")
+        # 4) Memória anterior só como fallback — não usar quando o turno atual limpou contrato incompatível.
+        or (str(sticky_segment_hint or "").strip() if not segment_context_cleared else "")
     )
 
     # ----------------------------------------------------------
@@ -5372,7 +5392,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     # se ainda estivermos num macro conhecido, tenta promover para subsegmento real
     try:
-        if effective_segment and "__" not in effective_segment:
+        if effective_segment and "__" not in effective_segment and not segment_context_cleared:
             promoted_segment = _infer_segment_from_docs(
                 user_text=user_text,
                 kb_snapshot=kb_snapshot,
@@ -5389,11 +5409,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # com as chaves reais do KB antes da hidratação principal.
     # ----------------------------------------------------------
     try:
-        inferred_from_docs = _infer_segment_from_docs(
-            user_text=user_text,
-            kb_snapshot=kb_snapshot,
-            kb_context=kb_context if isinstance(kb_context, dict) else {},
-        )
+        if segment_context_cleared:
+            inferred_from_docs = ""
+        else:
+            inferred_from_docs = _infer_segment_from_docs(
+                user_text=user_text,
+                kb_snapshot=kb_snapshot,
+                kb_context=kb_context if isinstance(kb_context, dict) else {},
+            )
         if inferred_from_docs:
             inferred_from_docs = str(inferred_from_docs).strip()
 
@@ -5410,6 +5433,22 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # Usa os docs reais do banco para preencher lacunas antes de
     # qualquer refresh de âncora ou montagem de contrato.
     # ----------------------------------------------------------
+    if segment_context_cleared:
+        effective_segment = str(inferred_segment or segment_hint or "").strip()
+        if isinstance(kb_context, dict):
+            for key in (
+                "subsegment_hint",
+                "effective_subsegment",
+                "segment_hint",
+                "segment_id",
+                "archetype_id",
+                "segment_profile",
+                "operational_family",
+                "operational_reference",
+                "segment_reference_example",
+            ):
+                kb_context.pop(key, None)
+
     try:
         real_kb_docs = _kb_lookup_operational_docs(
             kb_snapshot=kb_snapshot,
@@ -5447,7 +5486,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
         )
 
-        if not docs_hydrated:
+        if not docs_hydrated and not segment_context_cleared:
             reinforced_segment = _infer_segment_from_docs(
                 user_text=user_text,
                 kb_snapshot=kb_snapshot,
@@ -5470,7 +5509,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         pass
 
     try:
-        if effective_segment and isinstance(kb_context, dict):
+        if effective_segment and isinstance(kb_context, dict) and not segment_context_cleared:
             if "__" in str(effective_segment):
                 kb_context["subsegment_hint"] = str(effective_segment).strip()
             else:
@@ -5517,6 +5556,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     if not selected_pack_id:
         selected_pack_id = _pick_pack_for_intent(
             str((kb_context or {}).get("intent_hint") or last_intent or "").strip().upper()
+        )
+    if not selected_pack_id and segment_context_cleared:
+        selected_pack_id = _pick_pack_for_intent(
+            str((kb_context or {}).get("topic") or (kb_context or {}).get("topic_hint") or last_intent or "").strip().upper()
         )
     micro_scene = str((kb_context or {}).get("pack_micro_scene") or "").strip()
     operational_reference = str((kb_context or {}).get("operational_reference") or "").strip()
