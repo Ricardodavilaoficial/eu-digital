@@ -5263,6 +5263,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 inferred_segment_for_kb = ""
 
+            # ----------------------------------------------------------
+            # FILTRO ESTRUTURAL PRÉ-KB (CRÍTICO)
+            # Evita que inferência fraca contamine o lookup inicial
+            # Não usa palavras-chave, apenas coerência estrutural
+            # ----------------------------------------------------------
+            try:
+                if inferred_segment_for_kb:
+                    _seg = str(inferred_segment_for_kb).strip()
+                    _snap = str(kb_snapshot or "")
+
+                    # só aceita se o segmento tiver presença estrutural no snapshot
+                    # (não depende de texto do usuário, nem heurística artificial)
+                    if _seg not in _snap:
+                        inferred_segment_for_kb = ""
+            except Exception:
+                inferred_segment_for_kb = ""
+
             operational_family_hint = ""
             try:
                 operational_family_hint = _infer_operational_family(user_text, segment_hint or inferred_segment_for_kb)
