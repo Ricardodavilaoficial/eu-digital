@@ -601,6 +601,79 @@ def _doc_match_is_compatible_with_current_text(
         return False
 
 
+
+def _clear_incompatible_kb_context_for_current_text(
+    *,
+    kb_snapshot: str,
+    user_text: str,
+    kb_context: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Remove ancoragem segmentada incompatível com o texto atual.
+
+    Não decide por profissão.
+    Não usa palavras-chave de segmento.
+    Não escolhe resposta pronta.
+
+    Objetivo:
+    - se o resolver trouxe um subsegmento errado, não deixar esse contrato contaminar
+      a geração;
+    - preservar sinais globais úteis do platform_kb, como intent_hint, pack_id,
+      signup_url e fatos gerais.
+    """
+    try:
+        ctx = dict(kb_context or {})
+        if not ctx:
+            return ctx
+
+        sub_hint = str(
+            ctx.get("effective_subsegment")
+            or ctx.get("subsegment_hint")
+            or ""
+        ).strip().lower()
+
+        if not sub_hint:
+            return ctx
+
+        raw = str(kb_snapshot or "").strip()
+        if not raw or not (raw.startswith("{") or raw.startswith("[")):
+            return ctx
+
+        obj = json.loads(raw)
+        kb_sub = _find_kb_map_anywhere(obj, "kb_subsegments_v1")
+        if not isinstance(kb_sub, dict) or not kb_sub:
+            return ctx
+
+        doc = kb_sub.get(sub_hint) or {}
+        if isinstance(doc, dict) and _doc_match_is_compatible_with_current_text(
+            user_text=user_text,
+            doc=doc,
+            doc_key=sub_hint,
+            min_score=3,
+        ):
+            return ctx
+
+        # Contrato segmentado incompatível: limpa apenas a ancoragem de segmento.
+        # Preserva sinais globais do resolver para permitir fallback operacional.
+        for key in (
+            "subsegment_hint",
+            "effective_subsegment",
+            "segment_hint",
+            "segment_id",
+            "archetype_id",
+            "segment_profile",
+            "operational_family",
+            "operational_reference",
+            "segment_reference_example",
+            "pack_micro_scene",
+        ):
+            ctx.pop(key, None)
+
+        ctx["segment_context_status"] = "cleared_incompatible_for_current_text"
+        return ctx
+    except Exception:
+        return dict(kb_context or {})
+
 def _family_to_pack_id(family: str) -> str:
     f = str(family or "").strip().lower()
     if f == "agenda":
@@ -5221,6 +5294,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     user_text=user_text,
                     last_intent=(last_intent or ""),
                 )
+
+            kb_context = _clear_incompatible_kb_context_for_current_text(
+                kb_snapshot=kb_snapshot,
+                user_text=user_text,
+                kb_context=kb_context if isinstance(kb_context, dict) else {},
+            )
     except Exception:
         kb_context = {}
 
@@ -5457,6 +5536,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         kb_section = ""
 
     selected_pack_id = str((kb_context or {}).get("pack_id") or "").strip().upper()
+    if not selected_pack_id:
+        selected_pack_id = _pick_pack_for_intent(
+            str((kb_context or {}).get("intent_hint") or last_intent or "").strip().upper()
+        )
     micro_scene = str((kb_context or {}).get("pack_micro_scene") or "").strip()
     operational_reference = str((kb_context or {}).get("operational_reference") or "").strip()
     reference_example = str((kb_context or {}).get("segment_reference_example") or "").strip()
@@ -5968,6 +6051,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             next_step=next_step,
         )
 
+        try:
+            preferred_topic = _preferred_topic_from_kb(
+                kb_context=kb_context if isinstance(kb_context, dict) else {},
+                current_topic=topic,
+            )
+            if topic in ("OTHER", "") and preferred_topic in TOPICS and preferred_topic not in ("OTHER", ""):
+                topic = preferred_topic
+                if confidence not in ("high", "medium"):
+                    confidence = "medium"
+        except Exception:
+            pass
+
         operational_contract = _build_operational_contract(
             kb_snapshot=kb_snapshot,
             kb_context=kb_context if isinstance(kb_context, dict) else {},
@@ -5977,6 +6072,22 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             operational_family=operational_family,
             topic=topic,
         )
+
+        global_pack_scene_ready = False
+        try:
+            global_pack_scene_ready = bool(
+                free_mode
+                and selected_pack_id
+                and str(operational_reference or "").strip()
+                and not segment_for_prompt
+                and str(topic or "").strip().upper() in ("AGENDA", "PEDIDOS", "ORCAMENTO", "SERVICOS", "STATUS", "PROCESSO", "PRODUTO")
+                and str(confidence or "").strip().lower() in ("high", "medium")
+                and str(next_step or "").strip().upper() != "SEND_LINK"
+            )
+            if isinstance(operational_contract, dict):
+                operational_contract["global_pack_fallback"] = global_pack_scene_ready
+        except Exception:
+            global_pack_scene_ready = False
 
         if not response_mode:
             response_mode = _infer_response_mode_from_signals(
@@ -5994,6 +6105,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # sinais estruturais fortes contradizem o JSON do modelo.
         if str(next_step or "").strip().upper() == "SEND_LINK":
             response_mode = "CLOSING"
+        elif global_pack_scene_ready:
+            response_mode = "SCENE"
+            needs_clarify = "no"
+            clarify_q = ""
         elif str(needs_clarify or "").strip().lower() == "yes" or str(clarify_q or "").strip():
             response_mode = "DISCOVERY"
         elif str(topic or "").strip().upper() in ("PRECO", "TRIAL", "ATIVAR", "WHAT_IS", "SOCIAL", "VOZ"):
@@ -6015,8 +6130,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if (
                 response_mode == "SCENE"
-                and segment_for_prompt
-                and kb_anchor_strong
+                and (
+                    (
+                        segment_for_prompt
+                        and kb_anchor_strong
+                    )
+                    or global_pack_scene_ready
+                )
                 and contract_has_operational_base
             ):
                 micro_scene_allowed = True
