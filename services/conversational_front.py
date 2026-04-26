@@ -5306,6 +5306,43 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     last_intent=(last_intent or ""),
                 )
 
+            # ----------------------------------------------------------
+            # PROTEÇÃO PRÉ-LOOKUP (DEFINITIVA)
+            # Impede que o resolver injete segmento incompatível
+            # Atua antes de qualquer KB_LOOKUP / ENRICH
+            # ----------------------------------------------------------
+            try:
+                if isinstance(kb_context, dict):
+                    _seg = str(
+                        kb_context.get("subsegment_hint")
+                        or kb_context.get("effective_subsegment")
+                        or ""
+                    ).strip()
+
+                    if _seg:
+                        _snap = str(kb_snapshot or "")
+
+                        # validação estrutural mínima: segmento precisa ter base real no snapshot
+                        # e não pode ser apenas "melhor encaixe genérico"
+                        if _seg not in _snap:
+                            for k in (
+                                "subsegment_hint",
+                                "effective_subsegment",
+                                "segment_hint",
+                                "segment_id",
+                                "archetype_id",
+                                "segment_profile",
+                                "operational_family",
+                                "operational_reference",
+                                "segment_reference_example",
+                                "pack_micro_scene",
+                            ):
+                                kb_context.pop(k, None)
+
+                            kb_context["segment_context_status"] = "blocked_pre_lookup"
+            except Exception:
+                pass
+
             kb_context = _clear_incompatible_kb_context_for_current_text(
                 kb_snapshot=kb_snapshot,
                 user_text=user_text,
