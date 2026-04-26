@@ -294,7 +294,13 @@ def _looks_explanatory_sentence(text: str) -> bool:
 # -----------------------------
 
 def _infer_segment_from_text(user_text: str, kb_snapshot: str) -> str:
-    """Infer a segment from explicit user text, preferring KB-known segment keys."""
+    """
+    Infere segmento somente quando houver sinal explícito e seguro no texto.
+
+    Esta função NÃO deve escolher "o melhor documento disponível" do KB.
+    Matching estrutural por conteúdo fica concentrado em _infer_segment_from_docs(),
+    que possui validação de compatibilidade com o texto atual.
+    """
     try:
         t = str(user_text or "").strip().lower()
         if not t:
@@ -341,34 +347,6 @@ def _infer_segment_from_text(user_text: str, kb_snapshot: str) -> str:
         if "candidat" in _txt:
             return "politica_atendimento_publico"
 
-        # fallback estrutural por conteúdo real do KB
-        try:
-            if isinstance(obj, dict):
-                kb_subsegments = obj.get("kb_subsegments_v1") or {}
-                if isinstance(kb_subsegments, dict) and kb_subsegments:
-                    best_sub = _best_doc_match(norm, kb_subsegments, min_score=2)
-                    if best_sub:
-                        return str(best_sub).strip().lower()
-
-                kb_segments = obj.get("kb_segments_v1") or {}
-                if isinstance(kb_segments, dict) and kb_segments:
-                    best_seg = _best_doc_match(norm, kb_segments, min_score=2)
-                    if best_seg:
-                        return str(best_seg).strip().lower()
-        except Exception:
-            pass
-
-        # fallback final por overlap de chave
-        all_candidates = []
-        try:
-            all_candidates.extend([str(x).strip() for x in sub_candidates if str(x).strip()])
-            all_candidates.extend([str(x).strip() for x in candidates if str(x).strip()])
-        except Exception:
-            all_candidates = []
-
-        best = _best_lookup_key_match(norm, all_candidates, min_score=2)
-        if best:
-            return str(best).strip().lower()
         return ""
     except Exception:
         return ""
