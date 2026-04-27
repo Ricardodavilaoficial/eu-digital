@@ -5157,7 +5157,7 @@ def _platform_kb_resolve_runtime(
 
         if topic not in TOPICS or topic == "OTHER":
             text_norm = _normalize_lookup_key(user_text)
-            rules = ((kb_obj.get("routing_hints") or {}).get("intent_override_rules") or [])
+            rules = ((_platform_get_map(kb_obj, "routing_hints") or {}).get("intent_override_rules") or [])
             if isinstance(rules, list):
                 for rule in rules:
                     if not isinstance(rule, dict):
@@ -5177,7 +5177,7 @@ def _platform_kb_resolve_runtime(
 
         profile: Dict[str, Any] = {}
         profile_key = ""
-        segment_map = kb_obj.get("segment_value_map_v1") or {}
+        segment_map = _platform_get_map(kb_obj, "segment_value_map_v1")
         if isinstance(segment_map, dict):
             haystack = _normalize_lookup_key(
                 " ".join([str(user_text or ""), str(segment_hint or "")]).strip()
@@ -5189,7 +5189,7 @@ def _platform_kb_resolve_runtime(
                     profile = value
                     break
 
-        packs = kb_obj.get("value_packs_v1") or {}
+        packs = _platform_get_map(kb_obj, "value_packs_v1")
         preferred = [
             str(x or "").strip().upper()
             for x in ((profile or {}).get("preferred_packs") or [])
@@ -5250,7 +5250,7 @@ def _platform_topic_from_kb_rules(kb_obj: Dict[str, Any], user_text: str) -> str
     """
     try:
         text_norm = _normalize_lookup_key(user_text)
-        rules = ((kb_obj or {}).get("routing_hints") or {}).get("intent_override_rules") or []
+        rules = ((_platform_get_map(kb_obj or {}, "routing_hints") or {}).get("intent_override_rules") or [])
         if not isinstance(rules, list):
             return ""
 
@@ -5282,7 +5282,7 @@ def _platform_segment_profile_from_kb(
     mas não existe como documento operacional segmentado.
     """
     try:
-        svm = (kb_obj or {}).get("segment_value_map_v1") or {}
+        svm = _platform_get_map(kb_obj or {}, "segment_value_map_v1")
         if not isinstance(svm, dict):
             return "", {}
 
@@ -5312,7 +5312,7 @@ def _platform_pack_from_profile(
     Não altera fluxo segmentado: só é usado quando não há doc segmentado hidratado.
     """
     try:
-        packs = (kb_obj or {}).get("value_packs_v1") or {}
+        packs = _platform_get_map(kb_obj or {}, "value_packs_v1")
         if not isinstance(packs, dict):
             return ""
 
@@ -5362,7 +5362,7 @@ def _platform_pack_material(
         if not pack_key:
             return {}
 
-        packs = (kb_obj or {}).get("value_packs_v1") or {}
+        packs = _platform_get_map(kb_obj or {}, "value_packs_v1")
         pack = packs.get(pack_key) or {}
         short = (pack.get("runtime_short") or {}) if isinstance(pack, dict) else {}
         micro_scene = str(short.get("micro_scene") or "").strip()
@@ -5377,6 +5377,33 @@ def _platform_pack_material(
             "reference_example": example_line or micro_scene,
             "operational_reference": operational_reference,
         }
+    except Exception:
+        return {}
+
+
+
+
+def _platform_get_map(kb_obj: Dict[str, Any], key: str) -> Dict[str, Any]:
+    """
+    Busca mapas do platform_kb na raiz, em answer_playbook_v1 ou em níveis internos.
+    Não cria regra de segmento nem palavra-chave: só resolve a localização real do dado.
+    """
+    try:
+        if not isinstance(kb_obj, dict) or not key:
+            return {}
+
+        direct = kb_obj.get(key)
+        if isinstance(direct, dict):
+            return direct
+
+        ap = kb_obj.get("answer_playbook_v1")
+        if isinstance(ap, dict):
+            nested = ap.get(key)
+            if isinstance(nested, dict):
+                return nested
+
+        found = _find_kb_map_anywhere(kb_obj, key, max_depth=5)
+        return found if isinstance(found, dict) else {}
     except Exception:
         return {}
 
