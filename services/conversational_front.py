@@ -5380,6 +5380,41 @@ def _platform_pack_material(
     except Exception:
         return {}
 
+
+def _resolve_canonical_topic(
+    *,
+    kb_snapshot_obj: Dict[str, Any],
+    kb_context: Dict[str, Any],
+    user_text: str,
+    current_topic: str = "",
+    last_intent: str = "",
+) -> str:
+    """
+    Preserva a intenção do lead separada da resolução do KB.
+    Falha de hidratação de segmento não pode rebaixar topic para OTHER.
+    Não contém palavras-chave locais: usa apenas sinais já existentes e routing_hints do platform_kb.
+    """
+    try:
+        for candidate in (
+            current_topic,
+            (kb_context or {}).get("topic"),
+            (kb_context or {}).get("topic_hint"),
+            (kb_context or {}).get("intent_hint"),
+            last_intent,
+        ):
+            t = str(candidate or "").strip().upper()
+            if t in TOPICS and t != "OTHER":
+                return t
+
+        routed = _platform_topic_from_kb_rules(kb_snapshot_obj, user_text)
+        routed = str(routed or "").strip().upper()
+        if routed in TOPICS and routed != "OTHER":
+            return routed
+
+        return ""
+    except Exception:
+        return ""
+
 def _segment_reference_example(kb: Dict[str, Any], segment_key: str, pack_id: str) -> str:
     try:
         seg = (segment_key or "").strip().lower()
@@ -5936,6 +5971,27 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         platform_kb_mode = False
         platform_runtime = {}
 
+    # ----------------------------------------------------------
+    # CANONICAL TOPIC
+    # Intenção do lead é separada da resolução do KB.
+    # Se o KB segmentado não hidratou, a intenção válida deve guiar o platform_kb.
+    # ----------------------------------------------------------
+    canonical_topic = ""
+    try:
+        canonical_topic = _resolve_canonical_topic(
+            kb_snapshot_obj=kb_snapshot_obj,
+            kb_context=kb_context if isinstance(kb_context, dict) else {},
+            user_text=user_text,
+            current_topic=str((platform_runtime or {}).get("topic") or ""),
+            last_intent=last_intent,
+        )
+
+        if canonical_topic and platform_kb_mode and isinstance(kb_context, dict):
+            kb_context["topic"] = canonical_topic
+            kb_context["intent_hint"] = canonical_topic
+    except Exception:
+        canonical_topic = ""
+
     free_mode = bool(is_lead and ai_turns <= FRONT_FREE_MODE_MAX_TURNS)
     try:
         if isinstance(kb_context, dict):
@@ -6047,7 +6103,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         operational_reference=operational_reference,
         reference_example=reference_example,
         operational_family=operational_family,
-        topic="OTHER",
+        topic=(canonical_topic or "OTHER"),
     )
 
     # ----------------------------------------------------------
@@ -6501,6 +6557,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if topic not in TOPICS:
             topic = "OTHER"
 
+        # Se não há KB segmentado hidratado, OTHER do modelo não pode apagar
+        # a intenção já resolvida pelo platform_kb.
+        try:
+            if (
+                platform_kb_mode
+                and canonical_topic
+                and canonical_topic in TOPICS
+                and canonical_topic != "OTHER"
+                and topic == "OTHER"
+            ):
+                topic = canonical_topic
+                intent = canonical_topic
+                if confidence not in ("high", "medium"):
+                    confidence = "medium"
+        except Exception:
+            pass
+
         # 🔒 Aplicação determinística de sinais do platform_kb
         # Só atua sem KB segmentado hidratado.
         forced_topic = ""
@@ -6548,6 +6621,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             clarify_q=clarify_q,
             next_step=next_step,
         )
+
+        try:
+            if (
+                platform_kb_mode
+                and canonical_topic
+                and canonical_topic in TOPICS
+                and canonical_topic != "OTHER"
+                and topic == "OTHER"
+            ):
+                topic = canonical_topic
+                intent = canonical_topic
+                if confidence not in ("high", "medium"):
+                    confidence = "medium"
+        except Exception:
+            pass
 
         try:
             if platform_kb_mode and forced_topic in TOPICS and forced_topic != "OTHER":
@@ -6603,23 +6691,28 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         )
 
         try:
-            if platform_kb_mode and platform_runtime and isinstance(operational_contract, dict):
-                if platform_runtime.get("topic"):
-                    operational_contract["topic"] = platform_runtime["topic"]
-                if platform_runtime.get("pack_id"):
-                    operational_contract["selected_pack_id"] = platform_runtime["pack_id"]
-                if platform_runtime.get("platform_segment_key"):
-                    operational_contract["platform_segment_key"] = platform_runtime["platform_segment_key"]
-                if operational_reference:
-                    operational_contract["operational_reference"] = operational_reference
-                if reference_example:
-                    operational_contract["reference_example"] = reference_example
-                    operational_contract["has_reference_example"] = True
-                if micro_scene:
-                    operational_contract["pack_micro_scene"] = micro_scene
-                    operational_contract["has_practical_scene"] = True
-                operational_contract["hydrated_from_platform_kb"] = True
-                operational_contract["global_pack_fallback"] = True
+            if platform_kb_mode and isinstance(operational_contract, dict):
+                if canonical_topic and canonical_topic in TOPICS and canonical_topic != "OTHER":
+                    operational_contract["topic"] = canonical_topic
+                    topic = canonical_topic
+                    intent = canonical_topic
+
+                if platform_runtime:
+                    if platform_runtime.get("pack_id"):
+                        operational_contract["selected_pack_id"] = platform_runtime["pack_id"]
+                    if platform_runtime.get("platform_segment_key"):
+                        operational_contract["platform_segment_key"] = platform_runtime["platform_segment_key"]
+                    if operational_reference:
+                        operational_contract["operational_reference"] = operational_reference
+                    if reference_example:
+                        operational_contract["reference_example"] = reference_example
+                        operational_contract["has_reference_example"] = True
+                    if micro_scene:
+                        operational_contract["pack_micro_scene"] = micro_scene
+                        operational_contract["has_practical_scene"] = True
+
+                    operational_contract["hydrated_from_platform_kb"] = True
+                    operational_contract["global_pack_fallback"] = True
         except Exception:
             pass
 
@@ -7716,9 +7809,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 out["decider"] = decider
 
             logging.info(
-                "[CONVERSATIONAL_FRONT][FREE_MODE] ai_turns=%s topic=%s confidence=%s nextStep=%s shouldEnd=%s kbChars=%s tok=%s source=%s contract=%s docs=%s hydrated=%s",
+                "[CONVERSATIONAL_FRONT][FREE_MODE] ai_turns=%s topic=%s canonical_topic=%s platform_kb_mode=%s confidence=%s nextStep=%s shouldEnd=%s kbChars=%s tok=%s source=%s contract=%s docs=%s hydrated=%s",
                 ai_turns,
                 topic,
+                canonical_topic if 'canonical_topic' in locals() else "",
+                platform_kb_mode if 'platform_kb_mode' in locals() else False,
                 confidence,
                 next_step,
                 should_end,
