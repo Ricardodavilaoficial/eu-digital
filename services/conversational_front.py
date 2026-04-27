@@ -5230,6 +5230,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     is_lead = bool(state_summary.get("is_lead") or False)
     kb_snapshot, kb_compact, kb_snapshot_json_ok = _prepare_kb_snapshot_buffers(kb_snapshot)
 
+    # 🔒 Snapshot em dict para regras determinísticas do platform_kb
+    kb_snapshot_obj: Dict[str, Any] = {}
+    try:
+        if kb_snapshot and str(kb_snapshot).strip().startswith("{"):
+            _parsed_kb_snapshot = json.loads(str(kb_snapshot))
+            if isinstance(_parsed_kb_snapshot, dict):
+                kb_snapshot_obj = _parsed_kb_snapshot
+    except Exception:
+        kb_snapshot_obj = {}
+
     try:
         logging.info(
             "[CONVERSATIONAL_FRONT][KB_SNAPSHOT_IN] runtime_chars=%s prompt_chars=%s json_ok=%s",
@@ -6104,11 +6114,41 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if topic not in TOPICS:
             topic = "OTHER"
 
+        # 🔒 Aplicação determinística de routing_hints (platform_kb)
+        try:
+            _txt = (user_text or "").lower()
+            _routing = (kb_snapshot_obj.get("routing_hints") or {}).get("intent_override_rules") or []
+
+            for _rule in _routing:
+                _triggers = _rule.get("when_any") or []
+                if any(t in _txt for t in _triggers if isinstance(t, str)):
+                    forced_topic = _rule.get("force_topic")
+                    if forced_topic:
+                        topic = str(forced_topic).strip().upper()
+                        intent = topic
+                        break
+        except Exception:
+            pass
+
         next_step = str(data.get("nextStep") or data.get("next_step") or "NONE").strip().upper()
         if next_step not in ("NONE", "SEND_LINK"):
             next_step = "NONE"
 
         should_end = bool(data.get("shouldEnd")) or bool(data.get("should_end"))
+
+        # 🔒 Seleção de pack baseada em topic (fallback inteligente via platform_kb)
+        try:
+            _packs = (kb_snapshot_obj.get("value_packs_v1") or {})
+
+            if not segment_for_prompt:
+                if topic == "AGENDA" and "PACK_A_AGENDA" in _packs:
+                    selected_pack_id = "PACK_A_AGENDA"
+                elif topic == "PRICING" and "PACK_B_SERVICOS" in _packs:
+                    selected_pack_id = "PACK_B_SERVICOS"
+                elif topic == "PROCESS" and "PACK_D_STATUS" in _packs:
+                    selected_pack_id = "PACK_D_STATUS"
+        except Exception:
+            pass
 
 
         # ----------------------------------------------------------
@@ -6147,6 +6187,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             operational_family=operational_family,
             topic=topic,
         )
+
+        # 🔒 Injetar microcena curta do pack selecionado (se existir)
+        try:
+            if selected_pack_id:
+                _pack = (kb_snapshot_obj.get("value_packs_v1") or {}).get(selected_pack_id) or {}
+                _short = (_pack.get("runtime_short") or {})
+                _scene = _short.get("micro_scene")
+
+                if _scene:
+                    operational_contract["reference_example"] = _scene
+                    operational_contract["has_practical_scene"] = True
+        except Exception:
+            pass
 
         global_pack_scene_ready = False
         try:
@@ -7189,6 +7242,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     name_use = "clarify"
             # ---------------------------------------------------------
 
+            # 🔒 Garantir no máximo 1 pergunta válida (policy)
+            try:
+                if "?" in reply_text:
+                    parts = reply_text.split("?")
+                    if len(parts) > 2:
+                        reply_text = parts[0].strip() + "?"
+                        spoken_text = reply_text
+            except Exception:
+                pass
+
             out = {
                 "response_mode": response_mode,
                 "replyText": reply_text,
@@ -7668,6 +7731,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 name_use = "clarify"
 
         spoken_text = str(spoken_text or reply_text or "").strip()
+
+        # 🔒 Garantir no máximo 1 pergunta válida (policy)
+        try:
+            if "?" in reply_text:
+                parts = reply_text.split("?")
+                if len(parts) > 2:
+                    reply_text = parts[0].strip() + "?"
+                    spoken_text = reply_text
+        except Exception:
+            pass
 
         if FRONT_TRACE_ENABLED:
             logging.info({
