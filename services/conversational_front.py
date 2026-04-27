@@ -6246,6 +6246,27 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if not isinstance(operational_contract, dict) or not operational_contract:
             operational_contract = base_operational_contract if 'base_operational_contract' in locals() else {}
 
+        # 🔒 GARANTIA DE CONTRATO MÍNIMO (fallback global real)
+        try:
+            _has_operational = bool(
+                str(operational_contract.get("operational_reference") or "").strip()
+                or list(operational_contract.get("operational_ritual") or [])
+            )
+
+            if not _has_operational:
+                # fallback mínimo neutro (sem heurística de segmento)
+                operational_contract["operational_reference"] = "Atendimento automatizado via WhatsApp com foco em organização, resposta rápida e condução do cliente."
+                operational_contract["operational_ritual"] = [
+                    "recebe a mensagem do cliente",
+                    "interpreta a intenção",
+                    "organiza a informação",
+                    "responde de forma clara",
+                    "conduz para o próximo passo"
+                ]
+                operational_contract["global_pack_fallback"] = True
+        except Exception:
+            pass
+
         try:
             if (
                 isinstance(operational_contract, dict)
