@@ -4967,7 +4967,7 @@ def _prepare_kb_snapshot_buffers(kb_snapshot: str) -> tuple[str, str, bool]:
                 json_ok = False
 
         if json_ok:
-            runtime_snapshot = raw[:FRONT_KB_MAX_CHARS_PACKS_V1].rstrip()
+            runtime_snapshot = raw
             prompt_snapshot = _compact_kb_snapshot(_truncate(raw, FRONT_KB_MAX_CHARS))
             return runtime_snapshot, prompt_snapshot, True
 
