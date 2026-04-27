@@ -5124,6 +5124,145 @@ def _pick_pack_for_intent(intent: str, pack_id: str = "") -> str:
     return ""
 
 
+
+
+def _platform_topic_from_kb_rules(kb_obj: Dict[str, Any], user_text: str) -> str:
+    """
+    Resolve topic usando regras do próprio platform_kb.
+    Não contém palavras-chave próprias no código: apenas executa as regras cadastradas no banco.
+    """
+    try:
+        text_norm = _normalize_lookup_key(user_text)
+        rules = ((kb_obj or {}).get("routing_hints") or {}).get("intent_override_rules") or []
+        if not isinstance(rules, list):
+            return ""
+
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            triggers = rule.get("when_any") or []
+            forced_topic = str(rule.get("force_topic") or "").strip().upper()
+            if not forced_topic:
+                continue
+
+            for item in triggers:
+                item_norm = _normalize_lookup_key(str(item or ""))
+                if item_norm and item_norm in text_norm:
+                    return forced_topic
+        return ""
+    except Exception:
+        return ""
+
+
+def _platform_segment_profile_from_kb(
+    kb_obj: Dict[str, Any],
+    user_text: str,
+    segment_candidate: str = "",
+) -> tuple[str, Dict[str, Any]]:
+    """
+    Encontra perfil em segment_value_map_v1 sem assumir segmento do KB segmentado.
+    Serve para casos como: o lead declara uma atividade que existe no platform_kb,
+    mas não existe como documento operacional segmentado.
+    """
+    try:
+        svm = (kb_obj or {}).get("segment_value_map_v1") or {}
+        if not isinstance(svm, dict):
+            return "", {}
+
+        text_norm = _normalize_lookup_key(
+            " ".join([str(user_text or ""), str(segment_candidate or "")]).strip()
+        )
+
+        for key, profile in svm.items():
+            key_raw = str(key or "").strip()
+            key_norm = _normalize_lookup_key(key_raw)
+            if key_norm and key_norm in text_norm and isinstance(profile, dict):
+                return key_raw, profile
+
+        return "", {}
+    except Exception:
+        return "", {}
+
+
+def _platform_pack_from_profile(
+    kb_obj: Dict[str, Any],
+    topic: str,
+    profile: Dict[str, Any],
+    current_pack_id: str = "",
+) -> str:
+    """
+    Escolhe pack usando topic + preferred_packs do platform_kb.
+    Não altera fluxo segmentado: só é usado quando não há doc segmentado hidratado.
+    """
+    try:
+        packs = (kb_obj or {}).get("value_packs_v1") or {}
+        if not isinstance(packs, dict):
+            return ""
+
+        current = str(current_pack_id or "").strip().upper()
+        if current and current in packs:
+            return current
+
+        preferred = [
+            str(x or "").strip().upper()
+            for x in ((profile or {}).get("preferred_packs") or [])
+            if str(x or "").strip()
+        ]
+        blocked = {
+            str(x or "").strip().upper()
+            for x in ((profile or {}).get("do_not_use") or [])
+            if str(x or "").strip()
+        }
+
+        by_topic = _pick_pack_for_intent(str(topic or "").strip().upper())
+        if by_topic and by_topic in packs and by_topic not in blocked:
+            if not preferred or by_topic in preferred:
+                return by_topic
+
+        for pack_id in preferred:
+            if pack_id in packs and pack_id not in blocked:
+                return pack_id
+
+        if by_topic and by_topic in packs:
+            return by_topic
+
+        return ""
+    except Exception:
+        return ""
+
+
+def _platform_pack_material(
+    kb_obj: Dict[str, Any],
+    profile: Dict[str, Any],
+    pack_id: str,
+) -> Dict[str, str]:
+    """
+    Extrai material operacional curto do platform_kb.
+    Prioridade: exemplo do segmento no pack; depois micro_scene genérica do pack.
+    """
+    try:
+        pack_key = str(pack_id or "").strip().upper()
+        if not pack_key:
+            return {}
+
+        packs = (kb_obj or {}).get("value_packs_v1") or {}
+        pack = packs.get(pack_key) or {}
+        short = (pack.get("runtime_short") or {}) if isinstance(pack, dict) else {}
+        micro_scene = str(short.get("micro_scene") or "").strip()
+
+        tokens = ((profile or {}).get("tokens") or {}).get(pack_key) or {}
+        example_line = str((tokens or {}).get("example_line") or "").strip()
+
+        operational_reference = example_line or micro_scene
+
+        return {
+            "micro_scene": micro_scene,
+            "reference_example": example_line or micro_scene,
+            "operational_reference": operational_reference,
+        }
+    except Exception:
+        return {}
+
 def _segment_reference_example(kb: Dict[str, Any], segment_key: str, pack_id: str) -> str:
     try:
         seg = (segment_key or "").strip().lower()
@@ -5535,6 +5674,45 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     except Exception:
         pass
 
+    real_kb_docs = real_kb_docs if 'real_kb_docs' in locals() else {}
+    segment_docs_hydrated = False
+    try:
+        segment_docs_hydrated = bool(
+            isinstance(real_kb_docs, dict)
+            and (
+                real_kb_docs.get("subsegment_doc")
+                or real_kb_docs.get("segment_doc")
+                or real_kb_docs.get("archetype_doc")
+            )
+        )
+    except Exception:
+        segment_docs_hydrated = False
+
+    platform_segment_key = ""
+    platform_segment_profile: Dict[str, Any] = {}
+    try:
+        platform_segment_key, platform_segment_profile = _platform_segment_profile_from_kb(
+            kb_snapshot_obj,
+            user_text,
+            effective_segment,
+        )
+    except Exception:
+        platform_segment_key, platform_segment_profile = "", {}
+
+    platform_kb_mode = bool(
+        not segment_docs_hydrated
+        and isinstance(kb_snapshot_obj, dict)
+        and kb_snapshot_obj
+    )
+
+    if platform_kb_mode:
+        # Se não há documento segmentado hidratado, o segmento não deve bloquear o platform_kb.
+        segment_for_prompt = ""
+        if isinstance(kb_context, dict):
+            kb_context["platform_kb_mode"] = True
+            if platform_segment_key:
+                kb_context["platform_segment_key"] = platform_segment_key
+
     # ----------------------------------------------------------
     # RE-HIDRATAÇÃO ASSISTIDA
     # Se ainda veio magro, tenta mais uma vez com o melhor segmento
@@ -5636,6 +5814,40 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         operational_reference = _kb_get_segment_scene(kb_snapshot, effective_segment)
     if not operational_reference and micro_scene:
         operational_reference = micro_scene
+
+    platform_topic_hint = ""
+    try:
+        if platform_kb_mode:
+            platform_topic_hint = _platform_topic_from_kb_rules(kb_snapshot_obj, user_text)
+            if platform_topic_hint:
+                kb_context["topic"] = platform_topic_hint
+                kb_context["intent_hint"] = platform_topic_hint
+
+            selected_pack_id = _platform_pack_from_profile(
+                kb_snapshot_obj,
+                platform_topic_hint or str((kb_context or {}).get("intent_hint") or last_intent or ""),
+                platform_segment_profile,
+                selected_pack_id,
+            )
+
+            platform_material = _platform_pack_material(
+                kb_snapshot_obj,
+                platform_segment_profile,
+                selected_pack_id,
+            )
+
+            if platform_material:
+                micro_scene = str(platform_material.get("micro_scene") or micro_scene or "").strip()
+                reference_example = str(platform_material.get("reference_example") or reference_example or "").strip()
+                operational_reference = str(platform_material.get("operational_reference") or operational_reference or "").strip()
+
+                kb_context["pack_id"] = selected_pack_id
+                kb_context["pack_micro_scene"] = micro_scene
+                kb_context["segment_reference_example"] = reference_example
+                kb_context["operational_reference"] = operational_reference
+                kb_context["hydrated_from_platform_kb"] = True
+    except Exception:
+        pass
 
     # ----------------------------------------------------------
     # REFRESH DA ÂNCORA OPERACIONAL
@@ -5756,7 +5968,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # Mantém os fatos selecionados do KB, mas sem empurrar cena
         # antes da decisão soberana do modelo.
         # ARQUITETURA: NÃO vazar KB antes da confirmação de segmento
-        user_scene_block = kb_section if segment_for_prompt else ""
+        if segment_for_prompt:
+            user_scene_block = kb_section
+        elif platform_kb_mode and (operational_reference or reference_example or micro_scene):
+            user_scene_block = (
+                "[BASE OPERACIONAL DO PLATFORM_KB]\n"
+                + (f"topic_hint: {platform_topic_hint}\n" if platform_topic_hint else "")
+                + (f"pack_id: {selected_pack_id}\n" if selected_pack_id else "")
+                + (f"operational_reference: {operational_reference}\n" if operational_reference else "")
+                + (f"reference_example: {reference_example}\n" if reference_example else "")
+            )
+        else:
+            user_scene_block = ""
 
     kb_show_reply_seed = ""
     kb_forced_topic = ""
@@ -5803,7 +6026,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 + f"allowed_next_step: {str((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('allowed_next_step') or '').strip()}\n"
                 + f"operational_ritual: {json.dumps((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('operational_ritual') or [], ensure_ascii=False)}\n\n"
             )
-            if segment_for_prompt and (
+            if (segment_for_prompt or platform_kb_mode) and (
                 (
                     allow_kb_payload_scene
                     and (
@@ -6115,20 +6338,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             topic = "OTHER"
 
         # 🔒 Aplicação determinística de routing_hints (platform_kb)
+        # Só trava topic quando NÃO há documento segmentado hidratado.
+        forced_topic = ""
         try:
-            _txt = (user_text or "").lower()
-            _routing = (kb_snapshot_obj.get("routing_hints") or {}).get("intent_override_rules") or []
-
-            for _rule in _routing:
-                _triggers = _rule.get("when_any") or []
-                if any(t in _txt for t in _triggers if isinstance(t, str)):
-                    forced_topic = _rule.get("force_topic")
-                    if forced_topic:
-                        topic = str(forced_topic).strip().upper()
-                        intent = topic
-                        break
+            if platform_kb_mode:
+                forced_topic = _platform_topic_from_kb_rules(kb_snapshot_obj, user_text)
+                if forced_topic and forced_topic in TOPICS:
+                    topic = forced_topic
+                    intent = forced_topic
         except Exception:
-            pass
+            forced_topic = ""
 
         next_step = str(data.get("nextStep") or data.get("next_step") or "NONE").strip().upper()
         if next_step not in ("NONE", "SEND_LINK"):
@@ -6166,6 +6385,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             next_step=next_step,
         )
 
+        # Protege a decisão do platform_kb contra regressão para OTHER.
+        # Não atua quando há segmento real hidratado.
+        try:
+            if platform_kb_mode and forced_topic and forced_topic in TOPICS:
+                if not topic or topic == "OTHER":
+                    topic = forced_topic
+                    intent = forced_topic
+                    if confidence not in ("high", "medium"):
+                        confidence = "medium"
+        except Exception:
+            pass
+
         try:
             preferred_topic = _preferred_topic_from_kb(
                 kb_context=kb_context if isinstance(kb_context, dict) else {},
@@ -6175,6 +6406,28 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 topic = preferred_topic
                 if confidence not in ("high", "medium"):
                     confidence = "medium"
+        except Exception:
+            pass
+
+        try:
+            if platform_kb_mode:
+                selected_pack_id = _platform_pack_from_profile(
+                    kb_snapshot_obj,
+                    topic,
+                    platform_segment_profile,
+                    selected_pack_id,
+                )
+
+                platform_material = _platform_pack_material(
+                    kb_snapshot_obj,
+                    platform_segment_profile,
+                    selected_pack_id,
+                )
+
+                if platform_material:
+                    micro_scene = str(platform_material.get("micro_scene") or micro_scene or "").strip()
+                    reference_example = str(platform_material.get("reference_example") or reference_example or "").strip()
+                    operational_reference = str(platform_material.get("operational_reference") or operational_reference or "").strip()
         except Exception:
             pass
 
@@ -6206,7 +6459,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             global_pack_scene_ready = bool(
                 free_mode
                 and selected_pack_id
-                and str(operational_reference or "").strip()
+                and (
+                    str(operational_reference or "").strip()
+                    or str(reference_example or "").strip()
+                    or str(micro_scene or "").strip()
+                )
                 and not segment_for_prompt
                 and str(topic or "").strip().upper() in ("AGENDA", "PEDIDOS", "ORCAMENTO", "SERVICOS", "STATUS", "PROCESSO", "PRODUTO")
                 and str(confidence or "").strip().lower() in ("high", "medium")
