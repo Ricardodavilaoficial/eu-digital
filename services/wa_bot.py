@@ -1015,6 +1015,71 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
         return payload or {}
 
 
+def _compact_value_packs_for_front(value_packs: Any) -> Dict[str, Any]:
+    """
+    Compacta packs globais para o snapshot do front.
+    Preserva o runtime curto e os slots; remove textos longos que estouram o limite.
+    """
+    out: Dict[str, Any] = {}
+    try:
+        if not isinstance(value_packs, dict):
+            return {}
+
+        for pid, pack in list(value_packs.items()):
+            if not isinstance(pack, dict):
+                continue
+
+            p: Dict[str, Any] = {}
+
+            if pack.get("label"):
+                p["label"] = _clip_front_text(pack.get("label"), 80)
+
+            runtime_short = pack.get("runtime_short") or {}
+            if isinstance(runtime_short, dict):
+                micro_scene = _clip_front_text(runtime_short.get("micro_scene"), 320)
+                if micro_scene:
+                    p["runtime_short"] = {"micro_scene": micro_scene}
+
+            slots_out: Dict[str, Any] = {}
+            segment_slots = pack.get("segment_slots") or {}
+            if isinstance(segment_slots, dict):
+                for sk, sv in list(segment_slots.items()):
+                    if not isinstance(sv, dict):
+                        continue
+                    default_value = _clip_front_text(sv.get("default"), 140)
+                    if default_value:
+                        slots_out[str(sk)] = {"default": default_value}
+            if slots_out:
+                p["segment_slots"] = slots_out
+
+            outcomes = pack.get("outcomes") or []
+            if isinstance(outcomes, list):
+                picked = [
+                    _clip_front_text(x, 100)
+                    for x in outcomes[:4]
+                    if _clip_front_text(x, 100)
+                ]
+                if picked:
+                    p["outcomes"] = picked
+
+            limits = pack.get("limits") or []
+            if isinstance(limits, list):
+                picked = [
+                    _clip_front_text(x, 100)
+                    for x in limits[:3]
+                    if _clip_front_text(x, 100)
+                ]
+                if picked:
+                    p["limits"] = picked
+
+            if p:
+                out[str(pid)] = p
+
+        return out
+    except Exception:
+        return {}
+
+
 def _build_front_kb_snapshot(topic: str) -> str:
     """
     Monta snapshot textual compacto com teto de chars.
@@ -1093,7 +1158,7 @@ def _build_front_kb_snapshot(topic: str) -> str:
                     "segment_template_v1": pb.get("segment_template_v1") if isinstance(pb, dict) else {},
                     "segment_value_map_v1": pb.get("segment_value_map_v1") if isinstance(pb, dict) else {},
                 },
-                "value_packs_v1": kb.get("value_packs_v1") or {},
+                "value_packs_v1": _compact_value_packs_for_front(kb.get("value_packs_v1") or {}),
                 "platform_pricing": {"current": pricing_compact} if pricing_compact else {},
                 "kb_segments_v1": compact_segments,
                 "kb_subsegments_v1": compact_subsegments,
