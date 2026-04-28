@@ -3749,122 +3749,35 @@ def _build_structural_last_resort_reply(
     except Exception:
         return ""
 
-
-def _meaningful_token_set(text: str) -> set[str]:
-    try:
-        raw = re.findall(r"\w+", str(text or "").lower())
-        stop = {
-            "para", "com", "uma", "por", "que", "ele", "ela", "dos", "das", "esse", "essa",
-            "isso", "como", "quando", "onde", "qual", "quais", "mais", "menos", "muito",
-            "pouco", "sobre", "pelo", "pela", "pelos", "pelas", "aqui", "ali", "entao",
-            "então", "voce", "você", "meu", "minha", "seu", "sua", "seus", "suas", "mei",
-            "robo", "robô", "cliente", "clientes", "mensagem", "atendimento",
-        }
-        return {t for t in raw if len(t) >= 4 and t not in stop}
-    except Exception:
-        return set()
-
-
-def _scene_echoes_user_request(
-    *,
-    text: str,
-    user_text: str,
-    grounding_text: str,
-) -> bool:
-    try:
-        sentences = [seg.strip() for seg in _split_sentences_pt(text) if str(seg).strip()]
-        first = sentences[0] if sentences else str(text or "").strip()
-        first_tokens = _meaningful_token_set(first)
-        user_tokens = _meaningful_token_set(user_text)
-        grounding_tokens = _meaningful_token_set(grounding_text)
-
-        if not first_tokens or not user_tokens:
-            return False
-
-        user_ratio = len(first_tokens.intersection(user_tokens)) / max(1, len(first_tokens))
-        grounding_overlap = len(first_tokens.intersection(grounding_tokens))
-
-        # Detecção estrutural:
-        # frase inicial muito próxima do pedido do lead e pouco conectada ao KB.
-        return bool(user_ratio >= 0.42 and grounding_overlap <= 1 and len(first) >= 48)
-    except Exception:
-        return False
-
-
-def _has_ungrounded_scene_tail(
-    *,
-    text: str,
-    grounding_text: str,
-) -> bool:
-    try:
-        sentences = [seg.strip() for seg in _split_sentences_pt(text) if str(seg).strip()]
-        if len(sentences) < 2:
-            return False
-
-        last = sentences[-1]
-        last_tokens = _meaningful_token_set(last)
-        grounding_tokens = _meaningful_token_set(grounding_text)
-
-        if not last_tokens:
-            return False
-
-        overlap = len(last_tokens.intersection(grounding_tokens))
-
-        # Detecção estrutural de fechamento fora do fluxo operacional
-        novel = len(last_tokens.difference(grounding_tokens))
-        return bool(overlap <= 1 and novel >= 4 and len(last) >= 42)
-    except Exception:
-        return False
-
-
-def _scene_has_meta_or_ungrounded_shape(
-    *,
-    text: str,
-    user_text: str,
-    contract: Dict[str, Any] | None = None,
-) -> bool:
+def _heal_algorithmic_micro_scene(text: str) -> str:
+    """
+    Cura estrutural mínima para modelos leves.
+    Remove abertura meta fora do agente operacional e limita a saída a 3 frases.
+    """
     try:
         t = str(text or "").strip()
         if not t:
-            return False
+            return ""
 
-        c = dict(contract or {})
-        grounding_parts = [
-            c.get("operational_reference"),
-            c.get("reference_example"),
-            c.get("operational_family"),
-            c.get("primary_goal"),
-            c.get("service_noun"),
-            c.get("customer_noun"),
-            c.get("conversion_noun"),
-            c.get("allowed_next_step"),
-            " ".join([str(x or "") for x in (c.get("operational_ritual") or [])]),
-            " ".join([str(x or "") for x in (c.get("preferred_capabilities") or [])]),
-            " ".join([str(x or "") for x in (c.get("common_intents") or [])]),
-            " ".join([str(x or "") for x in (c.get("handoff_format") or [])]),
-        ]
-        grounding_text = " ".join(str(x or "") for x in grounding_parts).strip()
+        sentences = [s.strip() for s in _split_sentences_pt(t) if str(s).strip()]
+        if not sentences:
+            return ""
 
-        if _looks_like_technical_output(t):
-            return True
+        allowed_openers = ("o sistema", "o robô", "o robo", "a ia", "o assistente", "a automação", "a automacao")
+        first = sentences[0].lower().lstrip(" \"“”'")
 
-        meta_terms = (
-            "contexto operacional", "kb fornecido", "fonte única", "contrato", "payload",
-            "microcena", "base_scene", "reference_example", "operational_reference",
-        )
-        low = t.lower()
-        if any(term in low for term in meta_terms):
-            return True
+        if not first.startswith(allowed_openers) and len(sentences) > 1:
+            sentences = sentences[1:]
 
-        if _scene_echoes_user_request(text=t, user_text=user_text, grounding_text=grounding_text):
-            return True
+        if len(sentences) > 3:
+            sentences = sentences[:3]
 
-        if grounding_text and _has_ungrounded_scene_tail(text=t, grounding_text=grounding_text):
-            return True
-
-        return False
+        healed = " ".join(s.rstrip(" .") + "." for s in sentences if s.strip())
+        healed = re.sub(r"\s{2,}", " ", healed).strip()
+        return healed
     except Exception:
-        return False
+        return str(text or "").strip()
+
 
 def _generate_micro_scene_with_model(
     *,
@@ -3901,21 +3814,29 @@ def _generate_micro_scene_with_model(
         )
 
         system = """
-Você recebe um contexto operacional de atendimento já resolvido.
+Você recebe um contrato operacional já resolvido.
 
-Sua tarefa é gerar uma demonstração prática do funcionamento real do MEI Robô.
+Sua tarefa é descrever a execução de um atendimento via WhatsApp com base apenas no contrato fornecido.
 
-Regras obrigatórias:
-- Use o KB fornecido como fonte única da verdade.
-- Estruture a resposta como uma sequência de ações reais do atendimento.
-- A primeira frase descreve o início do contato do cliente final com o profissional.
-- A segunda frase descreve a atuação do MEI Robô dentro das regras configuradas.
-- A terceira frase descreve o resultado operacional do fluxo.
-- Utilize terceira pessoa com foco nas ações concretas.
-- Cada frase representa uma etapa do fluxo.
-- Use no máximo 3 frases curtas.
-- Finalize na última ação operacional executada.
-- Retorne apenas o texto da cena.
+ESTRUTURA OBRIGATÓRIA DA RESPOSTA:
+- Escreva exatamente 3 frases curtas.
+- Frase 1: ação imediata do sistema ao reconhecer a intenção operacional.
+- Frase 2: execução prática feita pelo robô, pela IA ou pela automação.
+- Frase 3: estado final do sistema no turno, como aguardando, registrando, encaminhando, enviando ou mantendo o atendimento pronto para a próxima ação.
+
+REGRAS DE FORMATAÇÃO:
+- Inicie a Frase 1 obrigatoriamente com "O sistema", "O robô", "A IA" ou "O assistente".
+- Não narre a pergunta do cliente.
+- Não invente decisão, compra, elogio, agradecimento ou conclusão do cliente.
+- Não use frases fora do contrato operacional.
+- Retorne exclusivamente o texto final, sem JSON, títulos ou explicações.
+
+EXEMPLOS DE SAÍDA ESPERADA:
+Contexto: cliente quer saber o preço.
+Saída: O sistema identifica a dúvida e acessa a tabela de valores atualizada. O robô envia as opções disponíveis com as formas de pagamento previstas no atendimento. O fluxo fica aguardando a confirmação do pedido.
+
+Contexto: cliente quer falar com humano.
+Saída: O assistente reconhece o pedido de transbordo e pausa a automação. A conversa é encaminhada para a fila da equipe com o histórico anexado. O sistema registra o encaminhamento e encerra sua participação no turno.
 """
 
         payload = {
@@ -3936,7 +3857,7 @@ Regras obrigatórias:
             "common_intents": c.get("common_intents") or [],
             "handoff_format": c.get("handoff_format") or [],
             "hydrated_from_docs": bool(c.get("hydrated_from_docs")),
-            "user_context": str(c.get("user_context") or "").strip(),
+            "intent_context": str(c.get("intent_hint") or c.get("topic") or c.get("primary_goal") or "").strip(),
         }
 
         user_prompt = json.dumps(payload, ensure_ascii=False)
@@ -3977,17 +3898,10 @@ Regras obrigatórias:
         candidate = _sanitize_user_facing_reply(micro_scene)
         candidate = _drop_explanatory_opening(candidate)
         candidate = _drop_abstract_closing(candidate)
+        candidate = _heal_algorithmic_micro_scene(candidate)
         candidate = re.sub(r"\s{2,}", " ", candidate).strip(" .")
         if candidate:
             micro_scene = candidate
-
-        # validação estrutural: evita cena baseada na pergunta do lead ou com fechamento fora do fluxo
-        if _scene_has_meta_or_ungrounded_shape(
-            text=micro_scene,
-            user_text=str(c.get("user_context") or ""),
-            contract=c,
-        ):
-            micro_scene = ""
 
         if not micro_scene:
             rebuilt = _sanitize_user_facing_reply(base_scene)
@@ -4042,13 +3956,6 @@ Regras obrigatórias:
             pass
 
         if not micro_scene:
-            return ""
-
-        if _scene_has_meta_or_ungrounded_shape(
-            text=micro_scene,
-            user_text=str(c.get("user_context") or ""),
-            contract=c,
-        ):
             return ""
 
         if len(micro_scene.strip()) < 40:
@@ -7800,15 +7707,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             ia_text = str(reply_text or "").strip()
 
-            ia_meta_or_ungrounded = bool(
-                allow_scene_runtime
-                and _scene_has_meta_or_ungrounded_shape(
-                    text=ia_text,
-                    user_text=user_text,
-                    contract=operational_contract if 'operational_contract' in locals() else {},
-                )
-            )
-
             ia_show = bool(
                 _is_show_micro_scene(
                     text=ia_text,
@@ -7843,11 +7741,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             _source_now = str(reply_source or "").strip()
 
             if _contract_strong:
-                accepted = bool(ia_show and not ia_meta_or_ungrounded)
+                accepted = bool(ia_show)
             else:
                 accepted = bool(
-                    (not ia_meta_or_ungrounded)
-                    and
                     _source_now in ("front_ia_soberana", "front_operational_upgrade")
                     and (
                         ia_show
@@ -7865,15 +7761,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if not accepted:
                 current_text = str(reply_text or "").strip()
-
-                current_meta_or_ungrounded = bool(
-                    allow_scene_runtime
-                    and _scene_has_meta_or_ungrounded_shape(
-                        text=current_text,
-                        user_text=user_text,
-                        contract=operational_contract if 'operational_contract' in locals() else {},
-                    )
-                )
 
                 current_show = bool(
                     current_text and _is_show_micro_scene(
@@ -7908,14 +7795,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
                 if _contract_strong:
-                    _accept_current = bool(current_show and not current_meta_or_ungrounded)
+                    _accept_current = bool(current_show)
                 else:
                     _accept_current = bool(
-                        (not current_meta_or_ungrounded)
-                        and (
-                            current_show
-                            or (current_live and _current_not_explanatory)
-                        )
+                        current_show
+                        or (current_live and _current_not_explanatory)
                     )
 
                 if _accept_current:
@@ -7928,7 +7812,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         (not current_text)
                         or len(current_text) < 40
                         or _looks_like_technical_output(current_text)
-                        or current_meta_or_ungrounded
                         or (_contract_strong and current_is_mild)
                     ):
                         fallback = (
