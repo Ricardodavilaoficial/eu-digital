@@ -5535,6 +5535,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     _final_candidate = None
 
     last_intent = str(state_summary.get("last_intent") or "").strip().upper()
+    upstream_topic_hint = str(
+        state_summary.get("kb_topic")
+        or state_summary.get("topic_hint")
+        or state_summary.get("snapshot_topic")
+        or state_summary.get("front_topic")
+        or ""
+    ).strip().upper()
+
+    if upstream_topic_hint not in TOPICS:
+        upstream_topic_hint = ""
+
     last_user_goal = str(state_summary.get("last_user_goal") or "").strip()
     name_hint = str(state_summary.get("name_hint") or "").strip()
 
@@ -5983,7 +5994,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 kb_obj=kb_snapshot_obj,
                 kb_context=kb_context if isinstance(kb_context, dict) else {},
                 user_text=user_text,
-                current_topic=last_intent,
+                current_topic=(upstream_topic_hint or last_intent),
                 segment_hint=effective_segment or segment_hint,
             )
 
@@ -6009,8 +6020,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             kb_snapshot_obj=kb_snapshot_obj,
             kb_context=kb_context if isinstance(kb_context, dict) else {},
             user_text=user_text,
-            current_topic=str((platform_runtime or {}).get("topic") or ""),
-            last_intent=last_intent,
+            current_topic=str(
+                upstream_topic_hint
+                or (platform_runtime or {}).get("topic")
+                or ""
+            ),
+            last_intent=(upstream_topic_hint or last_intent),
         )
 
         if canonical_topic and platform_kb_mode and isinstance(kb_context, dict):
@@ -7836,10 +7851,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 out["decider"] = decider
 
             logging.info(
-                "[CONVERSATIONAL_FRONT][FREE_MODE] ai_turns=%s topic=%s canonical_topic=%s platform_kb_mode=%s confidence=%s nextStep=%s shouldEnd=%s kbChars=%s tok=%s source=%s contract=%s docs=%s hydrated=%s",
+                "[CONVERSATIONAL_FRONT][FREE_MODE] ai_turns=%s topic=%s canonical_topic=%s upstream_topic_hint=%s platform_kb_mode=%s confidence=%s nextStep=%s shouldEnd=%s kbChars=%s tok=%s source=%s contract=%s docs=%s hydrated=%s",
                 ai_turns,
                 topic,
                 canonical_topic if 'canonical_topic' in locals() else "",
+                upstream_topic_hint if 'upstream_topic_hint' in locals() else "",
                 platform_kb_mode if 'platform_kb_mode' in locals() else False,
                 confidence,
                 next_step,
