@@ -3814,29 +3814,18 @@ def _generate_micro_scene_with_model(
         )
 
         system = """
-Você recebe um contrato operacional já resolvido.
+Gere uma sequência prática de funcionamento do MEI Robô.
 
-Sua tarefa é descrever a execução de um atendimento via WhatsApp com base apenas no contrato fornecido.
+Siga esta ordem:
 
-ESTRUTURA OBRIGATÓRIA DA RESPOSTA:
-- Escreva exatamente 3 frases curtas.
-- Frase 1: ação imediata do sistema ao reconhecer a intenção operacional.
-- Frase 2: execução prática feita pelo robô, pela IA ou pela automação.
-- Frase 3: estado final do sistema no turno, como aguardando, registrando, encaminhando, enviando ou mantendo o atendimento pronto para a próxima ação.
+1. O cliente envia uma mensagem.
+2. O robô responde, organiza e confirma.
+3. O dono do negócio recebe tudo pronto.
 
-REGRAS DE FORMATAÇÃO:
-- Inicie a Frase 1 obrigatoriamente com "O sistema", "O robô", "A IA" ou "O assistente".
-- Não narre a pergunta do cliente.
-- Não invente decisão, compra, elogio, agradecimento ou conclusão do cliente.
-- Não use frases fora do contrato operacional.
-- Retorne exclusivamente o texto final, sem JSON, títulos ou explicações.
+Use verbos de ação e conecte as frases.
+Finalize com ponto final.
 
-EXEMPLOS DE SAÍDA ESPERADA:
-Contexto: cliente quer saber o preço.
-Saída: O sistema identifica a dúvida e acessa a tabela de valores atualizada. O robô envia as opções disponíveis com as formas de pagamento previstas no atendimento. O fluxo fica aguardando a confirmação do pedido.
-
-Contexto: cliente quer falar com humano.
-Saída: O assistente reconhece o pedido de transbordo e pausa a automação. A conversa é encaminhada para a fila da equipe com o histórico anexado. O sistema registra o encaminhamento e encerra sua participação no turno.
+Retorne somente o texto.
 """
 
         payload = {
@@ -4028,22 +4017,22 @@ def _upgrade_operational_reply_with_model(
         c = contract or {}
 
         system = """
-Você recebe um texto operacional correto, mas que pode estar "seco" ou robótico.
+Você transforma um texto operacional em uma mensagem de WhatsApp natural.
 
-Sua tarefa é reescrever esse texto como um vendedor consultivo, mantendo a operação concreta e mais clara.
+Siga esta sequência:
 
-Regras obrigatórias (O Ponto de Equilíbrio):
-1. MANTENHA A OPERAÇÃO CONCRETA: preserve a sequência prática do texto base.
-2. FIDELIDADE ABSOLUTA: Baseie-se exclusivamente no texto base e no `operational_ritual`.
-3. TOM VIBRANTE E EMPÁTICO: Agradeça o contato na primeira frase. Se o nome do lead for fornecido, utilize-o uma vez.
-4. LINGUAGEM PRÁTICA: Use verbos de ação claros (ex: atende, envia, anota).
-5. FECHAMENTO SECO: Encerre o texto na última ação concreta.
-6. AÇÃO DIRETA: Descreva o fluxo acontecendo na prática, em terceira pessoa.
-7. CONCISO: Escreva exatamente 1 parágrafo curto e fluido.
-8. DISCOVERY OBRIGATÓRIO: Se faltar o nome ou o segmento, encerre o texto com uma única pergunta solicitando essas informações.
+1. Comece agradecendo o contato.
+2. Se houver nome do lead, use na primeira frase.
+3. Explique a informação principal do texto base com linguagem simples e conversada.
+4. Quando o texto base trouxer uma cena operacional, descreva a sequência:
+   cliente envia mensagem, robô responde, organiza e confirma, dono recebe pronto.
+5. Quando o texto base trouxer uma resposta direta, responda direto ao ponto.
+6. Finalize com ponto final.
 
-[EXEMPLO DE TOM E ESTRUTURA ESPERADA]
-"Muito obrigado pelo contato! O MEI Robô é um atendente virtual que responde no teu WhatsApp usando a tua própria voz digitalizada e teu jeito de falar. Ele consulta as informações que tu configurou e responde automaticamente, tanto em áudio quanto em texto. Pode informar serviços, valores, enviar orçamentos e organizar atendimentos conforme o teu padrão. Se eu ainda não souber teu nome ou teu segmento, eu peço isso no mesmo texto."
+Estrutura:
+- 1 parágrafo
+- fluxo contínuo
+- resposta útil para WhatsApp
 
 Retorne somente o texto final.
 """
@@ -4424,21 +4413,14 @@ def _regenerate_more_concrete(
             return ""
 
         system = (
-            "Reescreva a resposta abaixo em português do Brasil.\n"
-            "Objetivo: transformar em microcena operacional viva.\n"
-            "Mantenha o mesmo sentido e não invente fatos fora da base.\n"
-            "Não explique de fora.\n"
-            "Não use sujeito narrador explícito no começo das frases.\n"
-            "Evite construções genéricas; quando necessário, use MEI Robô como agente da ação.\n"
-            "Quando envolver resposta em áudio, afirme de forma natural e contextual que o MEI Robô responde com a voz do próprio profissional/contratante, digitalizada e configurada com o seu jeito de falar.\n"
-            "Use esta questão da voz digitalizada e configurada, como diferencial sempre que fizer sentido na explicação, sem depender de frase fixa.\n"
-            "Comece direto no acontecimento.\n"
-            "Mostre uma etapa puxando a próxima.\n"
-            "Feche no último efeito operacional visível, de forma curta e direta, sem fazer perguntas ou continuar a conversa.\n"
-            "Evite frases finais explicativas ou de benefício; termine na ação concluída.\n"
-            "Não use slogan.\n"
-            "Não termine com pergunta.\n"
-            "Responda somente com o texto final."
+            "Reescreva o texto como uma sequência prática.\n"
+            "Use esta ordem quando o texto tratar de uma cena operacional:\n"
+            "1. Cliente envia mensagem.\n"
+            "2. Robô responde, organiza e confirma.\n"
+            "3. Dono recebe pronto.\n"
+            "Quando o texto tratar de resposta direta, preserve a resposta direta.\n"
+            "Use frases conectadas e finalize com ponto final.\n"
+            "Retorne somente o texto."
         )
 
         prompt = (
@@ -4781,28 +4763,24 @@ def _ensure_discovery_identity_request(
         if mode != "DISCOVERY" or not reply:
             return reply, spoken, "none"
 
-        missing_name = not bool(has_name)
-        missing_segment = not bool(str(effective_segment or "").strip())
+        name_missing = not bool(has_name)
+        segment_missing = not bool(str(effective_segment or "").strip())
 
-        if not missing_name and not missing_segment:
-            return reply, spoken, "none"
+        question = ""
 
-        if missing_name and not _reply_mentions_name_request(reply):
-            if reply.endswith("?"):
-                reply = reply[:-1].rstrip()
-                reply += ", e qual é o teu nome?"
-            else:
-                reply = reply.rstrip(".! ")
-                reply += ". E qual é o teu nome?"
+        if name_missing:
+            question = "Como posso te chamar?"
+        elif segment_missing:
+            question = "Qual é o segmento do teu negócio?"
 
-        if missing_segment and "segment" not in reply.lower():
-            # Não força frase nova se a resposta já perguntou o segmento de outro modo.
-            if not re.search(r"\b(área|ramo|negócio|atividade|profissão|atua|trabalha)\b", reply.lower()):
-                reply = reply.rstrip(".! ")
-                reply += ". E me diz também em que área tu atua, para eu te mostrar do jeito certo."
+        if question:
+            reply = str(reply or "").strip()
+            reply = re.sub(r"[\s\.,;]+$", "", reply)
+            reply = f"{reply}\n\n{question}".strip()
+            spoken = reply
+            return reply, spoken, "clarify"
 
-        spoken = reply
-        return reply, spoken, "clarify"
+        return reply, spoken, "none"
     except Exception:
         return str(reply_text or "").strip(), str(spoken_text or reply_text or "").strip(), "none"
 
@@ -8445,6 +8423,30 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             out["spokenText"] = reply_text
             out["shouldEnd"] = should_end
             out["nextStep"] = next_step
+
+        try:
+            if ai_turns == 0:
+                txt = str(out.get("replyText") or reply_text or "").strip()
+                greetings = (
+                    "obrigado",
+                    "obrigada",
+                    "olá",
+                    "ola",
+                    "oi",
+                    "tudo bem",
+                    "maravilha",
+                    "perfeito",
+                    "entendi",
+                    "certo",
+                )
+                if txt and not txt.lower().startswith(greetings):
+                    txt = txt[0].upper() + txt[1:]
+                    reply_text = f"Obrigado pelo contato! {txt}"
+                    spoken_text = reply_text
+                    out["replyText"] = reply_text
+                    out["spokenText"] = spoken_text
+        except Exception:
+            pass
 
         return out
 
