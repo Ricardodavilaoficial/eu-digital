@@ -3751,30 +3751,27 @@ def _build_structural_last_resort_reply(
 
 def _heal_algorithmic_micro_scene(text: str) -> str:
     """
-    Cura estrutural mínima para modelos leves.
-    Remove abertura meta fora do agente operacional e limita a saída a 3 frases.
+    Ajuste leve de texto.
+    Preserva todo o conteúdo e apenas organiza a forma.
     """
     try:
         t = str(text or "").strip()
         if not t:
             return ""
 
-        sentences = [s.strip() for s in _split_sentences_pt(t) if str(s).strip()]
-        if not sentences:
-            return ""
+        t = re.sub(
+            r"^(Aqui está|Exemplo:|Cena:|Na prática:|Veja como funciona:)\s*",
+            "",
+            t,
+            flags=re.IGNORECASE
+        ).strip()
 
-        allowed_openers = ("o sistema", "o robô", "o robo", "a ia", "o assistente", "a automação", "a automacao")
-        first = sentences[0].lower().lstrip(" \"“”'")
+        t = re.sub(r"\s{2,}", " ", t).strip()
 
-        if not first.startswith(allowed_openers) and len(sentences) > 1:
-            sentences = sentences[1:]
+        if t and not t.endswith((".", "!", "?")):
+            t += "."
 
-        if len(sentences) > 3:
-            sentences = sentences[:3]
-
-        healed = " ".join(s.rstrip(" .") + "." for s in sentences if s.strip())
-        healed = re.sub(r"\s{2,}", " ", healed).strip()
-        return healed
+        return t
     except Exception:
         return str(text or "").strip()
 
@@ -3814,15 +3811,22 @@ def _generate_micro_scene_with_model(
         )
 
         system = """
-Gere uma sequência prática de funcionamento do MEI Robô.
+Você escreve uma explicação prática de atendimento no WhatsApp.
 
-Siga esta ordem:
+Siga exatamente esta sequência:
 
-1. O cliente envia uma mensagem.
-2. O robô responde, organiza e confirma.
-3. O dono do negócio recebe tudo pronto.
+1. Cliente envia uma mensagem.
+2. O MEI Robô responde.
+3. O MEI Robô faz perguntas e organiza as informações.
+4. O MEI Robô confirma o que foi combinado.
+5. O dono recebe tudo pronto.
 
-Use verbos de ação e conecte as frases.
+Use dados operacionais disponíveis no contexto.
+
+Escreva em um único parágrafo.
+
+Use frases conectadas.
+
 Finalize com ponto final.
 
 Retorne somente o texto.
@@ -4017,24 +4021,21 @@ def _upgrade_operational_reply_with_model(
         c = contract or {}
 
         system = """
-Você transforma um texto operacional em uma mensagem de WhatsApp natural.
+Você ajusta uma mensagem para WhatsApp.
 
 Siga esta sequência:
 
-1. Comece agradecendo o contato.
-2. Se houver nome do lead, use na primeira frase.
-3. Explique a informação principal do texto base com linguagem simples e conversada.
-4. Quando o texto base trouxer uma cena operacional, descreva a sequência:
-   cliente envia mensagem, robô responde, organiza e confirma, dono recebe pronto.
-5. Quando o texto base trouxer uma resposta direta, responda direto ao ponto.
-6. Finalize com ponto final.
+1. Comece com uma saudação.
+2. Use o nome do lead se estiver disponível.
+3. Mantenha toda a explicação operacional existente.
+4. Organize o texto em fluxo contínuo.
+5. Finalize com ponto.
 
-Estrutura:
-- 1 parágrafo
-- fluxo contínuo
-- resposta útil para WhatsApp
+Não remova informações.
 
-Retorne somente o texto final.
+Escreva em um único parágrafo.
+
+Retorne somente o texto.
 """
 
         user = f"""
@@ -4412,16 +4413,26 @@ def _regenerate_more_concrete(
         if _HAS_OPENAI_CLIENT and _client is None:
             return ""
 
-        system = (
-            "Reescreva o texto como uma sequência prática.\n"
-            "Use esta ordem quando o texto tratar de uma cena operacional:\n"
-            "1. Cliente envia mensagem.\n"
-            "2. Robô responde, organiza e confirma.\n"
-            "3. Dono recebe pronto.\n"
-            "Quando o texto tratar de resposta direta, preserve a resposta direta.\n"
-            "Use frases conectadas e finalize com ponto final.\n"
-            "Retorne somente o texto."
-        )
+        system = """
+Reescreva o texto como uma sequência prática de atendimento.
+
+Use esta ordem:
+
+1. Cliente envia mensagem.
+2. Robô responde e conduz.
+3. Robô organiza e confirma.
+4. Dono recebe pronto.
+
+Mantenha o conteúdo original.
+
+Use frases conectadas.
+
+Escreva em um único parágrafo.
+
+Finalize com ponto.
+
+Retorne somente o texto.
+"""
 
         prompt = (
             f"Mensagem do lead: {user_text}\n\n"
@@ -8340,6 +8351,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     spoken_text = reply_text
         except Exception:
             pass
+
+
+        if ai_turns == 0 and reply_text:
+            if not name_hint:
+                reply_text = "Obrigado pelo contato! " + reply_text
 
         if FRONT_TRACE_ENABLED:
             logging.info({
