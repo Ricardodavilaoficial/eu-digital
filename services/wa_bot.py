@@ -1080,6 +1080,38 @@ def _compact_value_packs_for_front(value_packs: Any) -> Dict[str, Any]:
         return {}
 
 
+
+
+def _front_find_kb_map_anywhere(obj: Any, target_key: str, max_depth: int = 5) -> Dict[str, Any]:
+    """
+    Localiza mapas do platform_kb em qualquer nível razoável do snapshot.
+    Não cria regra comercial; apenas resolve a localização real do dado no Firestore.
+    """
+    try:
+        if max_depth < 0 or not target_key:
+            return {}
+
+        if isinstance(obj, dict):
+            direct = obj.get(target_key)
+            if isinstance(direct, dict):
+                return direct
+
+            for _, value in obj.items():
+                found = _front_find_kb_map_anywhere(value, target_key, max_depth=max_depth - 1)
+                if isinstance(found, dict) and found:
+                    return found
+
+        elif isinstance(obj, list):
+            for item in obj:
+                found = _front_find_kb_map_anywhere(item, target_key, max_depth=max_depth - 1)
+                if isinstance(found, dict) and found:
+                    return found
+
+        return {}
+    except Exception:
+        return {}
+
+
 def _build_front_kb_snapshot(topic: str) -> str:
     """
     Monta snapshot textual compacto com teto de chars.
@@ -1137,6 +1169,10 @@ def _build_front_kb_snapshot(topic: str) -> str:
         if mode == "packs_v1":
             import json as _json
             snapshot_limit = FRONT_KB_MAX_CHARS_PACKS_V1
+            value_packs_source = _front_find_kb_map_anywhere(kb, "value_packs_v1")
+            segment_value_map_source = _front_find_kb_map_anywhere(kb, "segment_value_map_v1")
+            pack_selection_policy_source = _front_find_kb_map_anywhere(kb, "pack_selection_policy_v1")
+            segment_template_source = _front_find_kb_map_anywhere(kb, "segment_template_v1")
             # pricing compacto (canônico: platform_pricing/current)
             pricing_compact = {}
             try:
@@ -1154,11 +1190,11 @@ def _build_front_kb_snapshot(topic: str) -> str:
             payload = {
                 "answer_playbook_v1": {
                     "runtime_selector_v1": pb.get("runtime_selector_v1") if isinstance(pb, dict) else {},
-                    "pack_selection_policy_v1": pb.get("pack_selection_policy_v1") if isinstance(pb, dict) else {},
-                    "segment_template_v1": pb.get("segment_template_v1") if isinstance(pb, dict) else {},
-                    "segment_value_map_v1": pb.get("segment_value_map_v1") if isinstance(pb, dict) else {},
+                    "pack_selection_policy_v1": pack_selection_policy_source or (pb.get("pack_selection_policy_v1") if isinstance(pb, dict) else {}),
+                    "segment_template_v1": segment_template_source or (pb.get("segment_template_v1") if isinstance(pb, dict) else {}),
+                    "segment_value_map_v1": segment_value_map_source or (pb.get("segment_value_map_v1") if isinstance(pb, dict) else {}),
                 },
-                "value_packs_v1": _compact_value_packs_for_front(kb.get("value_packs_v1") or {}),
+                "value_packs_v1": _compact_value_packs_for_front(value_packs_source or kb.get("value_packs_v1") or {}),
                 "platform_pricing": {"current": pricing_compact} if pricing_compact else {},
                 "kb_segments_v1": compact_segments,
                 "kb_subsegments_v1": compact_subsegments,
@@ -1181,7 +1217,7 @@ def _build_front_kb_snapshot(topic: str) -> str:
 
                 _ap_log = (payload or {}).get("answer_playbook_v1") or {}
                 logging.info(
-                    "[WA_BOT][KB_SNAPSHOT] topic=%s chars=%s limit=%s valid_json=%s has_value_packs=%s has_segment_value_map=%s has_segments=%s has_subsegments=%s has_archetypes=%s n_segments=%s n_subsegments=%s n_archetypes=%s",
+                    "[WA_BOT][KB_SNAPSHOT] topic=%s chars=%s limit=%s valid_json=%s has_value_packs=%s has_segment_value_map=%s has_segments=%s has_subsegments=%s has_archetypes=%s n_value_packs=%s n_segments=%s n_subsegments=%s n_archetypes=%s",
                     str(topic or "").strip().upper(),
                     len(s or ""),
                     snapshot_limit,
@@ -1191,6 +1227,7 @@ def _build_front_kb_snapshot(topic: str) -> str:
                     bool((payload or {}).get("kb_segments_v1")),
                     bool((payload or {}).get("kb_subsegments_v1")),
                     bool((payload or {}).get("kb_archetypes_v1")),
+                    len((payload or {}).get("value_packs_v1") or {}),
                     len((payload or {}).get("kb_segments_v1") or {}),
                     len((payload or {}).get("kb_subsegments_v1") or {}),
                     len((payload or {}).get("kb_archetypes_v1") or {}),

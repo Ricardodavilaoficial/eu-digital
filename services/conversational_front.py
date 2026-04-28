@@ -6811,6 +6811,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             response_mode = "SCENE"
             needs_clarify = "no"
             clarify_q = ""
+            if isinstance(operational_contract, dict):
+                operational_contract["micro_scene_allowed"] = True
         elif str(needs_clarify or "").strip().lower() == "yes" or str(clarify_q or "").strip():
             response_mode = "DISCOVERY"
         elif str(topic or "").strip().upper() in ("PRECO", "TRIAL", "ATIVAR", "WHAT_IS", "SOCIAL", "VOZ"):
