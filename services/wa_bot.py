@@ -1527,10 +1527,21 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "is_lead": True,
                             "name_hint": ctx.get("name_hint") or ctx.get("displayName") or ctx.get("leadName") or "",
                             "segment_hint": ctx.get("segment_hint") or "",
+                            "topic_hint": topic_hint,
+                            "kb_topic": topic_hint,
                             # Micro-contexto (best-effort). Se não vier, segue vazio.
                             "last_intent": ctx.get("last_intent") or ctx.get("lastIntent") or "",
                             "last_user_goal": ctx.get("last_user_goal") or ctx.get("lastUserGoal") or "",
                         }
+
+                        try:
+                            logging.info(
+                                "[WA_BOT][FRONT_CALL] topic_hint=%s state_summary_has_topic=%s",
+                                str(topic_hint or "").strip().upper(),
+                                bool(state_summary.get("topic_hint")),
+                            )
+                        except Exception:
+                            pass
 
                         # Compat: se o front aceitar kb_snapshot como arg, usamos.
                         # Se não aceitar (TypeError), injeta no state_summary.
