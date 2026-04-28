@@ -870,64 +870,67 @@ def _safe_json_dumps_with_limit(payload: dict, limit: int) -> str:
             return s
 
         # fallback seguro mínimo:
-        # preserva o banco novo, zera anexos menos críticos
+        # preserva o runtime de packs_v1 antes do banco operacional auxiliar.
         minimal = {
             "answer_playbook_v1": {
                 "runtime_selector_v1": ((payload.get("answer_playbook_v1") or {}).get("runtime_selector_v1") or {}),
-                "pack_selection_policy_v1": {},
-                "segment_template_v1": {},
-                "segment_value_map_v1": {},
+                "pack_selection_policy_v1": ((payload.get("answer_playbook_v1") or {}).get("pack_selection_policy_v1") or {}),
+                "segment_template_v1": ((payload.get("answer_playbook_v1") or {}).get("segment_template_v1") or {}),
+                "segment_value_map_v1": ((payload.get("answer_playbook_v1") or {}).get("segment_value_map_v1") or {}),
             },
-            "value_packs_v1": {},
+            "value_packs_v1": payload.get("value_packs_v1") or {},
             "platform_pricing": {},
-            "kb_segments_v1": payload.get("kb_segments_v1") or {},
-            "kb_subsegments_v1": payload.get("kb_subsegments_v1") or {},
-            "kb_archetypes_v1": payload.get("kb_archetypes_v1") or {},
+            "kb_segments_v1": {},
+            "kb_subsegments_v1": {},
+            "kb_archetypes_v1": {},
         }
         s2 = json.dumps(minimal, ensure_ascii=False, separators=(",", ":"))
         if len(s2) <= limit:
             return s2
 
-        # último fallback: mantém subsegments primeiro, depois archetypes e segments
+        # último fallback: mantém o mínimo que permite escolher/renderizar pack.
         ultra_minimal = {
             "answer_playbook_v1": {
                 "runtime_selector_v1": ((payload.get("answer_playbook_v1") or {}).get("runtime_selector_v1") or {}),
+                "pack_selection_policy_v1": ((payload.get("answer_playbook_v1") or {}).get("pack_selection_policy_v1") or {}),
+                "segment_template_v1": ((payload.get("answer_playbook_v1") or {}).get("segment_template_v1") or {}),
+                "segment_value_map_v1": ((payload.get("answer_playbook_v1") or {}).get("segment_value_map_v1") or {}),
             },
-            "value_packs_v1": {},
+            "value_packs_v1": payload.get("value_packs_v1") or {},
             "platform_pricing": {},
-            "kb_segments_v1": payload.get("kb_segments_v1") or {},
-            "kb_subsegments_v1": payload.get("kb_subsegments_v1") or {},
-            "kb_archetypes_v1": payload.get("kb_archetypes_v1") or {},
+            "kb_segments_v1": {},
+            "kb_subsegments_v1": {},
+            "kb_archetypes_v1": {},
         }
         s3 = json.dumps(ultra_minimal, ensure_ascii=False, separators=(",", ":"))
         if len(s3) <= limit:
             return s3
 
-        # fallback extremo: subsegments sozinhos + archetypes se couber
+        # fallback extremo: só packs + selector, sem mapa segmentado.
         extreme = {
             "answer_playbook_v1": {
                 "runtime_selector_v1": ((payload.get("answer_playbook_v1") or {}).get("runtime_selector_v1") or {}),
             },
-            "kb_subsegments_v1": payload.get("kb_subsegments_v1") or {},
-            "kb_archetypes_v1": payload.get("kb_archetypes_v1") or {},
             "kb_segments_v1": {},
-            "value_packs_v1": {},
             "platform_pricing": {},
+            "value_packs_v1": payload.get("value_packs_v1") or {},
+            "kb_subsegments_v1": {},
+            "kb_archetypes_v1": {},
         }
         s4 = json.dumps(extreme, ensure_ascii=False, separators=(",", ":"))
         if len(s4) <= limit:
             return s4
 
-        # fallback extremo 2: só subsegments
+        # fallback extremo 2: selector puro.
         ultra_minimal = {
             "answer_playbook_v1": {
                 "runtime_selector_v1": ((payload.get("answer_playbook_v1") or {}).get("runtime_selector_v1") or {}),
             },
-            "kb_subsegments_v1": payload.get("kb_subsegments_v1") or {},
-            "kb_archetypes_v1": {},
             "kb_segments_v1": {},
             "value_packs_v1": {},
             "platform_pricing": {},
+            "kb_subsegments_v1": {},
+            "kb_archetypes_v1": {},
         }
         s5 = json.dumps(ultra_minimal, ensure_ascii=False, separators=(",", ":"))
         return s5 if len(s5) <= limit else "{}"
@@ -949,41 +952,15 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
         if _size(work) <= limit:
             return work
 
-        # 1) podar o que menos importa para o lookup do banco novo
-        ap = dict(work.get("answer_playbook_v1") or {})
-        svm = dict(ap.get("segment_value_map_v1") or {})
-        if svm:
-            ap["segment_value_map_v1"] = {}
-            work["answer_playbook_v1"] = ap
-            if _size(work) <= limit:
-                return work
-
-        # 2) corta value packs antes de tocar no banco novo
-        if work.get("value_packs_v1"):
-            work["value_packs_v1"] = {}
-            if _size(work) <= limit:
-                return work
-
-        # 3) corta pricing antes de tocar no banco novo
+        # 1) corta pricing antes do runtime de vendas.
         if work.get("platform_pricing"):
             work["platform_pricing"] = {}
             if _size(work) <= limit:
                 return work
 
-        # 4) enxuga answer_playbook pesado, preservando só runtime_selector
-        ap = dict(work.get("answer_playbook_v1") or {})
-        keep_runtime = {
-            "runtime_selector_v1": ap.get("runtime_selector_v1") or {},
-            "pack_selection_policy_v1": {},
-            "segment_template_v1": {},
-            "segment_value_map_v1": {},
-        }
-        work["answer_playbook_v1"] = keep_runtime
-        if _size(work) <= limit:
-            return work
-
-        # 5) agora sim começa a poda do banco novo, do menos crítico para o mais crítico
-        # preserva archetypes o máximo possível, porque ajudam microcena/hidratação
+        # 2) poda banco operacional auxiliar antes dos packs globais.
+        # Em Vendas/lead sem segmento hidratado, value_packs_v1 + segment_value_map_v1
+        # são o fallback estrutural do platform_kb.
         if work.get("kb_segments_v1"):
             work["kb_segments_v1"] = {}
             if _size(work) <= limit:
@@ -994,9 +971,42 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
             if _size(work) <= limit:
                 return work
 
-        # subsegments é a última camada a cair
         if work.get("kb_subsegments_v1"):
             work["kb_subsegments_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        # 3) enxuga partes menos essenciais do playbook, preservando seleção e tokens.
+        ap = dict(work.get("answer_playbook_v1") or {})
+        keep_runtime = {
+            "runtime_selector_v1": ap.get("runtime_selector_v1") or {},
+            "pack_selection_policy_v1": ap.get("pack_selection_policy_v1") or {},
+            "segment_template_v1": ap.get("segment_template_v1") or {},
+            "segment_value_map_v1": ap.get("segment_value_map_v1") or {},
+        }
+        work["answer_playbook_v1"] = keep_runtime
+        if _size(work) <= limit:
+            return work
+
+        # 4) se ainda exceder, perde personalização segmentada, mas mantém pack global.
+        ap = dict(work.get("answer_playbook_v1") or {})
+        if ap.get("segment_value_map_v1"):
+            ap["segment_value_map_v1"] = {}
+            work["answer_playbook_v1"] = ap
+            if _size(work) <= limit:
+                return work
+
+        # 5) último recurso: remove packs somente se nem o fallback global couber.
+        if work.get("value_packs_v1"):
+            work["value_packs_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        ap = dict(work.get("answer_playbook_v1") or {})
+        if ap.get("segment_template_v1") or ap.get("pack_selection_policy_v1"):
+            work["answer_playbook_v1"] = {
+                "runtime_selector_v1": ap.get("runtime_selector_v1") or {},
+            }
             if _size(work) <= limit:
                 return work
 
@@ -1104,12 +1114,15 @@ def _build_front_kb_snapshot(topic: str) -> str:
                 except Exception:
                     parsed_ok = False
 
+                _ap_log = (payload or {}).get("answer_playbook_v1") or {}
                 logging.info(
-                    "[WA_BOT][KB_SNAPSHOT] topic=%s chars=%s limit=%s valid_json=%s has_segments=%s has_subsegments=%s has_archetypes=%s n_segments=%s n_subsegments=%s n_archetypes=%s",
+                    "[WA_BOT][KB_SNAPSHOT] topic=%s chars=%s limit=%s valid_json=%s has_value_packs=%s has_segment_value_map=%s has_segments=%s has_subsegments=%s has_archetypes=%s n_segments=%s n_subsegments=%s n_archetypes=%s",
                     str(topic or "").strip().upper(),
                     len(s or ""),
                     snapshot_limit,
                     parsed_ok,
+                    bool((payload or {}).get("value_packs_v1")),
+                    bool((_ap_log or {}).get("segment_value_map_v1")) if isinstance(_ap_log, dict) else False,
                     bool((payload or {}).get("kb_segments_v1")),
                     bool((payload or {}).get("kb_subsegments_v1")),
                     bool((payload or {}).get("kb_archetypes_v1")),
