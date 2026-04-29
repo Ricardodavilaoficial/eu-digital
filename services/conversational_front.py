@@ -3016,28 +3016,17 @@ def _clean_scene_text(text: str) -> str:
 def _build_direct_scene_payload(contract: Dict[str, Any] | None) -> str:
     try:
         c = dict(contract or {})
-        parts = []
+        scene = (
+            c.get("pack_micro_scene")
+            or c.get("reference_example")
+            or c.get("operational_reference")
+        )
 
-        for key in ("pack_micro_scene", "reference_example", "operational_reference"):
-            v = str(c.get(key) or "").strip()
-            if v:
-                v = re.sub(r"\s{2,}", " ", v).strip(" .")
-                if v:
-                    parts.append(v)
-
-        unique = []
-        seen = set()
-
-        for p in parts:
-            k = re.sub(r"\s{2,}", " ", p.lower()).strip()
-            if k and k not in seen:
-                seen.add(k)
-                unique.append(p)
-
-        if not unique:
+        out = str(scene or "").strip()
+        if not out:
             return ""
 
-        out = ". ".join([p.rstrip(".") for p in unique]).strip()
+        out = re.sub(r"\s{2,}", " ", out).strip(" .")
 
         if out and not out.endswith((".", "!", "?")):
             out += "."
@@ -6966,6 +6955,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        has_structured_scene = (
+            (operational_contract or {}).get("pack_micro_scene")
+            or (operational_contract or {}).get("reference_example")
+            or (operational_contract or {}).get("operational_reference")
+        )
+
+        use_direct_scene = (
+            response_mode == "SCENE"
+            and (operational_contract or {}).get("micro_scene_allowed")
+            and has_structured_scene
+        )
+
         allow_scene_runtime = bool(
             response_mode == "SCENE"
             and micro_scene_allowed
@@ -7203,6 +7204,36 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             should_end = False
 
 
+
+        if use_direct_scene:
+            direct_text = _build_direct_scene_payload(contract=operational_contract)
+
+            if direct_text:
+                return {
+                    "response_mode": response_mode,
+                    "replyText": direct_text,
+                    "spokenText": direct_text,
+                    "understanding": {
+                        "topic": topic,
+                        "intent": intent,
+                        "response_mode": response_mode,
+                        "confidence": confidence,
+                        "needsClarify": needs_clarify,
+                        "clarifyQuestion": clarify_q,
+                        "packProfile": pack_profile,
+                        "renderMode": render_mode,
+                        "segmentKey": segment_key,
+                        "segmentConfidence": segment_conf,
+                        "shouldAskSegment": should_ask_segment,
+                    },
+                    "nextStep": next_step,
+                    "shouldEnd": should_end,
+                    "nameUse": name_use,
+                    "prefersText": False,
+                    "replySource": "front_direct_scene",
+                    "kbSnapshotSizeChars": len(kb_snapshot or ""),
+                    "tokenUsage": token_usage if isinstance(token_usage, dict) else {},
+                }
 
         # ----------------------------------------------------------
         # FREE MODE: nos primeiros turnos do lead, a IA responde direto.
