@@ -1019,6 +1019,7 @@ def _should_allow_question(*, user_text: str, kb_context: Dict[str, Any], reply_
         confidence = str((understanding or {}).get("confidence") or "").strip().lower()
         wants_link = bool((kb_context or {}).get("wants_link_explicit"))
         needs_segment = bool((kb_context or {}).get("needs_segment_discovery"))
+        needs_name = bool((kb_context or {}).get("needs_name_discovery"))
 
         # 1) ambiguidade real
         # OTHER com confidence medium não autoriza pergunta por si só.
@@ -1029,6 +1030,8 @@ def _should_allow_question(*, user_text: str, kb_context: Dict[str, Any], reply_
 
         # 2) descoberta de segmento/nome
         if needs_segment:
+            return True
+        if needs_name:
             return True
 
         # 3) abertura comercial clara para link/ativação
@@ -3007,6 +3010,41 @@ def _clean_scene_text(text: str) -> str:
         return t.rstrip(". ")
     except Exception:
         return str(text or "").strip()
+
+
+
+def _build_direct_scene_payload(contract: Dict[str, Any] | None) -> str:
+    try:
+        c = dict(contract or {})
+        parts = []
+
+        for key in ("pack_micro_scene", "reference_example", "operational_reference"):
+            v = str(c.get(key) or "").strip()
+            if v:
+                v = re.sub(r"\s{2,}", " ", v).strip(" .")
+                if v:
+                    parts.append(v)
+
+        unique = []
+        seen = set()
+
+        for p in parts:
+            k = re.sub(r"\s{2,}", " ", p.lower()).strip()
+            if k and k not in seen:
+                seen.add(k)
+                unique.append(p)
+
+        if not unique:
+            return ""
+
+        out = ". ".join([p.rstrip(".") for p in unique]).strip()
+
+        if out and not out.endswith((".", "!", "?")):
+            out += "."
+
+        return out
+    except Exception:
+        return ""
 
 
 def _humanize_scene_flow(text: str) -> str:
@@ -8122,6 +8160,37 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         reply_text = _sanitize_user_facing_reply(reply_text)
         spoken_text = _sanitize_user_facing_reply(spoken_text or reply_text)
+
+        try:
+            _contract_for_direct = (
+                operational_contract if 'operational_contract' in locals() and isinstance(operational_contract, dict)
+                else base_operational_contract if 'base_operational_contract' in locals() and isinstance(base_operational_contract, dict)
+                else {}
+            )
+
+            if (
+                str(response_mode or "").strip().upper() == "SCENE"
+                and isinstance(_contract_for_direct, dict)
+                and bool(_contract_for_direct.get("micro_scene_allowed"))
+            ):
+                _direct_payload = _build_direct_scene_payload(_contract_for_direct)
+                if _direct_payload:
+                    reply_text = _direct_payload
+                    spoken_text = _direct_payload
+        except Exception:
+            pass
+
+        try:
+            if ai_turns == 0 and is_lead and not has_name and str(next_step or "").strip().upper() != "SEND_LINK":
+                if isinstance(kb_context, dict):
+                    kb_context["needs_name_discovery"] = True
+
+                if reply_text and "?" not in reply_text:
+                    reply_text = reply_text.rstrip(" .") + ". Como posso te chamar?"
+                    spoken_text = reply_text
+                    name_use = "clarify"
+        except Exception:
+            pass
 
         if not hydrated_contract:
             reply_text = _smart_truncate_text(reply_text, FRONT_REPLY_MAX_CHARS)
