@@ -66,6 +66,22 @@ FRONT_TRACE_ENABLED = (os.getenv("FRONT_TRACE_ENABLED", "1") or "1").strip().low
 # Feature flag (default ON, mas seguro): seleciona fatos do KB para o prompt (menos alucinação, menos tokens)
 FRONT_KB_RESOLVER_ENABLED = (os.getenv("FRONT_KB_RESOLVER_ENABLED", "1") or "1").strip().lower() not in ("0","false","off","no")
 
+DEFAULT_TONE = "linguagem simples, direta, educada e comum de conversa no WhatsApp"
+
+def _resolve_tone_hint(state_summary: dict | None) -> str:
+    try:
+        raw = ""
+        if isinstance(state_summary, dict):
+            raw = str(state_summary.get("tone_hint") or "").strip()
+
+        if raw:
+            return raw
+
+        return DEFAULT_TONE
+
+    except Exception:
+        return DEFAULT_TONE
+
 
 _client = OpenAI() if _HAS_OPENAI_CLIENT else None
 # -----------------------------
@@ -3013,7 +3029,76 @@ def _clean_scene_text(text: str) -> str:
 
 
 
-def _build_direct_scene_payload(contract: Dict[str, Any] | None) -> str:
+def _generate_style_intro_with_model(
+    *,
+    user_text: str,
+    segment_hint: str,
+    name_hint: str,
+    state_summary: dict | None = None,
+) -> str:
+    """
+    Gera uma única frase de abertura contextualizada.
+    Escopo extremamente restrito para evitar regressão.
+    """
+    try:
+        tone_hint = _resolve_tone_hint(state_summary)
+        from openai import OpenAI
+        client = OpenAI()
+
+        system = f"""
+Você gera UMA única frase curta de abertura para WhatsApp.
+Use este estilo de comunicação: "{tone_hint}"
+
+A frase deve:
+- responder ao contexto do usuário
+- soar natural e humana
+- ter no máximo 20 palavras
+- não explicar o funcionamento
+- não listar etapas
+- não usar estrutura sequencial
+"""
+
+        user = f"""
+Mensagem do cliente:
+{user_text}
+
+Contexto:
+- segmento: {segment_hint}
+- nome: {name_hint}
+
+Gere apenas a frase de abertura.
+"""
+
+        resp = client.chat.completions.create(
+            model="gpt-4.0-mini",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.7,
+            max_tokens=40,
+        )
+
+        text = (resp.choices[0].message.content or "").strip()
+
+        # segurança mínima
+        if len(text) > 120:
+            return ""
+
+        return text
+
+    except Exception:
+        return ""
+
+
+def _build_direct_scene_payload(
+    contract: Dict[str, Any] | None,
+    *,
+    user_text: str = "",
+    segment_hint: str = "",
+    name_hint: str = "",
+    state_summary: dict | None = None,
+) -> str:
     try:
         c = dict(contract or {})
         scene = (
@@ -3022,16 +3107,30 @@ def _build_direct_scene_payload(contract: Dict[str, Any] | None) -> str:
             or c.get("operational_reference")
         )
 
-        out = str(scene or "").strip()
-        if not out:
+        core = str(scene or "").strip()
+        if not core:
             return ""
 
-        out = re.sub(r"\s{2,}", " ", out).strip(" .")
+        core = re.sub(r"\s{2,}", " ", core).strip(" .")
 
-        if out and not out.endswith((".", "!", "?")):
-            out += "."
+        if core and not core.endswith((".", "!", "?")):
+            core += "."
 
-        return out
+        # 🔹 tentativa de gerar abertura via IA (leve)
+        intro = _generate_style_intro_with_model(
+            user_text=user_text,
+            segment_hint=segment_hint,
+            name_hint=name_hint,
+            state_summary=state_summary,
+        )
+
+        # fallback seguro (sem frase fixa)
+        if not intro:
+            return core
+
+        final = f"{intro}\n\n{core}"
+        return final.strip()
+
     except Exception:
         return ""
 
@@ -7206,7 +7305,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
 
         if use_direct_scene:
-            direct_text = _build_direct_scene_payload(contract=operational_contract)
+            direct_text = _build_direct_scene_payload(
+                contract=operational_contract,
+                user_text=user_text,
+                segment_hint=(
+                    operational_contract.get("platform_segment_key")
+                    or segment_hint
+                    or ""
+                ),
+                name_hint=name_hint,
+                state_summary=state_summary,
+            )
 
             if direct_text:
                 return {
@@ -8204,7 +8313,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and isinstance(_contract_for_direct, dict)
                 and bool(_contract_for_direct.get("micro_scene_allowed"))
             ):
-                _direct_payload = _build_direct_scene_payload(_contract_for_direct)
+                _direct_payload = _build_direct_scene_payload(
+                    _contract_for_direct,
+                    user_text=user_text,
+                    segment_hint=(
+                        _contract_for_direct.get("platform_segment_key")
+                        or segment_hint
+                        or ""
+                    ),
+                    name_hint=name_hint,
+                    state_summary=state_summary,
+                )
                 if _direct_payload:
                     reply_text = _direct_payload
                     spoken_text = _direct_payload
