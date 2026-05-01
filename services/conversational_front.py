@@ -3042,8 +3042,6 @@ def _generate_style_intro_with_model(
     """
     try:
         tone_hint = _resolve_tone_hint(state_summary)
-        from openai import OpenAI
-        client = OpenAI()
 
         system = f"""
 Você gera UMA única frase curta de abertura para WhatsApp.
@@ -3069,17 +3067,12 @@ Contexto:
 Gere apenas a frase de abertura.
 """
 
-        resp = client.chat.completions.create(
-            model="gpt-4.0-mini",
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+        text = _call_openai_for_front(
+            system=system,
+            user=user,
             temperature=0.7,
             max_tokens=40,
-        )
-
-        text = (resp.choices[0].message.content or "").strip()
+        ).strip()
 
         # segurança mínima
         if len(text) > 120:
@@ -3112,6 +3105,8 @@ def _build_direct_scene_payload(
             return ""
 
         core = re.sub(r"\s{2,}", " ", core).strip(" .")
+        core = _humanize_scene_flow(core) or core
+        core = re.sub(r"\s{2,}", " ", core).strip(" .")
 
         if core and not core.endswith((".", "!", "?")):
             core += "."
@@ -3124,9 +3119,9 @@ def _build_direct_scene_payload(
             state_summary=state_summary,
         )
 
-        # fallback seguro (sem frase fixa)
+        # mantém fallback estrutural dentro do pipeline principal
         if not intro:
-            return core
+            return ""
 
         final = f"{intro}\n\n{core}"
         return final.strip()
@@ -7342,6 +7337,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     "replySource": "front_direct_scene",
                     "kbSnapshotSizeChars": len(kb_snapshot or ""),
                     "tokenUsage": token_usage if isinstance(token_usage, dict) else {},
+                    "operationalContract": operational_contract if isinstance(operational_contract, dict) else {},
                 }
 
         # ----------------------------------------------------------
@@ -8327,6 +8323,34 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if _direct_payload:
                     reply_text = _direct_payload
                     spoken_text = _direct_payload
+                    reply_source = "front_direct_scene"
+
+            _source_for_exit = str(reply_source or "").strip()
+            _raw_scene_exit = bool(
+                str(response_mode or "").strip().upper() == "SCENE"
+                and str(reply_text or "").strip()
+                and (
+                    _source_for_exit in ("front_fallback_structural", "front_direct_scene", "front_resolved_best_effort")
+                    or bool(re.search(r"\s(?:→|->|=>|\|)\s", str(reply_text or "")))
+                )
+            )
+
+            if _raw_scene_exit:
+                _upgraded_exit = _upgrade_operational_reply_with_model(
+                    base_text=str(reply_text or "").strip(),
+                    operational_reference=str(operational_reference or "").strip(),
+                    reference_example=str(reference_example or "").strip(),
+                    contract=_contract_for_direct if isinstance(_contract_for_direct, dict) else {},
+                )
+                if _upgraded_exit:
+                    reply_text = _upgraded_exit
+                    spoken_text = _upgraded_exit
+                    reply_source = "front_operational_upgrade"
+                else:
+                    _humanized_exit = _humanize_scene_flow(reply_text)
+                    if _humanized_exit and _humanized_exit != str(reply_text or "").strip():
+                        reply_text = _humanized_exit
+                        spoken_text = _humanized_exit
         except Exception:
             pass
 
