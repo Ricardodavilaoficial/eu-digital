@@ -3100,7 +3100,8 @@ def _build_direct_scene_payload(
             or c.get("operational_reference")
         )
 
-        core = str(scene or "").strip()
+        raw_core = str(scene or "").strip()
+        core = raw_core
         if not core:
             return ""
 
@@ -3110,6 +3111,25 @@ def _build_direct_scene_payload(
 
         if core and not core.endswith((".", "!", "?")):
             core += "."
+
+        upgraded = _upgrade_operational_reply_with_model(
+            base_text=core,
+            operational_reference=str(
+                c.get("operational_reference")
+                or raw_core
+                or ""
+            ).strip(),
+            reference_example=str(
+                c.get("reference_example")
+                or c.get("pack_micro_scene")
+                or raw_core
+                or ""
+            ).strip(),
+            contract=c,
+        )
+
+        if upgraded and not _looks_like_structural_scene_payload(upgraded):
+            return upgraded
 
         # 🔹 tentativa de gerar abertura via IA (leve)
         intro = _generate_style_intro_with_model(
@@ -3121,6 +3141,9 @@ def _build_direct_scene_payload(
 
         # mantém fallback estrutural dentro do pipeline principal
         if not intro:
+            return ""
+
+        if _looks_like_structural_scene_payload(core):
             return ""
 
         final = f"{intro}\n\n{core}"
@@ -3168,6 +3191,32 @@ def _humanize_scene_flow(text: str) -> str:
         return str(text or "").strip().rstrip(". ")
 
 
+
+def _looks_like_structural_scene_payload(text: str) -> bool:
+    """
+    Detecta saída operacional ainda crua.
+    Escopo restrito: usado apenas em response_mode SCENE / retornos operacionais.
+    """
+    try:
+        t = re.sub(r"\s{2,}", " ", str(text or "").strip())
+        if not t:
+            return False
+
+        if re.search(r"\s(?:→|->|=>|\|)\s", t):
+            return True
+
+        if re.search(r"\s\+\s", t):
+            return True
+
+        clauses = [p.strip() for p in re.split(r"\s*,\s*", t) if p.strip()]
+        if len(clauses) >= 4:
+            short_clauses = sum(1 for p in clauses if len(p.split()) <= 7)
+            if short_clauses >= 3:
+                return True
+
+        return False
+    except Exception:
+        return False
 
 
 def _derive_ritual_from_scene(text: str) -> list[str]:
@@ -8332,6 +8381,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and (
                     _source_for_exit in ("front_fallback_structural", "front_direct_scene", "front_resolved_best_effort")
                     or bool(re.search(r"\s(?:→|->|=>|\|)\s", str(reply_text or "")))
+                    or _looks_like_structural_scene_payload(reply_text)
                 )
             )
 
@@ -8342,13 +8392,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     reference_example=str(reference_example or "").strip(),
                     contract=_contract_for_direct if isinstance(_contract_for_direct, dict) else {},
                 )
-                if _upgraded_exit:
+                if _upgraded_exit and not _looks_like_structural_scene_payload(_upgraded_exit):
                     reply_text = _upgraded_exit
                     spoken_text = _upgraded_exit
                     reply_source = "front_operational_upgrade"
                 else:
                     _humanized_exit = _humanize_scene_flow(reply_text)
-                    if _humanized_exit and _humanized_exit != str(reply_text or "").strip():
+                    if (
+                        _humanized_exit
+                        and _humanized_exit != str(reply_text or "").strip()
+                        and not _looks_like_structural_scene_payload(_humanized_exit)
+                    ):
                         reply_text = _humanized_exit
                         spoken_text = _humanized_exit
         except Exception:
