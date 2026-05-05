@@ -6418,7 +6418,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
         )
 
-        platform_kb_mode = bool(not docs_hydrated_now and not segment_for_prompt)
+        platform_kb_mode = bool(
+            not docs_hydrated_now
+            and isinstance(kb_snapshot_obj, dict)
+            and bool(kb_snapshot_obj)
+        )
 
         if platform_kb_mode:
             platform_runtime = _platform_kb_resolve_runtime(
@@ -6490,13 +6494,24 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         selected_pack_id = _pick_pack_for_intent(
             str((kb_context or {}).get("topic") or (kb_context or {}).get("topic_hint") or last_intent or "").strip().upper()
         )
+    direct_scene = str((kb_context or {}).get("direct_scene") or "").strip()
+    runtime_long_text = str((kb_context or {}).get("runtime_long_text") or "").strip()
+    runtime_short_reply = str((kb_context or {}).get("runtime_short_reply") or "").strip()
     micro_scene = str((kb_context or {}).get("pack_micro_scene") or "").strip()
     operational_reference = str((kb_context or {}).get("operational_reference") or "").strip()
     reference_example = str((kb_context or {}).get("segment_reference_example") or "").strip()
 
     if platform_runtime:
+        direct_scene = str(platform_runtime.get("direct_scene") or direct_scene or "").strip()
+        runtime_long_text = str(platform_runtime.get("runtime_long_text") or runtime_long_text or "").strip()
+        runtime_short_reply = str(platform_runtime.get("runtime_short_reply") or runtime_short_reply or "").strip()
         micro_scene = str(platform_runtime.get("micro_scene") or micro_scene or "").strip()
-        operational_reference = str(platform_runtime.get("operational_reference") or operational_reference or "").strip()
+        operational_reference = str(
+            direct_scene
+            or platform_runtime.get("operational_reference")
+            or operational_reference
+            or ""
+        ).strip()
         reference_example = str(platform_runtime.get("reference_example") or reference_example or "").strip()
 
     if selected_pack_id and not micro_scene:
@@ -6505,8 +6520,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         reference_example = _kb_get_reference_example(kb_snapshot, effective_segment, selected_pack_id)
     if effective_segment and not operational_reference:
         operational_reference = _kb_get_segment_scene(kb_snapshot, effective_segment)
-    if not operational_reference and micro_scene:
-        operational_reference = micro_scene
+    if not operational_reference and (direct_scene or runtime_long_text or runtime_short_reply or micro_scene):
+        operational_reference = (
+            direct_scene
+            or runtime_long_text
+            or runtime_short_reply
+            or micro_scene
+        )
 
     platform_topic_hint = ""
     try:
@@ -7330,7 +7350,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
         has_structured_scene = (
-            (operational_contract or {}).get("pack_micro_scene")
+            (operational_contract or {}).get("direct_scene")
+            or (operational_contract or {}).get("runtime_long_text")
+            or (operational_contract or {}).get("runtime_short_reply")
+            or (operational_contract or {}).get("pack_micro_scene")
             or (operational_contract or {}).get("reference_example")
             or (operational_contract or {}).get("operational_reference")
         )
