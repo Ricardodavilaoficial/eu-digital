@@ -1752,6 +1752,8 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "is_lead": True,
                             "name_hint": ctx.get("name_hint") or ctx.get("displayName") or ctx.get("leadName") or "",
                             "segment_hint": ctx.get("segment_hint") or "",
+                            "msg_type": ctx.get("msg_type") or "",
+                            "entry_type": ctx.get("msg_type") or "",
                             "topic_hint": topic_hint,
                             "kb_topic": topic_hint,
                             # Micro-contexto (best-effort). Se não vier, segue vazio.

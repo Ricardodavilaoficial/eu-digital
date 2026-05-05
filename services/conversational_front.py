@@ -60,6 +60,15 @@ FRONT_KB_MAX_CHARS_PACKS_V1 = int(
     os.getenv("FRONT_KB_MAX_CHARS_PACKS_V1", "12000") or 12000
 )
 FRONT_REPLY_MAX_CHARS = int(os.getenv("FRONT_REPLY_MAX_CHARS", "1500") or 1500)      # corte final aumentado para permitir microcenas SHOW
+FRONT_TEXT_INITIAL_MAX_CHARS = int(os.getenv("FRONT_TEXT_INITIAL_MAX_CHARS", "850") or 850)
+FRONT_TEXT_SCENE_MAX_CHARS = int(os.getenv("FRONT_TEXT_SCENE_MAX_CHARS", "800") or 800)
+FRONT_TEXT_SEQUENCE_MAX_CHARS = int(os.getenv("FRONT_TEXT_SEQUENCE_MAX_CHARS", "600") or 600)
+FRONT_TEXT_CLOSING_MAX_CHARS = int(os.getenv("FRONT_TEXT_CLOSING_MAX_CHARS", "360") or 360)
+
+FRONT_AUDIO_INITIAL_MAX_CHARS = int(os.getenv("FRONT_AUDIO_INITIAL_MAX_CHARS", "620") or 620)
+FRONT_AUDIO_SCENE_MAX_CHARS = int(os.getenv("FRONT_AUDIO_SCENE_MAX_CHARS", "580") or 580)
+FRONT_AUDIO_SEQUENCE_MAX_CHARS = int(os.getenv("FRONT_AUDIO_SEQUENCE_MAX_CHARS", "430") or 430)
+FRONT_AUDIO_CLOSING_MAX_CHARS = int(os.getenv("FRONT_AUDIO_CLOSING_MAX_CHARS", "280") or 280)
 FRONT_FREE_MODE_MAX_TURNS = int(os.getenv("FRONT_FREE_MODE_MAX_TURNS", "5") or 5)
 FRONT_TRACE_ENABLED = (os.getenv("FRONT_TRACE_ENABLED", "1") or "1").strip().lower() in ("1", "true", "yes", "on")
 
@@ -4412,6 +4421,100 @@ def _smart_truncate_text(text: str, max_chars: int) -> str:
         return str(text or "")[:max_chars]
 
 
+
+
+def _resolve_reply_size_policy(
+    *,
+    ai_turns: int = 0,
+    msg_type: str = "",
+    response_mode: str = "",
+    next_step: str = "",
+    topic: str = "",
+    kb_rich: bool = False,
+) -> Dict[str, Any]:
+    """
+    Define tamanho alvo por necessidade estrutural.
+    O código decide o limite; a IA apenas escreve dentro da janela.
+    """
+    try:
+        turns = int(ai_turns or 0)
+    except Exception:
+        turns = 0
+
+    mt = str(msg_type or "").strip().lower()
+    mode = str(response_mode or "").strip().upper()
+    ns = str(next_step or "").strip().upper()
+    tp = str(topic or "").strip().upper()
+
+    is_audio = mt in ("audio", "voice", "ptt")
+    first_turn = turns <= 0
+    is_closing = ns == "SEND_LINK" or mode == "CLOSING"
+    is_scene = mode == "SCENE"
+    practical_topic = tp in ("AGENDA", "SERVICOS", "PEDIDOS", "STATUS", "PROCESSO", "ORCAMENTO")
+    technical_need = bool(kb_rich and (is_scene or practical_topic))
+
+    if is_closing:
+        max_chars = FRONT_AUDIO_CLOSING_MAX_CHARS if is_audio else FRONT_TEXT_CLOSING_MAX_CHARS
+        target_chars = int(max_chars * 0.78)
+        max_tokens = 90 if is_audio else 110
+        label = "closing"
+    elif is_audio:
+        if first_turn and technical_need:
+            max_chars = FRONT_AUDIO_INITIAL_MAX_CHARS
+            target_chars = 520
+            max_tokens = 190
+            label = "audio_initial_technical"
+        elif technical_need:
+            max_chars = FRONT_AUDIO_SCENE_MAX_CHARS
+            target_chars = 470
+            max_tokens = 175
+            label = "audio_technical"
+        else:
+            max_chars = FRONT_AUDIO_SEQUENCE_MAX_CHARS
+            target_chars = 330
+            max_tokens = 130
+            label = "audio_sequence"
+    else:
+        if first_turn and technical_need:
+            max_chars = FRONT_TEXT_INITIAL_MAX_CHARS
+            target_chars = 700
+            max_tokens = 270
+            label = "text_initial_technical"
+        elif technical_need:
+            max_chars = FRONT_TEXT_SCENE_MAX_CHARS
+            target_chars = 650
+            max_tokens = 250
+            label = "text_technical"
+        elif first_turn:
+            max_chars = 720
+            target_chars = 580
+            max_tokens = 220
+            label = "text_initial"
+        else:
+            max_chars = FRONT_TEXT_SEQUENCE_MAX_CHARS
+            target_chars = 430
+            max_tokens = 170
+            label = "text_sequence"
+
+    return {
+        "label": label,
+        "target_chars": int(target_chars),
+        "max_chars": int(max_chars),
+        "max_tokens": int(max_tokens),
+        "is_audio": bool(is_audio),
+        "technical_need": bool(technical_need),
+    }
+
+
+def _apply_reply_size_policy(text: str, policy: Dict[str, Any] | None = None) -> str:
+    try:
+        p = policy or {}
+        max_chars = int(p.get("max_chars") or FRONT_REPLY_MAX_CHARS)
+        max_chars = max(180, min(max_chars, FRONT_REPLY_MAX_CHARS))
+        return _smart_truncate_text(str(text or "").strip(), max_chars)
+    except Exception:
+        return _smart_truncate_text(str(text or "").strip(), FRONT_REPLY_MAX_CHARS)
+
 def _generate_consequence_with_model(contract: Dict[str, Any] | None = None) -> str:
     """
     Gera UM passo final de consequência usando apenas o contrato.
@@ -5999,6 +6102,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     segment_hint = str(state_summary.get("segment_hint") or "").strip()
     is_lead = bool(state_summary.get("is_lead") or False)
+    msg_type = str(
+        state_summary.get("msg_type")
+        or state_summary.get("entry_type")
+        or state_summary.get("message_type")
+        or ""
+    ).strip().lower()
     kb_snapshot, kb_compact, kb_snapshot_json_ok = _prepare_kb_snapshot_buffers(kb_snapshot)
 
     # 🔒 Snapshot em dict para regras determinísticas do platform_kb
@@ -6656,6 +6765,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         or operational_family
         or selected_pack_id
     )
+
+    reply_size_policy = _resolve_reply_size_policy(
+        ai_turns=ai_turns,
+        msg_type=msg_type,
+        response_mode=response_mode,
+        next_step=next_step,
+        topic=(canonical_topic or topic or upstream_topic_hint),
+        kb_rich=bool(kb_anchor_available),
+    )
+
     real_scene_for_anchor = operational_reference if not _is_scene_echo(operational_reference, user_text) else ""
     real_example_for_anchor = reference_example if not _is_scene_echo(reference_example, user_text) else ""
 
@@ -6814,7 +6933,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             req_kwargs = {
                 "model": MODEL,
                 "temperature": TEMPERATURE,
-                "max_tokens": FRONT_ANSWER_MAX_TOKENS,
+                "max_tokens": min(FRONT_ANSWER_MAX_TOKENS, int((reply_size_policy or {}).get("max_tokens") or FRONT_ANSWER_MAX_TOKENS)),
                 "messages": messages,
             }
 
@@ -6842,7 +6961,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             resp = openai.ChatCompletion.create(  # type: ignore
                 model=MODEL,
                 temperature=TEMPERATURE,
-                max_tokens=FRONT_ANSWER_MAX_TOKENS,
+                max_tokens=min(FRONT_ANSWER_MAX_TOKENS, int((reply_size_policy or {}).get("max_tokens") or FRONT_ANSWER_MAX_TOKENS)),
                 messages=messages,
             )
             raw = (resp["choices"][0]["message"]["content"] or "").strip()
@@ -7315,6 +7434,25 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         elif str(topic or "").strip().upper() in ("PRECO", "TRIAL", "ATIVAR", "WHAT_IS", "SOCIAL", "VOZ"):
             if response_mode == "SCENE":
                 response_mode = "DIRECT"
+
+        try:
+            reply_size_policy = _resolve_reply_size_policy(
+                ai_turns=ai_turns,
+                msg_type=msg_type,
+                response_mode=response_mode,
+                next_step=next_step,
+                topic=(canonical_topic or topic or upstream_topic_hint),
+                kb_rich=bool(kb_anchor_available or kb_anchor_strong),
+            )
+        except Exception:
+            reply_size_policy = _resolve_reply_size_policy(
+                ai_turns=ai_turns,
+                msg_type=msg_type,
+                response_mode=response_mode,
+                next_step=next_step,
+                topic=(topic or upstream_topic_hint),
+                kb_rich=False,
+            )
 
         # ----------------------------------------------------------
         # GATE SOBERANO DE MICROCENA / KB OPERACIONAL
@@ -7979,8 +8117,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             if operational_reply and next_step != "SEND_LINK":
                 should_end = False
 
-            reply_text = reply_text[:FRONT_REPLY_MAX_CHARS].rstrip()
-            spoken_text = (spoken_text or reply_text or "")[:FRONT_REPLY_MAX_CHARS].rstrip()
+            reply_text = _apply_reply_size_policy(reply_text, reply_size_policy)
+            spoken_text = _apply_reply_size_policy((spoken_text or reply_text or ""), reply_size_policy)
 
             try:
                 _reply_before_sanitize = str(reply_text or "").strip()
@@ -8181,8 +8319,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             reply_text = _sanitize_user_facing_reply(reply_text)
             spoken_text = _sanitize_user_facing_reply(spoken_text or reply_text)
 
-            reply_text = _smart_truncate_text(reply_text, FRONT_REPLY_MAX_CHARS)
-            spoken_text = _smart_truncate_text(spoken_text, FRONT_REPLY_MAX_CHARS)
+            reply_text = _apply_reply_size_policy(reply_text, reply_size_policy)
+            spoken_text = _apply_reply_size_policy(spoken_text, reply_size_policy)
 
             if _looks_like_technical_output(reply_text):
                 fallback_specific = ""
@@ -8483,11 +8621,26 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "replySource": (reply_source or "front_free_mode"),
                 "kbSnapshotSizeChars": len(kb_snapshot or ""),
                 "tokenUsage": token_usage,
+                "replySizePolicy": reply_size_policy if isinstance(reply_size_policy, dict) else {},
                 "operationalContract": operational_contract if 'operational_contract' in locals() else {},
             }
 
             if decider_only and isinstance(decider, dict):
                 out["decider"] = decider
+
+            try:
+                am = out.get("aiMeta") or {}
+                if not isinstance(am, dict):
+                    am = {}
+                rsp = reply_size_policy if isinstance(reply_size_policy, dict) else {}
+                am["replySizePolicy"] = str(rsp.get("label") or "")
+                am["replyTargetChars"] = int(rsp.get("target_chars") or 0)
+                am["replyMaxChars"] = int(rsp.get("max_chars") or 0)
+                am["replyIsAudioPolicy"] = bool(rsp.get("is_audio"))
+                am["replyTechnicalNeed"] = bool(rsp.get("technical_need"))
+                out["aiMeta"] = am
+            except Exception:
+                pass
 
             logging.info(
                 "[CONVERSATIONAL_FRONT][FREE_MODE] ai_turns=%s topic=%s canonical_topic=%s upstream_topic_hint=%s platform_kb_mode=%s confidence=%s nextStep=%s shouldEnd=%s kbChars=%s tok=%s source=%s contract=%s docs=%s hydrated=%s",
@@ -8774,8 +8927,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
         if not hydrated_contract:
-            reply_text = _smart_truncate_text(reply_text, FRONT_REPLY_MAX_CHARS)
-            spoken_text = _smart_truncate_text(spoken_text, FRONT_REPLY_MAX_CHARS)
+            reply_text = _apply_reply_size_policy(reply_text, reply_size_policy)
+            spoken_text = _apply_reply_size_policy(spoken_text, reply_size_policy)
 
         # Regra de produto: perguntas foram abolidas, salvo exceções controladas.
         if reply_text and ("?" in reply_text):
@@ -9070,11 +9223,26 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             "kbSnapshotSizeChars": len(kb_snapshot or ""),
             # Telemetria de custo (best-effort)
             "tokenUsage": token_usage,
+            "replySizePolicy": reply_size_policy if isinstance(reply_size_policy, dict) else {},
         }
 
         # Mantém o decider no retorno quando existir (p/ roteamento/auditoria downstream).
         if decider_only and isinstance(decider, dict):
             out["decider"] = decider
+
+        try:
+            am = out.get("aiMeta") or {}
+            if not isinstance(am, dict):
+                am = {}
+            rsp = reply_size_policy if isinstance(reply_size_policy, dict) else {}
+            am["replySizePolicy"] = str(rsp.get("label") or "")
+            am["replyTargetChars"] = int(rsp.get("target_chars") or 0)
+            am["replyMaxChars"] = int(rsp.get("max_chars") or 0)
+            am["replyIsAudioPolicy"] = bool(rsp.get("is_audio"))
+            am["replyTechnicalNeed"] = bool(rsp.get("technical_need"))
+            out["aiMeta"] = am
+        except Exception:
+            pass
 
         # -----------------------------
         # Observabilidade leve
