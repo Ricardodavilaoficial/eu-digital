@@ -3178,10 +3178,13 @@ def _build_direct_scene_payload(
 ) -> str:
     try:
         c = dict(contract or {})
+        # Direct Fulfillment:
+        # prioriza o material mais específico já resolvido pelo KB.
+        # Não reescreve a microcena por IA.
         scene = (
-            c.get("pack_micro_scene")
-            or c.get("reference_example")
+            c.get("reference_example")
             or c.get("operational_reference")
+            or c.get("pack_micro_scene")
         )
 
         raw_core = str(scene or "").strip()
@@ -3196,25 +3199,6 @@ def _build_direct_scene_payload(
         if core and not core.endswith((".", "!", "?")):
             core += "."
 
-        upgraded = _upgrade_operational_reply_with_model(
-            base_text=core,
-            operational_reference=str(
-                c.get("operational_reference")
-                or raw_core
-                or ""
-            ).strip(),
-            reference_example=str(
-                c.get("reference_example")
-                or c.get("pack_micro_scene")
-                or raw_core
-                or ""
-            ).strip(),
-            contract=c,
-        )
-
-        if upgraded and not _looks_like_structural_scene_payload(upgraded):
-            return upgraded
-
         # 🔹 tentativa de gerar abertura via IA (leve)
         intro = _generate_style_intro_with_model(
             user_text=user_text,
@@ -3227,9 +3211,9 @@ def _build_direct_scene_payload(
         intro = str(intro or "").strip().strip('"').strip("'").strip()
         intro = re.sub(r"\s{2,}", " ", intro).strip()
 
-        # fallback seguro: se a intro falhar, mantém a microcena
+        # fallback seguro: se a intro falhar, mantém empatia mínima sem mexer na cena
         if not intro:
-            return core
+            intro = "Obrigado pelo contato."
 
         final = f"{intro}\n\n{core}"
         return final.strip()
