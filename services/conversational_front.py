@@ -7372,7 +7372,61 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if not isinstance(operational_contract, dict) or not operational_contract:
             operational_contract = base_operational_contract if 'base_operational_contract' in locals() else {}
 
-        # 🔒 GARANTIA DE CONTRATO MÍNIMO (fallback global real)
+        # 🔒 GARANTIA TARDIA DO PLATFORM_KB
+        # Ponto crítico: antes do retorno direto, garante que o contrato use
+        # o melhor material já cadastrado no platform_kb, em vez da microcena curta.
+        # Não cria conteúdo, não detecta profissão por palavra local e não mexe em prompt.
+        try:
+            if (
+                platform_kb_mode
+                and isinstance(operational_contract, dict)
+                and selected_pack_id
+                and str(next_step or "").strip().upper() != "SEND_LINK"
+            ):
+                _late_material = _platform_pack_material(
+                    kb_snapshot_obj,
+                    platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
+                    selected_pack_id,
+                )
+
+                _late_direct_scene = str(_late_material.get("direct_scene") or "").strip()
+                _late_runtime_long = str(_late_material.get("runtime_long_text") or "").strip()
+                _late_runtime_short = str(_late_material.get("runtime_short_reply") or "").strip()
+                _late_micro_scene = str(_late_material.get("micro_scene") or "").strip()
+                _late_reference = str(_late_material.get("reference_example") or "").strip()
+
+                _best_scene = (
+                    _late_direct_scene
+                    or _late_runtime_long
+                    or _late_runtime_short
+                    or _late_micro_scene
+                )
+
+                if _best_scene:
+                    operational_contract["direct_scene"] = _best_scene
+                    operational_contract["operational_reference"] = _best_scene
+                    operational_contract["selected_pack_id"] = selected_pack_id
+                    operational_contract["hydrated_from_platform_kb"] = True
+                    operational_contract["global_pack_fallback"] = True
+                    operational_contract["has_practical_scene"] = True
+
+                    if platform_segment_key:
+                        operational_contract["platform_segment_key"] = platform_segment_key
+                    if _late_runtime_long:
+                        operational_contract["runtime_long_text"] = _late_runtime_long
+                    if _late_runtime_short:
+                        operational_contract["runtime_short_reply"] = _late_runtime_short
+                    if _late_reference:
+                        operational_contract["reference_example"] = _late_reference
+                        operational_contract["has_reference_example"] = True
+
+                    response_mode = "SCENE"
+                    micro_scene_allowed = True
+                    operational_contract["micro_scene_allowed"] = True
+        except Exception:
+            pass
+
+        # 🔒 GARANTIA DE CONTRATO MÍNIMO (sem frase pronta de venda)
         try:
             _has_operational = bool(
                 str(operational_contract.get("operational_reference") or "").strip()
@@ -7380,16 +7434,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
 
             if not _has_operational:
-                # fallback mínimo neutro (sem heurística de segmento)
-                operational_contract["operational_reference"] = "Atendimento automatizado via WhatsApp com foco em organização, resposta rápida e condução do cliente."
-                operational_contract["operational_ritual"] = [
-                    "recebe a mensagem do cliente",
-                    "interpreta a intenção",
-                    "organiza a informação",
-                    "responde de forma clara",
-                    "conduz para o próximo passo"
-                ]
-                operational_contract["global_pack_fallback"] = True
+                operational_contract["global_pack_fallback"] = bool(platform_kb_mode)
         except Exception:
             pass
 
