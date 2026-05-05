@@ -7433,6 +7433,27 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
 
 
+        # ----------------------------------------------------------
+        # GARANTIA DE DISCOVERY ANTES DE QUALQUER DIRECT RETURN
+        # Mantém a cena direta, mas não deixa o turno 0 sair sem nome.
+        # ----------------------------------------------------------
+        try:
+            identity_discovery_required = bool(
+                ai_turns == 0
+                and is_lead
+                and not has_name
+                and str(next_step or "").strip().upper() != "SEND_LINK"
+            )
+
+            if identity_discovery_required:
+                response_mode = "DISCOVERY"
+                needs_clarify = "yes"
+                name_use = "clarify"
+                if isinstance(kb_context, dict):
+                    kb_context["needs_name_discovery"] = True
+        except Exception:
+            identity_discovery_required = False
+
         if use_direct_scene:
             direct_text = _build_direct_scene_payload(
                 contract=operational_contract,
@@ -7447,10 +7468,25 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
 
             if direct_text:
+                direct_spoken = direct_text
+                try:
+                    direct_text, direct_spoken, _identity_name_use = _ensure_discovery_identity_request(
+                        reply_text=direct_text,
+                        spoken_text=direct_spoken,
+                        has_name=has_name,
+                        effective_segment=effective_segment or segment_for_prompt,
+                        response_mode=response_mode,
+                    )
+                    if _identity_name_use == "clarify":
+                        name_use = "clarify"
+                        needs_clarify = "yes"
+                except Exception:
+                    direct_spoken = direct_text
+
                 return {
                     "response_mode": response_mode,
                     "replyText": direct_text,
-                    "spokenText": direct_text,
+                    "spokenText": direct_spoken,
                     "understanding": {
                         "topic": topic,
                         "intent": intent,
