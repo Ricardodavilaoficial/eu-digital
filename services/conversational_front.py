@@ -4431,6 +4431,10 @@ def _resolve_reply_size_policy(
     next_step: str = "",
     topic: str = "",
     kb_rich: bool = False,
+    confidence: str = "",
+    needs_clarify: str = "",
+    clarify_q: str = "",
+    effective_segment: str = "",
 ) -> Dict[str, Any]:
     """
     Define tamanho alvo por necessidade estrutural.
@@ -4445,13 +4449,39 @@ def _resolve_reply_size_policy(
     mode = str(response_mode or "").strip().upper()
     ns = str(next_step or "").strip().upper()
     tp = str(topic or "").strip().upper()
+    conf = str(confidence or "").strip().lower()
+    nc = str(needs_clarify or "").strip().lower()
+    cq = str(clarify_q or "").strip()
+    seg = str(effective_segment or "").strip()
 
     is_audio = mt in ("audio", "voice", "ptt")
-    first_turn = turns <= 0
     is_closing = ns == "SEND_LINK" or mode == "CLOSING"
+    is_discovery = mode == "DISCOVERY" or nc == "yes" or bool(cq)
     is_scene = mode == "SCENE"
     practical_topic = tp in ("AGENDA", "SERVICOS", "PEDIDOS", "STATUS", "PROCESSO", "ORCAMENTO")
-    technical_need = bool(kb_rich and (is_scene or practical_topic))
+    light_topic = tp in ("SOCIAL", "OTHER", "")
+
+    rich_scene_need = bool(
+        kb_rich
+        and is_scene
+        and practical_topic
+        and conf in ("high", "medium")
+        and bool(seg)
+    )
+
+    medium_direct_need = bool(
+        kb_rich
+        and mode == "DIRECT"
+        and not light_topic
+        and conf in ("high", "medium")
+    )
+
+    light_need = bool(
+        is_discovery
+        or light_topic
+        or conf in ("low", "")
+        or not kb_rich
+    )
 
     if is_closing:
         max_chars = FRONT_AUDIO_CLOSING_MAX_CHARS if is_audio else FRONT_TEXT_CLOSING_MAX_CHARS
@@ -4459,42 +4489,42 @@ def _resolve_reply_size_policy(
         max_tokens = 90 if is_audio else 110
         label = "closing"
     elif is_audio:
-        if first_turn and technical_need:
+        if rich_scene_need:
             max_chars = FRONT_AUDIO_INITIAL_MAX_CHARS
             target_chars = 520
             max_tokens = 190
-            label = "audio_initial_technical"
-        elif technical_need:
+            label = "audio_scene_rich"
+        elif medium_direct_need:
             max_chars = FRONT_AUDIO_SCENE_MAX_CHARS
             target_chars = 470
             max_tokens = 175
-            label = "audio_technical"
+            label = "audio_direct_medium"
         else:
             max_chars = FRONT_AUDIO_SEQUENCE_MAX_CHARS
             target_chars = 330
             max_tokens = 130
-            label = "audio_sequence"
+            label = "audio_light"
     else:
-        if first_turn and technical_need:
+        if rich_scene_need:
             max_chars = FRONT_TEXT_INITIAL_MAX_CHARS
             target_chars = 700
             max_tokens = 270
-            label = "text_initial_technical"
-        elif technical_need:
+            label = "text_scene_rich"
+        elif medium_direct_need:
             max_chars = FRONT_TEXT_SCENE_MAX_CHARS
-            target_chars = 650
-            max_tokens = 250
-            label = "text_technical"
-        elif first_turn:
-            max_chars = 720
-            target_chars = 580
+            target_chars = 560
             max_tokens = 220
-            label = "text_initial"
+            label = "text_direct_medium"
+        elif light_need:
+            max_chars = min(FRONT_TEXT_SEQUENCE_MAX_CHARS, 520)
+            target_chars = 360
+            max_tokens = 150
+            label = "text_light"
         else:
             max_chars = FRONT_TEXT_SEQUENCE_MAX_CHARS
             target_chars = 430
             max_tokens = 170
-            label = "text_sequence"
+            label = "text_default"
 
     return {
         "label": label,
@@ -4502,7 +4532,9 @@ def _resolve_reply_size_policy(
         "max_chars": int(max_chars),
         "max_tokens": int(max_tokens),
         "is_audio": bool(is_audio),
-        "technical_need": bool(technical_need),
+        "rich_scene_need": bool(rich_scene_need),
+        "medium_direct_need": bool(medium_direct_need),
+        "light_need": bool(light_need),
     }
 
 
@@ -6773,6 +6805,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         next_step=next_step,
         topic=(canonical_topic or topic or upstream_topic_hint),
         kb_rich=bool(kb_anchor_available),
+        confidence=confidence,
+        needs_clarify=needs_clarify,
+        clarify_q=clarify_q,
+        effective_segment=effective_segment,
     )
 
     real_scene_for_anchor = operational_reference if not _is_scene_echo(operational_reference, user_text) else ""
@@ -7443,6 +7479,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 next_step=next_step,
                 topic=(canonical_topic or topic or upstream_topic_hint),
                 kb_rich=bool(kb_anchor_available or kb_anchor_strong),
+                confidence=confidence,
+                needs_clarify=needs_clarify,
+                clarify_q=clarify_q,
+                effective_segment=effective_segment,
             )
         except Exception:
             reply_size_policy = _resolve_reply_size_policy(
@@ -7452,6 +7492,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 next_step=next_step,
                 topic=(topic or upstream_topic_hint),
                 kb_rich=False,
+                confidence=confidence,
+                needs_clarify=needs_clarify,
+                clarify_q=clarify_q,
+                effective_segment=effective_segment,
             )
 
         # ----------------------------------------------------------
