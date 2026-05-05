@@ -1122,6 +1122,73 @@ def _compact_value_packs_for_front(value_packs: Any) -> Dict[str, Any]:
 
 
 
+def _compact_segment_value_map_for_front(segment_value_map: Any, topic: str = "") -> Dict[str, Any]:
+    """
+    Compacta o mapa de personalização por segmento para o snapshot do front.
+    Preserva somente dados operacionais usados pelo runtime e reduz tokens ao tópico atual.
+    """
+    out: Dict[str, Any] = {}
+    try:
+        if not isinstance(segment_value_map, dict):
+            return {}
+
+        topic_key = str(topic or "").strip().upper()
+
+        for seg_key, profile in list(segment_value_map.items()):
+            if not isinstance(profile, dict):
+                continue
+
+            item: Dict[str, Any] = {}
+
+            preferred = profile.get("preferred_packs") or []
+            if isinstance(preferred, list):
+                picked = [
+                    str(x or "").strip().upper()
+                    for x in preferred[:6]
+                    if str(x or "").strip()
+                ]
+                if picked:
+                    item["preferred_packs"] = picked
+
+            blocked = profile.get("do_not_use") or []
+            if isinstance(blocked, list):
+                picked = [
+                    str(x or "").strip().upper()
+                    for x in blocked[:6]
+                    if str(x or "").strip()
+                ]
+                if picked:
+                    item["do_not_use"] = picked
+
+            tokens = profile.get("tokens") or {}
+            if isinstance(tokens, dict):
+                tokens_out: Dict[str, Any] = {}
+                for pack_key, token_map in list(tokens.items()):
+                    pack_id = str(pack_key or "").strip().upper()
+                    if topic_key and pack_id != topic_key:
+                        continue
+                    if not isinstance(token_map, dict):
+                        continue
+
+                    token_out: Dict[str, Any] = {}
+                    for tk, tv in list(token_map.items()):
+                        clipped = _clip_front_text(tv, 420)
+                        if clipped:
+                            token_out[str(tk)] = clipped
+                    if token_out:
+                        tokens_out[pack_id] = token_out
+
+                if tokens_out:
+                    item["tokens"] = tokens_out
+
+            if item:
+                out[str(seg_key)] = item
+
+        return out
+    except Exception:
+        return {}
+
+
 def _front_find_kb_map_anywhere(obj: Any, target_key: str, max_depth: int = 5) -> Dict[str, Any]:
     """
     Localiza mapas do platform_kb em qualquer nível razoável do snapshot.
@@ -1232,7 +1299,10 @@ def _build_front_kb_snapshot(topic: str) -> str:
                     "runtime_selector_v1": pb.get("runtime_selector_v1") if isinstance(pb, dict) else {},
                     "pack_selection_policy_v1": pack_selection_policy_source or (pb.get("pack_selection_policy_v1") if isinstance(pb, dict) else {}),
                     "segment_template_v1": segment_template_source or (pb.get("segment_template_v1") if isinstance(pb, dict) else {}),
-                    "segment_value_map_v1": segment_value_map_source or (pb.get("segment_value_map_v1") if isinstance(pb, dict) else {}),
+                    "segment_value_map_v1": _compact_segment_value_map_for_front(
+                        segment_value_map_source or (pb.get("segment_value_map_v1") if isinstance(pb, dict) else {}),
+                        topic,
+                    ),
                 },
                 "value_packs_v1": _compact_value_packs_for_front(value_packs_source or kb.get("value_packs_v1") or {}),
                 "platform_pricing": {"current": pricing_compact} if pricing_compact else {},

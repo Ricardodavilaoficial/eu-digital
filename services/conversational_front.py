@@ -5607,9 +5607,9 @@ def _platform_kb_resolve_runtime(
                 )
 
                 direct_scene = (
-                    runtime_long_text
-                    or runtime_short_reply
+                    runtime_short_reply
                     or micro_scene_conversational
+                    or runtime_long_text
                     or micro_scene
                 )
 
@@ -5794,13 +5794,23 @@ def _platform_pack_material(
         )
 
         direct_scene = (
-            runtime_long_text
-            or runtime_short_reply
+            runtime_short_reply
             or micro_scene_conversational
+            or runtime_long_text
             or micro_scene
         )
 
         operational_reference = direct_scene or example_line or runtime_short_reply or micro_scene_conversational or micro_scene
+
+        material_source = ""
+        if runtime_short_reply and direct_scene == runtime_short_reply:
+            material_source = "runtime_short_reply"
+        elif micro_scene_conversational and direct_scene == micro_scene_conversational:
+            material_source = "micro_scene_conversational"
+        elif runtime_long_text and direct_scene == runtime_long_text:
+            material_source = "runtime_long_text"
+        elif micro_scene and direct_scene == micro_scene:
+            material_source = "micro_scene"
 
         return {
             "micro_scene": micro_scene_conversational or micro_scene,
@@ -5809,6 +5819,7 @@ def _platform_pack_material(
             "direct_scene": direct_scene,
             "reference_example": example_line,
             "operational_reference": operational_reference,
+            "material_source": material_source,
         }
     except Exception:
         return {}
@@ -6565,6 +6576,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     kb_context["runtime_long_text"] = runtime_long_text
                 if direct_scene:
                     kb_context["direct_scene"] = direct_scene
+                if platform_material.get("material_source"):
+                    kb_context["material_source"] = platform_material["material_source"]
                 kb_context["segment_reference_example"] = reference_example
                 kb_context["operational_reference"] = operational_reference
                 kb_context["hydrated_from_platform_kb"] = True
@@ -7221,6 +7234,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     if micro_scene:
                         operational_contract["pack_micro_scene"] = micro_scene
                         operational_contract["has_practical_scene"] = True
+                    if platform_runtime.get("material_source"):
+                        operational_contract["material_source"] = platform_runtime["material_source"]
 
                     operational_contract["hydrated_from_platform_kb"] = True
                     operational_contract["global_pack_fallback"] = True
@@ -7394,6 +7409,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 _late_runtime_short = str(_late_material.get("runtime_short_reply") or "").strip()
                 _late_micro_scene = str(_late_material.get("micro_scene") or "").strip()
                 _late_reference = str(_late_material.get("reference_example") or "").strip()
+                _late_material_source = str(_late_material.get("material_source") or "").strip()
 
                 _best_scene = (
                     _late_direct_scene
@@ -7408,6 +7424,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     operational_contract["selected_pack_id"] = selected_pack_id
                     operational_contract["hydrated_from_platform_kb"] = True
                     operational_contract["global_pack_fallback"] = True
+                    if _late_material_source:
+                        operational_contract["material_source"] = _late_material_source
                     operational_contract["has_practical_scene"] = True
 
                     if platform_segment_key:
