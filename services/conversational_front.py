@@ -68,11 +68,29 @@ FRONT_KB_RESOLVER_ENABLED = (os.getenv("FRONT_KB_RESOLVER_ENABLED", "1") or "1")
 
 DEFAULT_TONE = "linguagem simples, direta, educada e comum de conversa no WhatsApp"
 
-def _resolve_tone_hint(state_summary: dict | None) -> str:
+def _resolve_tone_hint(state_summary: dict | None, contract: dict | None = None) -> str:
     try:
         raw = ""
         if isinstance(state_summary, dict):
-            raw = str(state_summary.get("tone_hint") or "").strip()
+            raw = str(
+                state_summary.get("tone_hint")
+                or state_summary.get("account_tone_hint")
+                or state_summary.get("voice_tone_hint")
+                or state_summary.get("style_tone_hint")
+                or ""
+            ).strip()
+
+        if raw:
+            return raw
+
+        if isinstance(contract, dict):
+            raw = str(
+                contract.get("tone_hint")
+                or contract.get("account_tone_hint")
+                or contract.get("voice_tone_hint")
+                or contract.get("style_tone_hint")
+                or ""
+            ).strip()
 
         if raw:
             return raw
@@ -801,6 +819,51 @@ def _kb_get_reference_example(kb_snapshot: str, segment: str, pack_id: str) -> s
         return ""
 
 
+
+
+def _kb_get_pack_runtime_short(kb_snapshot: str, pack_id: str) -> dict:
+    try:
+        out = {}
+        if not kb_snapshot or not pack_id:
+            return out
+        try:
+            obj = json.loads(kb_snapshot) if kb_snapshot.lstrip().startswith(("{", "[")) else None
+        except Exception:
+            obj = None
+        if not isinstance(obj, dict):
+            return out
+        packs = obj.get("value_packs_v1") or {}
+        pack = packs.get((pack_id or "").strip().upper()) or {}
+        runtime_short = pack.get("runtime_short") or {}
+        if not isinstance(runtime_short, dict):
+            return out
+        for k in ("micro_scene", "micro_scene_conversational", "value_one_liner", "bridge_line"):
+            v = str(runtime_short.get(k) or "").strip()
+            if v:
+                out[k] = v
+        if out.get("micro_scene_conversational") or out.get("micro_scene"):
+            out["micro_scene"] = out.get("micro_scene_conversational") or out.get("micro_scene")
+        return out
+    except Exception:
+        return {}
+
+def _compose_pack_runtime_short_reply(material: dict) -> str:
+    try:
+        if not isinstance(material, dict):
+            return ""
+        value = str(material.get("value_one_liner") or "").strip()
+        bridge = str(material.get("bridge_line") or "").strip()
+        scene = str(material.get("micro_scene_conversational") or material.get("micro_scene") or "").strip()
+        parts = []
+        if value:
+            parts.append(value.rstrip(".!?") + ".")
+        if bridge:
+            parts.append(bridge.rstrip(":") + ":")
+        if scene:
+            parts.append(scene.rstrip(".!?") + ".")
+        return " ".join(parts).strip()
+    except Exception:
+        return ""
 def _kb_get_micro_scene(kb_snapshot: str, pack_id: str) -> str:
     """Pull runtime_short.micro_scene for a given pack from kb_snapshot."""
     try:
@@ -831,7 +894,11 @@ def _kb_get_micro_scene(kb_snapshot: str, pack_id: str) -> str:
             if isinstance(packs, dict):
                 p = packs.get((pack_id or "").strip().upper()) or {}
                 runtime_short = p.get("runtime_short") or {}
-                ms = str(runtime_short.get("micro_scene") or "").strip()
+                ms = str(
+                    runtime_short.get("micro_scene_conversational")
+                    or runtime_short.get("micro_scene")
+                    or ""
+                ).strip()
                 if ms:
                     return ms
         return ""
@@ -3035,36 +3102,51 @@ def _generate_style_intro_with_model(
     segment_hint: str,
     name_hint: str,
     state_summary: dict | None = None,
+    contract: dict | None = None,
 ) -> str:
     """
     Gera uma única frase de abertura contextualizada.
     Escopo extremamente restrito para evitar regressão.
     """
     try:
-        tone_hint = _resolve_tone_hint(state_summary)
+        tone_hint = _resolve_tone_hint(state_summary, contract)
 
         system = f"""
-Você gera UMA única frase curta de abertura para WhatsApp.
-Use este estilo de comunicação: "{tone_hint}"
+Você é um assistente de WhatsApp.
+Sua tarefa é escrever apenas a primeira frase da resposta.
 
-A frase deve:
-- responder ao contexto do usuário
-- soar natural e humana
-- ter no máximo 20 palavras
-- não explicar o funcionamento
-- não listar etapas
-- não usar estrutura sequencial
+PAPEL DA FRASE:
+Servir como ponte curta antes da explicação principal.
+
+PADRÃO:
+1. Uma frase curta.
+2. Linguagem simples de WhatsApp.
+3. Reconhecer o tema da mensagem do cliente.
+4. Iniciar a resposta com boas-vindas relacionadas ao tema.
+5. Usar exatamente este estilo de comunicação: "{tone_hint}".
+
+EXEMPLOS:
+Contexto: Cliente pergunta "Como funciona para clínica?"
+Saída: Que legal, para clínicas isso ajuda a organizar os atendimentos.
+
+Contexto: Cliente diz "Quero saber o preço."
+Saída: Claro, já te explico os valores de um jeito simples.
+
+Contexto: Cliente diz "Sou advogado."
+Saída: Perfeito, para advogado isso ajuda a organizar melhor o atendimento.
 """
 
         user = f"""
 Mensagem do cliente:
 {user_text}
 
-Contexto:
-- segmento: {segment_hint}
-- nome: {name_hint}
+Segmento:
+{segment_hint}
 
-Gere apenas a frase de abertura.
+Nome:
+{name_hint}
+
+Saída:
 """
 
         text = _call_openai_for_front(
@@ -3074,7 +3156,9 @@ Gere apenas a frase de abertura.
             max_tokens=40,
         ).strip()
 
-        # segurança mínima
+        text = str(text or "").strip().strip('"').strip("'").strip()
+        text = re.sub(r"\s{2,}", " ", text).strip()
+
         if len(text) > 120:
             return ""
 
@@ -3137,14 +3221,15 @@ def _build_direct_scene_payload(
             segment_hint=segment_hint,
             name_hint=name_hint,
             state_summary=state_summary,
+            contract=c,
         )
 
-        # mantém fallback estrutural dentro do pipeline principal
-        if not intro:
-            return ""
+        intro = str(intro or "").strip().strip('"').strip("'").strip()
+        intro = re.sub(r"\s{2,}", " ", intro).strip()
 
-        if _looks_like_structural_scene_payload(core):
-            return ""
+        # fallback seguro: se a intro falhar, mantém a microcena
+        if not intro:
+            return core
 
         final = f"{intro}\n\n{core}"
         return final.strip()
