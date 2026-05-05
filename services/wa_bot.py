@@ -765,8 +765,24 @@ def _render_pack_reply(decider: Dict[str, Any], kb: Dict[str, Any]) -> Dict[str,
         txt = str(((pack.get("runtime_long") or {}) if isinstance(pack, dict) else {}).get("text") or "")
         reply = _simple_tpl(txt, slots).strip()
     else:
-        micro = str(((pack.get("runtime_short") or {}) if isinstance(pack, dict) else {}).get("micro_scene") or "")
-        reply = _simple_tpl(micro, slots).strip()
+        short = ((pack.get("runtime_short") or {}) if isinstance(pack, dict) else {})
+        value_one_liner = str(short.get("value_one_liner") or "").strip()
+        bridge_line = str(short.get("bridge_line") or "").strip()
+        micro = str(
+            short.get("micro_scene_conversational")
+            or short.get("micro_scene")
+            or ""
+        ).strip()
+
+        reply_parts = []
+        if value_one_liner:
+            reply_parts.append(_simple_tpl(value_one_liner, slots).strip())
+        if bridge_line:
+            reply_parts.append(_simple_tpl(bridge_line, slots).strip())
+        if micro:
+            reply_parts.append(_simple_tpl(micro, slots).strip())
+
+        reply = "\n".join([p for p in reply_parts if p]).strip()
         ex = str(slots.get("example_line") or "").strip()
         if ex:
             reply = (reply + "\n" + ex).strip()
@@ -1036,9 +1052,33 @@ def _compact_value_packs_for_front(value_packs: Any) -> Dict[str, Any]:
 
             runtime_short = pack.get("runtime_short") or {}
             if isinstance(runtime_short, dict):
+                runtime_short_out: Dict[str, Any] = {}
+
+                value_one_liner = _clip_front_text(runtime_short.get("value_one_liner"), 520)
+                bridge_line = _clip_front_text(runtime_short.get("bridge_line"), 220)
+                micro_scene_conversational = _clip_front_text(
+                    runtime_short.get("micro_scene_conversational"),
+                    900,
+                )
                 micro_scene = _clip_front_text(runtime_short.get("micro_scene"), 320)
+
+                if value_one_liner:
+                    runtime_short_out["value_one_liner"] = value_one_liner
+                if bridge_line:
+                    runtime_short_out["bridge_line"] = bridge_line
+                if micro_scene_conversational:
+                    runtime_short_out["micro_scene_conversational"] = micro_scene_conversational
                 if micro_scene:
-                    p["runtime_short"] = {"micro_scene": micro_scene}
+                    runtime_short_out["micro_scene"] = micro_scene
+
+                if runtime_short_out:
+                    p["runtime_short"] = runtime_short_out
+
+            runtime_long = pack.get("runtime_long") or {}
+            if isinstance(runtime_long, dict):
+                runtime_long_text = _clip_front_text(runtime_long.get("text"), 2200)
+                if runtime_long_text:
+                    p["runtime_long"] = {"text": runtime_long_text}
 
             slots_out: Dict[str, Any] = {}
             segment_slots = pack.get("segment_slots") or {}
