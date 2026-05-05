@@ -864,6 +864,43 @@ def _compose_pack_runtime_short_reply(material: dict) -> str:
         return " ".join(parts).strip()
     except Exception:
         return ""
+
+def _platform_apply_slots(text: str, pack: Dict[str, Any], tokens: Dict[str, Any]) -> str:
+    """
+    Aplica slots vindos do próprio platform_kb.
+    Não decide segmento, não cria frase e não contém conteúdo comercial próprio.
+    Apenas troca {{campo}} pelos valores/defaults cadastrados no banco.
+    """
+    try:
+        out = str(text or "").strip()
+        if not out:
+            return ""
+
+        values: Dict[str, str] = {}
+
+        segment_slots = (pack or {}).get("segment_slots") or {}
+        if isinstance(segment_slots, dict):
+            for key, spec in segment_slots.items():
+                if isinstance(spec, dict):
+                    default_value = str(spec.get("default") or "").strip()
+                    if default_value:
+                        values[str(key)] = default_value
+
+        if isinstance(tokens, dict):
+            for key, value in tokens.items():
+                if isinstance(value, (str, int, float)):
+                    v = str(value or "").strip()
+                    if v:
+                        values[str(key)] = v
+
+        for key, value in values.items():
+            out = out.replace("{{" + str(key) + "}}", str(value))
+
+        out = re.sub(r"\s{2,}", " ", out).strip()
+        return out
+    except Exception:
+        return str(text or "").strip()
+
 def _kb_get_micro_scene(kb_snapshot: str, pack_id: str) -> str:
     """Pull runtime_short.micro_scene for a given pack from kb_snapshot."""
     try:
@@ -3182,7 +3219,10 @@ def _build_direct_scene_payload(
         # prioriza o material mais específico já resolvido pelo KB.
         # Não reescreve a microcena por IA.
         scene = (
-            c.get("reference_example")
+            c.get("direct_scene")
+            or c.get("runtime_long_text")
+            or c.get("runtime_short_reply")
+            or c.get("reference_example")
             or c.get("operational_reference")
             or c.get("pack_micro_scene")
         )
@@ -3211,9 +3251,9 @@ def _build_direct_scene_payload(
         intro = str(intro or "").strip().strip('"').strip("'").strip()
         intro = re.sub(r"\s{2,}", " ", intro).strip()
 
-        # fallback seguro: se a intro falhar, mantém empatia mínima sem mexer na cena
+        # fallback seguro: se a intro falhar, mantém a cena do KB sem frase fixa no código
         if not intro:
-            intro = "Obrigado pelo contato."
+            return core
 
         final = f"{intro}\n\n{core}"
         return final.strip()
@@ -5515,15 +5555,65 @@ def _platform_kb_resolve_runtime(
             pack_id = _pick_pack_for_intent(topic)
 
         tokens = ((profile or {}).get("tokens") or {}).get(pack_id) or {}
-        example_line = str((tokens or {}).get("example_line") or "").strip()
+        example_line = _platform_apply_slots(
+            str((tokens or {}).get("example_line") or "").strip(),
+            packs.get(pack_id) if isinstance(packs, dict) else {},
+            tokens,
+        )
 
         micro_scene = ""
+        micro_scene_conversational = ""
+        runtime_short_reply = ""
+        runtime_long_text = ""
+        direct_scene = ""
+
         if isinstance(packs, dict) and pack_id:
             pack = packs.get(pack_id) or {}
             if isinstance(pack, dict):
-                micro_scene = str(((pack.get("runtime_short") or {}).get("micro_scene")) or "").strip()
+                runtime_short = (pack.get("runtime_short") or {})
+                runtime_long = (pack.get("runtime_long") or {})
 
-        operational_reference = example_line or micro_scene
+                micro_scene = _platform_apply_slots(
+                    str(runtime_short.get("micro_scene") or "").strip(),
+                    pack,
+                    tokens,
+                )
+                micro_scene_conversational = _platform_apply_slots(
+                    str(runtime_short.get("micro_scene_conversational") or "").strip(),
+                    pack,
+                    tokens,
+                )
+
+                runtime_short_material = {
+                    "value_one_liner": _platform_apply_slots(
+                        str(runtime_short.get("value_one_liner") or "").strip(),
+                        pack,
+                        tokens,
+                    ),
+                    "bridge_line": _platform_apply_slots(
+                        str(runtime_short.get("bridge_line") or "").strip(),
+                        pack,
+                        tokens,
+                    ),
+                    "micro_scene_conversational": micro_scene_conversational,
+                    "micro_scene": micro_scene,
+                }
+                runtime_short_reply = _compose_pack_runtime_short_reply(runtime_short_material)
+
+                runtime_long_text = _platform_apply_slots(
+                    str(runtime_long.get("text") or "").strip(),
+                    pack,
+                    tokens,
+                )
+
+                direct_scene = (
+                    runtime_long_text
+                    or runtime_short_reply
+                    or micro_scene_conversational
+                    or micro_scene
+                )
+
+        operational_reference = direct_scene or example_line or runtime_short_reply or micro_scene_conversational or micro_scene
 
         if topic in TOPICS and topic != "OTHER":
             out["topic"] = topic
@@ -5531,8 +5621,14 @@ def _platform_kb_resolve_runtime(
             out["pack_id"] = pack_id
         if profile_key:
             out["platform_segment_key"] = profile_key
-        if micro_scene:
-            out["micro_scene"] = micro_scene
+        if micro_scene_conversational or micro_scene:
+            out["micro_scene"] = micro_scene_conversational or micro_scene
+        if runtime_short_reply:
+            out["runtime_short_reply"] = runtime_short_reply
+        if runtime_long_text:
+            out["runtime_long_text"] = runtime_long_text
+        if direct_scene:
+            out["direct_scene"] = direct_scene
         if example_line:
             out["reference_example"] = example_line
         if operational_reference:
@@ -5654,8 +5750,9 @@ def _platform_pack_material(
     pack_id: str,
 ) -> Dict[str, str]:
     """
-    Extrai material operacional curto do platform_kb.
-    Prioridade: exemplo do segmento no pack; depois micro_scene genérica do pack.
+    Extrai material operacional do platform_kb.
+    Prioriza material conversacional/narrativo do banco e usa a microcena curta
+    apenas como último fallback.
     """
     try:
         pack_key = str(pack_id or "").strip().upper()
@@ -5664,23 +5761,57 @@ def _platform_pack_material(
 
         packs = _platform_get_map(kb_obj or {}, "value_packs_v1")
         pack = packs.get(pack_key) or {}
-        short = (pack.get("runtime_short") or {}) if isinstance(pack, dict) else {}
-        micro_scene = str(short.get("micro_scene") or "").strip()
-
         tokens = ((profile or {}).get("tokens") or {}).get(pack_key) or {}
-        example_line = str((tokens or {}).get("example_line") or "").strip()
+        example_line = _platform_apply_slots(
+            str((tokens or {}).get("example_line") or "").strip(),
+            pack,
+            tokens,
+        )
 
-        operational_reference = example_line or micro_scene
+        short = (pack.get("runtime_short") or {}) if isinstance(pack, dict) else {}
+        long = (pack.get("runtime_long") or {}) if isinstance(pack, dict) else {}
+
+        micro_scene = _platform_apply_slots(
+            str(short.get("micro_scene") or "").strip(),
+            pack,
+            tokens,
+        )
+        micro_scene_conversational = _platform_apply_slots(
+            str(short.get("micro_scene_conversational") or "").strip(),
+            pack,
+            tokens,
+        )
+        runtime_short_reply = _compose_pack_runtime_short_reply({
+            "value_one_liner": _platform_apply_slots(str(short.get("value_one_liner") or "").strip(), pack, tokens),
+            "bridge_line": _platform_apply_slots(str(short.get("bridge_line") or "").strip(), pack, tokens),
+            "micro_scene_conversational": micro_scene_conversational,
+            "micro_scene": micro_scene,
+        })
+        runtime_long_text = _platform_apply_slots(
+            str(long.get("text") or "").strip(),
+            pack,
+            tokens,
+        )
+
+        direct_scene = (
+            runtime_long_text
+            or runtime_short_reply
+            or micro_scene_conversational
+            or micro_scene
+        )
+
+        operational_reference = direct_scene or example_line or runtime_short_reply or micro_scene_conversational or micro_scene
 
         return {
-            "micro_scene": micro_scene,
-            "reference_example": example_line or micro_scene,
+            "micro_scene": micro_scene_conversational or micro_scene,
+            "runtime_short_reply": runtime_short_reply,
+            "runtime_long_text": runtime_long_text,
+            "direct_scene": direct_scene,
+            "reference_example": example_line,
             "operational_reference": operational_reference,
         }
     except Exception:
         return {}
-
-
 
 
 def _platform_get_map(kb_obj: Dict[str, Any], key: str) -> Dict[str, Any]:
@@ -6400,11 +6531,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if platform_material:
                 micro_scene = str(platform_material.get("micro_scene") or micro_scene or "").strip()
+                runtime_short_reply = str(platform_material.get("runtime_short_reply") or "").strip()
+                runtime_long_text = str(platform_material.get("runtime_long_text") or "").strip()
+                direct_scene = str(platform_material.get("direct_scene") or "").strip()
                 reference_example = str(platform_material.get("reference_example") or reference_example or "").strip()
                 operational_reference = str(platform_material.get("operational_reference") or operational_reference or "").strip()
 
                 kb_context["pack_id"] = selected_pack_id
                 kb_context["pack_micro_scene"] = micro_scene
+                if runtime_short_reply:
+                    kb_context["runtime_short_reply"] = runtime_short_reply
+                if runtime_long_text:
+                    kb_context["runtime_long_text"] = runtime_long_text
+                if direct_scene:
+                    kb_context["direct_scene"] = direct_scene
                 kb_context["segment_reference_example"] = reference_example
                 kb_context["operational_reference"] = operational_reference
                 kb_context["hydrated_from_platform_kb"] = True
@@ -7017,6 +7157,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 if platform_material:
                     micro_scene = str(platform_material.get("micro_scene") or micro_scene or "").strip()
+                    runtime_short_reply = str(platform_material.get("runtime_short_reply") or "").strip()
+                    runtime_long_text = str(platform_material.get("runtime_long_text") or "").strip()
+                    direct_scene = str(platform_material.get("direct_scene") or "").strip()
                     reference_example = str(platform_material.get("reference_example") or reference_example or "").strip()
                     operational_reference = str(platform_material.get("operational_reference") or operational_reference or "").strip()
         except Exception:
@@ -7044,6 +7187,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         operational_contract["selected_pack_id"] = platform_runtime["pack_id"]
                     if platform_runtime.get("platform_segment_key"):
                         operational_contract["platform_segment_key"] = platform_runtime["platform_segment_key"]
+                    if platform_runtime.get("direct_scene"):
+                        operational_contract["direct_scene"] = platform_runtime["direct_scene"]
+                    if platform_runtime.get("runtime_long_text"):
+                        operational_contract["runtime_long_text"] = platform_runtime["runtime_long_text"]
+                    if platform_runtime.get("runtime_short_reply"):
+                        operational_contract["runtime_short_reply"] = platform_runtime["runtime_short_reply"]
                     if operational_reference:
                         operational_contract["operational_reference"] = operational_reference
                     if reference_example:
@@ -7058,15 +7207,28 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
-        # 🔒 Injetar microcena curta do pack selecionado (se existir)
+        # 🔒 Reforça o melhor material operacional do pack selecionado.
+        # Mantém a microcena curta apenas como fallback final.
         try:
             if selected_pack_id:
-                _pack = (kb_snapshot_obj.get("value_packs_v1") or {}).get(selected_pack_id) or {}
-                _short = (_pack.get("runtime_short") or {})
-                _scene = _short.get("micro_scene")
+                _runtime_material = _platform_pack_material(
+                    kb_snapshot_obj,
+                    platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
+                    selected_pack_id,
+                )
+                _scene = (
+                    str(_runtime_material.get("direct_scene") or "").strip()
+                    or str(_runtime_material.get("runtime_long_text") or "").strip()
+                    or str(_runtime_material.get("runtime_short_reply") or "").strip()
+                    or str(_runtime_material.get("micro_scene") or "").strip()
+                )
 
                 if _scene:
-                    operational_contract["reference_example"] = _scene
+                    operational_contract["direct_scene"] = _scene
+                    if _runtime_material.get("runtime_long_text"):
+                        operational_contract["runtime_long_text"] = _runtime_material["runtime_long_text"]
+                    if _runtime_material.get("runtime_short_reply"):
+                        operational_contract["runtime_short_reply"] = _runtime_material["runtime_short_reply"]
                     operational_contract["has_practical_scene"] = True
         except Exception:
             pass
