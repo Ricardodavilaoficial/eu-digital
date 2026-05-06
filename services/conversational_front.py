@@ -6544,6 +6544,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     except Exception:
         pass
 
+    has_lead_name = bool(str(name_hint or "").strip())
+
+    has_segment_context = bool(
+        str(effective_segment or "").strip()
+        or str(segment_hint or "").strip()
+    )
+
+    discovery_resolved = bool(
+        has_lead_name and has_segment_context
+    )
+
     try:
         if (
             not str((kb_context or {}).get("discovery_question_hint") or "").strip()
@@ -7302,6 +7313,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             clarify_q=clarify_q,
             next_step=next_step,
         )
+
+        # ----------------------------------------------------------
+        # Continuidade conversacional:
+        # se nome e segmento já foram obtidos,
+        # não repetir descoberta.
+        # ----------------------------------------------------------
+        if discovery_resolved:
+            needs_clarify = "no"
+            clarify_q = ""
 
         try:
             if (
