@@ -4465,15 +4465,16 @@ def _resolve_reply_size_policy(
         kb_rich
         and is_scene
         and practical_topic
-        and conf in ("high", "medium")
+        and conf == "high"
         and bool(seg)
     )
 
     medium_direct_need = bool(
         kb_rich
-        and mode == "DIRECT"
+        and mode in ("DIRECT", "SCENE")
         and not light_topic
         and conf in ("high", "medium")
+        and not rich_scene_need
     )
 
     light_need = bool(
@@ -4490,14 +4491,14 @@ def _resolve_reply_size_policy(
         label = "closing"
     elif is_audio:
         if rich_scene_need:
-            max_chars = FRONT_AUDIO_INITIAL_MAX_CHARS
-            target_chars = 520
-            max_tokens = 190
+            max_chars = min(FRONT_AUDIO_INITIAL_MAX_CHARS, 560)
+            target_chars = 470
+            max_tokens = 170
             label = "audio_scene_rich"
         elif medium_direct_need:
-            max_chars = FRONT_AUDIO_SCENE_MAX_CHARS
-            target_chars = 470
-            max_tokens = 175
+            max_chars = min(FRONT_AUDIO_SCENE_MAX_CHARS, 460)
+            target_chars = 380
+            max_tokens = 145
             label = "audio_direct_medium"
         else:
             max_chars = FRONT_AUDIO_SEQUENCE_MAX_CHARS
@@ -4511,9 +4512,14 @@ def _resolve_reply_size_policy(
             max_tokens = 270
             label = "text_scene_rich"
         elif medium_direct_need:
-            max_chars = FRONT_TEXT_SCENE_MAX_CHARS
-            target_chars = 560
-            max_tokens = 220
+            if not seg:
+                max_chars = min(FRONT_TEXT_SCENE_MAX_CHARS, 560)
+                target_chars = 450
+                max_tokens = 175
+            else:
+                max_chars = FRONT_TEXT_SCENE_MAX_CHARS
+                target_chars = 560
+                max_tokens = 220
             label = "text_direct_medium"
         elif light_need:
             max_chars = min(FRONT_TEXT_SEQUENCE_MAX_CHARS, 520)

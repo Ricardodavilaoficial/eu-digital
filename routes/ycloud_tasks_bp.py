@@ -996,23 +996,48 @@ def _apply_name_override(reply_text: str, override_name: str) -> str:
 def _shorten_for_speech(text: str, max_chars: int) -> str:
     """
     Encurta texto para TTS de forma segura e 'falável'.
-    Heurística leve (barata): corta em limite e tenta terminar em pontuação.
+    Heurística leve (barata): corta antes do limite, priorizando fim de frase.
+    Nunca corta palavra no meio.
     """
-    t = (text or "").strip()
-    if not t:
-        return ""
-    if max_chars <= 60:
-        max_chars = 60
-    if len(t) <= max_chars:
-        return t
-    cut = t[:max_chars].strip()
-    # tenta finalizar no último . ! ? (melhor pra fala)
-    m = re.search(r"^(.{40,})([.!?])[^.!?]*$", cut)
-    if m:
-        return (m.group(1) + m.group(2)).strip()
-    # fallback: remove resto e fecha com ponto
-    cut = cut.rstrip(",;:-")
-    return (cut + ".").strip()
+    try:
+        t = " ".join(str(text or "").split()).strip()
+        if not t:
+            return ""
+        if max_chars <= 60:
+            max_chars = 60
+        if len(t) <= max_chars:
+            return t
+
+        cut = t[:max_chars].rstrip()
+        floor = max(40, int(max_chars * 0.62))
+
+        # 1) Melhor caso: terminar em pontuação natural perto do limite.
+        best = -1
+        for mark in (".", "!", "?"):
+            pos = cut.rfind(mark)
+            if pos >= floor:
+                best = max(best, pos)
+        if best >= floor:
+            return cut[: best + 1].strip()
+
+        # 2) Segundo melhor: terminar em quebra lógica leve.
+        best = -1
+        for mark in ("; ", ": ", ", "):
+            pos = cut.rfind(mark)
+            if pos >= floor:
+                best = max(best, pos)
+        if best >= floor:
+            return cut[:best].rstrip(" ,;:-") + "."
+
+        # 3) Fallback: último espaço antes do limite.
+        sp = cut.rfind(" ")
+        if sp >= floor:
+            return cut[:sp].rstrip(" ,;:-") + "."
+
+        # 4) Fallback extremo: evita retornar vazio.
+        return cut.rstrip(" ,;:-") + "."
+    except Exception:
+        return str(text or "").strip()
 
 
 def _shorten_for_whatsapp(text: str, max_chars: int) -> str:
@@ -3510,6 +3535,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                         "maxChars": _SALES_TTS_MAX_CHARS,
                                         "beforeLen": len(before),
                                         "afterLen": len(tts_text),
+                                        "safeBoundary": True,
                                     }
                             else:
                                 support_persona = _get_support_persona()
@@ -3746,6 +3772,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                     "maxChars": _tts_max,
                                     "beforeLen": len(before),
                                     "afterLen": len(tts_text),
+                                    "safeBoundary": True,
                                 }
                             # Probe FINAL (texto REAL falado)
                             audio_debug = dict(audio_debug or {})
@@ -3842,6 +3869,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                     "http": 413,
                                     "maxChars": _SUPPORT_TTS_RETRY_MAX_CHARS,
                                     "retryLen": len(retry_text),
+                                    "safeBoundary": True,
                                 }
                                 rr = _call_tts(retry_text)
                             except Exception as e_retry:

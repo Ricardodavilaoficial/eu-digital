@@ -1536,6 +1536,79 @@ def _build_front_kb_snapshot(topic: str) -> str:
 # ==========================================================
 # ✅ PATCH ÚNICO: substituir completamente reply_to_text(...)
 # ==========================================================
+
+
+def _front_smart_cut_for_audio(text: str, max_chars: int = 460) -> str:
+    """
+    Encurta fala para TTS sem cortar palavra/frase no meio.
+    Regra técnica de canal/custo; não cria frase comercial.
+    """
+    try:
+        s = " ".join(str(text or "").split()).strip()
+        if not s or len(s) <= max_chars:
+            return s
+
+        soft = s[:max_chars].rstrip()
+
+        # Preferência: encerrar em pontuação natural próxima do limite.
+        floor = max(0, int(max_chars * 0.62))
+        best = -1
+        for mark in (".", "!", "?"):
+            pos = soft.rfind(mark)
+            if pos >= floor:
+                best = max(best, pos)
+
+        if best >= floor:
+            return soft[: best + 1].strip()
+
+        # Fallback: corta no último espaço, nunca no meio da palavra.
+        sp = soft.rfind(" ")
+        if sp >= floor:
+            return soft[:sp].rstrip(" ,;:-") + "."
+
+        return soft.rstrip(" ,;:-") + "."
+    except Exception:
+        return str(text or "").strip()
+
+
+def _prepare_worker_tts_text(out: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Para inbound de áudio, entrega ao worker um texto falável já limpo.
+    Mantém replyText intacto para auditoria/texto; ajusta spokenText/ttsText.
+    """
+    try:
+        out = dict(out or {})
+        ctx = ctx or {}
+        msg_type = str(ctx.get("msg_type") or "").strip().lower()
+        if msg_type not in ("audio", "voice", "ptt"):
+            return out
+
+        if _is_sales_text_only_closure(out):
+            return out
+
+        source = str(
+            out.get("spokenText")
+            or out.get("ttsText")
+            or out.get("replyText")
+            or ""
+        ).strip()
+        if not source:
+            return out
+
+        clipped = _front_smart_cut_for_audio(source, 460)
+        out["spokenText"] = clipped
+        out["ttsText"] = clipped
+
+        dbg = out.get("decisionDebug") or {}
+        if isinstance(dbg, dict):
+            dbg["worker_tts_text_prepared"] = True
+            dbg["worker_tts_text_len"] = len(clipped)
+            out["decisionDebug"] = dbg
+
+        return out
+    except Exception:
+        return dict(out or {})
+
 def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Retorna um dict com replyText (texto a ser enviado).
@@ -2032,6 +2105,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             except Exception:
                                 pass
                             _final_cut_one_q(out)
+                            out = _prepare_worker_tts_text(out, ctx)
                             return out
                         else:
                             front_reason = "front_empty_reply"
@@ -2246,6 +2320,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             # O worker (routes/ycloud_tasks_bp.py) decide áudio/texto e faz TTS.
             out = _apply_safe_ai_meta(out, ctx)
             _final_cut_one_q(out)
+            out = _prepare_worker_tts_text(out, ctx)
             return out
 
         except Exception as e:
@@ -2289,6 +2364,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                     out = _apply_sales_text_only_closure(out, ctx)
                     out = _apply_safe_ai_meta(out, ctx)
                     _final_cut_one_q(out)
+                    out = _prepare_worker_tts_text(out, ctx)
                     return out
             except Exception:
                 pass
@@ -2308,6 +2384,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             out = _apply_sales_text_only_closure(out, ctx)
             out = _apply_safe_ai_meta(out, ctx)
             _final_cut_one_q(out)
+            out = _prepare_worker_tts_text(out, ctx)
             return out
     # 2) SUPORTE (uid presente) — usa o legacy de forma compatível
     actor_type = str((ctx.get("actor_type") or "")).strip().lower()
