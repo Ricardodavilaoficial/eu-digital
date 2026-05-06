@@ -6549,6 +6549,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     has_segment_context = bool(
         str(effective_segment or "").strip()
         or str(segment_hint or "").strip()
+        or str(platform_segment_key or "").strip()
     )
 
     discovery_resolved = bool(
@@ -7222,6 +7223,38 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         should_ask_segment = str(data.get("shouldAskSegment") or "no").strip().lower()
         pack_id = str(data.get("packId") or (data.get("decider") or {}).get("packId") or "").strip()
 
+        # ----------------------------------------------------------
+        # Continuidade do turno atual:
+        # o modelo pode ter reconhecido nome/segmento na própria fala
+        # antes disso existir no state_summary.
+        # Não cria frase, não usa palavra-chave, só consome sinais estruturados.
+        # ----------------------------------------------------------
+        try:
+            _name_use_probe = str(
+                data.get("nameUse")
+                or understanding.get("nameUse")
+                or understanding.get("name_use")
+                or ""
+            ).strip().lower()
+
+            if (not has_name) and _name_use_probe in ("greet", "empathy"):
+                has_name = True
+                has_lead_name = True
+
+            current_turn_segment_resolved = bool(
+                str(segment_key or "").strip()
+                and segment_conf in ("high", "medium")
+                and should_ask_segment != "yes"
+            )
+
+            if current_turn_segment_resolved:
+                has_segment_context = True
+
+            discovery_resolved = bool(has_name and has_segment_context)
+
+        except Exception:
+            current_turn_segment_resolved = False
+
         # Back-compat: alguns retornos antigos ainda vêm com replyText/spokenText
         reply_text = str(data.get("replyText") or "").strip()
         spoken_text = str(data.get("spokenText") or "").strip()
@@ -7322,6 +7355,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if discovery_resolved:
             needs_clarify = "no"
             clarify_q = ""
+            if should_ask_segment == "yes":
+                should_ask_segment = "no"
 
         try:
             if (
@@ -7821,6 +7856,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if confidence not in ("high", "medium", "low"):
             confidence = "low"
 
+        segment_discovery_resolved = bool(
+            has_segment_context
+            or str(segment_for_prompt or "").strip()
+            or (
+                str(segment_key or "").strip()
+                and segment_conf in ("high", "medium")
+                and should_ask_segment != "yes"
+            )
+        )
+
+        discovery_resolved = bool(has_name and segment_discovery_resolved)
+
+        if discovery_resolved:
+            needs_clarify = "no"
+            clarify_q = ""
+            should_ask_segment = "no"
+
         
         # ----------------------------------------------------------
         # ✅ "TOM DO LINK": o link é uma AÇÃO (fechar) — não uma palavra.
@@ -7887,6 +7939,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ai_turns == 0
                 and is_lead
                 and not has_name
+                and not discovery_resolved
                 and str(next_step or "").strip().upper() != "SEND_LINK"
             )
 
@@ -8659,7 +8712,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             # --- GARANTIA DE DISCOVERY ANTES DO EARLY RETURN ---
             if response_mode == "DISCOVERY":
                 missing_name = not bool(has_name)
-                missing_segment = not bool(segment_for_prompt)
+                missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
                     if not _has_question(reply_text):
@@ -9169,7 +9222,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             elif response_mode == "DISCOVERY":
                 missing_name = not bool(has_name)
-                missing_segment = not bool(segment_for_prompt)
+                missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
                     if not _has_question(reply_text):
@@ -9189,7 +9242,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if response_mode == "DISCOVERY":
                 missing_name = not bool(has_name)
-                missing_segment = not bool(segment_for_prompt)
+                missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
                     if not _has_question(reply_text):
@@ -9240,7 +9293,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # ----------------------------------------------------------
         if response_mode == "DISCOVERY":
             missing_name = not bool(has_name)
-            missing_segment = not bool(segment_for_prompt)
+            missing_segment = not bool(segment_discovery_resolved)
 
             if missing_name or missing_segment:
                 if not _has_question(reply_text):
@@ -9262,7 +9315,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
 
         if ai_turns == 0 and reply_text:
-            if not name_hint:
+            if not has_name:
                 reply_text = "Obrigado pelo contato! " + reply_text
 
         if FRONT_TRACE_ENABLED:
