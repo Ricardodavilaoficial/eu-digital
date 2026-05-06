@@ -3602,21 +3602,26 @@ def _expand_structural_steps_from_contract_with_model(
             "base_steps": base_steps,
         }
 
-        system = """
-Você recebe um contrato operacional já resolvido.
+        system = """Você ajusta uma mensagem para WhatsApp.
 
-Sua tarefa é expandir a microcena em passos estruturais curtos e encadeados.
+Siga esta sequência:
 
-Regras:
-- Escreva exclusivamente os passos da ação.
-- Baseie-se estritamente no contrato fornecido (ritual, capabilities, handoff, goal e next_step).
-- Formule cada passo como uma ação concreta que puxa a próxima (ex: "O cliente envia mensagem", "O robô identifica o pedido").
-- Use linguagem prática, visual e do dia a dia.
-- Descreva o fluxo de forma objetiva, focando apenas nas ações do cliente e do robô.
-- Retorne EXCLUSIVAMENTE o JSON solicitado.
+1. Comece com uma saudação.
+2. Use o nome do lead se estiver disponível.
+3. Mantenha toda a explicação operacional existente.
+4. Continue a conversa já iniciada com o lead enquanto explica o funcionamento.
+5. Se houver nome do lead, utilize naturalmente ao longo da resposta.
+6. Se houver profissão, segmento ou contexto profissional, conecte a explicação ao cenário desse profissional de forma natural.
+7. Explique o funcionamento de forma prática e operacional, sem perder continuidade conversacional.
+8. A resposta deve soar como conversa consultiva no WhatsApp, não como documentação ou tutorial.
+9. Organize o texto em fluxo contínuo.
+10. Finalize com ponto.
 
-Formato:
-{"steps":["passo 1","passo 2","passo 3","passo 4"]}
+Não remova informações.
+
+Escreva em um único parágrafo.
+
+Retorne somente o texto.
 """
 
         user_prompt = json.dumps(payload, ensure_ascii=False)
