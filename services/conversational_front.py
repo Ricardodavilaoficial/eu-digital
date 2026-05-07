@@ -8278,11 +8278,45 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             contract=operational_contract if 'operational_contract' in locals() else {},
                         )
 
-                if generated_show:
+                # ==========================================================
+                # Gate estrutural do worker operacional
+                #
+                # IMPORTANTE:
+                # O payload institucional/global continua existindo
+                # como contexto consultivo para o GPT.
+                #
+                # Porém o worker operacional NÃO pode ser promovido
+                # sem autorização estrutural do contrato.
+                #
+                # Isso evita:
+                # - tutorial operacional global
+                # - fluxo procedural indevido
+                # - vazamento do PACK fallback
+                #
+                # Sem destruir:
+                # - runtime_short_reply
+                # - operational_reference
+                # - bridge_line
+                # - fallback institucional
+                # ==========================================================
+                operational_upgrade_allowed = bool(
+                    (
+                        operational_contract.get("has_practical_scene")
+                        if isinstance(operational_contract, dict)
+                        else False
+                    )
+                    and (
+                        operational_contract.get("hydrated_from_docs")
+                        if isinstance(operational_contract, dict)
+                        else False
+                    )
+                )
+
+                if generated_show and operational_upgrade_allowed:
                     reply_text = generated
                     spoken_text = generated
                     reply_source = "front_ia_soberana"
-                elif generated:
+                elif generated and operational_upgrade_allowed:
                     reply_text = generated
                     spoken_text = generated
                     reply_source = "front_operational_upgrade"
