@@ -2906,9 +2906,12 @@ def _build_operational_contract(
             or ((seg_doc or {}).get("operational_ritual") if use_seg else [])
             or []
         )
-        ritual_steps = [str(x).strip() for x in operational_ritual if str(x).strip()] if isinstance(operational_ritual, list) else []
+        _is_hydrated = bool(sub_doc or arch_doc or (seg_doc if use_seg else {}))
+        ritual_steps = []
+        if _is_hydrated:
+            ritual_steps = [str(x).strip() for x in operational_ritual if str(x).strip()] if isinstance(operational_ritual, list) else []
 
-        if not ritual_steps:
+        if _is_hydrated and not ritual_steps:
             ritual_steps = _derive_ritual_from_scene(
                 _pick_str(
                     operational_reference,
@@ -6006,7 +6009,10 @@ def _platform_pack_material(
             or micro_scene
         )
 
-        operational_reference = direct_scene or example_line or runtime_short_reply or micro_scene_conversational or micro_scene
+        if not profile or not profile.get("tokens"):
+            operational_reference = runtime_compact_reply or value_one_liner or example_line
+        else:
+            operational_reference = direct_scene or example_line or runtime_short_reply or micro_scene_conversational or micro_scene
 
         material_source = ""
         if runtime_short_reply and direct_scene == runtime_short_reply:
@@ -6989,28 +6995,33 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         + f"last_intent={last_intent or 'NONE'}\n"
         + f"last_user_goal={last_user_goal or 'NONE'}\n\n"
         + (
-            (
-                "[BASE OPERACIONAL DO KB]\n"
-                + (
-                    f"operational_reference: {str(operational_reference or '').strip()}\n"
-                    f"reference_example: {str(reference_example or '').strip()}\n"
-                    if allow_kb_payload_scene else ""
-                )
-                + f"primary_goal: {str((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('primary_goal') or '').strip()}\n"
-                + f"allowed_next_step: {str((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('allowed_next_step') or '').strip()}\n"
-                + f"operational_ritual: {json.dumps((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('operational_ritual') or [], ensure_ascii=False)}\n\n"
-            )
-            if (segment_for_prompt or platform_kb_mode) and (
-                (
+            "[BASE OPERACIONAL DO KB]\n"
+            + (
+                f"operational_reference: {str(operational_reference or '').strip()}\n"
+                f"reference_example: {str(reference_example or '').strip()}\n"
+                if (
                     allow_kb_payload_scene
-                    and (
-                        str(operational_reference or '').strip()
-                        or str(reference_example or '').strip()
+                    and bool((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get("hydrated_from_docs"))
+                ) else ""
+            )
+            + f"primary_goal: {str((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('primary_goal') or '').strip()}\n"
+            + f"allowed_next_step: {str((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('allowed_next_step') or '').strip()}\n"
+            + f"operational_ritual: {json.dumps(((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('operational_ritual') or []) if bool((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('hydrated_from_docs')) else [], ensure_ascii=False)}\n\n"
+            if (
+                (segment_for_prompt or platform_kb_mode)
+                and bool((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get("hydrated_from_docs"))
+                and (
+                    (
+                        allow_kb_payload_scene
+                        and (
+                            str(operational_reference or '').strip()
+                            or str(reference_example or '').strip()
+                        )
                     )
+                    or ((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('primary_goal'))
+                    or ((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('allowed_next_step'))
+                    or ((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('operational_ritual'))
                 )
-                or ((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('primary_goal'))
-                or ((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('allowed_next_step'))
-                or ((operational_contract if 'operational_contract' in locals() else base_operational_contract if 'base_operational_contract' in locals() else {}).get('operational_ritual'))
             )
             else ""
         )
