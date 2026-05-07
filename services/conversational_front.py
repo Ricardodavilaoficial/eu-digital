@@ -7798,11 +7798,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                     if platform_segment_key:
                         operational_contract["platform_segment_key"] = platform_segment_key
-                    if _late_runtime_long:
+                    if has_real_operational_context and _late_runtime_long:
                         operational_contract["runtime_long_text"] = _late_runtime_long
-                    if _late_runtime_short:
+                    if has_real_operational_context and _late_runtime_short:
                         operational_contract["runtime_short_reply"] = _late_runtime_short
-                    if _late_reference:
+                    if has_real_operational_context and _late_reference:
                         operational_contract["reference_example"] = _late_reference
                         operational_contract["has_reference_example"] = True
 
@@ -8752,6 +8752,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and str(((operational_contract if 'operational_contract' in locals() else {}) or {}).get("operational_reference") or "").strip()
             )
 
+            _contract_allows_operational_output = bool(
+                isinstance((operational_contract if 'operational_contract' in locals() else {}), dict)
+                and (operational_contract if 'operational_contract' in locals() else {}).get("hydrated_from_docs")
+                and (operational_contract if 'operational_contract' in locals() else {}).get("has_practical_scene")
+            )
+
             _not_explanatory = not _looks_explanatory_reply(
                 text=str(reply_text or ""),
                 operational_reference="",
@@ -8761,15 +8767,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             _source_now = str(reply_source or "").strip()
 
-            if _contract_strong:
+            if _contract_strong or _contract_allows_operational_output:
                 accepted = bool(ia_show)
             else:
                 accepted = bool(
-                    _source_now in ("front_ia_soberana", "front_operational_upgrade")
-                    and (
-                        ia_show
-                        or (ia_live_final and _not_explanatory)
-                    )
+                    _source_now == "front_ia_soberana"
+                    and ia_live_final
+                    and _not_explanatory
                 )
             ia_accepted = accepted
 
@@ -8815,17 +8819,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
 
-                if _contract_strong:
+                if _contract_strong or _contract_allows_operational_output:
                     _accept_current = bool(current_show)
                 else:
                     _accept_current = bool(
-                        current_show
-                        or (current_live and _current_not_explanatory)
+                        current_live
+                        and _current_not_explanatory
+                        and str(reply_source or "").strip() == "front_ia_soberana"
                     )
 
                 if _accept_current:
                     accepted = True
-                    if str(reply_source or "").strip() not in ("front_ia_soberana", "front_operational_upgrade"):
+                    if (
+                        (_contract_strong or _contract_allows_operational_output)
+                        and str(reply_source or "").strip() not in ("front_ia_soberana", "front_operational_upgrade")
+                    ):
                         reply_source = "front_operational_upgrade"
                 else:
                     fallback = ""
@@ -9151,6 +9159,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 str(response_mode or "").strip().upper() == "SCENE"
                 and isinstance(_contract_for_direct, dict)
                 and bool(_contract_for_direct.get("micro_scene_allowed"))
+                and bool(_contract_for_direct.get("hydrated_from_docs"))
+                and bool(_contract_for_direct.get("has_practical_scene"))
             ):
                 _direct_payload = _build_direct_scene_payload(
                     _contract_for_direct,
@@ -9171,6 +9181,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             _source_for_exit = str(reply_source or "").strip()
             _raw_scene_exit = bool(
                 str(response_mode or "").strip().upper() == "SCENE"
+                and isinstance(_contract_for_direct, dict)
+                and bool(_contract_for_direct.get("hydrated_from_docs"))
+                and bool(_contract_for_direct.get("has_practical_scene"))
                 and str(reply_text or "").strip()
                 and (
                     _source_for_exit in ("front_fallback_structural", "front_direct_scene", "front_resolved_best_effort")
