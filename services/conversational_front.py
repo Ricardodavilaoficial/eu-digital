@@ -7534,11 +7534,34 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         has_real_operational_context = False
         try:
+            # ==========================================================
+            # GATE ESTRUTURAL OPERACIONAL
+            #
+            # IMPORTANTE:
+            # Tópico global / PACK fallback / inferência parcial
+            # NÃO podem promover modo operacional.
+            #
+            # Contexto operacional real exige:
+            # - hidratação real de docs
+            # E
+            # - identidade estrutural válida
+            #
+            # Isso evita:
+            # - tutorial operacional global
+            # - SCENE indevido
+            # - operational_ritual sem contrato
+            # - vazamento do PACK_A_AGENDA
+            #
+            # Sem destruir:
+            # - fallback institucional
+            # - runtime consultivo
+            # - fluidez do GPT 4.0 mini
+            # ==========================================================
             has_real_operational_context = bool(
                 isinstance(operational_contract, dict)
+                and bool(operational_contract.get("hydrated_from_docs"))
                 and (
-                    bool(operational_contract.get("hydrated_from_docs"))
-                    or str(operational_contract.get("segment") or "").strip()
+                    str(operational_contract.get("segment") or "").strip()
                     or str(operational_contract.get("archetype_id") or "").strip()
                 )
             )
@@ -7558,6 +7581,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
         except Exception:
             pass
+
+        if not has_real_operational_context:
+            operational_contract["has_practical_scene"] = False
+            operational_contract["micro_scene_allowed"] = False
+            operational_contract["response_mode"] = "DIRECT"
 
         # 🔒 Reforça o melhor material operacional do pack selecionado.
         # Mantém a microcena curta apenas como fallback final.
@@ -7731,16 +7759,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         )
 
         use_direct_scene = (
-            response_mode == "SCENE"
+            has_real_operational_context
+            and response_mode == "SCENE"
             and (operational_contract or {}).get("micro_scene_allowed")
-            and bool(has_real_operational_context)
             and has_structured_scene
         )
 
         allow_scene_runtime = bool(
-            response_mode == "SCENE"
+            has_real_operational_context
+            and response_mode == "SCENE"
             and micro_scene_allowed
-            and bool(has_real_operational_context)
         )
 
         if not isinstance(operational_contract, dict) or not operational_contract:
@@ -7792,11 +7820,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     else:
                         operational_contract.pop("direct_scene", None)
                         operational_contract.pop("operational_reference", None)
-                        operational_contract.pop("runtime_long_text", None)
                         operational_contract.pop("pack_micro_scene", None)
+                        operational_contract.pop("runtime_long_text", None)
+                        operational_contract.pop("operational_ritual", None)
                         operational_contract["runtime_short_reply"] = _best_scene
                         operational_contract["has_practical_scene"] = False
                         operational_contract["micro_scene_allowed"] = False
+                        operational_contract["response_mode"] = "DIRECT"
                     if _late_material_source:
                         operational_contract["material_source"] = _late_material_source
                     operational_contract["has_practical_scene"] = bool(
@@ -9201,7 +9231,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             _source_for_exit = str(reply_source or "").strip()
             _raw_scene_exit = bool(
-                str(response_mode or "").strip().upper() == "SCENE"
+                has_real_operational_context
+                and str(response_mode or "").strip().upper() == "SCENE"
                 and isinstance(_contract_for_direct, dict)
                 and bool(_contract_for_direct.get("hydrated_from_docs"))
                 and bool(_contract_for_direct.get("has_practical_scene"))
