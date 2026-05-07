@@ -893,7 +893,49 @@ def _compose_pack_runtime_compact_reply(material: dict) -> str:
             parts.append(bridge.rstrip(":") + ":")
         if scene:
             parts.append(scene.rstrip(".!?") + ".")
-        return " ".join(parts).strip()
+
+        compact_reply = str(" ".join(parts).strip() or "").strip()
+
+        if compact_reply:
+            compact_reply = re.sub(
+                r'(?i)\bna prática[,:\s]*',
+                '',
+                compact_reply,
+            ).strip()
+
+            compact_reply = re.sub(
+                r'(?i)\bfunciona assim[,:\s]*',
+                '',
+                compact_reply,
+            ).strip()
+
+            compact_reply = re.sub(
+                r'\s{2,}',
+                ' ',
+                compact_reply,
+            ).strip()
+
+            compact_reply = compact_reply.replace(
+                'Cliente pede horário →',
+                'O cliente chama no WhatsApp e o robô'
+            )
+
+            compact_reply = compact_reply.replace(
+                'o robô oferece só opções válidas',
+                'consulta sua agenda e oferece os horários disponíveis'
+            )
+
+            compact_reply = compact_reply.replace(
+                'confirma por escrito',
+                'confirma tudo no WhatsApp'
+            )
+
+            compact_reply = compact_reply.replace(
+                'fica no painel + resumo 06:30',
+                'registra no painel da conta e organiza os atendimentos do dia'
+            )
+
+        return compact_reply
     except Exception:
         return ""
 
@@ -3268,6 +3310,7 @@ def _build_direct_scene_payload(
     segment_hint: str = "",
     name_hint: str = "",
     state_summary: dict | None = None,
+    use_human_wrapper: bool = False,
 ) -> str:
     try:
         c = dict(contract or {})
@@ -3321,10 +3364,26 @@ def _build_direct_scene_payload(
 
         # fallback seguro: se a intro falhar, mantém a cena do KB sem frase fixa no código
         if not intro:
-            return core
+            final_text = core
+        else:
+            final_text = f"{intro}\n\n{core}"
 
-        final = f"{intro}\n\n{core}"
-        return final.strip()
+        if use_human_wrapper:
+            intro_parts = []
+
+            lead_name = str(name_hint or "").strip()
+            if lead_name:
+                intro_parts.append(f"Oi {lead_name}!")
+
+            if segment_hint:
+                intro_parts.append(
+                    f"Que legal saber que você trabalha com {segment_hint.lower()}."
+                )
+
+            if intro_parts:
+                final_text = " ".join(intro_parts) + "\n\n" + final_text
+
+        return final_text.strip()
 
     except Exception:
         return ""
@@ -8186,6 +8245,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             identity_discovery_required = False
 
         if use_direct_scene:
+            use_human_wrapper = bool(
+                response_mode == "DIRECT"
+                and (operational_contract or {}).get("global_pack_fallback")
+                and not (operational_contract or {}).get("hydrated_from_docs")
+            )
+
             direct_text = _build_direct_scene_payload(
                 contract=operational_contract,
                 user_text=user_text,
@@ -8196,6 +8261,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ),
                 name_hint=name_hint,
                 state_summary=state_summary,
+                use_human_wrapper=use_human_wrapper,
             )
 
             if direct_text:
@@ -9281,6 +9347,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
 
             if _valid_real_scene or _valid_compact_fallback:
+                use_human_wrapper = bool(
+                    str(response_mode or "").strip().upper() == "DIRECT"
+                    and _contract_for_direct.get("global_pack_fallback")
+                    and not _contract_for_direct.get("hydrated_from_docs")
+                )
+
                 _direct_payload = _build_direct_scene_payload(
                     _contract_for_direct,
                     user_text=user_text,
@@ -9291,6 +9363,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     ),
                     name_hint=name_hint,
                     state_summary=state_summary,
+                    use_human_wrapper=use_human_wrapper,
                 )
                 if _direct_payload:
                     reply_text = _direct_payload
