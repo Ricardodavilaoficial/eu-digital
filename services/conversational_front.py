@@ -3274,14 +3274,26 @@ def _build_direct_scene_payload(
         # Direct Fulfillment:
         # prioriza o material mais específico já resolvido pelo KB.
         # Não reescreve a microcena por IA.
-        scene = (
-            c.get("direct_scene")
-            or c.get("runtime_long_text")
-            or c.get("runtime_short_reply")
-            or c.get("reference_example")
-            or c.get("operational_reference")
-            or c.get("pack_micro_scene")
-        )
+        # ==========================================================
+        # FALLBACK GLOBAL:
+        # usa SOMENTE núcleo compacto/institucional
+        # para evitar retorno do proceduralismo.
+        # ==========================================================
+        if not bool(c.get("hydrated_from_docs")):
+            scene = (
+                c.get("runtime_compact_reply")
+                or c.get("runtime_short_reply")
+                or c.get("operational_reference")
+            )
+        else:
+            scene = (
+                c.get("direct_scene")
+                or c.get("runtime_long_text")
+                or c.get("runtime_short_reply")
+                or c.get("reference_example")
+                or c.get("operational_reference")
+                or c.get("pack_micro_scene")
+            )
 
         raw_core = str(scene or "").strip()
         core = raw_core
@@ -7769,11 +7781,32 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or (operational_contract or {}).get("operational_reference")
         )
 
-        use_direct_scene = (
-            has_real_operational_context
-            and response_mode == "SCENE"
-            and (operational_contract or {}).get("micro_scene_allowed")
-            and has_structured_scene
+        # ==========================================================
+        # Wrapper humano:
+        # agora também permitido para fallback DIRECT compacto.
+        #
+        # IMPORTANTE:
+        # NÃO reabre SCENE procedural.
+        # Apenas reutiliza a camada humana já existente.
+        # ==========================================================
+        use_direct_scene = bool(
+            has_structured_scene
+            and (
+                (
+                    has_real_operational_context
+                    and response_mode == "SCENE"
+                    and (operational_contract or {}).get("micro_scene_allowed")
+                )
+                or
+                (
+                    not has_real_operational_context
+                    and bool((operational_contract or {}).get("global_pack_fallback"))
+                    and bool(
+                        (operational_contract or {}).get("runtime_compact_reply")
+                        or (operational_contract or {}).get("runtime_short_reply")
+                    )
+                )
+            )
         )
 
         allow_scene_runtime = bool(
@@ -7833,7 +7866,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         operational_contract.pop("operational_reference", None)
                         operational_contract.pop("pack_micro_scene", None)
                         operational_contract.pop("runtime_long_text", None)
+                        # Mantém limpeza do proceduralismo pesado
                         operational_contract.pop("operational_ritual", None)
+
+                        # ==========================================================
+                        # Mantém núcleo compacto humanizável.
+                        # NÃO destrói runtime curto leve.
+                        # ==========================================================
+                        if operational_contract.get("runtime_short_reply"):
+                            operational_contract["runtime_compact_reply"] = (
+                                operational_contract.get("runtime_compact_reply")
+                                or operational_contract.get("runtime_short_reply")
+                            )
+
                         operational_contract["runtime_short_reply"] = _best_scene
                         operational_contract["has_practical_scene"] = False
                         operational_contract["micro_scene_allowed"] = False
@@ -9217,13 +9262,25 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 else {}
             )
 
-            if (
+            _valid_real_scene = bool(
                 str(response_mode or "").strip().upper() == "SCENE"
                 and isinstance(_contract_for_direct, dict)
                 and bool(_contract_for_direct.get("micro_scene_allowed"))
                 and bool(_contract_for_direct.get("hydrated_from_docs"))
                 and bool(_contract_for_direct.get("has_practical_scene"))
-            ):
+            )
+
+            _valid_compact_fallback = bool(
+                isinstance(_contract_for_direct, dict)
+                and not bool(_contract_for_direct.get("hydrated_from_docs"))
+                and bool(_contract_for_direct.get("global_pack_fallback"))
+                and bool(
+                    _contract_for_direct.get("runtime_compact_reply")
+                    or _contract_for_direct.get("runtime_short_reply")
+                )
+            )
+
+            if _valid_real_scene or _valid_compact_fallback:
                 _direct_payload = _build_direct_scene_payload(
                     _contract_for_direct,
                     user_text=user_text,
