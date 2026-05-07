@@ -2970,11 +2970,32 @@ def _build_operational_contract(
             or str((arch_doc or {}).get("one_liner") or "").strip()
         )
 
+        # ==========================================================
+        # Cena operacional válida:
+        # NÃO basta existir material global/runtime.
+        # Precisa existir hidratação estrutural real.
+        #
+        # Isso evita promover PACK global institucional
+        # para contrato operacional legítimo.
+        # ==========================================================
+        has_structural_contract = bool(
+            sub_doc
+            or arch_doc
+            or (seg_doc if use_seg else {})
+            or archetype_id
+            or str(effective_segment or "").strip()
+            or str((kb_context or {}).get("effective_subsegment") or "").strip()
+            or str((kb_context or {}).get("subsegment_hint") or "").strip()
+        )
+
         has_practical_scene = bool(
-            str(operational_reference or "").strip()
-            or str((sub_doc or {}).get("micro_scene") or "").strip()
-            or str((arch_doc or {}).get("micro_scene") or "").strip()
-            or str(((seg_doc or {}).get("micro_scene") if use_seg else "") or "").strip()
+            has_structural_contract
+            and (
+                str(operational_reference or "").strip()
+                or str((sub_doc or {}).get("micro_scene") or "").strip()
+                or str((arch_doc or {}).get("micro_scene") or "").strip()
+                or str(((seg_doc or {}).get("micro_scene") if use_seg else "") or "").strip()
+            )
         )
 
         allowed_next_step = "none"
@@ -7514,6 +7535,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             has_real_operational_context = False
 
+        try:
+            if isinstance(operational_contract, dict):
+                operational_contract["has_practical_scene"] = bool(
+                    has_real_operational_context
+                    and (
+                        str(operational_contract.get("operational_reference") or "").strip()
+                        or str(operational_contract.get("direct_scene") or "").strip()
+                        or str(operational_contract.get("runtime_short_reply") or "").strip()
+                        or str(operational_contract.get("pack_micro_scene") or "").strip()
+                    )
+                )
+        except Exception:
+            pass
+
         # 🔒 Reforça o melhor material operacional do pack selecionado.
         # Mantém a microcena curta apenas como fallback final.
         try:
@@ -7751,7 +7786,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         operational_contract["micro_scene_allowed"] = False
                     if _late_material_source:
                         operational_contract["material_source"] = _late_material_source
-                    operational_contract["has_practical_scene"] = True
+                    operational_contract["has_practical_scene"] = bool(
+                        has_real_operational_context
+                        and (
+                            _late_direct_scene
+                            or _late_runtime_short
+                            or _late_micro_scene
+                            or _best_scene
+                        )
+                    )
 
                     if platform_segment_key:
                         operational_contract["platform_segment_key"] = platform_segment_key
