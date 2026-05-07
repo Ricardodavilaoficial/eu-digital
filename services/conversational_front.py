@@ -5815,6 +5815,8 @@ def _platform_kb_resolve_runtime(
             out["micro_scene"] = micro_scene_conversational or micro_scene
         if runtime_short_reply:
             out["runtime_short_reply"] = runtime_short_reply
+        if runtime_compact_reply:
+            out["runtime_compact_reply"] = runtime_compact_reply
         if runtime_long_text:
             out["runtime_long_text"] = runtime_long_text
         if direct_scene:
@@ -7495,23 +7497,31 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     topic = canonical_topic
                     intent = canonical_topic
 
+                _platform_runtime_operational_allowed = bool(
+                    operational_contract.get("hydrated_from_docs")
+                    or str(operational_contract.get("segment") or "").strip()
+                    or str(operational_contract.get("archetype_id") or "").strip()
+                )
+
                 if platform_runtime:
                     if platform_runtime.get("pack_id"):
                         operational_contract["selected_pack_id"] = platform_runtime["pack_id"]
                     if platform_runtime.get("platform_segment_key"):
                         operational_contract["platform_segment_key"] = platform_runtime["platform_segment_key"]
-                    if platform_runtime.get("direct_scene"):
+                    if _platform_runtime_operational_allowed and platform_runtime.get("direct_scene"):
                         operational_contract["direct_scene"] = platform_runtime["direct_scene"]
-                    if platform_runtime.get("runtime_long_text"):
+                    if _platform_runtime_operational_allowed and platform_runtime.get("runtime_long_text"):
                         operational_contract["runtime_long_text"] = platform_runtime["runtime_long_text"]
-                    if platform_runtime.get("runtime_short_reply"):
+                    if _platform_runtime_operational_allowed and platform_runtime.get("runtime_short_reply"):
                         operational_contract["runtime_short_reply"] = platform_runtime["runtime_short_reply"]
-                    if operational_reference:
+                    elif (not _platform_runtime_operational_allowed) and platform_runtime.get("runtime_compact_reply"):
+                        operational_contract["runtime_short_reply"] = platform_runtime["runtime_compact_reply"]
+                    if _platform_runtime_operational_allowed and operational_reference:
                         operational_contract["operational_reference"] = operational_reference
-                    if reference_example:
+                    if _platform_runtime_operational_allowed and reference_example:
                         operational_contract["reference_example"] = reference_example
                         operational_contract["has_reference_example"] = True
-                    if micro_scene:
+                    if _platform_runtime_operational_allowed and micro_scene:
                         operational_contract["pack_micro_scene"] = micro_scene
                         operational_contract["has_practical_scene"] = True
                     if platform_runtime.get("material_source"):
@@ -7723,12 +7733,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         use_direct_scene = (
             response_mode == "SCENE"
             and (operational_contract or {}).get("micro_scene_allowed")
+            and bool(has_real_operational_context)
             and has_structured_scene
         )
 
         allow_scene_runtime = bool(
             response_mode == "SCENE"
             and micro_scene_allowed
+            and bool(has_real_operational_context)
         )
 
         if not isinstance(operational_contract, dict) or not operational_contract:
@@ -7768,19 +7780,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         or _late_micro_scene
                     )
                 else:
-                    _best_scene = (
-                        _late_compact
-                        or _late_micro_scene
-                    )
+                    _best_scene = _late_compact
 
                 if _best_scene:
-                    operational_contract["direct_scene"] = _best_scene
-                    operational_contract["operational_reference"] = _best_scene
                     operational_contract["selected_pack_id"] = selected_pack_id
                     operational_contract["hydrated_from_platform_kb"] = True
                     operational_contract["global_pack_fallback"] = True
-                    if not has_real_operational_context:
+                    if has_real_operational_context:
+                        operational_contract["direct_scene"] = _best_scene
+                        operational_contract["operational_reference"] = _best_scene
+                    else:
+                        operational_contract.pop("direct_scene", None)
+                        operational_contract.pop("operational_reference", None)
                         operational_contract.pop("runtime_long_text", None)
+                        operational_contract.pop("pack_micro_scene", None)
                         operational_contract["runtime_short_reply"] = _best_scene
                         operational_contract["has_practical_scene"] = False
                         operational_contract["micro_scene_allowed"] = False
@@ -7827,6 +7840,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if not _has_operational:
                 operational_contract["global_pack_fallback"] = bool(platform_kb_mode)
+            elif (
+                platform_kb_mode
+                and isinstance(operational_contract, dict)
+                and not bool(operational_contract.get("hydrated_from_docs"))
+            ):
+                operational_contract["global_pack_fallback"] = True
+                operational_contract["has_practical_scene"] = False
+                operational_contract["micro_scene_allowed"] = False
         except Exception:
             pass
 
