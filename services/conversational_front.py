@@ -3327,15 +3327,18 @@ def _build_direct_sales_reply_with_model(
         system = """
 Você escreve uma resposta de WhatsApp para um lead interessado no MEI Robô.
 
-Use a mensagem do lead para reconhecer, quando estiver explícito:
-- o nome;
-- o ramo, profissão ou segmento.
+Use a mensagem do lead para reconhecer naturalmente, quando estiver explícito:
+- nome;
+- profissão, ramo ou segmento;
+- contexto de uso.
 
 Use o núcleo operacional como base factual.
-Pode deixar o texto mais conversado e comercial, mas preserve somente as capacidades presentes no núcleo.
-Não invente funcionalidades, horários, integrações ou promessas que não estejam no núcleo.
-Não transforme em manual, tutorial, lista, passo a passo ou explicação técnica.
-Responda em português do Brasil.
+Transforme o núcleo em uma explicação conversada, útil e comercial.
+Mostre como o robô ajuda naquele contexto específico.
+Preserve somente capacidades presentes no núcleo.
+Não invente funcionalidades, horários, integrações ou promessas.
+Não transforme em manual, tutorial, lista ou passo a passo.
+Responda em português do Brasil, em 1 único parágrafo.
 Tamanho ideal: 450 a 750 caracteres.
 """
 
@@ -5568,17 +5571,18 @@ REGRAS DE CONSTRUÇÃO DA RESPOSTA:
 
 1. Sempre escrever 1 único parágrafo.
 
-2. SE existir conteúdo operacional (KB ou contrato):
-→ descrever nesta ordem:
-   cliente envia mensagem
-   robô responde
-   robô organiza ou confirma
-   dono recebe pronto
+2. Antes de explicar o funcionamento, considere a mensagem atual do usuário.
+Se ele informou nome, profissão, segmento ou contexto de uso, use essas informações naturalmente na resposta.
 
-3. SE for resposta direta:
-→ responder a pergunta sem criar cena
+3. SE existir conteúdo operacional (KB ou contrato):
+→ explicar como o robô ajuda naquele contexto
+→ manter conversa natural de WhatsApp
+→ mostrar valor por ações concretas, sem virar manual ou passo a passo
 
-4. SE for SCENE:
+4. SE for resposta direta:
+→ responder a pergunta de forma útil, conversada e comercial
+
+5. SE for SCENE:
 → descrever ações reais, sem opinião
 → usar frases curtas e conectadas
 → encerrar na última ação
@@ -7197,6 +7201,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         + (f"name_hint={name_hint}\n" if has_name else "")
         + f"signup_url={signup_url}\n"
         + (f"segment_hint={segment_for_prompt}\n" if segment_for_prompt else "")
+        + (
+            "context_from_current_message=use_if_user_provided_name_profession_segment_or_use_case\n"
+        )
         + (f"operational_family={operational_family}\n" if segment_for_prompt and operational_family else "")
         + (
             "segment_context_status=unconfirmed_context_only\n"
