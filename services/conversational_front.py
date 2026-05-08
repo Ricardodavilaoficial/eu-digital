@@ -9123,6 +9123,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 accepted = bool(
                     _source_now in (
                         "front",
+                        "front_free_mode",
                         "front_ia_soberana",
                         "front_direct_scene",
                         "front_keep_current",
@@ -9543,7 +9544,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
             )
 
-            if _valid_real_scene or _valid_compact_fallback:
+            _should_run_late_payload = True
+
+            if (
+                str(response_mode or "").strip().upper() == "DIRECT"
+                and bool(ia_accepted)
+                and str(reply_text or "").strip()
+            ):
+                _should_run_late_payload = False
+
+            if (_valid_real_scene or _valid_compact_fallback) and _should_run_late_payload:
                 use_human_wrapper = bool(
                     str(response_mode or "").strip().upper() == "DIRECT"
                     and _contract_for_direct.get("global_pack_fallback")
