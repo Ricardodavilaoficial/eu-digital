@@ -7883,7 +7883,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     if has_real_operational_context and _runtime_material.get("runtime_short_reply"):
                         operational_contract["runtime_short_reply"] = _runtime_material["runtime_short_reply"]
                     elif not has_real_operational_context:
-                        if response_mode == "DIRECT" and _runtime_material.get("runtime_short_reply"):
+                        if (
+                            response_mode == "DIRECT"
+                            and hydrated_from_docs
+                            and (
+                                found_seg
+                                or found_sub
+                                or found_arch
+                                or operational_contract.get("has_practical_scene")
+                            )
+                            and _runtime_material.get("runtime_short_reply")
+                        ):
                             operational_contract["runtime_short_reply"] = _runtime_material["runtime_short_reply"]
                         elif _runtime_material.get("runtime_compact_reply"):
                             operational_contract["runtime_short_reply"] = _runtime_material["runtime_compact_reply"]
