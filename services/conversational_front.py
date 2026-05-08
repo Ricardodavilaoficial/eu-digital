@@ -3529,21 +3529,6 @@ def _build_direct_scene_payload(
         else:
             final_text = f"{intro}\n\n{core}"
 
-        if use_human_wrapper:
-            intro_parts = []
-
-            lead_name = str(name_hint or "").strip()
-            if lead_name:
-                intro_parts.append(f"Oi {lead_name}!")
-
-            if segment_hint:
-                intro_parts.append(
-                    f"Que legal saber que você trabalha com {segment_hint.lower()}."
-                )
-
-            if intro_parts:
-                final_text = " ".join(intro_parts) + "\n\n" + final_text
-
         return final_text.strip()
 
     except Exception:
@@ -7847,10 +7832,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         or str(_runtime_material.get("micro_scene") or "").strip()
                     )
                 else:
-                    _scene = (
-                        str(_runtime_material.get("runtime_compact_reply") or "").strip()
-                        or str(_runtime_material.get("micro_scene") or "").strip()
-                    )
+                    if response_mode == "DIRECT":
+                        _scene = (
+                            str(_runtime_material.get("runtime_short_reply") or "").strip()
+                            or str(_runtime_material.get("direct_scene") or "").strip()
+                            or str(_runtime_material.get("runtime_compact_reply") or "").strip()
+                            or str(_runtime_material.get("micro_scene") or "").strip()
+                        )
+                    else:
+                        _scene = (
+                            str(_runtime_material.get("runtime_compact_reply") or "").strip()
+                            or str(_runtime_material.get("micro_scene") or "").strip()
+                        )
 
                 if _scene:
                     operational_contract["direct_scene"] = _scene
@@ -7861,8 +7854,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                     if has_real_operational_context and _runtime_material.get("runtime_short_reply"):
                         operational_contract["runtime_short_reply"] = _runtime_material["runtime_short_reply"]
-                    elif (not has_real_operational_context) and _runtime_material.get("runtime_compact_reply"):
-                        operational_contract["runtime_short_reply"] = _runtime_material["runtime_compact_reply"]
+                    elif not has_real_operational_context:
+                        if response_mode == "DIRECT" and _runtime_material.get("runtime_short_reply"):
+                            operational_contract["runtime_short_reply"] = _runtime_material["runtime_short_reply"]
+                        elif _runtime_material.get("runtime_compact_reply"):
+                            operational_contract["runtime_short_reply"] = _runtime_material["runtime_compact_reply"]
 
                     operational_contract["has_practical_scene"] = bool(has_real_operational_context)
         except Exception:
@@ -8072,7 +8068,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         or _late_micro_scene
                     )
                 else:
-                    _best_scene = _late_compact
+                    if response_mode == "DIRECT":
+                        _best_scene = (
+                            _late_runtime_short
+                            or _late_direct_scene
+                            or _late_compact
+                        )
+                    else:
+                        _best_scene = _late_compact
 
                 if _best_scene:
                     operational_contract["selected_pack_id"] = selected_pack_id
@@ -8841,7 +8844,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             # A IA cria a resposta; o front apenas organiza a narrativa
             # para manter a cena operacional clara.
             # ----------------------------------------------------------
-            if not ia_locked:
+            if not ia_locked and response_mode == "SCENE":
                 try:
                     composed_reply = _compose_operational_reply(
                         reply_text=reply_text,
@@ -9102,14 +9105,28 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             _source_now = str(reply_source or "").strip()
 
-            if _contract_strong or _contract_allows_operational_output:
-                accepted = bool(ia_show)
-            else:
+            if response_mode == "DIRECT":
                 accepted = bool(
-                    _source_now == "front_ia_soberana"
-                    and ia_live_final
-                    and _not_explanatory
+                    _source_now in (
+                        "front_ia_soberana",
+                        "front_direct_scene",
+                        "front_keep_current",
+                    )
+                    and len(str(reply_text or "").strip()) >= 40
+                    and not _looks_like_technical_output(reply_text)
+                    and not _looks_like_dialogue_stub(reply_text)
+                    and _has_operational_shape(reply_text)
                 )
+            else:
+                if _contract_strong or _contract_allows_operational_output:
+                    accepted = bool(ia_show)
+                else:
+                    accepted = bool(
+                        _source_now == "front_ia_soberana"
+                        and ia_live_final
+                        and _not_explanatory
+                    )
+
             ia_accepted = accepted
 
             if accepted:
@@ -9154,7 +9171,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     contract=operational_contract if 'operational_contract' in locals() else {},
                 )
 
-                if _contract_strong or _contract_allows_operational_output:
+                if response_mode == "DIRECT":
+                    _accept_current = bool(
+                        current_live
+                        and not _looks_like_technical_output(current_text)
+                        and not _looks_like_dialogue_stub(current_text)
+                    )
+                elif _contract_strong or _contract_allows_operational_output:
                     _accept_current = bool(current_show)
                 else:
                     _accept_current = bool(
