@@ -5615,8 +5615,13 @@ FORMATO DE SAÍDA (OBRIGATÓRIO JSON):
     "topic": "...",
     "confidence": "high|medium|low"
   },
-  "nextStep": "SEND_LINK|NONE"
+  "nextStep": "SEND_LINK|NONE",
+  "lead_name": "",
+  "lead_segment": ""
 }
+
+Extraia `lead_name` e `lead_segment` somente quando estiverem explícitos na mensagem atual do usuário.
+Se não estiverem explícitos, deixe vazio.
 """
 DISCOVERY_PROMPT = """
 Você está no modo DISCOVERY.
@@ -6402,6 +6407,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     spoken_text = ""
     response_mode = "DIRECT"
     _final_candidate = None
+    inferred_lead_name = ""
+    inferred_lead_segment = ""
 
     last_intent = str(state_summary.get("last_intent") or "").strip().upper()
     upstream_topic_hint = str(
@@ -6454,8 +6461,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     except Exception:
         pass
 
-    # Sinal simples para o modelo: já sabemos o nome?
+    # Contexto explícito extraído pela IA no turno atual.
+    # Evita contradição do tipo has_name=false quando o usuário acabou de se apresentar.
+    if not name_hint and inferred_lead_name:
+        name_hint = inferred_lead_name
+
     has_name = bool(name_hint)
+
+    if not segment_hint and inferred_lead_segment:
+        segment_hint = inferred_lead_segment
 
     # fast-path comercial removido:
     # intenção de ativação/link deve nascer do entendimento da IA
@@ -7199,6 +7213,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         f"is_lead={'true' if is_lead else 'false'}\n"
         f"has_name={'true' if has_name else 'false'}\n"
         + (f"name_hint={name_hint}\n" if has_name else "")
+        + (f"lead_name_from_current_turn={inferred_lead_name}\n" if inferred_lead_name else "")
+        + (f"lead_segment_from_current_turn={inferred_lead_segment}\n" if inferred_lead_segment else "")
         + f"signup_url={signup_url}\n"
         + (f"segment_hint={segment_for_prompt}\n" if segment_for_prompt else "")
         + (
@@ -7498,6 +7514,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or understanding.get("needsClarify")
             or "no"
         ).strip().lower()
+
+        inferred_lead_name = str(
+            data.get("lead_name")
+            or data.get("leadName")
+            or ""
+        ).strip()
+
+        inferred_lead_segment = str(
+            data.get("lead_segment")
+            or data.get("leadSegment")
+            or ""
+        ).strip()
 
         clarify_q = str(
             data.get("clarifyQuestion")
@@ -9280,6 +9308,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     "confidence": confidence,
                     "needsClarify": needs_clarify,
                     "clarifyQuestion": clarify_q,
+                    "leadName": name_hint,
+                    "segmentHint": segment_hint,
                 },
                 "nextStep": next_step,
                 "shouldEnd": should_end,
@@ -9290,6 +9320,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "tokenUsage": token_usage,
                 "replySizePolicy": reply_size_policy if isinstance(reply_size_policy, dict) else {},
                 "operationalContract": operational_contract if 'operational_contract' in locals() else {},
+                "leadName": name_hint,
+                "segmentHint": segment_hint,
             }
 
             if decider_only and isinstance(decider, dict):
