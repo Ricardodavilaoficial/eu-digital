@@ -3303,6 +3303,46 @@ Saída:
         return ""
 
 
+def _extract_intro_hint_from_model_reply(*, intro_hint: str = "", core_text: str = "") -> str:
+    """
+    Reaproveita a abertura natural que o modelo já produziu no turno.
+    Não cria frase pronta, não decide segmento e não reabre microcena.
+    Apenas separa uma primeira frase curta do texto livre já gerado.
+    """
+    try:
+        hint = str(intro_hint or "").strip()
+        core = str(core_text or "").strip()
+
+        if not hint:
+            return ""
+
+        hint = re.sub(r"\s{2,}", " ", hint).strip()
+        core_norm = re.sub(r"\s{2,}", " ", core).strip().lower()
+        hint_norm = hint.lower()
+
+        if core_norm and (hint_norm == core_norm or hint_norm in core_norm):
+            return ""
+
+        first_block = re.split(r"\n\s*\n", hint, maxsplit=1)[0].strip()
+        first_sentence = re.split(r"(?<=[\.\!\?])\s+", first_block, maxsplit=1)[0].strip()
+
+        candidate = first_sentence or first_block
+        candidate = re.sub(r"\s{2,}", " ", candidate).strip()
+
+        if not candidate:
+            return ""
+
+        if len(candidate) < 8 or len(candidate) > 180:
+            return ""
+
+        if core_norm and candidate.lower() in core_norm:
+            return ""
+
+        return candidate
+
+    except Exception:
+        return ""
+
 def _build_direct_scene_payload(
     contract: Dict[str, Any] | None,
     *,
@@ -3310,6 +3350,7 @@ def _build_direct_scene_payload(
     segment_hint: str = "",
     name_hint: str = "",
     state_summary: dict | None = None,
+    intro_hint: str = "",
     use_human_wrapper: bool = False,
 ) -> str:
     try:
@@ -3362,8 +3403,18 @@ def _build_direct_scene_payload(
         intro = str(intro or "").strip().strip('"').strip("'").strip()
         intro = re.sub(r"\s{2,}", " ", intro).strip()
 
-        # fallback seguro: se a intro falhar, mantém a cena do KB sem frase fixa no código
         if not intro:
+            intro = _extract_intro_hint_from_model_reply(
+                intro_hint=intro_hint,
+                core_text=core,
+            )
+
+        if not intro:
+            if (
+                bool(c.get("global_pack_fallback"))
+                and not bool(c.get("hydrated_from_docs"))
+            ):
+                return ""
             final_text = core
         else:
             final_text = f"{intro}\n\n{core}"
@@ -8261,6 +8312,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ),
                 name_hint=name_hint,
                 state_summary=state_summary,
+                intro_hint=reply_text,
                 use_human_wrapper=use_human_wrapper,
             )
 
@@ -9363,6 +9415,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     ),
                     name_hint=name_hint,
                     state_summary=state_summary,
+                    intro_hint=reply_text,
                     use_human_wrapper=use_human_wrapper,
                 )
                 if _direct_payload:
