@@ -3377,17 +3377,8 @@ Resposta final:
         if _looks_like_technical_output(text):
             return ""
 
-        if _looks_like_dialogue_stub(text):
-            return ""
-
-        if not _is_live_operational_reply(
-            text=text,
-            operational_reference="",
-            reference_example="",
-            contract=contract or {},
-        ):
-            return ""
-
+        # DIRECT é resposta consultiva de vendas.
+        # Não aplicar aqui os validadores de forma operacional usados para SCENE.
         return text
 
     except Exception:
@@ -9108,14 +9099,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             if response_mode == "DIRECT":
                 accepted = bool(
                     _source_now in (
+                        "front",
                         "front_ia_soberana",
                         "front_direct_scene",
                         "front_keep_current",
                     )
                     and len(str(reply_text or "").strip()) >= 40
                     and not _looks_like_technical_output(reply_text)
-                    and not _looks_like_dialogue_stub(reply_text)
-                    and _has_operational_shape(reply_text)
                 )
             else:
                 if _contract_strong or _contract_allows_operational_output:
@@ -9173,9 +9163,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 if response_mode == "DIRECT":
                     _accept_current = bool(
-                        current_live
+                        len(str(current_text or "").strip()) >= 40
                         and not _looks_like_technical_output(current_text)
-                        and not _looks_like_dialogue_stub(current_text)
                     )
                 elif _contract_strong or _contract_allows_operational_output:
                     _accept_current = bool(current_show)
