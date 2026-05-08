@@ -3368,7 +3368,9 @@ Resposta final:
         if not text:
             return ""
 
-        if len(text) < 160:
+        # DIRECT consultivo pode ser curto e humano.
+        # A trava de 160 chars estava descartando wrappers válidos.
+        if len(text) < 40:
             return ""
 
         if len(text) > 900:
@@ -8677,6 +8679,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         reply_text = structured
                         spoken_text = structured
                         reply_source = "front_fallback_structural"
+
+                elif (
+                    response_mode == "DIRECT"
+                    and str(reply_text or "").strip()
+                    and len(str(reply_text or "").strip()) >= 40
+                ):
+                    # DIRECT consultivo:
+                    # preserva a resposta soberana já gerada pela IA
+                    # e impede queda no empty fallback do free_mode.
+                    spoken_text = str(reply_text or "").strip()
+
+                    if not str(reply_source or "").strip():
+                        reply_source = "front_ia_soberana"
+
                 else:
                     reply_text = str(question or clarify_q or "").strip()
                     spoken_text = reply_text
