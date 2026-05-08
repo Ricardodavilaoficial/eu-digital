@@ -3303,6 +3303,97 @@ Saída:
         return ""
 
 
+def _build_direct_sales_reply_with_model(
+    *,
+    user_text: str = "",
+    core_text: str = "",
+    name_hint: str = "",
+    segment_hint: str = "",
+    state_summary: dict | None = None,
+    contract: Dict[str, Any] | None = None,
+) -> str:
+    """
+    Monta a resposta DIRECT de vendas a partir do núcleo operacional compacto.
+    Não reabre SCENE, não usa ritual operacional e não inventa fatos.
+    O modelo só faz a camada conversacional: abertura, contexto do lead e fluidez.
+    """
+    try:
+        core = str(core_text or "").strip()
+        user = str(user_text or "").strip()
+
+        if not core or not user:
+            return ""
+
+        system = """
+Você escreve uma resposta de WhatsApp para um lead interessado no MEI Robô.
+
+Use a mensagem do lead para reconhecer, quando estiver explícito:
+- o nome;
+- o ramo, profissão ou segmento.
+
+Use o núcleo operacional como base factual.
+Pode deixar o texto mais conversado e comercial, mas preserve somente as capacidades presentes no núcleo.
+Não invente funcionalidades, horários, integrações ou promessas que não estejam no núcleo.
+Não transforme em manual, tutorial, lista, passo a passo ou explicação técnica.
+Responda em português do Brasil.
+Tamanho ideal: 450 a 750 caracteres.
+"""
+
+        payload = f"""
+Mensagem do lead:
+{user}
+
+Nome já conhecido:
+{str(name_hint or "").strip()}
+
+Segmento já conhecido:
+{str(segment_hint or "").strip()}
+
+Núcleo operacional seguro:
+{core}
+
+Resposta final:
+"""
+
+        text = _call_openai_for_front(
+            system=system,
+            user=payload,
+            temperature=0.55,
+            max_tokens=220,
+        ).strip()
+
+        text = str(text or "").strip().strip('"').strip("'").strip()
+        text = re.sub(r"\s{2,}", " ", text).strip()
+
+        if not text:
+            return ""
+
+        if len(text) < 160:
+            return ""
+
+        if len(text) > 900:
+            text = text[:900].rsplit(" ", 1)[0].strip()
+
+        if _looks_like_technical_output(text):
+            return ""
+
+        if _looks_like_dialogue_stub(text):
+            return ""
+
+        if not _is_live_operational_reply(
+            text=text,
+            operational_reference="",
+            reference_example="",
+            contract=contract or {},
+        ):
+            return ""
+
+        return text
+
+    except Exception:
+        return ""
+
+
 def _extract_intro_hint_from_model_reply(*, intro_hint: str = "", core_text: str = "") -> str:
     """
     Reaproveita a abertura natural que o modelo já produziu no turno.
@@ -3390,6 +3481,25 @@ def _build_direct_scene_payload(
 
         if core and not core.endswith((".", "!", "?")):
             core += "."
+
+        # DIRECT global compacto:
+        # antes de cair em intro curta + core seco, tenta montar a resposta
+        # vencedora com base no user_text e no núcleo seguro.
+        if (
+            bool(c.get("global_pack_fallback"))
+            and not bool(c.get("hydrated_from_docs"))
+        ):
+            rich_direct = _build_direct_sales_reply_with_model(
+                user_text=user_text,
+                core_text=core,
+                name_hint=name_hint,
+                segment_hint=segment_hint,
+                state_summary=state_summary,
+                contract=c,
+            )
+
+            if rich_direct:
+                return rich_direct
 
         # 🔹 tentativa de gerar abertura via IA (leve)
         intro = _generate_style_intro_with_model(
