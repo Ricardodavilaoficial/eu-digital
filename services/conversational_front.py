@@ -7414,6 +7414,33 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             e,
                         )
 
+                        # Preserva o texto bruto da IA para o fallback.
+                        try:
+                            data = {"reply": str(raw_response or "").strip()}
+                        except Exception:
+                            data = {"reply": ""}
+
+                        # Mesmo com JSON inválido, tenta inferir nome e segmento a partir
+                        # da mensagem atual do usuário para não perder contexto estruturado.
+                        try:
+                            _fallback_name = ""
+                            _fallback_segment = ""
+
+                            if not name_hint:
+                                _fallback_name = _extract_name_from_text(user_text) or ""
+
+                            if not segment_hint:
+                                _fallback_segment = _infer_segment_from_text(user_text) or ""
+
+                            if _fallback_name:
+                                data["lead_name"] = _fallback_name
+
+                            if _fallback_segment:
+                                data["lead_segment"] = _fallback_segment
+
+                        except Exception:
+                            pass
+
                         salvaged = {}
                         try:
                             salvaged = _salvage_free_mode_payload(repaired or raw_json or raw)
