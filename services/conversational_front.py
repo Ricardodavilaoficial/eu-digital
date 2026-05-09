@@ -198,6 +198,28 @@ def _reply_has_lead_context(reply: str, lead_name: str = "", lead_segment_raw: s
         return False
 
 
+def _reply_opening_has_lead_context(reply: str, lead_name: str = "", lead_segment_raw: str = "") -> bool:
+    """
+    Verifica se a abertura da resposta carrega nome e atividade do lead.
+    Não exige frase pronta; valida apenas que os sinais humanos apareçam logo no início.
+    """
+    try:
+        text = str(reply or "").strip()
+        if not text:
+            return False
+
+        parts = _split_sentences_pt(text)
+        opening = str(parts[0] if parts else text[:180]).strip()
+
+        return _reply_has_lead_context(
+            opening,
+            lead_name=lead_name,
+            lead_segment_raw=lead_segment_raw,
+        )
+    except Exception:
+        return False
+
+
 
 def _humanize_reply_with_lead_context(
     reply: str,
@@ -219,10 +241,10 @@ def _humanize_reply_with_lead_context(
         if not name and not segment_raw:
             return text
 
-        lower = text.lower()
-
-        if name and name.lower() in lower and (
-            not segment_raw or segment_raw.lower() in lower
+        if _reply_opening_has_lead_context(
+            text,
+            lead_name=name,
+            lead_segment_raw=segment_raw,
         ):
             return text
 
@@ -231,13 +253,12 @@ Você ajusta uma mensagem de WhatsApp para atendimento comercial.
 
 Siga esta sequência:
 
-1. Abra com cumprimento curto.
-2. Use o nome do lead quando disponível.
-3. Referencie de forma natural a atividade informada pelo lead quando disponível.
-4. Preserve a explicação operacional do texto base.
-5. Varie a construção da abertura.
-6. Escreva em português do Brasil.
-7. Retorne somente a mensagem final.
+1. Construa a primeira frase com cumprimento curto, nome do lead e referência natural à atividade informada.
+2. Mantenha a explicação operacional do texto base.
+3. Preserve os detalhes concretos já presentes no texto base.
+4. Varie a construção da abertura.
+5. Escreva em português do Brasil.
+6. Retorne somente a mensagem final.
 """
 
         user = f"""
@@ -259,7 +280,7 @@ atividade: {segment_raw}
         upgraded = _sanitize_user_facing_reply(str(upgraded or "").strip())
         upgraded = re.sub(r"\s{2,}", " ", upgraded).strip()
 
-        if upgraded and _reply_has_lead_context(
+        if upgraded and _reply_opening_has_lead_context(
             upgraded,
             lead_name=name,
             lead_segment_raw=segment_raw,
@@ -9711,7 +9732,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     "confidence": confidence,
                     "needsClarify": needs_clarify,
                     "clarifyQuestion": clarify_q,
-                    "leadName": name_hint,
+                    "leadName": inferred_lead_name or name_hint,
                     "segmentHint": segment_hint,
                     "leadSegmentRaw": inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
                 },
@@ -9726,6 +9747,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "operationalContract": operational_contract if 'operational_contract' in locals() else {},
                 "leadName": inferred_lead_name or name_hint,
                 "segmentHint": segment_hint,
+                "leadSegmentRaw": inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
             }
 
             if decider_only and isinstance(decider, dict):
