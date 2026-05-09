@@ -7327,6 +7327,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 temperature=TEMPERATURE,
                 max_tokens=min(FRONT_ANSWER_MAX_TOKENS, int((reply_size_policy or {}).get("max_tokens") or FRONT_ANSWER_MAX_TOKENS)),
                 messages=messages,
+                response_format={
+                    "type": "json_object"
+                },
             )
             raw = (resp["choices"][0]["message"]["content"] or "").strip()
             # usage no SDK antigo
