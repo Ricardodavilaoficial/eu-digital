@@ -7605,6 +7605,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # ----------------------------------------------------------
         raw_json = raw
         cleaned = str(raw or "").strip()
+        json_fail_safe_used = False
 
         if free_mode:
             looks_like_json = cleaned.startswith("{") or cleaned.startswith("```json") or cleaned.startswith("```")
@@ -7668,6 +7669,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             "[CONVERSATIONAL_FRONT][JSON_FAIL_SAFE] usando resposta textual da IA | err=%s",
                             e,
                         )
+                        json_fail_safe_used = True
 
                         # Preserva o texto bruto da IA para o fallback.
                         try:
@@ -7751,6 +7753,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         "[CONVERSATIONAL_FRONT][JSON_FAIL_SAFE] usando resposta textual da IA | err=%s",
                         e,
                     )
+                    json_fail_safe_used = True
                     data = {}
 
         # ----------------------------------------------------------
@@ -8550,6 +8553,66 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             response_mode = "DIRECT"
                         micro_scene_allowed = False
                         operational_contract["micro_scene_allowed"] = False
+        except Exception:
+            pass
+
+        # ----------------------------------------------------------
+        # GUARDA DO JSON_FAIL_SAFE
+        #
+        # Quando o modelo quebra o JSON, a resposta textual livre pode vir
+        # humanizada, mas resumir o núcleo operacional do KB.
+        #
+        # Neste caso, sem mexer em prompt e sem inferir segmento por texto,
+        # usamos o material operacional já resolvido no contrato como base
+        # factual e reaplicamos a camada existente de humanização.
+        # ----------------------------------------------------------
+        try:
+            if (
+                bool(json_fail_safe_used)
+                and free_mode
+                and platform_kb_mode
+                and str(response_mode or "").strip().upper() == "DIRECT"
+                and str(next_step or "").strip().upper() != "SEND_LINK"
+                and isinstance(operational_contract, dict)
+            ):
+                _safe_core = (
+                    str(operational_contract.get("direct_scene") or "").strip()
+                    or str(operational_contract.get("runtime_long_text") or "").strip()
+                    or str(operational_contract.get("runtime_short_reply") or "").strip()
+                    or str(operational_contract.get("runtime_compact_reply") or "").strip()
+                    or str(operational_contract.get("operational_reference") or "").strip()
+                )
+
+                if _safe_core:
+                    _safe_lead_name = str(
+                        inferred_lead_name
+                        or name_hint
+                        or ""
+                    ).strip()
+
+                    _safe_segment_raw = str(
+                        inferred_lead_segment_raw
+                        or inferred_lead_segment
+                        or segment_hint
+                        or operational_contract.get("segment")
+                        or operational_contract.get("platform_segment_key")
+                        or ""
+                    ).strip()
+
+                    _safe_reply = _humanize_reply_with_lead_context(
+                        reply=_safe_core,
+                        lead_name=_safe_lead_name,
+                        lead_segment_raw=_safe_segment_raw,
+                    )
+
+                    _safe_reply = _sanitize_user_facing_reply(
+                        str(_safe_reply or "").strip()
+                    )
+
+                    if _safe_reply:
+                        reply_text = _safe_reply
+                        spoken_text = _safe_reply
+                        reply_source = "front_json_fail_safe_kb_core"
         except Exception:
             pass
 
