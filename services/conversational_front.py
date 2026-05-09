@@ -7557,6 +7557,29 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or ""
         ).strip()
 
+        # ----------------------------------------------------------
+        # Hidratação pós-parse do turno atual.
+        # O modelo só retorna lead_name/lead_segment depois da chamada.
+        # Portanto, name_hint/segment_hint precisam ser atualizados aqui,
+        # antes do cálculo de has_name/has_segment_context e antes do retorno.
+        # ----------------------------------------------------------
+        try:
+            if inferred_lead_name and not name_hint:
+                name_hint = inferred_lead_name
+
+            if inferred_lead_segment and not segment_hint:
+                segment_hint = inferred_lead_segment
+
+            has_name = bool(str(name_hint or "").strip())
+            has_lead_name = has_name
+
+            if str(segment_hint or "").strip():
+                has_segment_context = True
+                discovery_resolved = bool(has_name and has_segment_context)
+
+        except Exception:
+            pass
+
         clarify_q = str(
             data.get("clarifyQuestion")
             or understanding.get("clarifyQuestion")
