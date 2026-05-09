@@ -5640,11 +5640,16 @@ FORMATO DE SAÍDA (OBRIGATÓRIO JSON):
   },
   "nextStep": "SEND_LINK|NONE",
   "lead_name": "",
-  "lead_segment": ""
+  "lead_segment": "",
+  "lead_segment_raw": ""
 }
 
-Extraia `lead_name` e `lead_segment` somente quando estiverem explícitos na mensagem atual do usuário.
-Se não estiverem explícitos, deixe vazio.
+Preencha os campos usando a mensagem atual do usuário.
+
+- `lead_name`: nome informado pelo usuário.
+- `lead_segment_raw`: atividade, profissão ou descrição do trabalho do usuário.
+- `lead_segment`: escolha uma chave da lista de segmentos disponíveis que melhor represente a atividade do usuário.
+- `lead_segment`: use `outros` quando a atividade não corresponder a uma chave específica.
 """
 DISCOVERY_PROMPT = """
 Você está no modo DISCOVERY.
@@ -6432,6 +6437,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     _final_candidate = None
     inferred_lead_name = ""
     inferred_lead_segment = ""
+    inferred_lead_segment_raw = ""
 
     last_intent = str(state_summary.get("last_intent") or "").strip().upper()
     upstream_topic_hint = str(
@@ -7598,6 +7604,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or ""
         ).strip()
 
+        inferred_lead_segment_raw = str(
+            data.get("lead_segment_raw")
+            or data.get("leadSegmentRaw")
+            or ""
+        ).strip()
+
+        if not inferred_lead_segment_raw and inferred_lead_segment:
+            inferred_lead_segment_raw = inferred_lead_segment
+
         # ----------------------------------------------------------
         # Hidratação pós-parse do turno atual.
         # O modelo só retorna lead_name/lead_segment depois da chamada.
@@ -8593,8 +8608,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         "segmentKey": segment_key,
                         "segmentConfidence": segment_conf,
                         "shouldAskSegment": should_ask_segment,
+                        "leadSegmentRaw": inferred_lead_segment_raw,
                     },
                     "nextStep": next_step,
+                    "leadSegmentRaw": inferred_lead_segment_raw,
                     "shouldEnd": should_end,
                     "nameUse": name_use,
                     "prefersText": False,
@@ -10048,8 +10065,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "needsClarify": needs_clarify,
                 "clarifyQuestion": clarify_q,
                 "response_mode": response_mode,
+                "leadSegmentRaw": inferred_lead_segment_raw,
             },
             "nextStep": next_step,
+            "leadSegmentRaw": inferred_lead_segment_raw,
             "shouldEnd": should_end,
             "nameUse": name_use,
             # ✅ Regra canônica: texto só quando for SEND_LINK (link copiável).
