@@ -7301,10 +7301,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "messages": messages,
             }
 
-            # Só força JSON fora do free_mode.
-            # Em free_mode a IA pode responder em texto livre.
-            if not free_mode:
-                req_kwargs["response_format"] = {"type": "json_object"}
+            # Front sempre espera objeto JSON estruturado.
+            # O reply continua sendo texto natural dentro do campo reply/replyText.
+            req_kwargs["response_format"] = {"type": "json_object"}
 
             resp = _client.chat.completions.create(**req_kwargs)
             raw = str(resp.choices[0].message.content or "").strip()
@@ -7419,7 +7418,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                         # Preserva o texto bruto da IA para o fallback.
                         try:
-                            data = {"reply": str(raw_response or "").strip()}
+                            data = {"reply": str(raw or "").strip()}
                         except Exception:
                             data = {"reply": ""}
 
@@ -7513,6 +7512,25 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         e,
                     )
                     data = {}
+
+        # ----------------------------------------------------------
+        # Blindagem pós-parse/fail-safe:
+        # se qualquer fallback sobrescreveu data, reanexa nome/segmento
+        # inferidos da mensagem atual antes do parse canônico.
+        # ----------------------------------------------------------
+        try:
+            if isinstance(data, dict):
+                if not str(data.get("lead_name") or data.get("leadName") or "").strip():
+                    _turn_name = _extract_name_from_text(user_text) or ""
+                    if _turn_name:
+                        data["lead_name"] = _turn_name
+
+                if not str(data.get("lead_segment") or data.get("leadSegment") or "").strip():
+                    _turn_segment = _infer_segment_from_text(user_text) or ""
+                    if _turn_segment:
+                        data["lead_segment"] = _turn_segment
+        except Exception:
+            pass
 
         # ----------------------------------------------------------
         # Parse canônico do decider (packs_v1): por padrão pode vir sem replyText final.
