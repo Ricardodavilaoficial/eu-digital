@@ -162,10 +162,8 @@ def _humanize_reply_with_lead_context(
     lead_segment_raw: str = "",
 ) -> str:
     """
-    Acrescenta cumprimento, nome e atividade real do lead ao início do texto
-    quando essas informações estiverem disponíveis.
-
-    Não altera o conteúdo operacional já produzido pela IA.
+    Humaniza a resposta usando os sinais estruturados já extraídos.
+    A variação textual fica com o modelo, evitando frase fixa no código.
     """
     try:
         text = str(reply or "").strip()
@@ -180,23 +178,48 @@ def _humanize_reply_with_lead_context(
 
         lower = text.lower()
 
-        # Se o nome já aparece, preserva o texto.
-        if name and name.lower() in lower:
+        if name and name.lower() in lower and (
+            not segment_raw or segment_raw.lower() in lower
+        ):
             return text
 
-        intro_parts = ["Oi"]
+        system = """
+Você ajusta uma mensagem de WhatsApp para atendimento comercial.
 
-        if name:
-            intro_parts.append(name)
+Siga esta sequência:
 
-        intro = " ".join(intro_parts).strip()
+1. Abra com cumprimento curto.
+2. Use o nome do lead quando disponível.
+3. Referencie de forma natural a atividade informada pelo lead quando disponível.
+4. Preserve a explicação operacional do texto base.
+5. Varie a construção da abertura.
+6. Escreva em português do Brasil.
+7. Retorne somente a mensagem final.
+"""
 
-        if segment_raw:
-            intro = f"{intro}! Que interessante o seu trabalho com {segment_raw}."
-        else:
-            intro = f"{intro}!"
+        user = f"""
+[DADOS DO LEAD]
+nome: {name}
+atividade: {segment_raw}
 
-        return f"{intro} {text}".strip()
+[TEXTO BASE]
+{text}
+"""
+
+        upgraded = _call_openai_for_front(
+            system=system,
+            user=user,
+            max_tokens=420,
+            temperature=0.45,
+        )
+
+        upgraded = _sanitize_user_facing_reply(str(upgraded or "").strip())
+        upgraded = re.sub(r"\s{2,}", " ", upgraded).strip()
+
+        if upgraded:
+            return upgraded
+
+        return text
 
     except Exception:
         return str(reply or "").strip()
@@ -1349,6 +1372,83 @@ def _extract_json_object_field(raw: str, field_name: str) -> Dict[str, Any]:
         return {}
 
 
+def _merge_identity_fields_from_raw_ai_payload(
+    data: Dict[str, Any],
+    raw: str,
+) -> Dict[str, Any]:
+    """
+    Recupera campos estruturados do JSON textual quebrado.
+    Não usa palavras-chave de profissão nem frases do usuário.
+    Lê apenas campos que o próprio modelo já tentou devolver.
+    """
+    try:
+        out = data if isinstance(data, dict) else {}
+        understanding = out.get("understanding") if isinstance(out.get("understanding"), dict) else {}
+
+        def _first(*vals: Any) -> str:
+            for v in vals:
+                ss = str(v or "").strip()
+                if ss:
+                    return ss
+            return ""
+
+        lead_name = _first(
+            out.get("lead_name"),
+            out.get("leadName"),
+            understanding.get("lead_name"),
+            understanding.get("leadName"),
+            _extract_json_string_field(raw, "lead_name"),
+            _extract_json_string_field(raw, "leadName"),
+        )
+
+        lead_segment = _first(
+            out.get("lead_segment"),
+            out.get("leadSegment"),
+            out.get("segmentHint"),
+            understanding.get("lead_segment"),
+            understanding.get("leadSegment"),
+            understanding.get("segmentHint"),
+            _extract_json_string_field(raw, "lead_segment"),
+            _extract_json_string_field(raw, "leadSegment"),
+            _extract_json_string_field(raw, "segmentHint"),
+        )
+
+        lead_segment_raw = _first(
+            out.get("lead_segment_raw"),
+            out.get("leadSegmentRaw"),
+            understanding.get("lead_segment_raw"),
+            understanding.get("leadSegmentRaw"),
+            _extract_json_string_field(raw, "lead_segment_raw"),
+            _extract_json_string_field(raw, "leadSegmentRaw"),
+            lead_segment,
+        )
+
+        if lead_name:
+            out["lead_name"] = lead_name
+            out["leadName"] = lead_name
+
+        if lead_segment:
+            out["lead_segment"] = lead_segment
+            out["leadSegment"] = lead_segment
+
+        if lead_segment_raw:
+            out["lead_segment_raw"] = lead_segment_raw
+            out["leadSegmentRaw"] = lead_segment_raw
+
+        if isinstance(understanding, dict):
+            if lead_name:
+                understanding["leadName"] = lead_name
+            if lead_segment:
+                understanding["segmentHint"] = lead_segment
+            if lead_segment_raw:
+                understanding["leadSegmentRaw"] = lead_segment_raw
+            out["understanding"] = understanding
+
+        return out
+    except Exception:
+        return data if isinstance(data, dict) else {}
+
+
 def _salvage_free_mode_payload(raw: str) -> Dict[str, Any]:
     try:
         reply = _extract_json_string_field(raw, "replyText")
@@ -1358,13 +1458,14 @@ def _salvage_free_mode_payload(raw: str) -> Dict[str, Any]:
         topic = str((understanding or {}).get("topic") or "").strip().upper() or "OTHER"
         confidence = str((understanding or {}).get("confidence") or "").strip().lower() or "medium"
         if reply:
-            return {
+            payload = {
                 "response_mode": _normalize_response_mode(_extract_json_string_field(raw, "response_mode")) or "DIRECT",
                 "replyText": reply,
                 "spokenText": spoken or reply,
                 "understanding": {"topic": topic, "confidence": confidence},
                 "nextStep": next_step,
             }
+            return _merge_identity_fields_from_raw_ai_payload(payload, raw)
         return {}
     except Exception:
         return {}
@@ -7499,26 +7600,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         except Exception:
                             data = {"reply": ""}
 
-                        # Mesmo com JSON inválido, tenta inferir nome e segmento a partir
-                        # da mensagem atual do usuário para não perder contexto estruturado.
+                        # Mesmo com JSON inválido, tenta preservar nome e segmento que
+                        # o próprio modelo já tentou devolver no payload textual.
                         try:
-                            _fallback_name = ""
-                            _fallback_segment = ""
-
-                            if not name_hint:
-                                _fallback_name = _extract_name_from_text(user_text) or ""
-
-                            if not segment_hint:
-                                _fallback_segment = _infer_segment_from_text(user_text, kb_snapshot) or ""
-
-                            if _fallback_name:
-                                data["lead_name"] = _fallback_name
-
-                            if _fallback_segment:
-                                data["lead_segment"] = _fallback_segment
-
-                        except Exception:
-                            pass
+                            data = _merge_identity_fields_from_raw_ai_payload(data, raw or raw_json or "")
+                        except Exception as e:
+                            logging.warning("[CONVERSATIONAL_FRONT][IDENTITY_SALVAGE_FAIL] %s", e)
 
                         salvaged = {}
                         try:
@@ -7527,7 +7614,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             salvaged = {}
 
                         if salvaged and str((salvaged or {}).get("replyText") or "").strip():
-                            data = salvaged
+                            data = _merge_identity_fields_from_raw_ai_payload(salvaged, raw or raw_json or "")
                         else:
                             preferred_topic_hint = _preferred_topic_from_kb(
                                 kb_context=kb_context if isinstance(kb_context, dict) else {},
@@ -7542,7 +7629,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 confidence_hint=("high" if kb_anchor_strong else "medium"),
                             )
                             if free_text_payload and str(free_text_payload.get("replyText") or "").strip():
-                                data = free_text_payload
+                                data = _merge_identity_fields_from_raw_ai_payload(free_text_payload, raw or raw_json or "")
                             else:
                                 raw_text_candidate = _sanitize_user_facing_reply(str(raw or ""))
                                 raw_text_candidate = re.sub(r"\s{2,}", " ", raw_text_candidate).strip()
@@ -7562,6 +7649,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                         "prefersText": False,
                                         "replySource": "front_raw_fallback",
                                     }
+                                    data = _merge_identity_fields_from_raw_ai_payload(data, raw or raw_json or "")
                                 else:
                                     data = {}
         else:
@@ -7597,17 +7685,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # ----------------------------------------------------------
         try:
             if isinstance(data, dict):
-                if not str(data.get("lead_name") or data.get("leadName") or "").strip():
-                    _turn_name = _extract_name_from_text(user_text) or ""
-                    if _turn_name:
-                        data["lead_name"] = _turn_name
-
-                if not str(data.get("lead_segment") or data.get("leadSegment") or "").strip():
-                    _turn_segment = _infer_segment_from_text(user_text, kb_snapshot) or ""
-                    if _turn_segment:
-                        data["lead_segment"] = _turn_segment
-        except Exception:
-            pass
+                data = _merge_identity_fields_from_raw_ai_payload(data, raw or raw_json or "")
+        except Exception as e:
+            logging.warning("[CONVERSATIONAL_FRONT][IDENTITY_POST_PARSE_FAIL] %s", e)
 
         # ----------------------------------------------------------
         # Parse canônico do decider (packs_v1): por padrão pode vir sem replyText final.
@@ -7673,6 +7753,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if inferred_lead_segment and not segment_hint:
                 segment_hint = inferred_lead_segment
+
+            if inferred_lead_segment_raw and not segment_hint:
+                segment_hint = inferred_lead_segment_raw
+
+            try:
+                if isinstance(operational_contract, dict):
+                    if inferred_lead_segment_raw and not str(operational_contract.get("segment") or "").strip():
+                        operational_contract["segment"] = inferred_lead_segment_raw
+                    elif inferred_lead_segment and not str(operational_contract.get("segment") or "").strip():
+                        operational_contract["segment"] = inferred_lead_segment
+            except Exception:
+                pass
 
             has_name = bool(str(name_hint or "").strip())
             has_lead_name = has_name
@@ -8659,6 +8751,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         "leadSegmentRaw": inferred_lead_segment_raw,
                     },
                     "nextStep": next_step,
+                    "leadName": inferred_lead_name or name_hint,
+                    "segmentHint": segment_hint,
                     "leadSegmentRaw": inferred_lead_segment_raw,
                     "shouldEnd": should_end,
                     "nameUse": name_use,
@@ -10150,9 +10244,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         try:
             reply_text = _humanize_reply_with_lead_context(
                 reply=reply_text,
-                lead_name=inferred_lead_name,
-                lead_segment_raw=inferred_lead_segment_raw,
+                lead_name=inferred_lead_name or name_hint,
+                lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
             )
+            spoken_text = reply_text
         except Exception:
             pass
 
@@ -10172,6 +10267,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "leadSegmentRaw": inferred_lead_segment_raw,
             },
             "nextStep": next_step,
+            "leadName": inferred_lead_name or name_hint,
+            "segmentHint": segment_hint,
             "leadSegmentRaw": inferred_lead_segment_raw,
             "shouldEnd": should_end,
             "nameUse": name_use,
