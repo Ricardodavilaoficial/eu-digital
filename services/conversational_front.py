@@ -6203,6 +6203,7 @@ def _platform_kb_resolve_runtime(
         micro_scene = ""
         micro_scene_conversational = ""
         runtime_short_reply = ""
+        runtime_compact_reply = ""
         runtime_long_text = ""
         direct_scene = ""
 
@@ -6238,6 +6239,7 @@ def _platform_kb_resolve_runtime(
                     "micro_scene": micro_scene,
                 }
                 runtime_short_reply = _compose_pack_runtime_short_reply(runtime_short_material)
+                runtime_compact_reply = _compose_pack_runtime_compact_reply(runtime_short_material)
 
                 runtime_long_text = _platform_apply_slots(
                     str(runtime_long.get("text") or "").strip(),
@@ -6246,13 +6248,20 @@ def _platform_kb_resolve_runtime(
                 )
 
                 direct_scene = (
-                    runtime_short_reply
+                    runtime_long_text
+                    or runtime_short_reply
                     or micro_scene_conversational
-                    or runtime_long_text
                     or micro_scene
                 )
 
-        operational_reference = direct_scene or example_line or runtime_short_reply or micro_scene_conversational or micro_scene
+        operational_reference = (
+            direct_scene
+            or example_line
+            or runtime_long_text
+            or runtime_short_reply
+            or micro_scene_conversational
+            or micro_scene
+        )
 
         if topic in TOPICS and topic != "OTHER":
             out["topic"] = topic
@@ -6449,16 +6458,23 @@ def _platform_pack_material(
         )
 
         direct_scene = (
-            runtime_short_reply
+            runtime_long_text
+            or runtime_short_reply
             or micro_scene_conversational
-            or runtime_long_text
             or micro_scene
         )
 
         if not profile or not profile.get("tokens"):
             operational_reference = runtime_compact_reply or value_one_liner or example_line
         else:
-            operational_reference = direct_scene or example_line or runtime_short_reply or micro_scene_conversational or micro_scene
+            operational_reference = (
+                direct_scene
+                or example_line
+                or runtime_long_text
+                or runtime_short_reply
+                or micro_scene_conversational
+                or micro_scene
+            )
 
         material_source = ""
         if runtime_short_reply and direct_scene == runtime_short_reply:
@@ -8209,7 +8225,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 else:
                     if response_mode == "DIRECT":
                         _scene = (
-                            str(_runtime_material.get("runtime_short_reply") or "").strip()
+                            str(_runtime_material.get("runtime_long_text") or "").strip()
+                            or str(_runtime_material.get("runtime_short_reply") or "").strip()
                             or str(_runtime_material.get("direct_scene") or "").strip()
                             or str(_runtime_material.get("runtime_compact_reply") or "").strip()
                             or str(_runtime_material.get("micro_scene") or "").strip()
@@ -8455,7 +8472,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 else:
                     if response_mode == "DIRECT":
                         _best_scene = (
-                            _late_runtime_short
+                            _late_runtime_long
+                            or _late_runtime_short
                             or _late_direct_scene
                             or _late_compact
                         )
