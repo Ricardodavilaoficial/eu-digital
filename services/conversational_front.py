@@ -154,6 +154,49 @@ def _split_sentences_pt(text: str) -> list[str]:
 
 
 
+def _extract_lead_name_from_current_turn(text: str) -> str:
+    """
+    Fallback estrutural genérico para nome no turno atual.
+    Não usa lista de nomes, profissão ou segmento.
+    Serve para o caminho JSON_FAIL_SAFE quando o modelo quebra o JSON.
+    """
+    try:
+        t = str(text or "").strip()
+        if not t:
+            return ""
+
+        m = re.search(
+            r"(?i)\b(?:sou|me chamo|meu nome é|meu nome e)\s+(?:o\s+|a\s+)?([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-zà-ÿ]{1,30})\b",
+            t,
+        )
+        if m:
+            return m.group(1).strip()
+
+        return ""
+    except Exception:
+        return ""
+
+
+def _reply_has_lead_context(reply: str, lead_name: str = "", lead_segment_raw: str = "") -> bool:
+    """
+    Valida se a resposta final carregou os sinais humanos mínimos.
+    Não valida frase pronta; valida presença estrutural de nome e atividade.
+    """
+    try:
+        text = str(reply or "").lower()
+        name = str(lead_name or "").strip().lower()
+        seg = str(lead_segment_raw or "").strip().lower()
+
+        if name and name not in text:
+            return False
+
+        if seg and seg not in text:
+            return False
+
+        return bool(name or seg)
+    except Exception:
+        return False
+
 
 
 def _humanize_reply_with_lead_context(
@@ -216,7 +259,11 @@ atividade: {segment_raw}
         upgraded = _sanitize_user_facing_reply(str(upgraded or "").strip())
         upgraded = re.sub(r"\s{2,}", " ", upgraded).strip()
 
-        if upgraded:
+        if upgraded and _reply_has_lead_context(
+            upgraded,
+            lead_name=name,
+            lead_segment_raw=segment_raw,
+        ):
             return upgraded
 
         return text
@@ -7726,6 +7773,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or ""
         ).strip()
 
+        # Fallback estrutural seguro para nome do lead no turno atual.
+        # Atua quando o JSON quebra e o campo leadName não vem do modelo.
+        # Não usa lista de nomes nem frases prontas de resposta.
+        try:
+            if not inferred_lead_name:
+                _turn_name = _extract_lead_name_from_current_turn(user_text)
+                if _turn_name:
+                    inferred_lead_name = _turn_name
+                    data["lead_name"] = _turn_name
+                    data["leadName"] = _turn_name
+        except Exception as e:
+            logging.warning("[CONVERSATIONAL_FRONT][LEAD_NAME_FALLBACK_FAIL] %s", e)
+
         inferred_lead_segment = str(
             data.get("lead_segment")
             or data.get("leadSegment")
@@ -9609,8 +9669,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             # ---------------------------------------------------------
             try:
                 _context_lead_name = str(
-                    name_hint
-                    or inferred_lead_name
+                    inferred_lead_name
+                    or name_hint
                     or ""
                 ).strip()
 
@@ -9664,7 +9724,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "tokenUsage": token_usage,
                 "replySizePolicy": reply_size_policy if isinstance(reply_size_policy, dict) else {},
                 "operationalContract": operational_contract if 'operational_contract' in locals() else {},
-                "leadName": name_hint,
+                "leadName": inferred_lead_name or name_hint,
                 "segmentHint": segment_hint,
             }
 
