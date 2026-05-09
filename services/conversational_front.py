@@ -9467,6 +9467,51 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 pass
 
+            # ---------------------------------------------------------
+            # HUMANIZAÇÃO FINAL DO FREE_MODE / DIRECT
+            # ---------------------------------------------------------
+            # O free_mode retorna cedo. Quando o JSON quebra e cai em
+            # JSON_FAIL_SAFE, a resposta pode estar boa operacionalmente,
+            # mas ainda sair sem nome/cumprimento/contexto do lead.
+            #
+            # Aqui não inferimos profissão por palavra-chave e não mexemos
+            # em prompt. Apenas usamos os sinais estruturados já capturados
+            # no próprio turno e aplicamos a camada existente de humanização.
+            # ---------------------------------------------------------
+            try:
+                _context_lead_name = str(
+                    name_hint
+                    or inferred_lead_name
+                    or ""
+                ).strip()
+
+                _context_segment_raw = str(
+                    inferred_lead_segment_raw
+                    or inferred_lead_segment
+                    or segment_hint
+                    or ""
+                ).strip()
+
+                if _context_segment_raw and not str(segment_hint or "").strip():
+                    segment_hint = _context_segment_raw
+
+                if (
+                    isinstance(operational_contract, dict)
+                    and _context_segment_raw
+                    and not str(operational_contract.get("segment") or "").strip()
+                ):
+                    operational_contract["segment"] = _context_segment_raw
+
+                if reply_text and (_context_lead_name or _context_segment_raw):
+                    reply_text = _humanize_reply_with_lead_context(
+                        reply=reply_text,
+                        lead_name=_context_lead_name,
+                        lead_segment_raw=_context_segment_raw,
+                    )
+                    spoken_text = reply_text
+            except Exception:
+                pass
+
             out = {
                 "response_mode": response_mode,
                 "replyText": reply_text,
@@ -9479,6 +9524,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     "clarifyQuestion": clarify_q,
                     "leadName": name_hint,
                     "segmentHint": segment_hint,
+                    "leadSegmentRaw": inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
                 },
                 "nextStep": next_step,
                 "shouldEnd": should_end,
