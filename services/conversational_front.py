@@ -373,7 +373,30 @@ def _infer_segment_from_text(user_text: str, kb_snapshot: str) -> str:
 
             svm = obj.get("segment_value_map_v1") or {}
             if isinstance(svm, dict):
-                candidates.extend([str(k).strip().lower() for k in svm.keys() if str(k).strip()])
+                for k, profile in svm.items():
+                    key = str(k).strip().lower()
+                    if not key:
+                        continue
+
+                    candidates.append(key)
+
+                    try:
+                        blob = json.dumps(profile or {}, ensure_ascii=False).lower()
+                        blob_norm = _norm(blob)
+
+                        # Usa o próprio conteúdo do KB como sinal.
+                        # Ex.: key=psicologo pode conter "psicologia" no example_line.
+                        if blob_norm and any(tok in norm for tok in _tokenize_lookup_text(blob_norm)):
+                            candidates.append(key)
+                    except Exception:
+                        pass
+
+        # Primeiro: se o conteúdo do perfil no KB casou com o texto,
+        # retorna a chave estrutural do segmento.
+        for seg in candidates:
+            s = _norm(seg)
+            if s and s in norm:
+                return s
 
         for sub in sub_candidates:
             s = _norm(sub.replace("__", " "))
@@ -7432,7 +7455,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 _fallback_name = _extract_name_from_text(user_text) or ""
 
                             if not segment_hint:
-                                _fallback_segment = _infer_segment_from_text(user_text) or ""
+                                _fallback_segment = _infer_segment_from_text(user_text, kb_snapshot) or ""
 
                             if _fallback_name:
                                 data["lead_name"] = _fallback_name
@@ -7526,7 +7549,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         data["lead_name"] = _turn_name
 
                 if not str(data.get("lead_segment") or data.get("leadSegment") or "").strip():
-                    _turn_segment = _infer_segment_from_text(user_text) or ""
+                    _turn_segment = _infer_segment_from_text(user_text, kb_snapshot) or ""
                     if _turn_segment:
                         data["lead_segment"] = _turn_segment
         except Exception:
