@@ -154,6 +154,54 @@ def _split_sentences_pt(text: str) -> list[str]:
 
 
 
+
+
+def _humanize_reply_with_lead_context(
+    reply: str,
+    lead_name: str = "",
+    lead_segment_raw: str = "",
+) -> str:
+    """
+    Acrescenta cumprimento, nome e atividade real do lead ao início do texto
+    quando essas informações estiverem disponíveis.
+
+    Não altera o conteúdo operacional já produzido pela IA.
+    """
+    try:
+        text = str(reply or "").strip()
+        if not text:
+            return text
+
+        name = str(lead_name or "").strip()
+        segment_raw = str(lead_segment_raw or "").strip()
+
+        if not name and not segment_raw:
+            return text
+
+        lower = text.lower()
+
+        # Se o nome já aparece, preserva o texto.
+        if name and name.lower() in lower:
+            return text
+
+        intro_parts = ["Oi"]
+
+        if name:
+            intro_parts.append(name)
+
+        intro = " ".join(intro_parts).strip()
+
+        if segment_raw:
+            intro = f"{intro}! Que interessante o seu trabalho com {segment_raw}."
+        else:
+            intro = f"{intro}!"
+
+        return f"{intro} {text}".strip()
+
+    except Exception:
+        return str(reply or "").strip()
+
+
 def _front_fs_client():
     """
     Firestore canônico via firebase_admin.
@@ -10052,6 +10100,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "segment": segment_for_prompt,
                 "clarify": needs_clarify
             })
+
+        try:
+            reply_text = _humanize_reply_with_lead_context(
+                reply=reply_text,
+                lead_name=inferred_lead_name,
+                lead_segment_raw=inferred_lead_segment_raw,
+            )
+        except Exception:
+            pass
+
 
         out = {
             "response_mode": response_mode,
