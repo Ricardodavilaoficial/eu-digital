@@ -454,6 +454,10 @@ def _front_platform_pack_content(
             return {}
 
         return {
+            "value_one_liner": value_one_liner,
+            "bridge_line": bridge_line,
+            "micro_scene_conversational": conversational_scene,
+            "micro_scene": conversational_scene or str(material.get("micro_scene") or "").strip(),
             "core": core,
             "contentSourceType": "platform_kb_pack",
             "contentSourceId": selected_pack_id,
@@ -511,10 +515,6 @@ def _front_build_structured_assembly_reply(
         assembled = _sanitize_user_facing_reply(str(assembled or "").strip())
 
         if not assembled:
-            return {}
-
-        current = str(current_reply or "").strip()
-        if current and len(current) >= len(assembled) and source.get("contentSourceType") != "subsegment":
             return {}
 
         return {
@@ -9963,6 +9963,44 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         reply_text = fallback
                         spoken_text = fallback
                         reply_source = "front_fallback_structural"
+
+            # ---------------------------------------------------------
+            # STRUCTURED ASSEMBLY DENTRO DO FREE_MODE
+            # ---------------------------------------------------------
+            # O FREE_MODE retorna antes do caminho final comum.
+            # Portanto, quando a flag está ativa, o montador determinístico
+            # precisa assumir aqui, antes do out/return do FREE_MODE.
+            # Não altera prompt, não detecta segmento por palavra-chave
+            # e usa somente KB/contrato já resolvidos.
+            # ---------------------------------------------------------
+            try:
+                _oc_for_assembly = operational_contract if isinstance(operational_contract, dict) else {}
+                _pack_for_assembly = str(
+                    selected_pack_id
+                    or _oc_for_assembly.get("selected_pack_id")
+                    or ""
+                ).strip().upper()
+
+                structured_assembly_result = _front_build_structured_assembly_reply(
+                    current_reply=reply_text,
+                    real_kb_docs=real_kb_docs if 'real_kb_docs' in locals() else {},
+                    kb_snapshot_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                    platform_segment_profile=platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
+                    selected_pack_id=_pack_for_assembly,
+                    response_mode=response_mode,
+                    next_step=next_step,
+                    lead_name=inferred_lead_name or name_hint,
+                    lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
+                )
+
+                if structured_assembly_result and structured_assembly_result.get("replyText"):
+                    reply_text = str(structured_assembly_result.get("replyText") or "").strip()
+                    spoken_text = str(structured_assembly_result.get("spokenText") or reply_text).strip()
+                    reply_source = "front_structured_python_assembly"
+                    accepted = True
+                    ia_accepted = True
+            except Exception:
+                structured_assembly_result = {}
 
             logging.info(
                 "[IA_FINAL_DECISION] source=%s accepted=%s len=%s live=%s density=%s",
