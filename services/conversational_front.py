@@ -7738,8 +7738,43 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or ""
         ).strip()
 
+        # Fallback estrutural seguro para atividade/profissão do lead.
+        # Usado quando o JSON do modelo quebra e não entrega leadSegmentRaw.
+        # Não usa lista de profissões nem mapeamento por palavra-chave de segmento.
+        try:
+            if not inferred_lead_segment_raw:
+                _ut = str(user_text or "").strip()
+                _m = re.search(
+                    r"(?i)\b(?:trabalho com|trabalho na área de|trabalho como|atuo com|atuo na área de|atuo como)\s+([a-zÀ-ÿ][a-zÀ-ÿ\s]{2,40}?)(?:\.|,| e | para | como |$)",
+                    _ut,
+                )
+                if _m:
+                    _raw_activity = re.sub(r"\s{2,}", " ", _m.group(1)).strip()
+                    if (
+                        _raw_activity
+                        and _raw_activity.lower() != str(inferred_lead_name or "").strip().lower()
+                    ):
+                        inferred_lead_segment_raw = _raw_activity
+                        data["lead_segment_raw"] = _raw_activity
+                        data["leadSegmentRaw"] = _raw_activity
+        except Exception as e:
+            logging.warning("[CONVERSATIONAL_FRONT][LEAD_SEGMENT_RAW_FALLBACK_FAIL] %s", e)
+
+
         if not inferred_lead_segment_raw and inferred_lead_segment:
             inferred_lead_segment_raw = inferred_lead_segment
+
+        try:
+            if inferred_lead_segment_raw:
+                if not segment_hint:
+                    segment_hint = inferred_lead_segment_raw
+
+                if isinstance(operational_contract, dict) and not str(
+                    operational_contract.get("segment") or ""
+                ).strip():
+                    operational_contract["segment"] = inferred_lead_segment_raw
+        except Exception:
+            pass
 
         # ----------------------------------------------------------
         # Hidratação pós-parse do turno atual.
