@@ -198,28 +198,6 @@ def _reply_has_lead_context(reply: str, lead_name: str = "", lead_segment_raw: s
         return False
 
 
-def _reply_opening_has_lead_context(reply: str, lead_name: str = "", lead_segment_raw: str = "") -> bool:
-    """
-    Verifica se a abertura da resposta carrega nome e atividade do lead.
-    Não exige frase pronta; valida apenas que os sinais humanos apareçam logo no início.
-    """
-    try:
-        text = str(reply or "").strip()
-        if not text:
-            return False
-
-        parts = _split_sentences_pt(text)
-        opening = str(parts[0] if parts else text[:180]).strip()
-
-        return _reply_has_lead_context(
-            opening,
-            lead_name=lead_name,
-            lead_segment_raw=lead_segment_raw,
-        )
-    except Exception:
-        return False
-
-
 
 def _humanize_reply_with_lead_context(
     reply: str,
@@ -229,6 +207,7 @@ def _humanize_reply_with_lead_context(
     """
     Humaniza a resposta usando os sinais estruturados já extraídos.
     A variação textual fica com o modelo, evitando frase fixa no código.
+    Garante a cópia integral do texto operacional gerado anteriormente.
     """
     try:
         text = str(reply or "").strip()
@@ -241,24 +220,27 @@ def _humanize_reply_with_lead_context(
         if not name and not segment_raw:
             return text
 
-        if _reply_opening_has_lead_context(
-            text,
-            lead_name=name,
-            lead_segment_raw=segment_raw,
+        lower = text.lower()
+
+        # Verifica se o nome já está na abertura do texto.
+        # Se estiver, considera a resposta já humanizada.
+        first_chars = lower[:60]
+        if name and name.lower() in first_chars and (
+            not segment_raw or segment_raw.lower() in lower
         ):
             return text
 
         system = """
-Você ajusta uma mensagem de WhatsApp para atendimento comercial.
+Você ajusta uma mensagem de WhatsApp.
 
-Siga esta sequência:
+Siga exatamente esta sequência:
 
-1. Construa a primeira frase com cumprimento curto, nome do lead e referência natural à atividade informada.
-2. Mantenha a explicação operacional do texto base.
-3. Preserve os detalhes concretos já presentes no texto base.
-4. Varie a construção da abertura.
-5. Escreva em português do Brasil.
-6. Retorne somente a mensagem final.
+1. Escreva uma frase inicial de cumprimento.
+2. Inclua o nome do lead na frase inicial.
+3. Escreva uma segunda frase demonstrando entusiasmo com a atividade do lead.
+4. Pule uma linha.
+5. Copie o texto base exatamente como ele é, palavra por palavra.
+6. Retorne apenas o texto final.
 """
 
         user = f"""
@@ -273,14 +255,16 @@ atividade: {segment_raw}
         upgraded = _call_openai_for_front(
             system=system,
             user=user,
-            max_tokens=420,
-            temperature=0.45,
+            max_tokens=600,
+            temperature=0.35,
         )
 
         upgraded = _sanitize_user_facing_reply(str(upgraded or "").strip())
-        upgraded = re.sub(r"\s{2,}", " ", upgraded).strip()
 
-        if upgraded and _reply_opening_has_lead_context(
+        # Normaliza espaços preservando quebras de linha.
+        upgraded = re.sub(r"[ \t]{2,}", " ", upgraded).strip()
+
+        if upgraded and _reply_has_lead_context(
             upgraded,
             lead_name=name,
             lead_segment_raw=segment_raw,
@@ -291,8 +275,6 @@ atividade: {segment_raw}
 
     except Exception:
         return str(reply or "").strip()
-
-
 def _front_fs_client():
     """
     Firestore canônico via firebase_admin.
@@ -9732,7 +9714,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     "confidence": confidence,
                     "needsClarify": needs_clarify,
                     "clarifyQuestion": clarify_q,
-                    "leadName": inferred_lead_name or name_hint,
+                    "leadName": name_hint,
                     "segmentHint": segment_hint,
                     "leadSegmentRaw": inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
                 },
@@ -9747,7 +9729,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "operationalContract": operational_contract if 'operational_contract' in locals() else {},
                 "leadName": inferred_lead_name or name_hint,
                 "segmentHint": segment_hint,
-                "leadSegmentRaw": inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
             }
 
             if decider_only and isinstance(decider, dict):
