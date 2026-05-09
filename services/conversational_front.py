@@ -3673,11 +3673,20 @@ def _build_direct_scene_payload(
         # para evitar retorno do proceduralismo.
         # ==========================================================
         if not bool(c.get("hydrated_from_docs")):
-            scene = (
-                c.get("runtime_compact_reply")
-                or c.get("runtime_short_reply")
-                or c.get("operational_reference")
-            )
+            if str(c.get("response_mode") or "").strip().upper() == "DIRECT":
+                scene = (
+                    c.get("direct_scene")
+                    or c.get("runtime_long_text")
+                    or c.get("runtime_short_reply")
+                    or c.get("runtime_compact_reply")
+                    or c.get("operational_reference")
+                )
+            else:
+                scene = (
+                    c.get("runtime_compact_reply")
+                    or c.get("runtime_short_reply")
+                    or c.get("operational_reference")
+                )
         else:
             scene = (
                 c.get("direct_scene")
@@ -8239,6 +8248,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 if _scene:
                     operational_contract["direct_scene"] = _scene
+                    operational_contract["response_mode"] = str(response_mode or "").strip().upper()
                     if has_real_operational_context and _runtime_material.get("runtime_long_text"):
                         operational_contract["runtime_long_text"] = _runtime_material["runtime_long_text"]
                     elif not has_real_operational_context:
