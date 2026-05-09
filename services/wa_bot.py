@@ -412,6 +412,9 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
         if not wa_key:
             return
 
+        from firebase_admin import firestore  # type: ignore
+        db = firestore.client()
+
         out = out or {}
         ctx = ctx or {}
 
@@ -434,8 +437,6 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
             or ""
         ).strip()
 
-        from firebase_admin import firestore  # type: ignore
-
         payload: Dict[str, Any] = {
             "waKey": wa_key,
             "updatedAt": firestore.SERVER_TIMESTAMP,
@@ -452,7 +453,6 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
         if len(payload) <= 2:
             return
 
-        db = firestore.client()
         db.collection("institutional_leads").document(wa_key).set(payload, merge=True)
     except Exception:
         pass
@@ -1716,6 +1716,23 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
     """
     ctx = ctx or {}
     try:
+        if not (uid or "").strip():
+            _wa_mem_key = (
+                ctx.get("waKey")
+                or ctx.get("wa_key")
+                or ctx.get("from_e164")
+                or ctx.get("wa_id")
+                or ""
+            )
+            lead_memory = _load_institutional_lead_memory(str(_wa_mem_key or ""))
+            if lead_memory:
+                for _k, _v in lead_memory.items():
+                    if _v and not ctx.get(_k):
+                        ctx[_k] = _v
+    except Exception:
+        pass
+
+    try:
         ai_turns = int((ctx or {}).get("ai_turns") or 0)
     except Exception:
         ai_turns = 0
@@ -2187,6 +2204,10 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
                             out["aiMeta"] = am
                             out = _apply_safe_ai_meta(out, ctx)
+                            try:
+                                _save_institutional_lead_memory(wa_key, out, ctx)
+                            except Exception:
+                                pass
                             # incrementa contador SOMENTE se o front realmente respondeu
                             try:
                                 from services.speaker_state import bump_ai_turns  # type: ignore
@@ -2422,6 +2443,14 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
             out = _apply_safe_ai_meta(out, ctx)
             _final_cut_one_q(out)
             out = _prepare_worker_tts_text(out, ctx)
+            try:
+                _save_institutional_lead_memory(
+                    ctx.get("waKey") or ctx.get("wa_key") or ctx.get("from_e164") or "",
+                    out,
+                    ctx,
+                )
+            except Exception:
+                pass
             return out
 
         except Exception as e:
