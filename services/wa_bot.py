@@ -358,6 +358,105 @@ def _log_sales_lead_fallback(ctx: Optional[Dict[str, Any]], *, reason: str, err:
         pass
 
 
+
+def _load_institutional_lead_memory(wa_key: str) -> Dict[str, Any]:
+    """
+    Carrega memória persistente do lead institucional por telefone.
+    Best-effort: nunca bloqueia o atendimento.
+    """
+    try:
+        wa_key = "".join(ch for ch in str(wa_key or "") if ch.isdigit())
+        if not wa_key:
+            return {}
+
+        from firebase_admin import firestore  # type: ignore
+        db = firestore.client()
+        snap = db.collection("institutional_leads").document(wa_key).get()
+        data = (snap.to_dict() or {}) if snap else {}
+        if not isinstance(data, dict):
+            return {}
+
+        name = str(
+            data.get("name_hint")
+            or data.get("displayName")
+            or data.get("leadName")
+            or ""
+        ).strip()
+        segment = str(
+            data.get("segment")
+            or data.get("segment_hint")
+            or data.get("leadSegment")
+            or ""
+        ).strip()
+
+        out: Dict[str, Any] = {}
+        if name:
+            out["name_hint"] = name
+            out["displayName"] = name
+            out["leadName"] = name
+        if segment:
+            out["segment_hint"] = segment
+            out["segment"] = segment
+        return out
+    except Exception:
+        return {}
+
+
+def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] = None, ctx: Optional[Dict[str, Any]] = None) -> None:
+    """
+    Persiste nome/segmento do lead institucional por telefone.
+    Usa merge=True e só grava campos não vazios.
+    """
+    try:
+        wa_key = "".join(ch for ch in str(wa_key or "") if ch.isdigit())
+        if not wa_key:
+            return
+
+        out = out or {}
+        ctx = ctx or {}
+
+        name = str(
+            out.get("leadName")
+            or out.get("nameToSay")
+            or out.get("displayName")
+            or ctx.get("leadName")
+            or ctx.get("name_hint")
+            or ctx.get("displayName")
+            or ""
+        ).strip()
+
+        segment = str(
+            out.get("segmentHint")
+            or out.get("leadSegment")
+            or out.get("segment")
+            or ctx.get("segment_hint")
+            or ctx.get("segment")
+            or ""
+        ).strip()
+
+        from firebase_admin import firestore  # type: ignore
+
+        payload: Dict[str, Any] = {
+            "waKey": wa_key,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }
+
+        if name:
+            payload["displayName"] = name
+            payload["name_hint"] = name
+
+        if segment:
+            payload["segment"] = segment
+            payload["segment_hint"] = segment
+
+        if len(payload) <= 2:
+            return
+
+        db = firestore.client()
+        db.collection("institutional_leads").document(wa_key).set(payload, merge=True)
+    except Exception:
+        pass
+
 def _apply_safe_ai_meta(out: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Garantia mínima de aiMeta para auditoria, sem alterar comportamento."""
     try:
@@ -1926,6 +2025,8 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "replyText": str(front_out.get("replyText") or "").strip(),
                             "spokenText": str(front_out.get("spokenText") or front_out.get("spoken_text") or "").strip(),
                             "understanding": und,
+                            "leadName": str(front_out.get("leadName") or "").strip(),
+                            "segmentHint": str(front_out.get("segmentHint") or "").strip(),
                             "planNextStep": front_out.get("nextStep") or "NONE",
                             "nameUse": front_out.get("nameUse") or "none",
                             # Telemetria leve (ignorada se o worker não usar)
@@ -2717,6 +2818,12 @@ def process_change(
                 "actor_type": "unknown_or_lead",
                 "route_hint": "vendas",
             }
+            try:
+                lead_memory = _load_institutional_lead_memory(wa_key_local)
+                if lead_memory:
+                    ctx_local.update({k: v for k, v in lead_memory.items() if v})
+            except Exception:
+                pass
         except Exception:
             wa_key_local = "".join(ch for ch in (from_id or "") if ch.isdigit())
             ctx_local = {
@@ -2727,11 +2834,21 @@ def process_change(
                 "app_tag": app_tag or "",
                 "route_hint": "vendas",
             }
+            try:
+                lead_memory = _load_institutional_lead_memory(wa_key_local)
+                if lead_memory:
+                    ctx_local.update({k: v for k, v in lead_memory.items() if v})
+            except Exception:
+                pass
 
         # ✅ Unificar núcleo de VENDAS: passa SEMPRE pelo reply_to_text(...)
         # Isso garante que o Módulo 1 (Conversational Front) seja o "dono" nos 5 primeiros turnos.
         try:
             out = reply_to_text("", _body or "", ctx_local) or {}
+            try:
+                _save_institutional_lead_memory(wa_key_local, out, ctx_local)
+            except Exception:
+                pass
             reply_text = str(out.get("replyText") or "").strip()
             if not reply_text:
                 _log_sales_lead_fallback(ctx_local, reason="empty_reply_from_reply_to_text")
