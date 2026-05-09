@@ -75,6 +75,12 @@ FRONT_TRACE_ENABLED = (os.getenv("FRONT_TRACE_ENABLED", "1") or "1").strip().low
 # Feature flag (default ON, mas seguro): seleciona fatos do KB para o prompt (menos alucinação, menos tokens)
 FRONT_KB_RESOLVER_ENABLED = (os.getenv("FRONT_KB_RESOLVER_ENABLED", "1") or "1").strip().lower() not in ("0","false","off","no")
 
+# Feature flag nova: montagem determinística da resposta final pelo Python.
+# Default OFF para não alterar produção antes dos testes.
+FRONT_STRUCTURED_ASSEMBLY_ENABLED = (
+    os.getenv("FRONT_STRUCTURED_ASSEMBLY_ENABLED", "0") or "0"
+).strip().lower() in ("1", "true", "yes", "on")
+
 DEFAULT_TONE = "linguagem simples, direta, educada e comum de conversa no WhatsApp"
 
 def _resolve_tone_hint(state_summary: dict | None, contract: dict | None = None) -> str:
@@ -275,6 +281,252 @@ atividade: {segment_raw}
 
     except Exception:
         return str(reply or "").strip()
+
+
+def _front_first_text(*vals: Any) -> str:
+    """
+    Retorna o primeiro texto útil.
+    Helper estrutural: não decide intenção, não detecta segmento e não cria conteúdo comercial.
+    """
+    try:
+        for v in vals:
+            if isinstance(v, str):
+                s = v.strip()
+                if s:
+                    return s
+        return ""
+    except Exception:
+        return ""
+
+
+def _front_structured_doc_content(docs: Dict[str, Any] | None) -> Dict[str, Any]:
+    """
+    Extrai conteúdo operacional de segmento/archetype já hidratados.
+    Prioridade:
+    1) subsegmento
+    2) archetype
+    3) segmento macro
+    """
+    try:
+        docs = docs if isinstance(docs, dict) else {}
+        sub_doc = docs.get("subsegment_doc") or {}
+        arch_doc = docs.get("archetype_doc") or {}
+        seg_doc = docs.get("segment_doc") or {}
+
+        if not isinstance(sub_doc, dict):
+            sub_doc = {}
+        if not isinstance(arch_doc, dict):
+            arch_doc = {}
+        if not isinstance(seg_doc, dict):
+            seg_doc = {}
+
+        source_doc = sub_doc or arch_doc or seg_doc
+        if not source_doc:
+            return {}
+
+        source_type = "subsegment" if sub_doc else ("archetype" if arch_doc else "segment")
+        source_id = _front_first_text(
+            source_doc.get("id"),
+            source_doc.get("name"),
+            source_doc.get("archetype_id"),
+            source_doc.get("segment_id"),
+        )
+
+        one_liner = _front_first_text(
+            sub_doc.get("one_liner"),
+            arch_doc.get("one_liner"),
+            seg_doc.get("one_liner"),
+        )
+
+        scene = _front_first_text(
+            sub_doc.get("micro_scene_conversational"),
+            arch_doc.get("micro_scene_conversational"),
+            seg_doc.get("micro_scene_conversational"),
+            sub_doc.get("micro_scene"),
+            arch_doc.get("micro_scene"),
+            seg_doc.get("micro_scene"),
+        )
+
+        service_noun = _front_first_text(
+            sub_doc.get("service_noun"),
+            arch_doc.get("service_noun"),
+            seg_doc.get("service_noun"),
+        )
+
+        conversion_noun = _front_first_text(
+            sub_doc.get("conversion_noun"),
+            arch_doc.get("conversion_noun"),
+            seg_doc.get("conversion_noun"),
+        )
+
+        pieces = []
+        if one_liner:
+            pieces.append(one_liner)
+        if scene and scene not in pieces:
+            pieces.append(scene)
+
+        core = "\n\n".join([p for p in pieces if p]).strip()
+        if not core:
+            return {}
+
+        return {
+            "core": core,
+            "contentSourceType": source_type,
+            "contentSourceId": source_id,
+            "serviceNoun": service_noun,
+            "conversionNoun": conversion_noun,
+        }
+    except Exception:
+        return {}
+
+
+def _front_platform_pack_content(
+    *,
+    kb_snapshot_obj: Dict[str, Any] | None,
+    platform_segment_profile: Dict[str, Any] | None,
+    selected_pack_id: str = "",
+    response_mode: str = "DIRECT",
+) -> Dict[str, Any]:
+    """
+    Extrai conteúdo do platform_kb/value_packs_v1 já resolvido.
+    Não seleciona segmento por palavra local; usa selected_pack_id e profile já calculados.
+    """
+    try:
+        if not selected_pack_id:
+            return {}
+        if not isinstance(kb_snapshot_obj, dict) or not kb_snapshot_obj:
+            return {}
+
+        material = _platform_pack_material(
+            kb_snapshot_obj,
+            platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
+            selected_pack_id,
+        )
+        if not isinstance(material, dict):
+            return {}
+
+        mode = str(response_mode or "").strip().upper()
+
+        bridge_line = _front_first_text(
+            material.get("bridge_line"),
+        )
+
+        value_one_liner = _front_first_text(
+            material.get("value_one_liner"),
+        )
+
+        conversational_scene = _front_first_text(
+            material.get("micro_scene_conversational"),
+        )
+
+        if mode == "SCENE":
+            main_body = _front_first_text(
+                conversational_scene,
+                material.get("direct_scene"),
+                material.get("runtime_long_text"),
+                material.get("runtime_short_reply"),
+                material.get("runtime_compact_reply"),
+                material.get("micro_scene"),
+                material.get("reference_example"),
+            )
+        else:
+            main_body = _front_first_text(
+                conversational_scene,
+                material.get("runtime_long_text"),
+                material.get("runtime_short_reply"),
+                material.get("runtime_compact_reply"),
+                material.get("direct_scene"),
+                material.get("micro_scene"),
+                material.get("reference_example"),
+            )
+
+        pieces = []
+        if value_one_liner:
+            pieces.append(value_one_liner)
+        if bridge_line:
+            pieces.append(bridge_line)
+        if main_body:
+            pieces.append(main_body)
+
+        core = "\n\n".join([p for p in pieces if p]).strip()
+
+        if not core:
+            return {}
+
+        return {
+            "core": core,
+            "contentSourceType": "platform_kb_pack",
+            "contentSourceId": selected_pack_id,
+            "materialSource": str(material.get("material_source") or "").strip(),
+        }
+    except Exception:
+        return {}
+
+
+def _front_build_structured_assembly_reply(
+    *,
+    current_reply: str = "",
+    real_kb_docs: Dict[str, Any] | None = None,
+    kb_snapshot_obj: Dict[str, Any] | None = None,
+    platform_segment_profile: Dict[str, Any] | None = None,
+    selected_pack_id: str = "",
+    response_mode: str = "DIRECT",
+    next_step: str = "NONE",
+    lead_name: str = "",
+    lead_segment_raw: str = "",
+) -> Dict[str, Any]:
+    """
+    Monta resposta final por fonte estruturada, atrás de feature flag.
+    Prioridade:
+    1) segmento/subsegmento/archetype hidratado
+    2) platform_kb/value_packs_v1
+    3) mantém resposta atual
+    """
+    try:
+        if not FRONT_STRUCTURED_ASSEMBLY_ENABLED:
+            return {}
+
+        if str(next_step or "").strip().upper() == "SEND_LINK":
+            return {}
+
+        source = _front_structured_doc_content(real_kb_docs)
+
+        if not source:
+            source = _front_platform_pack_content(
+                kb_snapshot_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                platform_segment_profile=platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
+                selected_pack_id=selected_pack_id,
+                response_mode=response_mode,
+            )
+
+        core = str((source or {}).get("core") or "").strip()
+        if not core:
+            return {}
+
+        assembled = _humanize_reply_with_lead_context(
+            reply=core,
+            lead_name=lead_name,
+            lead_segment_raw=lead_segment_raw,
+        )
+        assembled = _sanitize_user_facing_reply(str(assembled or "").strip())
+
+        if not assembled:
+            return {}
+
+        current = str(current_reply or "").strip()
+        if current and len(current) >= len(assembled) and source.get("contentSourceType") != "subsegment":
+            return {}
+
+        return {
+            "replyText": assembled,
+            "spokenText": assembled,
+            "assemblyMode": "structured_python",
+            "contentSourceType": str(source.get("contentSourceType") or "").strip(),
+            "contentSourceId": str(source.get("contentSourceId") or "").strip(),
+            "materialSource": str(source.get("materialSource") or "").strip(),
+        }
+    except Exception:
+        return {}
 def _front_fs_client():
     """
     Firestore canônico via firebase_admin.
@@ -6646,6 +6898,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     understanding: Dict[str, Any] = {}
     decider: Dict[str, Any] | None = None
     token_usage: Dict[str, Any] = {}
+    structured_assembly_result: Dict[str, Any] = {}
 
     topic = "OTHER"
     intent = "OTHER"
@@ -9835,6 +10088,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 am["replyMaxChars"] = int(rsp.get("max_chars") or 0)
                 am["replyIsAudioPolicy"] = bool(rsp.get("is_audio"))
                 am["replyTechnicalNeed"] = bool(rsp.get("technical_need"))
+                am["structuredAssemblyEnabled"] = bool(FRONT_STRUCTURED_ASSEMBLY_ENABLED)
+                sar = structured_assembly_result if isinstance(structured_assembly_result, dict) else {}
+                if sar:
+                    am["assemblyMode"] = str(sar.get("assemblyMode") or "")
+                    am["contentSourceType"] = str(sar.get("contentSourceType") or "")
+                    am["contentSourceId"] = str(sar.get("contentSourceId") or "")
+                    am["materialSource"] = str(sar.get("materialSource") or "")
                 out["aiMeta"] = am
             except Exception:
                 pass
@@ -10429,6 +10689,27 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "segment": segment_for_prompt,
                 "clarify": needs_clarify
             })
+
+        structured_assembly_result: Dict[str, Any] = {}
+        try:
+            structured_assembly_result = _front_build_structured_assembly_reply(
+                current_reply=reply_text,
+                real_kb_docs=real_kb_docs if 'real_kb_docs' in locals() else {},
+                kb_snapshot_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                platform_segment_profile=platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
+                selected_pack_id=selected_pack_id if 'selected_pack_id' in locals() else "",
+                response_mode=response_mode,
+                next_step=next_step,
+                lead_name=inferred_lead_name or name_hint,
+                lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
+            )
+
+            if structured_assembly_result and structured_assembly_result.get("replyText"):
+                reply_text = str(structured_assembly_result.get("replyText") or "").strip()
+                spoken_text = str(structured_assembly_result.get("spokenText") or reply_text).strip()
+                reply_source = "front_structured_python_assembly"
+        except Exception:
+            structured_assembly_result = {}
 
         try:
             reply_text = _humanize_reply_with_lead_context(
