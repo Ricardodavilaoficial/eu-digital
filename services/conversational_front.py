@@ -432,12 +432,12 @@ def _front_platform_pack_content(
         else:
             main_body = _front_first_text(
                 conversational_scene,
-                material.get("runtime_long_text"),
                 material.get("runtime_short_reply"),
                 material.get("runtime_compact_reply"),
                 material.get("direct_scene"),
                 material.get("micro_scene"),
                 material.get("reference_example"),
+                material.get("runtime_long_text"),
             )
 
         pieces = []
@@ -9008,6 +9008,46 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "shouldAskSegment": should_ask_segment,
             }
             # NOTE: fora do free_mode ainda pode seguir para render/Fail-safe.
+            # ---------------------------------------------------------
+            # LIMITE SEGURO DA MONTAGEM DETERMINÍSTICA NO FREE_MODE
+            # ---------------------------------------------------------
+            # Para respostas técnicas de texto, queremos manter robustez
+            # comercial/operacional (~700–800 chars úteis).
+            # Para áudio, mantemos menor para evitar TTS longo.
+            # ---------------------------------------------------------
+            try:
+                if str(reply_source or "").strip() == "front_structured_python_assembly":
+                    _structured_policy = dict(reply_size_policy or {})
+                    _is_audio_policy = bool(_structured_policy.get("is_audio"))
+
+                    if _is_audio_policy:
+                        _structured_policy["max_chars"] = min(
+                            int(_structured_policy.get("max_chars") or 520),
+                            520,
+                        )
+                        _structured_policy["target_chars"] = min(
+                            int(_structured_policy.get("target_chars") or 430),
+                            430,
+                        )
+                    else:
+                        _structured_policy["max_chars"] = min(
+                            int(_structured_policy.get("max_chars") or 800),
+                            800,
+                        )
+                        _structured_policy["target_chars"] = min(
+                            int(_structured_policy.get("target_chars") or 740),
+                            740,
+                        )
+
+                    reply_text = _apply_reply_size_policy(reply_text, _structured_policy)
+                    spoken_text = _apply_reply_size_policy(
+                        spoken_text or reply_text,
+                        _structured_policy,
+                    )
+                    reply_size_policy = _structured_policy
+            except Exception:
+                pass
+
             out = {
                 "response_mode": response_mode,
                 "replyText": "",
