@@ -1708,7 +1708,42 @@ def _extract_json_string_field(raw: str, field_name: str) -> str:
             flags=re.DOTALL,
         )
         if not m:
-            return ""
+            # Salvage para JSON truncado no meio do valor string.
+            # Ex.: {"replyText":"Olá...   sem aspas/fecha-chaves finais.
+            start = re.search(
+                rf'"{re.escape(field_name)}"\s*:\s*"',
+                s,
+                flags=re.DOTALL,
+            )
+            if not start:
+                return ""
+
+            frag = s[start.end():]
+            buf = []
+            escaped = False
+            for ch in frag:
+                if escaped:
+                    buf.append(ch)
+                    escaped = False
+                    continue
+                if ch == "\\":
+                    escaped = True
+                    buf.append(ch)
+                    continue
+                if ch == '"':
+                    break
+                buf.append(ch)
+
+            val = "".join(buf).strip()
+            if not val:
+                return ""
+            val = val.replace(r"\/", "/")
+            val = val.replace(r'\"', '"')
+            val = val.replace(r"\n", "\n")
+            val = val.replace(r"\t", "\t")
+            val = val.replace(r"\r", "")
+            return str(val).strip()
+
         val = m.group(1)
         val = val.replace(r"\/", "/")
         val = val.replace(r'\"', '"')
@@ -1736,6 +1771,45 @@ def _extract_json_object_field(raw: str, field_name: str) -> Dict[str, Any]:
         return obj if isinstance(obj, dict) else {}
     except Exception:
         return {}
+
+
+def _front_response_json_schema() -> Dict[str, Any]:
+    return {
+        "name": "conversational_front_response",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "response_mode": {
+                    "type": "string",
+                    "enum": ["DIRECT", "SCENE", "DISCOVERY", "CLOSING"],
+                },
+                "understanding": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "topic": {"type": "string"},
+                        "confidence": {
+                            "type": "string",
+                            "enum": ["high", "medium", "low"],
+                        },
+                        "question_type": {
+                            "type": "string",
+                            "enum": ["broad", "punctual"],
+                        },
+                    },
+                    "required": ["topic", "confidence", "question_type"],
+                },
+                "nextStep": {
+                    "type": "string",
+                    "enum": ["SEND_LINK", "NONE"],
+                },
+                "replyText": {"type": "string"},
+            },
+            "required": ["response_mode", "understanding", "nextStep", "replyText"],
+        },
+    }
 
 
 def _merge_identity_fields_from_raw_ai_payload(
@@ -7995,17 +8069,27 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # ----------------------------------------------------------
         # Chamada ao modelo (compat: SDK novo e antigo)
         # ----------------------------------------------------------
+        _policy_max_tokens = int((reply_size_policy or {}).get("max_tokens") or FRONT_ANSWER_MAX_TOKENS)
+        # O modelo agora devolve envelope JSON + replyText.
+        # A política de tamanho continua valendo para o texto final,
+        # mas a chamada precisa de folga para fechar o JSON.
+        _json_call_max_tokens = min(
+            FRONT_ANSWER_MAX_TOKENS,
+            max(260, _policy_max_tokens + 160),
+        )
+
         if _HAS_OPENAI_CLIENT and _client is not None:
             req_kwargs = {
                 "model": MODEL,
                 "temperature": TEMPERATURE,
-                "max_tokens": min(FRONT_ANSWER_MAX_TOKENS, int((reply_size_policy or {}).get("max_tokens") or FRONT_ANSWER_MAX_TOKENS)),
+                "max_tokens": _json_call_max_tokens,
                 "messages": messages,
             }
 
-            # Front sempre espera objeto JSON estruturado.
-            # O reply continua sendo texto natural dentro do campo reply/replyText.
-            req_kwargs["response_format"] = {"type": "json_object"}
+            req_kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": _front_response_json_schema(),
+            }
 
             resp = _client.chat.completions.create(**req_kwargs)
             raw = str(resp.choices[0].message.content or "").strip()
@@ -8026,10 +8110,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             resp = openai.ChatCompletion.create(  # type: ignore
                 model=MODEL,
                 temperature=TEMPERATURE,
-                max_tokens=min(FRONT_ANSWER_MAX_TOKENS, int((reply_size_policy or {}).get("max_tokens") or FRONT_ANSWER_MAX_TOKENS)),
+                max_tokens=_json_call_max_tokens,
                 messages=messages,
                 response_format={
-                    "type": "json_object"
+                    "type": "json_schema",
+                    "json_schema": _front_response_json_schema(),
                 },
             )
             raw = (resp["choices"][0]["message"]["content"] or "").strip()
@@ -8157,7 +8242,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             if free_text_payload and str(free_text_payload.get("replyText") or "").strip():
                                 data = _merge_identity_fields_from_raw_ai_payload(free_text_payload, raw or raw_json or "")
                             else:
-                                raw_text_candidate = _sanitize_user_facing_reply(str(raw or ""))
+                                raw_text_candidate = ""
+                                if not (
+                                    str(raw or "").lstrip().startswith("{")
+                                    or str(raw or "").lstrip().startswith("```")
+                                ):
+                                    raw_text_candidate = _sanitize_user_facing_reply(str(raw or ""))
                                 raw_text_candidate = re.sub(r"\s{2,}", " ", raw_text_candidate).strip()
 
                                 if raw_text_candidate:
@@ -8421,7 +8511,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             spoken_text = reply_text
 
         if free_mode and not reply_text:
-            raw_text_candidate = _sanitize_user_facing_reply(str(raw or ""))
+            raw_text_candidate = ""
+            if not (
+                str(raw or "").lstrip().startswith("{")
+                or str(raw or "").lstrip().startswith("```")
+            ):
+                raw_text_candidate = _sanitize_user_facing_reply(str(raw or ""))
             raw_text_candidate = re.sub(r"\s{2,}", " ", raw_text_candidate).strip()
 
             if raw_text_candidate:
