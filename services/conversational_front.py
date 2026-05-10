@@ -5247,6 +5247,7 @@ def _resolve_reply_size_policy(
     needs_clarify: str = "",
     clarify_q: str = "",
     effective_segment: str = "",
+    question_type: str = "broad",
 ) -> Dict[str, Any]:
     """
     Define tamanho alvo por necessidade estrutural.
@@ -5265,6 +5266,7 @@ def _resolve_reply_size_policy(
     nc = str(needs_clarify or "").strip().lower()
     cq = str(clarify_q or "").strip()
     seg = str(effective_segment or "").strip()
+    is_punctual = (str(question_type).strip().lower() == "punctual")
 
     is_audio = mt in ("audio", "voice", "ptt")
     is_closing = ns == "SEND_LINK" or mode == "CLOSING"
@@ -5294,7 +5296,12 @@ def _resolve_reply_size_policy(
         or light_topic
         or conf in ("low", "")
         or not kb_rich
+        or is_punctual
     )
+
+    if is_punctual:
+        rich_scene_need = False
+        medium_direct_need = False
 
     if is_closing:
         max_chars = FRONT_AUDIO_CLOSING_MAX_CHARS if is_audio else FRONT_TEXT_CLOSING_MAX_CHARS
@@ -5353,6 +5360,7 @@ def _resolve_reply_size_policy(
         "rich_scene_need": bool(rich_scene_need),
         "medium_direct_need": bool(medium_direct_need),
         "light_need": bool(light_need),
+        "question_type": str(question_type or "broad"),
     }
 
 
@@ -6121,13 +6129,15 @@ REGRAS DE CONSTRUÇÃO DA RESPOSTA:
 2. Antes de explicar o funcionamento, considere a mensagem atual do usuário.
 Se ele informou nome, profissão, segmento ou contexto de uso, use essas informações naturalmente na resposta.
 
-3. SE existir conteúdo operacional (KB ou contrato):
-→ explicar como o robô ajuda naquele contexto
-→ manter conversa natural de WhatsApp
-→ mostrar valor por ações concretas, sem virar manual ou passo a passo
+3. SE question_type = punctual:
+→ Inicie a resposta entregando a informação exata solicitada pelo usuário.
+→ Limite o texto a no máximo 2 frases.
+→ Inclua o nome do usuário ou o segmento dele na resposta, caso essas informações já existam no contexto.
 
-4. SE for resposta direta:
-→ responder a pergunta de forma útil, conversada e comercial
+4. SE question_type = broad E existir conteúdo operacional:
+→ Descreva o fluxo de atendimento usando os passos listados no conteúdo operacional.
+→ Escreva o texto em ordem cronológica dos acontecimentos.
+→ Encerre o texto com exatamente uma frase afirmando o benefício final gerado para o dono do negócio.
 
 5. SE for SCENE:
 → descrever ações reais, sem opinião
@@ -6157,12 +6167,13 @@ REGRAS DE LINGUAGEM:
 FORMATO DE SAÍDA (OBRIGATÓRIO JSON):
 {
   "response_mode": "DIRECT|SCENE|DISCOVERY|CLOSING",
-  "replyText": "...",
   "understanding": {
     "topic": "...",
-    "confidence": "high|medium|low"
+    "confidence": "high|medium|low",
+    "question_type": "broad|punctual"
   },
   "nextStep": "SEND_LINK|NONE",
+  "replyText": "...",
   "lead_name": "",
   "lead_segment": "",
   "lead_segment_raw": ""
@@ -6174,6 +6185,8 @@ Preencha os campos usando a mensagem atual do usuário.
 - `lead_segment_raw`: atividade, profissão ou descrição do trabalho do usuário.
 - `lead_segment`: escolha uma chave da lista de segmentos disponíveis que melhor represente a atividade do usuário.
 - `lead_segment`: use `outros` quando a atividade não corresponder a uma chave específica.
+- `question_type`: use `broad` quando a mensagem pedir explicação geral, funcionamento completo ou demonstração do robô.
+- `question_type`: use `punctual` quando a mensagem fizer uma pergunta específica, direta ou de continuidade.
 """
 DISCOVERY_PROMPT = """
 Você está no modo DISCOVERY.
@@ -6975,6 +6988,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     reply_text = ""
     spoken_text = ""
     response_mode = "DIRECT"
+    question_type = "broad"
     _final_candidate = None
     inferred_lead_name = ""
     inferred_lead_segment = ""
@@ -7697,6 +7711,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         needs_clarify=needs_clarify,
         clarify_q=clarify_q,
         effective_segment=effective_segment,
+        question_type=question_type,
     )
 
     real_scene_for_anchor = operational_reference if not _is_scene_echo(operational_reference, user_text) else ""
@@ -8107,6 +8122,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             data.get("confidence")
             or understanding.get("confidence")
             or "low"
+        ).strip().lower()
+
+        question_type = str(
+            data.get("question_type")
+            or understanding.get("question_type")
+            or "broad"
         ).strip().lower()
 
         needs_clarify = str(
@@ -8657,6 +8678,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 needs_clarify=needs_clarify,
                 clarify_q=clarify_q,
                 effective_segment=effective_segment,
+                question_type=question_type,
             )
         except Exception:
             reply_size_policy = _resolve_reply_size_policy(
@@ -8670,6 +8692,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 needs_clarify=needs_clarify,
                 clarify_q=clarify_q,
                 effective_segment=effective_segment,
+                question_type=question_type,
             )
 
         # ----------------------------------------------------------
@@ -9121,6 +9144,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     "intent": intent,
                     "response_mode": response_mode,
                     "confidence": confidence,
+                    "question_type": question_type,
                     "needsClarify": needs_clarify,
                     "clarifyQuestion": clarify_q,
                     "packProfile": pack_profile,
@@ -9287,6 +9311,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         "intent": intent,
                         "response_mode": response_mode,
                         "confidence": confidence,
+                        "question_type": question_type,
                         "needsClarify": needs_clarify,
                         "clarifyQuestion": clarify_q,
                         "packProfile": pack_profile,
@@ -9350,6 +9375,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         "topic": "OTHER",
                         "intent": "DISCOVERY",
                         "confidence": confidence,
+                        "question_type": question_type,
                     },
                     "nextStep": "DISCOVERY",
                     "shouldEnd": False,
@@ -10222,6 +10248,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     "topic": topic,
                     "intent": topic,
                     "confidence": confidence,
+                    "question_type": question_type,
                     "needsClarify": needs_clarify,
                     "clarifyQuestion": clarify_q,
                     "leadName": name_hint,
