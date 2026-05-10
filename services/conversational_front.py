@@ -6238,7 +6238,62 @@ def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, 
             return ""
 
         if _HAS_OPENAI_CLIENT and _client is not None:
-            resp = _client.chat.completions.create(
+            try:
+                resp = _client.chat.completions.create(
+                    model=MODEL,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                )
+            except TypeError:
+                logging.warning(
+                    "[CONVERSATIONAL_FRONT][OPENAI_JSON_MODE_UNSUPPORTED] usando chamada sem response_format"
+                )
+                resp = _client.chat.completions.create(
+                    model=MODEL,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                )
+            except Exception as e:
+                logging.warning(
+                    "[CONVERSATIONAL_FRONT][OPENAI_JSON_MODE_FAIL] usando chamada sem response_format | err=%s",
+                    e,
+                )
+                resp = _client.chat.completions.create(
+                    model=MODEL,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                )
+            return str(resp.choices[0].message.content or "").strip()
+
+        try:
+            resp = openai.ChatCompletion.create(
+                model=MODEL,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+        except TypeError:
+            logging.warning(
+                "[CONVERSATIONAL_FRONT][OPENAI_JSON_MODE_UNSUPPORTED_LEGACY] usando chamada sem response_format"
+            )
+            resp = openai.ChatCompletion.create(
                 model=MODEL,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -6247,17 +6302,20 @@ def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, 
                     {"role": "user", "content": user},
                 ],
             )
-            return str(resp.choices[0].message.content or "").strip()
-
-        resp = openai.ChatCompletion.create(
-            model=MODEL,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
+        except Exception as e:
+            logging.warning(
+                "[CONVERSATIONAL_FRONT][OPENAI_JSON_MODE_FAIL_LEGACY] usando chamada sem response_format | err=%s",
+                e,
+            )
+            resp = openai.ChatCompletion.create(
+                model=MODEL,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
         return str(resp["choices"][0]["message"]["content"] or "").strip()
     except Exception:
         return ""
