@@ -25,9 +25,12 @@ import os
 import json
 import traceback
 import logging
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Tuple, Callable  # <- acrescentado Callable
 
 # Runtime mode router (sales vs operational)
+
+logger = logging.getLogger(__name__)
 
 __version__ = "1.0.0-fachada"
 BUILD_DATE = "2025-09-30"
@@ -53,6 +56,9 @@ FRONT_KB_MAX_CHARS = int(os.getenv("FRONT_KB_MAX_CHARS", "2500") or 2500)
 FRONT_KB_MAX_CHARS_PACKS_V1 = int(
     os.getenv("FRONT_KB_MAX_CHARS_PACKS_V1", "12000") or 12000
 )
+
+LEAD_MEMORY_TTL_DAYS = 180
+LEAD_MEMORY_SUMMARY_MAX_CHARS = 500
 
 # -------------------------------------------------------------------
 # Legacy deve ser "lazy": só importa quando realmente for necessário
@@ -359,6 +365,71 @@ def _log_sales_lead_fallback(ctx: Optional[Dict[str, Any]], *, reason: str, err:
 
 
 
+def _truncate_lead_summary(text: Any, max_chars: int = LEAD_MEMORY_SUMMARY_MAX_CHARS) -> str:
+    try:
+        s = str(text or "").strip()
+    except Exception:
+        return ""
+    if not s:
+        return ""
+    if len(s) <= max_chars:
+        return s
+    return s[: max_chars - 1].rstrip() + "…"
+
+
+def _build_lead_summary(out: Dict[str, Any], ctx: Dict[str, Any]) -> str:
+    try:
+        name = (
+            out.get("leadName")
+            or out.get("displayName")
+            or out.get("nameToSay")
+            or ctx.get("displayName")
+            or ctx.get("name_hint")
+            or ""
+        )
+
+        segment = (
+            out.get("leadSegmentRaw")
+            or out.get("segmentHint")
+            or ctx.get("segment")
+            or ctx.get("segment_hint")
+            or ""
+        )
+
+        intent = (
+            out.get("intent")
+            or out.get("lastIntent")
+            or ctx.get("intent")
+            or ""
+        )
+
+        topic = (
+            out.get("topic")
+            or out.get("lastTopic")
+            or ctx.get("topic")
+            or ""
+        )
+
+        parts = []
+
+        if name and segment:
+            parts.append(f"{name} atua em {segment}.")
+        elif name:
+            parts.append(f"{name} entrou em contato.")
+        elif segment:
+            parts.append(f"Lead atua em {segment}.")
+
+        if intent:
+            parts.append(f"Demonstrou interesse em {intent}.")
+
+        if topic:
+            parts.append(f"Tema principal: {topic}.")
+
+        return _truncate_lead_summary(" ".join(parts))
+    except Exception:
+        return ""
+
+
 def _load_institutional_lead_memory(wa_key: str) -> Dict[str, Any]:
     """
     Carrega memória persistente do lead institucional por telefone.
@@ -397,6 +468,33 @@ def _load_institutional_lead_memory(wa_key: str) -> Dict[str, Any]:
         if segment:
             out["segment_hint"] = segment
             out["segment"] = segment
+
+        if data.get("lastIntent"):
+            out["lastIntent"] = data.get("lastIntent")
+
+        if data.get("lastTopic"):
+            out["lastTopic"] = data.get("lastTopic")
+
+        if data.get("nextStep"):
+            out["lastNextStep"] = data.get("nextStep")
+
+        if data.get("summary"):
+            out["lead_memory_summary"] = data.get("summary")
+
+        if data.get("turns"):
+            out["lead_memory_turns"] = data.get("turns")
+
+        try:
+            logger.info(
+                "lead_memory_loaded waKey=%s has_name=%s has_segment=%s has_summary=%s",
+                wa_key,
+                bool(data.get("displayName") or data.get("name_hint")),
+                bool(data.get("segment") or data.get("segment_hint")),
+                bool(data.get("summary")),
+            )
+        except Exception:
+            pass
+
         return out
     except Exception:
         return {}
@@ -404,7 +502,7 @@ def _load_institutional_lead_memory(wa_key: str) -> Dict[str, Any]:
 
 def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] = None, ctx: Optional[Dict[str, Any]] = None) -> None:
     """
-    Persiste nome/segmento do lead institucional por telefone.
+    Persiste memória do lead institucional por telefone.
     Usa merge=True e só grava campos não vazios.
     """
     try:
@@ -418,44 +516,111 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
         out = out or {}
         ctx = ctx or {}
 
-        name = str(
+        snap = db.collection("institutional_leads").document(wa_key).get()
+        data = (snap.to_dict() or {}) if snap else {}
+        if not isinstance(data, dict):
+            data = {}
+
+        now = firestore.SERVER_TIMESTAMP
+
+        created_at = data.get("createdAt") if isinstance(data, dict) else None
+
+        lead_name = (
             out.get("leadName")
-            or out.get("nameToSay")
             or out.get("displayName")
-            or ctx.get("leadName")
-            or ctx.get("name_hint")
+            or out.get("nameToSay")
             or ctx.get("displayName")
+            or ctx.get("name_hint")
             or ""
-        ).strip()
+        )
 
-        segment = str(
-            out.get("segmentHint")
-            or out.get("leadSegment")
-            or out.get("segment")
-            or ctx.get("segment_hint")
+        segment_raw = (
+            out.get("leadSegmentRaw")
+            or out.get("segmentHint")
             or ctx.get("segment")
+            or ctx.get("segment_hint")
             or ""
-        ).strip()
+        )
 
-        payload: Dict[str, Any] = {
+        last_intent = (
+            out.get("intent")
+            or out.get("lastIntent")
+            or ctx.get("intent")
+            or ctx.get("lastIntent")
+            or ""
+        )
+
+        last_topic = (
+            out.get("topic")
+            or out.get("lastTopic")
+            or ctx.get("topic")
+            or ctx.get("lastTopic")
+            or ""
+        )
+
+        next_step = (
+            out.get("nextStep")
+            or ctx.get("nextStep")
+            or ctx.get("lastNextStep")
+            or ""
+        )
+
+        turns_prev = 0
+        try:
+            turns_prev = int(data.get("turns") or 0)
+        except Exception:
+            turns_prev = 0
+
+        turns = turns_prev + 1
+
+        summary = _build_lead_summary(out, ctx)
+
+        expires_at = datetime.utcnow() + timedelta(days=LEAD_MEMORY_TTL_DAYS)
+
+        payload = {
             "waKey": wa_key,
-            "updatedAt": firestore.SERVER_TIMESTAMP,
+            "fromE164": ctx.get("from") or ctx.get("fromE164") or "",
+            "source": "whatsapp_institutional_sales",
+            "status": "active",
+            "createdAt": created_at or now,
+            "updatedAt": now,
+            "lastSeenAt": now,
+            "lastMessageAt": now,
+            "expiresAt": expires_at,
+            "displayName": lead_name,
+            "name_hint": lead_name,
+            "leadName": lead_name,
+            "segment": segment_raw,
+            "segment_hint": segment_raw,
+            "leadSegmentRaw": segment_raw,
+            "lastIntent": last_intent,
+            "lastTopic": last_topic,
+            "nextStep": next_step,
+            "summary": summary,
+            "turns": turns,
         }
 
-        if name:
-            payload["displayName"] = name
-            payload["name_hint"] = name
-
-        if segment:
-            payload["segment"] = segment
-            payload["segment_hint"] = segment
-
-        if len(payload) <= 2:
-            return
+        payload = {
+            k: v
+            for k, v in payload.items()
+            if v not in (None, "", [], {})
+        }
 
         db.collection("institutional_leads").document(wa_key).set(payload, merge=True)
+
+        try:
+            logger.info(
+                "lead_memory_saved waKey=%s fields=%s has_summary=%s turns=%s",
+                wa_key,
+                sorted(payload.keys()),
+                bool(payload.get("summary")),
+                payload.get("turns"),
+            )
+        except Exception:
+            pass
     except Exception:
         pass
+
 
 def _apply_safe_ai_meta(out: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Garantia mínima de aiMeta para auditoria, sem alterar comportamento."""
