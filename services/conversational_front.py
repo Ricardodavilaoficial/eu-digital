@@ -516,6 +516,7 @@ def _front_build_structured_assembly_reply(
     selected_pack_id: str = "",
     response_mode: str = "DIRECT",
     next_step: str = "NONE",
+    ai_turns: int = 0,
     lead_name: str = "",
     lead_segment_raw: str = "",
 ) -> Dict[str, Any]:
@@ -531,6 +532,29 @@ def _front_build_structured_assembly_reply(
             return {}
 
         if str(next_step or "").strip().upper() == "SEND_LINK":
+            return {}
+
+        mode = str(response_mode or "").strip().upper()
+        try:
+            turns = int(ai_turns or 0)
+        except Exception:
+            turns = 0
+
+        allow_structured_long = bool(
+            mode == "SCENE"
+            or (mode == "DIRECT" and turns <= 0)
+        )
+
+        if not allow_structured_long:
+            try:
+                logging.info(
+                    "[CONVERSATIONAL_FRONT][STRUCTURED_ASSEMBLY_SKIP] mode=%s ai_turns=%s selected_pack_id=%s reason=continuity_or_non_demonstrative",
+                    mode,
+                    turns,
+                    str(selected_pack_id or "").strip().upper(),
+                )
+            except Exception:
+                pass
             return {}
 
         source = _front_structured_doc_content(real_kb_docs)
@@ -10069,6 +10093,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     selected_pack_id=_pack_for_assembly,
                     response_mode=response_mode,
                     next_step=next_step,
+                    ai_turns=ai_turns,
                     lead_name=inferred_lead_name or name_hint,
                     lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
                 )
@@ -10841,6 +10866,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 selected_pack_id=selected_pack_id if 'selected_pack_id' in locals() else "",
                 response_mode=response_mode,
                 next_step=next_step,
+                ai_turns=ai_turns,
                 lead_name=inferred_lead_name or name_hint,
                 lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
             )

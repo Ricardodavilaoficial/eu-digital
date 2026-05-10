@@ -542,27 +542,74 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
             or ""
         )
 
+        understanding = out.get("understanding") if isinstance(out.get("understanding"), dict) else {}
+
+
+
         last_intent = (
+
+
             out.get("intent")
+
+
             or out.get("lastIntent")
+
+
+            or understanding.get("intent")
+
+
             or ctx.get("intent")
+
+
             or ctx.get("lastIntent")
+
+
             or ""
+
+
         )
 
         last_topic = (
+
+
             out.get("topic")
+
+
             or out.get("lastTopic")
+
+
+            or understanding.get("intent")
+
+
             or ctx.get("topic")
+
+
             or ctx.get("lastTopic")
+
+
             or ""
+
+
         )
 
         next_step = (
+
+
             out.get("nextStep")
+
+
+            or understanding.get("next_step")
+
+
             or ctx.get("nextStep")
+
+
             or ctx.get("lastNextStep")
+
+
             or ""
+
+
         )
 
         turns_prev = 0
@@ -579,7 +626,12 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
 
         payload = {
             "waKey": wa_key,
-            "fromE164": ctx.get("from") or ctx.get("fromE164") or "",
+            "fromE164": (
+            ctx.get("fromE164")
+            or ctx.get("from")
+            or out.get("fromE164")
+            or ""
+        ),
             "source": "whatsapp_institutional_sales",
             "status": "active",
             "createdAt": created_at or now,
