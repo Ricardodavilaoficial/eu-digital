@@ -6234,6 +6234,11 @@ def _compact_kb_snapshot(s: str) -> str:
 
 def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, max_tokens: int = 180) -> str:
     try:
+        json_system = (
+            str(system or "").strip()
+            + "\n\nResponda exclusivamente em json válido."
+        ).strip()
+
         if _HAS_OPENAI_CLIENT and _client is None:
             return ""
 
@@ -6245,7 +6250,7 @@ def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, 
                     max_tokens=max_tokens,
                     response_format={"type": "json_object"},
                     messages=[
-                        {"role": "system", "content": system},
+                        {"role": "system", "content": json_system},
                         {"role": "user", "content": user},
                     ],
                 )
@@ -6285,7 +6290,7 @@ def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, 
                 max_tokens=max_tokens,
                 response_format={"type": "json_object"},
                 messages=[
-                    {"role": "system", "content": system},
+                    {"role": "system", "content": json_system},
                     {"role": "user", "content": user},
                 ],
             )
@@ -7927,8 +7932,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             "Evite trocar por outro tipo de fluxo quando a ancoragem do KB estiver clara e a intenção já estiver prática.\n"
         )
 
+    system_prompt_json = (
+        str(system_prompt or "").strip()
+        + "\n\nResponda exclusivamente em json válido."
+    ).strip()
+
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": system_prompt_json},
         {"role": "user", "content": user_payload},
     ]
 
