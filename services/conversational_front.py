@@ -299,6 +299,46 @@ def _front_first_text(*vals: Any) -> str:
         return ""
 
 
+def _front_trim_to_complete_sentence(text: str, max_chars: int) -> str:
+    """
+    Corta texto em limite seguro, preservando frase completa quando possível.
+    Não cria conteúdo novo e não decide intenção/segmento.
+    """
+    try:
+        s = str(text or "").strip()
+        if not s:
+            return ""
+
+        max_chars = int(max_chars or 0)
+        if max_chars <= 0 or len(s) <= max_chars:
+            return s
+
+        cut = s[:max_chars].rstrip()
+        min_good = max(220, int(max_chars * 0.55))
+
+        last_sentence = max(
+            cut.rfind("."),
+            cut.rfind("!"),
+            cut.rfind("?"),
+        )
+
+        if last_sentence >= min_good:
+            return cut[: last_sentence + 1].strip()
+
+        last_space = cut.rfind(" ")
+        if last_space >= min_good:
+            out = cut[:last_space].strip()
+        else:
+            out = cut.strip()
+
+        out = re.sub(r"[\s,;:–—-]+$", "", out).strip()
+        if out and out[-1] not in ".!?":
+            out += "."
+        return out
+    except Exception:
+        return str(text or "").strip()
+
+
 def _front_structured_doc_content(docs: Dict[str, Any] | None) -> Dict[str, Any]:
     """
     Extrai conteúdo operacional de segmento/archetype já hidratados.
@@ -443,7 +483,7 @@ def _front_platform_pack_content(
         pieces = []
         if value_one_liner:
             pieces.append(value_one_liner)
-        if bridge_line:
+        if bridge_line and not conversational_scene:
             pieces.append(bridge_line)
         if main_body:
             pieces.append(main_body)
@@ -10123,6 +10163,29 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         lead_segment_raw=_context_segment_raw,
                     )
                     spoken_text = reply_text
+            except Exception:
+                pass
+
+            # ---------------------------------------------------------
+            # ACABAMENTO FINAL DA MONTAGEM ESTRUTURADA
+            # ---------------------------------------------------------
+            # Mantém resposta técnica robusta em texto, menor em áudio,
+            # e evita saída cortada no meio de palavra/frase.
+            # ---------------------------------------------------------
+            try:
+                if str(reply_source or "").strip() == "front_structured_python_assembly":
+                    _rsp = reply_size_policy if isinstance(reply_size_policy, dict) else {}
+                    _is_audio_policy = bool(_rsp.get("is_audio"))
+                    _max_structured_chars = 520 if _is_audio_policy else 800
+
+                    reply_text = _front_trim_to_complete_sentence(
+                        reply_text,
+                        _max_structured_chars,
+                    )
+                    spoken_text = _front_trim_to_complete_sentence(
+                        spoken_text or reply_text,
+                        520 if _is_audio_policy else _max_structured_chars,
+                    )
             except Exception:
                 pass
 
