@@ -1818,6 +1818,8 @@ def _merge_identity_fields_from_raw_ai_payload(
 def _salvage_free_mode_payload(raw: str) -> Dict[str, Any]:
     try:
         reply = _extract_json_string_field(raw, "replyText")
+        if not reply:
+            reply = _extract_json_string_field(raw, "mensagem")
         spoken = _extract_json_string_field(raw, "spokenText")
         next_step = _extract_json_string_field(raw, "nextStep") or "NONE"
         understanding = _extract_json_object_field(raw, "understanding")
@@ -1828,7 +1830,11 @@ def _salvage_free_mode_payload(raw: str) -> Dict[str, Any]:
                 "response_mode": _normalize_response_mode(_extract_json_string_field(raw, "response_mode")) or "DIRECT",
                 "replyText": reply,
                 "spokenText": spoken or reply,
-                "understanding": {"topic": topic, "confidence": confidence},
+                "understanding": {
+                    "topic": topic,
+                    "confidence": confidence,
+                    "question_type": str((understanding or {}).get("question_type") or "broad").strip().lower(),
+                },
                 "nextStep": next_step,
             }
             return _merge_identity_fields_from_raw_ai_payload(payload, raw)
@@ -6234,9 +6240,46 @@ def _compact_kb_snapshot(s: str) -> str:
 
 def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, max_tokens: int = 180) -> str:
     try:
+        front_json_schema = {
+            "name": "conversational_front_response",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "response_mode": {
+                        "type": "string",
+                        "enum": ["DIRECT", "SCENE", "DISCOVERY", "CLOSING"]
+                    },
+                    "understanding": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "topic": {"type": "string"},
+                            "confidence": {
+                                "type": "string",
+                                "enum": ["high", "medium", "low"]
+                            },
+                            "question_type": {
+                                "type": "string",
+                                "enum": ["broad", "punctual"]
+                            }
+                        },
+                        "required": ["topic", "confidence", "question_type"]
+                    },
+                    "nextStep": {
+                        "type": "string",
+                        "enum": ["SEND_LINK", "NONE"]
+                    },
+                    "replyText": {"type": "string"}
+                },
+                "required": ["response_mode", "understanding", "nextStep", "replyText"]
+            }
+        }
+
         json_system = (
             str(system or "").strip()
-            + "\n\nResponda exclusivamente em json válido."
+            + "\n\nResponda exclusivamente em json válido seguindo exatamente o schema solicitado."
         ).strip()
 
         if _HAS_OPENAI_CLIENT and _client is None:
@@ -6248,7 +6291,10 @@ def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, 
                     model=MODEL,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    response_format={"type": "json_object"},
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": front_json_schema,
+                    },
                     messages=[
                         {"role": "system", "content": json_system},
                         {"role": "user", "content": user},
@@ -6256,7 +6302,7 @@ def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, 
                 )
             except TypeError:
                 logging.warning(
-                    "[CONVERSATIONAL_FRONT][OPENAI_JSON_MODE_UNSUPPORTED] usando chamada sem response_format"
+                    "[CONVERSATIONAL_FRONT][OPENAI_JSON_SCHEMA_UNSUPPORTED] usando chamada sem response_format"
                 )
                 resp = _client.chat.completions.create(
                     model=MODEL,
@@ -6269,7 +6315,7 @@ def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, 
                 )
             except Exception as e:
                 logging.warning(
-                    "[CONVERSATIONAL_FRONT][OPENAI_JSON_MODE_FAIL] usando chamada sem response_format | err=%s",
+                    "[CONVERSATIONAL_FRONT][OPENAI_JSON_SCHEMA_FAIL] usando chamada sem response_format | err=%s",
                     e,
                 )
                 resp = _client.chat.completions.create(
@@ -6288,7 +6334,10 @@ def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, 
                 model=MODEL,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                response_format={"type": "json_object"},
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": front_json_schema,
+                },
                 messages=[
                     {"role": "system", "content": json_system},
                     {"role": "user", "content": user},
@@ -6296,7 +6345,7 @@ def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, 
             )
         except TypeError:
             logging.warning(
-                "[CONVERSATIONAL_FRONT][OPENAI_JSON_MODE_UNSUPPORTED_LEGACY] usando chamada sem response_format"
+                "[CONVERSATIONAL_FRONT][OPENAI_JSON_SCHEMA_UNSUPPORTED_LEGACY] usando chamada sem response_format"
             )
             resp = openai.ChatCompletion.create(
                 model=MODEL,
@@ -6309,7 +6358,7 @@ def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, 
             )
         except Exception as e:
             logging.warning(
-                "[CONVERSATIONAL_FRONT][OPENAI_JSON_MODE_FAIL_LEGACY] usando chamada sem response_format | err=%s",
+                "[CONVERSATIONAL_FRONT][OPENAI_JSON_SCHEMA_FAIL_LEGACY] usando chamada sem response_format | err=%s",
                 e,
             )
             resp = openai.ChatCompletion.create(
@@ -8198,6 +8247,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or "broad"
         ).strip().lower()
 
+        if question_type not in ("broad", "punctual"):
+            question_type = "broad"
+
         needs_clarify = str(
             data.get("needsClarify")
             or understanding.get("needsClarify")
@@ -8354,7 +8406,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             current_turn_segment_resolved = False
 
         # Back-compat: alguns retornos antigos ainda vêm com replyText/spokenText
-        reply_text = str(data.get("replyText") or "").strip()
+        reply_text = str(
+            data.get("replyText")
+            or data.get("mensagem")
+            or ""
+        ).strip()
         spoken_text = str(data.get("spokenText") or "").strip()
 
         payload_reply_source = str(data.get("replySource") or "").strip()
