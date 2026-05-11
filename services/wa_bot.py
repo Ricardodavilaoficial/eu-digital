@@ -2204,8 +2204,45 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             current_reply = str((front_out.get("replyText") or "") if isinstance(front_out, dict) else "").strip()
                             current_source = str((front_out.get("replySource") or "") if isinstance(front_out, dict) else "").strip().lower()
 
+                            contract = (
+                                (front_out.get("operationalContract") or {})
+                                if isinstance(front_out, dict)
+                                else {}
+                            )
+
+                            front_reply_is_valid = bool(
+                                current_reply
+                                and current_source == "front_structured_python_assembly"
+                                and isinstance(contract, dict)
+                                and (
+                                    contract.get("hydrated_from_platform_kb")
+                                    or contract.get("global_pack_fallback")
+                                )
+                            )
+
+                            try:
+                                logging.info(
+                                    "[WA_BOT][FRONT_REPLY_IN] "
+                                    "len=%s source=%s valid=%s mode=%s platform_kb=%s",
+                                    len(current_reply or ""),
+                                    current_source,
+                                    bool(front_reply_is_valid),
+                                    str(contract.get("response_mode") or ""),
+                                    bool(
+                                        isinstance(contract, dict)
+                                        and (
+                                            contract.get("hydrated_from_platform_kb")
+                                            or contract.get("global_pack_fallback")
+                                        )
+                                    ),
+                                )
+                            except Exception:
+                                pass
+
                             should_rescue_with_pack = bool(
-                                dec and (
+                                dec
+                                and not front_reply_is_valid
+                                and (
                                     (not current_reply)
                                     or current_source in ("pack_engine_fallback_default", "front_fallback_structural", "fallback")
                                 )
@@ -2275,6 +2312,17 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "ttsOwner": "worker",
                         }
 
+                        try:
+                            logging.info(
+                                "[WA_BOT][FRONT_OUT_BUILT] "
+                                "reply_len=%s spoken_len=%s source=%s",
+                                len(str(out.get("replyText") or "")),
+                                len(str(out.get("spokenText") or "")),
+                                str(out.get("replySource") or ""),
+                            )
+                        except Exception:
+                            pass
+
                         # ✅ Regra de canal (sem alterar linguagem)
                         out = _apply_sales_text_only_closure(out, ctx)
                         # ✅ Produto: SEND_LINK = venda fechada (link-only, sem pergunta)
@@ -2337,6 +2385,17 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
                             if _rt:
                                 out["replyText"] = _rt
+                        except Exception:
+                            pass
+
+                        try:
+                            logging.info(
+                                "[WA_BOT][FRONT_AFTER_POLISH] "
+                                "reply_len=%s source=%s plan=%s",
+                                len(str(out.get("replyText") or "")),
+                                str(out.get("replySource") or ""),
+                                str(out.get("planNextStep") or ""),
+                            )
                         except Exception:
                             pass
 
