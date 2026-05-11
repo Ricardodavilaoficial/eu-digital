@@ -339,6 +339,37 @@ def _front_trim_to_complete_sentence(text: str, max_chars: int) -> str:
         return str(text or "").strip()
 
 
+def _front_trim_to_word_boundary_limit(text: str, max_chars: int) -> str:
+    """
+    Corta texto apenas no limite de palavra, sem procurar frase completa.
+    Usado somente quando a resposta técnica DIRECT já foi aceita pela IA,
+    pois nesses casos cortar na última frase completa pode remover a parte
+    operacional mais importante da explicação.
+    """
+    try:
+        s = str(text or "").strip()
+        if not s:
+            return ""
+
+        max_chars = int(max_chars or 0)
+        if max_chars <= 0 or len(s) <= max_chars:
+            return s
+
+        cut = s[:max_chars].rstrip()
+        last_space = cut.rfind(" ")
+        min_good = max(220, int(max_chars * 0.70))
+
+        if last_space >= min_good:
+            out = cut[:last_space].strip()
+        else:
+            out = cut.strip()
+
+        out = re.sub(r"[\s,;:–—-]+$", "", out).strip()
+        if out and out[-1] not in ".!?":
+            out += "."
+        return out
+    except Exception:
+        return str(text or "").strip()
 
 
 def _preserve_technical_direct_reply_size(
@@ -10626,16 +10657,55 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if str(reply_source or "").strip() == "front_structured_python_assembly":
                     _rsp = reply_size_policy if isinstance(reply_size_policy, dict) else {}
                     _is_audio_policy = bool(_rsp.get("is_audio"))
-                    _max_structured_chars = 520 if _is_audio_policy else 800
+                    _contract = operational_contract if isinstance(operational_contract, dict) else {}
+                    _mode = str(response_mode or "").strip().upper()
+                    _topic = str(topic or "").strip().upper()
 
-                    reply_text = _front_trim_to_complete_sentence(
-                        reply_text,
-                        _max_structured_chars,
+                    _technical_direct_platform_kb = bool(
+                        not _is_audio_policy
+                        and _mode == "DIRECT"
+                        and _topic in (
+                            "AGENDA",
+                            "SERVICOS",
+                            "PEDIDOS",
+                            "STATUS",
+                            "PROCESSO",
+                            "ORCAMENTO",
+                        )
+                        and (
+                            _contract.get("hydrated_from_platform_kb")
+                            or _contract.get("global_pack_fallback")
+                        )
                     )
-                    spoken_text = _front_trim_to_complete_sentence(
-                        spoken_text or reply_text,
-                        520 if _is_audio_policy else _max_structured_chars,
-                    )
+
+                    if _technical_direct_platform_kb:
+                        reply_text = _front_trim_to_word_boundary_limit(
+                            reply_text,
+                            820,
+                        )
+                        spoken_text = _front_trim_to_word_boundary_limit(
+                            spoken_text or reply_text,
+                            820,
+                        )
+                        try:
+                            logging.info(
+                                "[FRONT_STRUCTURED_FINAL_TRIM] mode=technical_direct topic=%s reply_len=%s",
+                                _topic,
+                                len(reply_text or ""),
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        _max_structured_chars = 520 if _is_audio_policy else 800
+
+                        reply_text = _front_trim_to_complete_sentence(
+                            reply_text,
+                            _max_structured_chars,
+                        )
+                        spoken_text = _front_trim_to_complete_sentence(
+                            spoken_text or reply_text,
+                            520 if _is_audio_policy else _max_structured_chars,
+                        )
             except Exception:
                 pass
 
