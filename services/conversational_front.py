@@ -10852,18 +10852,39 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         _safe_preserved_reply = _preserved_reply
                         _safe_preserved_spoken = _preserved_spoken or _preserved_reply
 
+                        # -------------------------------------------------
+                        # Se o texto preservado ainda estiver envelopado em
+                        # JSON, devemos extrair replyText. Porém, se o texto
+                        # extraído vier muito menor, isso indica que o campo
+                        # interno já estava truncado. Nesse caso, NÃO usamos
+                        # o conteúdo extraído e também NÃO devolvemos o JSON
+                        # bruto. Em vez disso, removemos estruturalmente o
+                        # envelope preservando apenas o conteúdo textual.
+                        # -------------------------------------------------
                         if _safe_preserved_reply.startswith("{") or _safe_preserved_reply.startswith("```"):
                             _unwrapped_reply = (
                                 _unwrap_front_json_envelope(_safe_preserved_reply)
                                 or ""
                             ).strip()
 
-                            # Se o conteúdo extraído do envelope vier
-                            # substancialmente menor que o texto preservado,
-                            # significa que o campo interno já estava truncado.
-                            # Nesse caso, mantemos o texto preservado completo.
                             if len(_unwrapped_reply) >= max(700, int(len(_preserved_reply) * 0.90)):
                                 _safe_preserved_reply = _unwrapped_reply
+                            else:
+                                _m = re.search(
+                                    r'"replyText"\s*:\s*"(.*)',
+                                    _safe_preserved_reply,
+                                    re.DOTALL,
+                                )
+                                if _m:
+                                    _candidate = str(_m.group(1) or "")
+                                    _candidate = re.sub(
+                                        r'"?\s*}\s*$',
+                                        "",
+                                        _candidate,
+                                        flags=re.DOTALL,
+                                    ).strip()
+                                    if _candidate:
+                                        _safe_preserved_reply = _candidate
 
                         if _safe_preserved_spoken.startswith("{") or _safe_preserved_spoken.startswith("```"):
                             _unwrapped_spoken = (
@@ -10874,7 +10895,25 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             if len(_unwrapped_spoken) >= max(700, int(len(_preserved_spoken) * 0.90)):
                                 _safe_preserved_spoken = _unwrapped_spoken
                             else:
-                                _safe_preserved_spoken = _safe_preserved_reply
+                                _m = re.search(
+                                    r'"replyText"\s*:\s*"(.*)',
+                                    _safe_preserved_spoken,
+                                    re.DOTALL,
+                                )
+                                if _m:
+                                    _candidate = str(_m.group(1) or "")
+                                    _candidate = re.sub(
+                                        r'"?\s*}\s*$',
+                                        "",
+                                        _candidate,
+                                        flags=re.DOTALL,
+                                    ).strip()
+                                    if _candidate:
+                                        _safe_preserved_spoken = _candidate
+                                    else:
+                                        _safe_preserved_spoken = _safe_preserved_reply
+                                else:
+                                    _safe_preserved_spoken = _safe_preserved_reply
 
                         out["replyText"] = _front_trim_to_word_boundary_limit(
                             _safe_preserved_reply,
