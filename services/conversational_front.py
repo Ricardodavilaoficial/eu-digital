@@ -1773,6 +1773,49 @@ def _extract_json_object_field(raw: str, field_name: str) -> Dict[str, Any]:
         return {}
 
 
+def _unwrap_front_json_envelope(text: str) -> str:
+    """
+    Blindagem final: impede que o envelope JSON estruturado seja enviado
+    como mensagem ao WhatsApp. Extrai somente o campo replyText quando
+    a resposta final ainda vier no formato {"response_mode":..., "replyText":...}.
+    """
+    try:
+        s = str(text or "").strip()
+        if not s:
+            return ""
+
+        if s.startswith("```"):
+            s = re.sub(r"^\s*```(?:json)?\s*", "", s, flags=re.I).strip()
+            s = re.sub(r"\s*```\s*$", "", s).strip()
+
+        if not s.startswith("{"):
+            return str(text or "").strip()
+
+        try:
+            obj = json.loads(s)
+            if isinstance(obj, dict):
+                rt = str(obj.get("replyText") or obj.get("reply") or obj.get("mensagem") or "").strip()
+                if rt:
+                    return _sanitize_user_facing_reply(rt)
+        except Exception:
+            pass
+
+        rt = _extract_json_string_field(s, "replyText")
+        if not rt:
+            rt = _extract_json_string_field(s, "reply")
+        if not rt:
+            rt = _extract_json_string_field(s, "mensagem")
+        if rt:
+            return _sanitize_user_facing_reply(rt)
+
+        if '"replyText"' in s or '"response_mode"' in s or '"understanding"' in s:
+            return ""
+
+        return str(text or "").strip()
+    except Exception:
+        return str(text or "").strip()
+
+
 def _front_response_json_schema() -> Dict[str, Any]:
     return {
         "name": "conversational_front_response",
@@ -11089,6 +11132,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        # Blindagem final antes de montar o retorno:
+        # se o texto ainda for o envelope JSON, entrega só o replyText interno.
+        try:
+            reply_text = _unwrap_front_json_envelope(reply_text)
+            spoken_text = _unwrap_front_json_envelope(spoken_text or reply_text) or reply_text
+        except Exception:
+            pass
+
 
         if ai_turns == 0 and reply_text:
             if not has_name:
@@ -11250,6 +11301,27 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     spoken_text = reply_text
                     out["replyText"] = reply_text
                     out["spokenText"] = spoken_text
+        except Exception:
+            pass
+
+
+        # Última trava antes de devolver ao wa_bot.py.
+        # Nunca permitir envelope JSON como mensagem final.
+        try:
+            final_reply = _unwrap_front_json_envelope(out.get("replyText") or reply_text)
+            final_spoken = _unwrap_front_json_envelope(out.get("spokenText") or spoken_text or final_reply)
+
+            if final_reply:
+                reply_text = final_reply
+                spoken_text = final_spoken or final_reply
+                out["replyText"] = reply_text
+                out["spokenText"] = spoken_text
+            elif _looks_like_technical_output(out.get("replyText") or reply_text):
+                reply_text = question or "Me conta um pouco melhor o teu cenário."
+                spoken_text = reply_text
+                out["replyText"] = reply_text
+                out["spokenText"] = spoken_text
+                out["shouldEnd"] = False
         except Exception:
             pass
 
