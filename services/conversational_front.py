@@ -10698,6 +10698,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     else:
                         _max_structured_chars = 520 if _is_audio_policy else 800
 
+                        # Cópia imutável para o retorno técnico DIRECT.
+                        # Produção mostrou que, depois deste ponto, outro
+                        # caminho ainda pode reduzir reply_text antes do
+                        # retorno ao wa_bot.py. Esta cópia preserva apenas o
+                        # texto já aceito e já limitado, sem alterar prompts,
+                        # sem liberar microcena e sem afetar áudio.
+                        _technical_direct_preserved_reply_text = str(
+                            reply_text or ""
+                        ).strip()
+                        _technical_direct_preserved_spoken_text = str(
+                            spoken_text or reply_text or ""
+                        ).strip()
+
                         reply_text = _front_trim_to_complete_sentence(
                             reply_text,
                             _max_structured_chars,
@@ -10814,8 +10827,25 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
                 if _is_technical_direct_exit:
-                    _reply_probe = str(reply_text or "").strip()
-                    _spoken_probe = str(spoken_text or _reply_probe or "").strip()
+                    _preserved_reply = str(
+                        locals().get("_technical_direct_preserved_reply_text")
+                        or ""
+                    ).strip()
+                    _preserved_spoken = str(
+                        locals().get("_technical_direct_preserved_spoken_text")
+                        or ""
+                    ).strip()
+
+                    _reply_probe = (
+                        _preserved_reply
+                        if len(_preserved_reply) >= 700
+                        else str(reply_text or "").strip()
+                    )
+                    _spoken_probe = (
+                        _preserved_spoken
+                        if len(_preserved_spoken) >= 700
+                        else str(spoken_text or _reply_probe or "").strip()
+                    )
 
                     if _reply_probe.startswith("{") or _reply_probe.startswith("```"):
                         _reply_probe = _unwrap_front_json_envelope(_reply_probe) or _reply_probe
@@ -10834,10 +10864,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                     try:
                         logging.info(
-                            "[FREE_MODE_TECH_DIRECT_RETURN] topic=%s reply_len=%s spoken_len=%s",
+                            "[FREE_MODE_TECH_DIRECT_RETURN] topic=%s reply_len=%s spoken_len=%s preserved_len=%s",
                             _topic,
                             len(str(out.get("replyText") or "")),
                             len(str(out.get("spokenText") or "")),
+                            len(_preserved_reply or ""),
                         )
                     except Exception:
                         pass
