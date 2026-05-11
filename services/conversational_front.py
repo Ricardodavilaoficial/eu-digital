@@ -11435,6 +11435,81 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        # -----------------------------------------------------------------
+        # PRESERVAÇÃO FINAL DO TEXTO JÁ VALIDADO
+        #
+        # Diagnóstico confirmado em produção:
+        # - IA_FINAL_DECISION accepted=True len≈855
+        # - FRONT_STRUCTURED_FINAL_TRIM reply_len≈819
+        # - WA_BOT recebe apenas ≈656
+        #
+        # Portanto, algum passo entre o trim técnico e a montagem final do
+        # objeto de saída ainda substitui ou reprocessa o texto.
+        #
+        # Neste ponto, imediatamente antes do retorno efetivo, forçamos o uso
+        # do texto já preparado em reply_text/spoken_text e aplicamos apenas
+        # um corte seguro em limite de palavra.
+        #
+        # Regras preservadas:
+        # - não altera prompts;
+        # - não libera microcena;
+        # - não afeta áudio;
+        # - atua somente em DIRECT técnico vindo da platform_kb.
+        # -----------------------------------------------------------------
+        try:
+            _contract = (
+                operational_contract
+                if isinstance(operational_contract, dict)
+                else {}
+            )
+
+            _source = str(reply_source or "").strip()
+            _mode = str(response_mode or "").strip().upper()
+            _topic = str(topic or "").strip().upper()
+
+            _is_platform_runtime = bool(
+                _contract.get("hydrated_from_platform_kb")
+                or _contract.get("global_pack_fallback")
+            )
+
+            _is_technical_direct = bool(
+                _source == "front_structured_python_assembly"
+                and _mode == "DIRECT"
+                and _topic in (
+                    "AGENDA",
+                    "SERVICOS",
+                    "PEDIDOS",
+                    "STATUS",
+                    "PROCESSO",
+                    "ORCAMENTO",
+                )
+                and _is_platform_runtime
+            )
+
+            if _is_technical_direct:
+                reply_text = _front_trim_to_word_boundary_limit(
+                    reply_text,
+                    780,
+                )
+                spoken_text = _front_trim_to_word_boundary_limit(
+                    spoken_text or reply_text,
+                    780,
+                )
+
+                try:
+                    logging.info(
+                        "[FINAL_REPLY_OVERRIDE] "
+                        "topic=%s source=%s reply_len=%s spoken_len=%s",
+                        _topic,
+                        _source,
+                        len(reply_text or ""),
+                        len(spoken_text or ""),
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         out = {
             "response_mode": response_mode,
             "replyText": reply_text,
