@@ -10918,35 +10918,99 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
         if not hydrated_contract:
-            _final_policy = reply_size_policy
+            # -----------------------------------------------------------------
+            # AJUSTE CIRÚRGICO DE TAMANHO PARA DIRECT TÉCNICO (PACKS DA PLATFORM KB)
+            #
+            # Objetivo:
+            # - Preservar o restante da política global de tamanhos.
+            # - Não alterar prompts.
+            # - Não liberar microcena.
+            # - Não afetar áudio.
+            # - Permitir respostas técnicas de alto valor (AGENDA, SERVICOS,
+            #   PEDIDOS, STATUS, PROCESSO, ORCAMENTO) ficarem entre ~700 e 800
+            #   caracteres quando geradas pelo front_structured_python_assembly.
+            #
+            # Contexto:
+            # - A IA já estava produzindo textos com ~880 caracteres.
+            # - O corte final reduzia para ~540 caracteres, removendo a parte
+            #   mais importante da explicação operacional.
+            # - Esse comportamento ocorre em contratos não hidratados por docs,
+            #   mas com conteúdo válido proveniente da platform_kb.
+            # -----------------------------------------------------------------
+            _effective_policy = reply_size_policy
             try:
-                _src = str(reply_source or "").strip()
+                _source = str(reply_source or "").strip()
                 _mode = str(response_mode or "").strip().upper()
                 _topic = str(topic or "").strip().upper()
-                _rsp = dict(reply_size_policy or {})
-                _is_audio = bool(_rsp.get("is_audio"))
-                _contract = operational_contract if isinstance(operational_contract, dict) else {}
 
-                _technical_direct_from_platform_kb = bool(
-                    _src == "front_structured_python_assembly"
+                _base_policy = (
+                    dict(reply_size_policy)
+                    if isinstance(reply_size_policy, dict)
+                    else {}
+                )
+
+                _is_audio = bool(_base_policy.get("is_audio"))
+
+                _contract = (
+                    operational_contract
+                    if isinstance(operational_contract, dict)
+                    else {}
+                )
+
+                _is_platform_kb_direct = bool(
+                    _source == "front_structured_python_assembly"
                     and _mode == "DIRECT"
                     and not _is_audio
-                    and _topic in ("AGENDA", "SERVICOS", "PEDIDOS", "STATUS", "PROCESSO", "ORCAMENTO")
+                    and _topic in (
+                        "AGENDA",
+                        "SERVICOS",
+                        "PEDIDOS",
+                        "STATUS",
+                        "PROCESSO",
+                        "ORCAMENTO",
+                    )
                     and bool(
                         _contract.get("hydrated_from_platform_kb")
                         or _contract.get("global_pack_fallback")
                     )
                 )
 
-                if _technical_direct_from_platform_kb:
-                    _rsp["max_chars"] = max(int(_rsp.get("max_chars") or 0), 800)
-                    _rsp["target_chars"] = max(int(_rsp.get("target_chars") or 0), 740)
-                    _final_policy = _rsp
-            except Exception:
-                _final_policy = reply_size_policy
+                if _is_platform_kb_direct:
+                    # Mantém todas as demais regras da política, apenas amplia
+                    # o teto para permitir que o fluxo técnico seja concluído.
+                    _base_policy["target_chars"] = max(
+                        int(_base_policy.get("target_chars") or 0),
+                        740,
+                    )
+                    _base_policy["max_chars"] = max(
+                        int(_base_policy.get("max_chars") or 0),
+                        820,
+                    )
+                    _effective_policy = _base_policy
 
-            reply_text = _apply_reply_size_policy(reply_text, _final_policy)
-            spoken_text = _apply_reply_size_policy(spoken_text, _final_policy)
+                    try:
+                        logging.info(
+                            "[REPLY_SIZE_POLICY][TECH_DIRECT] "
+                            "topic=%s source=%s target=%s max=%s",
+                            _topic,
+                            _source,
+                            _base_policy.get("target_chars"),
+                            _base_policy.get("max_chars"),
+                        )
+                    except Exception:
+                        pass
+
+            except Exception:
+                _effective_policy = reply_size_policy
+
+            reply_text = _apply_reply_size_policy(
+                reply_text,
+                _effective_policy,
+            )
+            spoken_text = _apply_reply_size_policy(
+                spoken_text,
+                _effective_policy,
+            )
 
         # Regra de produto: perguntas foram abolidas, salvo exceções controladas.
         if reply_text and ("?" in reply_text):
