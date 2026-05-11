@@ -1816,6 +1816,50 @@ def _unwrap_front_json_envelope(text: str) -> str:
         return str(text or "").strip()
 
 
+
+
+def _sanitize_front_result_payload(payload: Any) -> Any:
+    """
+    Blindagem definitiva no ponto de saída do conversational_front.
+    Independentemente do caminho executado (inclusive
+    front_structured_python_assembly), garante que os campos replyText
+    e spokenText contenham somente o texto final para o usuário.
+    """
+    try:
+        if not isinstance(payload, dict):
+            return payload
+
+        raw_reply = payload.get("replyText")
+        raw_spoken = payload.get("spokenText")
+
+        clean_reply = _unwrap_front_json_envelope(raw_reply)
+        clean_spoken = _unwrap_front_json_envelope(raw_spoken)
+
+        if clean_reply:
+            payload["replyText"] = clean_reply
+            payload["spokenText"] = clean_spoken or clean_reply
+            return payload
+
+        # Se não foi possível extrair e o conteúdo parece um envelope JSON,
+        # evita que o JSON bruto seja enviado ao WhatsApp.
+        probe = str(raw_reply or "").strip()
+        if (
+            probe.startswith("{")
+            and (
+                '"replyText"' in probe
+                or '"response_mode"' in probe
+                or '"understanding"' in probe
+            )
+        ):
+            fallback = "Me conta um pouco melhor o seu cenário."
+            payload["replyText"] = fallback
+            payload["spokenText"] = fallback
+            payload["shouldEnd"] = False
+
+        return payload
+    except Exception:
+        return payload
+
 def _front_response_json_schema() -> Dict[str, Any]:
     return {
         "name": "conversational_front_response",
@@ -10571,7 +10615,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 real_kb_docs if 'real_kb_docs' in locals() else {},
                 bool((operational_contract or {}).get("hydrated_from_docs")) if 'operational_contract' in locals() and isinstance(operational_contract, dict) else False,
             )
-            return out
+            return _sanitize_front_result_payload(out)
 
 
 
@@ -11325,7 +11369,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
-        return out
+        return _sanitize_front_result_payload(out)
 
     except Exception as e:
         # Fail-safe absoluto: nunca quebrar o fluxo
@@ -11403,7 +11447,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         aiMeta["kbHasContext"] = bool(aiMeta.get("kbDocPath"))
 
-        return error_out
+        return _sanitize_front_result_payload(error_out)
 
 
 # --- helpers added ---
