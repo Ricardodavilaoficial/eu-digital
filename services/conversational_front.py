@@ -10687,6 +10687,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             spoken_text or reply_text,
                             820,
                         )
+
+                        # Cópia preservada para o retorno técnico DIRECT.
+                        # Precisa nascer exatamente neste ramo, pois é aqui
+                        # que o texto técnico foi validado e limitado sem
+                        # perder o trecho operacional importante.
+                        _technical_direct_preserved_reply_text = str(
+                            reply_text or ""
+                        ).strip()
+                        _technical_direct_preserved_spoken_text = str(
+                            spoken_text or reply_text or ""
+                        ).strip()
+
                         try:
                             logging.info(
                                 "[FRONT_STRUCTURED_FINAL_TRIM] mode=technical_direct topic=%s reply_len=%s",
@@ -10698,18 +10710,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     else:
                         _max_structured_chars = 520 if _is_audio_policy else 800
 
-                        # Cópia imutável para o retorno técnico DIRECT.
-                        # Produção mostrou que, depois deste ponto, outro
-                        # caminho ainda pode reduzir reply_text antes do
-                        # retorno ao wa_bot.py. Esta cópia preserva apenas o
-                        # texto já aceito e já limitado, sem alterar prompts,
-                        # sem liberar microcena e sem afetar áudio.
-                        _technical_direct_preserved_reply_text = str(
-                            reply_text or ""
-                        ).strip()
-                        _technical_direct_preserved_spoken_text = str(
-                            spoken_text or reply_text or ""
-                        ).strip()
+
 
                         reply_text = _front_trim_to_complete_sentence(
                             reply_text,
