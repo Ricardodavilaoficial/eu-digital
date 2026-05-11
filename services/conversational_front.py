@@ -8289,6 +8289,60 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             max(260, _policy_max_tokens + 160),
         )
 
+        # -------------------------------------------------
+        # RESERVA DE TOKENS PARA RESPOSTAS TÉCNICAS DIRECT
+        #
+        # Telemetria observada:
+        # - output_tokens ≈ 118–121
+        # - replyText limpo ≈ 659 caracteres
+        # - texto técnico desejado ≈ 700–820 caracteres
+        #
+        # Isso indica exaustão de tokens na geração estruturada.
+        # O envelope JSON consome parte da saída, e o modelo
+        # interrompe a frase antes de concluir o conteúdo.
+        #
+        # Esta alteração atua somente em DIRECT técnico vindo da
+        # platform_kb/global packs (AGENDA, SERVICOS, PEDIDOS,
+        # STATUS, PROCESSO, ORCAMENTO), aumentando o orçamento de
+        # saída para permitir que o GPT-4o mini conclua a resposta
+        # e feche o JSON corretamente.
+        #
+        # Não altera:
+        # - prompts;
+        # - regras gerais de tamanho;
+        # - áudio;
+        # - DISCOVERY / SCENE / CLOSING.
+        # -------------------------------------------------
+        try:
+            _contract_probe = (
+                base_operational_contract
+                if isinstance(base_operational_contract, dict)
+                else {}
+            )
+            _topic_probe = str(topic or canonical_topic or "").strip().upper()
+            _mode_probe = str(response_mode or "").strip().upper()
+
+            _technical_direct_budget = bool(
+                _mode_probe == "DIRECT"
+                and _topic_probe in (
+                    "AGENDA",
+                    "SERVICOS",
+                    "PEDIDOS",
+                    "STATUS",
+                    "PROCESSO",
+                    "ORCAMENTO",
+                )
+                and (
+                    _contract_probe.get("hydrated_from_platform_kb")
+                    or _contract_probe.get("global_pack_fallback")
+                )
+            )
+
+            if _technical_direct_budget:
+                _json_call_max_tokens = max(_json_call_max_tokens, 420)
+        except Exception:
+            pass
+
         if _HAS_OPENAI_CLIENT and _client is not None:
             req_kwargs = {
                 "model": MODEL,
