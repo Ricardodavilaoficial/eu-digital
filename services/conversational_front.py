@@ -10849,8 +10849,29 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     )
 
                     if len(_preserved_reply) >= 700:
-                        out["replyText"] = _preserved_reply
-                        out["spokenText"] = _preserved_spoken or _preserved_reply
+                        _safe_preserved_reply = _preserved_reply
+                        _safe_preserved_spoken = _preserved_spoken or _preserved_reply
+
+                        if _safe_preserved_reply.startswith("{") or _safe_preserved_reply.startswith("```"):
+                            _safe_preserved_reply = (
+                                _unwrap_front_json_envelope(_safe_preserved_reply)
+                                or _safe_preserved_reply
+                            )
+
+                        if _safe_preserved_spoken.startswith("{") or _safe_preserved_spoken.startswith("```"):
+                            _safe_preserved_spoken = (
+                                _unwrap_front_json_envelope(_safe_preserved_spoken)
+                                or _safe_preserved_reply
+                            )
+
+                        out["replyText"] = _front_trim_to_word_boundary_limit(
+                            _safe_preserved_reply,
+                            820,
+                        )
+                        out["spokenText"] = _front_trim_to_word_boundary_limit(
+                            _safe_preserved_spoken or out["replyText"],
+                            820,
+                        )
                     else:
                         if _reply_probe.startswith("{") or _reply_probe.startswith("```"):
                             _reply_probe = _unwrap_front_json_envelope(_reply_probe) or _reply_probe
