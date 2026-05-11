@@ -10918,8 +10918,35 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
         if not hydrated_contract:
-            reply_text = _apply_reply_size_policy(reply_text, reply_size_policy)
-            spoken_text = _apply_reply_size_policy(spoken_text, reply_size_policy)
+            _final_policy = reply_size_policy
+            try:
+                _src = str(reply_source or "").strip()
+                _mode = str(response_mode or "").strip().upper()
+                _topic = str(topic or "").strip().upper()
+                _rsp = dict(reply_size_policy or {})
+                _is_audio = bool(_rsp.get("is_audio"))
+                _contract = operational_contract if isinstance(operational_contract, dict) else {}
+
+                _technical_direct_from_platform_kb = bool(
+                    _src == "front_structured_python_assembly"
+                    and _mode == "DIRECT"
+                    and not _is_audio
+                    and _topic in ("AGENDA", "SERVICOS", "PEDIDOS", "STATUS", "PROCESSO", "ORCAMENTO")
+                    and bool(
+                        _contract.get("hydrated_from_platform_kb")
+                        or _contract.get("global_pack_fallback")
+                    )
+                )
+
+                if _technical_direct_from_platform_kb:
+                    _rsp["max_chars"] = max(int(_rsp.get("max_chars") or 0), 800)
+                    _rsp["target_chars"] = max(int(_rsp.get("target_chars") or 0), 740)
+                    _final_policy = _rsp
+            except Exception:
+                _final_policy = reply_size_policy
+
+            reply_text = _apply_reply_size_policy(reply_text, _final_policy)
+            spoken_text = _apply_reply_size_policy(spoken_text, _final_policy)
 
         # Regra de produto: perguntas foram abolidas, salvo exceções controladas.
         if reply_text and ("?" in reply_text):
