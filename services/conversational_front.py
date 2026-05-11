@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 import json
 import re
 try:
@@ -337,6 +337,99 @@ def _front_trim_to_complete_sentence(text: str, max_chars: int) -> str:
         return out
     except Exception:
         return str(text or "").strip()
+
+
+
+
+def _preserve_technical_direct_reply_size(
+    text: str,
+    policy: Any,
+    *,
+    reply_source: str = "",
+    response_mode: str = "",
+    topic: str = "",
+    operational_contract: Any = None,
+) -> Tuple[str, Any]:
+    """
+    Ajusta exclusivamente a política de tamanho para respostas DIRECT de alto
+    valor operacional originadas da platform_kb.
+
+    Objetivo:
+    - Permitir que respostas técnicas em texto concluam o fluxo operacional.
+    - Não alterar prompts.
+    - Não liberar microcena.
+    - Não afetar áudio.
+    - Preservar todas as demais regras globais de tamanho.
+    """
+    try:
+        if not isinstance(text, str) or not text.strip():
+            return text, policy
+
+        if not isinstance(policy, dict):
+            return text, policy
+
+        if bool(policy.get("is_audio")):
+            return text, policy
+
+        contract = (
+            operational_contract
+            if isinstance(operational_contract, dict)
+            else {}
+        )
+
+        source = str(reply_source or "").strip()
+        mode = str(response_mode or "").strip().upper()
+        canonical_topic = str(topic or "").strip().upper()
+
+        is_platform_runtime = bool(
+            contract.get("hydrated_from_platform_kb")
+            or contract.get("global_pack_fallback")
+        )
+
+        is_technical_direct = bool(
+            source == "front_structured_python_assembly"
+            and mode == "DIRECT"
+            and canonical_topic in (
+                "AGENDA",
+                "SERVICOS",
+                "PEDIDOS",
+                "STATUS",
+                "PROCESSO",
+                "ORCAMENTO",
+            )
+            and is_platform_runtime
+        )
+
+        if not is_technical_direct:
+            return text, policy
+
+        adjusted = dict(policy)
+        adjusted["target_chars"] = max(
+            int(adjusted.get("target_chars") or 0),
+            740,
+        )
+        adjusted["max_chars"] = max(
+            int(adjusted.get("max_chars") or 0),
+            820,
+        )
+
+        try:
+            logging.info(
+                "[REPLY_SIZE_POLICY][TECH_DIRECT_APPLIED] "
+                "topic=%s source=%s len=%s target=%s max=%s",
+                canonical_topic,
+                source,
+                len(text),
+                adjusted.get("target_chars"),
+                adjusted.get("max_chars"),
+            )
+        except Exception:
+            pass
+
+        return text, adjusted
+
+    except Exception:
+        return text, policy
 
 
 def _front_structured_doc_content(docs: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -10918,98 +11011,35 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
         if not hydrated_contract:
-            # -----------------------------------------------------------------
-            # AJUSTE CIRÚRGICO DE TAMANHO PARA DIRECT TÉCNICO (PACKS DA PLATFORM KB)
-            #
-            # Objetivo:
-            # - Preservar o restante da política global de tamanhos.
-            # - Não alterar prompts.
-            # - Não liberar microcena.
-            # - Não afetar áudio.
-            # - Permitir respostas técnicas de alto valor (AGENDA, SERVICOS,
-            #   PEDIDOS, STATUS, PROCESSO, ORCAMENTO) ficarem entre ~700 e 800
-            #   caracteres quando geradas pelo front_structured_python_assembly.
-            #
-            # Contexto:
-            # - A IA já estava produzindo textos com ~880 caracteres.
-            # - O corte final reduzia para ~540 caracteres, removendo a parte
-            #   mais importante da explicação operacional.
-            # - Esse comportamento ocorre em contratos não hidratados por docs,
-            #   mas com conteúdo válido proveniente da platform_kb.
-            # -----------------------------------------------------------------
-            _effective_policy = reply_size_policy
-            try:
-                _source = str(reply_source or "").strip()
-                _mode = str(response_mode or "").strip().upper()
-                _topic = str(topic or "").strip().upper()
-
-                _base_policy = (
-                    dict(reply_size_policy)
-                    if isinstance(reply_size_policy, dict)
-                    else {}
+            reply_text, reply_size_policy = (
+                _preserve_technical_direct_reply_size(
+                    reply_text,
+                    reply_size_policy,
+                    reply_source=reply_source,
+                    response_mode=response_mode,
+                    topic=topic,
+                    operational_contract=operational_contract,
                 )
+            )
 
-                _is_audio = bool(_base_policy.get("is_audio"))
-
-                _contract = (
-                    operational_contract
-                    if isinstance(operational_contract, dict)
-                    else {}
+            spoken_text, spoken_size_policy = (
+                _preserve_technical_direct_reply_size(
+                    spoken_text,
+                    reply_size_policy,
+                    reply_source=reply_source,
+                    response_mode=response_mode,
+                    topic=topic,
+                    operational_contract=operational_contract,
                 )
-
-                _is_platform_kb_direct = bool(
-                    _source == "front_structured_python_assembly"
-                    and _mode == "DIRECT"
-                    and not _is_audio
-                    and _topic in (
-                        "AGENDA",
-                        "SERVICOS",
-                        "PEDIDOS",
-                        "STATUS",
-                        "PROCESSO",
-                        "ORCAMENTO",
-                    )
-                    and bool(
-                        _contract.get("hydrated_from_platform_kb")
-                        or _contract.get("global_pack_fallback")
-                    )
-                )
-
-                if _is_platform_kb_direct:
-                    # Mantém todas as demais regras da política, apenas amplia
-                    # o teto para permitir que o fluxo técnico seja concluído.
-                    _base_policy["target_chars"] = max(
-                        int(_base_policy.get("target_chars") or 0),
-                        740,
-                    )
-                    _base_policy["max_chars"] = max(
-                        int(_base_policy.get("max_chars") or 0),
-                        820,
-                    )
-                    _effective_policy = _base_policy
-
-                    try:
-                        logging.info(
-                            "[REPLY_SIZE_POLICY][TECH_DIRECT] "
-                            "topic=%s source=%s target=%s max=%s",
-                            _topic,
-                            _source,
-                            _base_policy.get("target_chars"),
-                            _base_policy.get("max_chars"),
-                        )
-                    except Exception:
-                        pass
-
-            except Exception:
-                _effective_policy = reply_size_policy
+            )
 
             reply_text = _apply_reply_size_policy(
                 reply_text,
-                _effective_policy,
+                reply_size_policy,
             )
             spoken_text = _apply_reply_size_policy(
                 spoken_text,
-                _effective_policy,
+                spoken_size_policy,
             )
 
         # Regra de produto: perguntas foram abolidas, salvo exceções controladas.
@@ -11320,6 +11350,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+
+        try:
+            reply_text, reply_size_policy = (
+                _preserve_technical_direct_reply_size(
+                    reply_text,
+                    reply_size_policy,
+                    reply_source=reply_source,
+                    response_mode=response_mode,
+                    topic=topic,
+                    operational_contract=operational_contract,
+                )
+            )
+        except Exception:
+            pass
 
         out = {
             "response_mode": response_mode,
