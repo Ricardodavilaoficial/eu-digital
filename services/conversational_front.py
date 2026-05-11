@@ -10853,16 +10853,28 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         _safe_preserved_spoken = _preserved_spoken or _preserved_reply
 
                         if _safe_preserved_reply.startswith("{") or _safe_preserved_reply.startswith("```"):
-                            _safe_preserved_reply = (
+                            _unwrapped_reply = (
                                 _unwrap_front_json_envelope(_safe_preserved_reply)
-                                or _safe_preserved_reply
-                            )
+                                or ""
+                            ).strip()
+
+                            # Se o conteúdo extraído do envelope vier
+                            # substancialmente menor que o texto preservado,
+                            # significa que o campo interno já estava truncado.
+                            # Nesse caso, mantemos o texto preservado completo.
+                            if len(_unwrapped_reply) >= max(700, int(len(_preserved_reply) * 0.90)):
+                                _safe_preserved_reply = _unwrapped_reply
 
                         if _safe_preserved_spoken.startswith("{") or _safe_preserved_spoken.startswith("```"):
-                            _safe_preserved_spoken = (
+                            _unwrapped_spoken = (
                                 _unwrap_front_json_envelope(_safe_preserved_spoken)
-                                or _safe_preserved_reply
-                            )
+                                or ""
+                            ).strip()
+
+                            if len(_unwrapped_spoken) >= max(700, int(len(_preserved_spoken) * 0.90)):
+                                _safe_preserved_spoken = _unwrapped_spoken
+                            else:
+                                _safe_preserved_spoken = _safe_preserved_reply
 
                         out["replyText"] = _front_trim_to_word_boundary_limit(
                             _safe_preserved_reply,
@@ -10872,6 +10884,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             _safe_preserved_spoken or out["replyText"],
                             820,
                         )
+
+                        # Garante término com pontuação.
+                        if out["replyText"] and out["replyText"][-1] not in ".!?":
+                            out["replyText"] = out["replyText"].rstrip() + "."
+
+                        if out["spokenText"] and out["spokenText"][-1] not in ".!?":
+                            out["spokenText"] = out["spokenText"].rstrip() + "."
                     else:
                         if _reply_probe.startswith("{") or _reply_probe.startswith("```"):
                             _reply_probe = _unwrap_front_json_envelope(_reply_probe) or _reply_probe
