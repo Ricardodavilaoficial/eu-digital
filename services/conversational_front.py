@@ -10848,20 +10848,24 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         else str(spoken_text or _reply_probe or "").strip()
                     )
 
-                    if _reply_probe.startswith("{") or _reply_probe.startswith("```"):
-                        _reply_probe = _unwrap_front_json_envelope(_reply_probe) or _reply_probe
+                    if len(_preserved_reply) >= 700:
+                        out["replyText"] = _preserved_reply
+                        out["spokenText"] = _preserved_spoken or _preserved_reply
+                    else:
+                        if _reply_probe.startswith("{") or _reply_probe.startswith("```"):
+                            _reply_probe = _unwrap_front_json_envelope(_reply_probe) or _reply_probe
 
-                    if _spoken_probe.startswith("{") or _spoken_probe.startswith("```"):
-                        _spoken_probe = _unwrap_front_json_envelope(_spoken_probe) or _reply_probe
+                        if _spoken_probe.startswith("{") or _spoken_probe.startswith("```"):
+                            _spoken_probe = _unwrap_front_json_envelope(_spoken_probe) or _reply_probe
 
-                    out["replyText"] = _front_trim_to_word_boundary_limit(
-                        _reply_probe,
-                        820,
-                    )
-                    out["spokenText"] = _front_trim_to_word_boundary_limit(
-                        _spoken_probe or out["replyText"],
-                        820,
-                    )
+                        out["replyText"] = _front_trim_to_word_boundary_limit(
+                            _reply_probe,
+                            820,
+                        )
+                        out["spokenText"] = _front_trim_to_word_boundary_limit(
+                            _spoken_probe or out["replyText"],
+                            820,
+                        )
 
                     try:
                         logging.info(
