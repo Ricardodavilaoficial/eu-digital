@@ -10761,6 +10761,91 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 pass
 
+            # ---------------------------------------------------------
+            # SAÍDA FINAL DO FREE_MODE PARA DIRECT TÉCNICO
+            # ---------------------------------------------------------
+            # Diagnóstico em produção:
+            # - FRONT_STRUCTURED_FINAL_TRIM preserva ~813 chars;
+            # - wa_bot.py recebe ~649 chars;
+            # - portanto a perda ocorre no retorno sanitizado do FREE_MODE.
+            #
+            # Para este caso específico, o texto já foi montado, aceito e
+            # higienizado. Então devolvemos o payload diretamente, aplicando
+            # apenas a blindagem de envelope JSON se ela for realmente
+            # necessária.
+            #
+            # Preserva pilares:
+            # - não altera prompts;
+            # - não libera microcena;
+            # - não altera política geral de tamanho;
+            # - não afeta áudio;
+            # - atua só em DIRECT técnico vindo da platform_kb.
+            # ---------------------------------------------------------
+            try:
+                _contract = (
+                    operational_contract
+                    if isinstance(operational_contract, dict)
+                    else {}
+                )
+                _rsp = reply_size_policy if isinstance(reply_size_policy, dict) else {}
+                _is_audio_policy = bool(_rsp.get("is_audio"))
+                _source = str(reply_source or "").strip()
+                _mode = str(response_mode or "").strip().upper()
+                _topic = str(topic or "").strip().upper()
+
+                _is_technical_direct_exit = bool(
+                    not _is_audio_policy
+                    and _source == "front_structured_python_assembly"
+                    and _mode == "DIRECT"
+                    and _topic in (
+                        "AGENDA",
+                        "SERVICOS",
+                        "PEDIDOS",
+                        "STATUS",
+                        "PROCESSO",
+                        "ORCAMENTO",
+                    )
+                    and (
+                        _contract.get("hydrated_from_platform_kb")
+                        or _contract.get("global_pack_fallback")
+                    )
+                    and isinstance(reply_text, str)
+                    and len(reply_text.strip()) >= 700
+                )
+
+                if _is_technical_direct_exit:
+                    _reply_probe = str(reply_text or "").strip()
+                    _spoken_probe = str(spoken_text or _reply_probe or "").strip()
+
+                    if _reply_probe.startswith("{") or _reply_probe.startswith("```"):
+                        _reply_probe = _unwrap_front_json_envelope(_reply_probe) or _reply_probe
+
+                    if _spoken_probe.startswith("{") or _spoken_probe.startswith("```"):
+                        _spoken_probe = _unwrap_front_json_envelope(_spoken_probe) or _reply_probe
+
+                    out["replyText"] = _front_trim_to_word_boundary_limit(
+                        _reply_probe,
+                        820,
+                    )
+                    out["spokenText"] = _front_trim_to_word_boundary_limit(
+                        _spoken_probe or out["replyText"],
+                        820,
+                    )
+
+                    try:
+                        logging.info(
+                            "[FREE_MODE_TECH_DIRECT_RETURN] topic=%s reply_len=%s spoken_len=%s",
+                            _topic,
+                            len(str(out.get("replyText") or "")),
+                            len(str(out.get("spokenText") or "")),
+                        )
+                    except Exception:
+                        pass
+
+                    return out
+            except Exception:
+                pass
+
             logging.info(
                 "[CONVERSATIONAL_FRONT][FREE_MODE] ai_turns=%s topic=%s canonical_topic=%s upstream_topic_hint=%s platform_kb_mode=%s confidence=%s nextStep=%s shouldEnd=%s kbChars=%s tok=%s source=%s contract=%s docs=%s hydrated=%s",
                 ai_turns,
