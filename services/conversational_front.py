@@ -11001,16 +11001,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         )
 
                     try:
-                        preserved_clean = str(_preserved_reply or "").strip()
-                        reply_clean = str(out.get("replyText") or "").strip()
-
-                        # Se já existe uma versão preservada e ela é mais completa do que
-                        # a resposta atual, ela passa a ser a fonte definitiva do retorno.
-                        # Isso evita que uma sanitização posterior substitua um texto já
-                        # validado por uma versão truncada.
-                        if preserved_clean and len(preserved_clean) > len(reply_clean):
-                            out["replyText"] = preserved_clean
-                            out["spokenText"] = preserved_clean
+                        out = _sanitize_front_result_payload(out)
 
                         logging.info(
                             "[FREE_MODE_TECH_DIRECT_RETURN] topic=%s reply_len=%s spoken_len=%s preserved_len=%s",
@@ -11923,8 +11914,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # persistência ou envio ao WhatsApp.
         try:
             if isinstance(result, dict):
-                result["replyText"] = str(reply_text or "").strip()
-                result["spokenText"] = str(spoken_text or reply_text or "").strip()
+                final_reply = _unwrap_front_json_envelope(result.get("replyText") or reply_text)
+                final_spoken = _unwrap_front_json_envelope(result.get("spokenText") or spoken_text or final_reply)
+
+                if final_reply:
+                    result["replyText"] = final_reply
+                    result["spokenText"] = final_spoken or final_reply
         except Exception:
             pass
 
