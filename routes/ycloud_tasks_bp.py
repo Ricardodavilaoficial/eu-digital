@@ -79,6 +79,78 @@ from services.phone_utils import digits_only as _digits_only_c, to_plus_e164 as 
 
 logger = logging.getLogger("mei_robo.ycloud_tasks")
 
+
+def _post_internal_with_retry(
+    *,
+    url: str,
+    headers: dict | None = None,
+    json_payload: dict | None = None,
+    data: bytes | None = None,
+    timeout: int = 35,
+    max_attempts: int = 3,
+    backoff_seconds: tuple[float, ...] = (1.0, 2.0),
+):
+    """
+    POST interno resiliente para chamadas ao próprio Cloud Run.
+
+    Objetivo:
+    - Absorver indisponibilidades transitórias (502/503/504).
+    - Absorver timeouts e erros de conexão.
+    - Preservar o contrato de requests.Response.
+
+    Regras:
+    - Retry apenas em falhas transitórias.
+    - Retorna a última Response obtida.
+    - Se todas as tentativas falharem por exceção, relança a última exceção.
+    """
+    last_exc = None
+    resp = None
+
+    for attempt in range(1, max(1, int(max_attempts)) + 1):
+        try:
+            resp = requests.post(
+                url,
+                headers=(headers or {}),
+                json=json_payload,
+                data=data,
+                timeout=timeout,
+            )
+
+            # Sucesso ou erro não transitório: retorna imediatamente.
+            if resp.status_code not in (502, 503, 504):
+                return resp
+
+            # Última tentativa: retorna mesmo com 502/503/504.
+            if attempt >= max_attempts:
+                return resp
+
+        except (
+            requests.exceptions.Timeout,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.RequestException,
+        ) as e:
+            last_exc = e
+            if attempt >= max_attempts:
+                break
+
+        # Backoff progressivo entre tentativas.
+        try:
+            idx = min(attempt - 1, len(backoff_seconds) - 1)
+            sleep_s = float(backoff_seconds[idx])
+        except Exception:
+            sleep_s = 1.0
+
+        if sleep_s > 0:
+            time.sleep(sleep_s)
+
+    if resp is not None:
+        return resp
+
+    if last_exc is not None:
+        raise last_exc
+
+    raise RuntimeError("internal_post_failed")
+
 # Limites para manter "entra áudio -> sai áudio" sem 413 no /api/voz/tts
 _SUPPORT_TTS_MAX_CHARS = int(os.environ.get("SUPPORT_TTS_MAX_CHARS", "650") or "650")
 _SUPPORT_TTS_RETRY_MAX_CHARS = int(os.environ.get("SUPPORT_TTS_RETRY_MAX_CHARS", "420") or "420")
@@ -2200,7 +2272,13 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 audio_bytes = normalize_audio_for_stt(audio_bytes)
                                 headers = {"Content-Type": "audio/wav"}
 
-                                rr = requests.post(stt_url, data=audio_bytes, headers=headers, timeout=25)
+                                rr = _post_internal_with_retry(
+                                    url=stt_url,
+                                    headers=headers,
+                                    data=audio_bytes,
+                                    timeout=25,
+                                    max_attempts=3,
+                                )
                                 stt_payload = {}
                                 try:
                                     if rr.status_code == 200:
@@ -3368,11 +3446,16 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             if voice_id:
                                 nm = (display_name or "").strip()
                                 ack = _build_ack_audio(nm)
-                                tts_resp = requests.post(
-                                    tts_url,
+                                tts_resp = _post_internal_with_retry(
+                                    url=tts_url,
                                     headers={"Accept": "application/json"},
-                                    json={"text": ack, "voice_id": voice_id, "format": "mp3"},
+                                    json_payload={
+                                        "text": ack,
+                                        "voice_id": voice_id,
+                                        "format": "mp3",
+                                    },
                                     timeout=35,
+                                    max_attempts=3,
                                 )
                                 if not tts_resp.ok:
                                     audio_debug["ttsAck"] = {"ok": False, "reason": f"tts_http_{tts_resp.status_code}"}
@@ -3416,11 +3499,16 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 except Exception:
                                     nm = nm
                                 ack = _build_ack_audio(nm)
-                                tts_resp = requests.post(
-                                    tts_url,
+                                tts_resp = _post_internal_with_retry(
+                                    url=tts_url,
                                     headers={"Accept": "application/json"},
-                                    json={"text": ack, "voice_id": voice_id, "format": "mp3"},
+                                    json_payload={
+                                        "text": ack,
+                                        "voice_id": voice_id,
+                                        "format": "mp3",
+                                    },
                                     timeout=35,
+                                    max_attempts=3,
                                 )
 
                                 # (ACK) /api/voz/tts retorna MP3 bytes; sobe pro storage e gera Signed URL (mesmo padrão do worker)
@@ -3784,11 +3872,12 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             pass
 
                         def _call_tts(payload_text: str):
-                            return requests.post(
-                                tts_url,
+                            return _post_internal_with_retry(
+                                url=tts_url,
                                 headers={"Accept": "application/json"},
-                                json={"text": payload_text, "voice_id": voice_id},
+                                json_payload={"text": payload_text, "voice_id": voice_id},
                                 timeout=35,
+                                max_attempts=3,
                             )
 
                         # ✅ Texto canônico falado (o que realmente vai pro TTS)
