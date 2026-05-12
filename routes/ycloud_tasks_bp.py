@@ -397,6 +397,12 @@ def _maybe_apply_name_to_tts(
 
 ycloud_tasks_bp = Blueprint("ycloud_tasks_bp", __name__)
 
+# STT nativo (sem HTTP interno para o próprio Cloud Run)
+try:
+    from routes.voz_stt_bp import perform_stt_logic  # type: ignore
+except Exception:
+    perform_stt_logic = None  # type: ignore
+
 
 _IDENTITY_MODE = (os.environ.get("IDENTITY_MODE") or "on").strip().lower()  # on|off
 
@@ -2272,54 +2278,100 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 audio_bytes = normalize_audio_for_stt(audio_bytes)
                                 headers = {"Content-Type": "audio/wav"}
 
-                                rr = _post_internal_with_retry(
-                                    url=stt_url,
-                                    headers=headers,
-                                    data=audio_bytes,
-                                    timeout=25,
-                                    max_attempts=3,
-                                )
-                                stt_payload = {}
-                                try:
-                                    if rr.status_code == 200:
-                                        # tenta JSON (sem explodir)
-                                        try:
-                                            stt_payload = rr.json() if rr.headers.get("content-type","").startswith("application/json") else {}
-                                        except Exception:
-                                            stt_payload = {}
+                                if perform_stt_logic is not None:
+                                    stt_payload, stt_status = perform_stt_logic(
+                                        audio_bytes,
+                                        "audio/wav",
+                                    )
 
-                                        ok_flag = bool(stt_payload.get("ok"))
-                                        transcript = (stt_payload.get("transcript") or "").strip() if ok_flag else ""
-                                        if ok_flag and transcript:
-                                            text_in = transcript
-                                            audio_debug["stt"] = {
-                                                "ok": True,
-                                                "confidence": stt_payload.get("confidence"),
-                                                "transcriptLen": len(transcript),
-                                                "preview": transcript[:120],
-                                            }
+                                    if stt_status == 200:
+                                        if bool(stt_payload.get("ok")):
+                                            transcript = str(
+                                                stt_payload.get("transcript") or ""
+                                            ).strip()
+
+                                            if transcript:
+                                                text_in = transcript
+                                                audio_debug["stt"] = {
+                                                    "ok": True,
+                                                    "confidence": stt_payload.get("confidence"),
+                                                    "transcriptLen": len(transcript),
+                                                    "preview": transcript[:120],
+                                                }
+                                            else:
+                                                stt_err = "empty_transcript"
                                         else:
-                                            # motivo real (ex.: empty_transcript / stt_failed)
-                                            err_code = (stt_payload.get("error") or "").strip() or f"http_{rr.status_code}"
-                                            detail = (stt_payload.get("detail") or "").strip()
-                                            stt_err = f"stt_not_ok:{err_code}" + (f":{detail[:80]}" if detail else "")
+                                            err_code = (
+                                                str(stt_payload.get("error") or "").strip()
+                                                or "stt_not_ok"
+                                            )
+                                            detail = str(
+                                                stt_payload.get("detail") or ""
+                                            ).strip()
+
+                                            stt_err = f"stt_not_ok:{err_code}"
                                             audio_debug["stt"] = {
                                                 "ok": False,
                                                 "error": err_code,
                                                 "detail": detail[:160],
-                                                "http": rr.status_code,
-                                                "bodyHint": (rr.text or "")[:160],
                                             }
-                                            logger.warning(
-                                                "[tarefas] stt_not_ok from=%s wamid=%s err=%s detail=%s",
-                                                from_e164, wamid, err_code, detail[:120]
-                                            )
                                     else:
-                                        stt_err = f"stt_http_{rr.status_code}"
-                                        audio_debug["stt"] = {"ok": False, "http": rr.status_code, "bodyHint": (rr.text or "")[:160]}
-                                except Exception as e:
-                                    stt_err = f"stt_exc:{type(e).__name__}"
-                                    audio_debug["stt"] = {"ok": False, "reason": stt_err}
+                                        stt_err = f"stt_http_{stt_status}"
+                                        audio_debug["stt"] = {
+                                            "ok": False,
+                                            "http": stt_status,
+                                        }
+                                else:
+                                    # Fallback de segurança: mantém o caminho HTTP
+                                    # apenas se o import da função nativa falhar.
+                                    rr = _post_internal_with_retry(
+                                        url=stt_url,
+                                        headers=headers,
+                                        data=audio_bytes,
+                                        timeout=45,
+                                        max_attempts=3,
+                                    )
+                                    stt_payload = {}
+                                    try:
+                                        if rr.status_code == 200:
+                                            # tenta JSON (sem explodir)
+                                            try:
+                                                stt_payload = rr.json() if rr.headers.get("content-type","").startswith("application/json") else {}
+                                            except Exception:
+                                                stt_payload = {}
+
+                                            ok_flag = bool(stt_payload.get("ok"))
+                                            transcript = (stt_payload.get("transcript") or "").strip() if ok_flag else ""
+                                            if ok_flag and transcript:
+                                                text_in = transcript
+                                                audio_debug["stt"] = {
+                                                    "ok": True,
+                                                    "confidence": stt_payload.get("confidence"),
+                                                    "transcriptLen": len(transcript),
+                                                    "preview": transcript[:120],
+                                                }
+                                            else:
+                                                # motivo real (ex.: empty_transcript / stt_failed)
+                                                err_code = (stt_payload.get("error") or "").strip() or f"http_{rr.status_code}"
+                                                detail = (stt_payload.get("detail") or "").strip()
+                                                stt_err = f"stt_not_ok:{err_code}" + (f":{detail[:80]}" if detail else "")
+                                                audio_debug["stt"] = {
+                                                    "ok": False,
+                                                    "error": err_code,
+                                                    "detail": detail[:160],
+                                                    "http": rr.status_code,
+                                                    "bodyHint": (rr.text or "")[:160],
+                                                }
+                                                logger.warning(
+                                                    "[tarefas] stt_not_ok from=%s wamid=%s err=%s detail=%s",
+                                                    from_e164, wamid, err_code, detail[:120]
+                                                )
+                                        else:
+                                            stt_err = f"stt_http_{rr.status_code}"
+                                            audio_debug["stt"] = {"ok": False, "http": rr.status_code, "bodyHint": (rr.text or "")[:160]}
+                                    except Exception as e:
+                                        stt_err = f"stt_exc:{type(e).__name__}"
+                                        audio_debug["stt"] = {"ok": False, "reason": stt_err}
                             except Exception as e:
                                 stt_err = f"stt_exc:{e}"
 
@@ -3876,7 +3928,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 url=tts_url,
                                 headers={"Accept": "application/json"},
                                 json_payload={"text": payload_text, "voice_id": voice_id},
-                                timeout=35,
+                                timeout=45,
                                 max_attempts=3,
                             )
 
