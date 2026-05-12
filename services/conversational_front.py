@@ -700,7 +700,19 @@ def _front_build_structured_assembly_reply(
             lead_name=lead_name,
             lead_segment_raw=lead_segment_raw,
         )
+        assembled = _unwrap_front_json_envelope(assembled) or assembled
         assembled = _sanitize_user_facing_reply(str(assembled or "").strip())
+
+        # Se a camada de humanização voltar menor/truncada, preserva o core
+        # estruturado já vindo da KB. Não cria frase, não usa palavra-chave e
+        # não promove envelope JSON.
+        try:
+            core_clean = _unwrap_front_json_envelope(core) or core
+            core_clean = _sanitize_user_facing_reply(str(core_clean or "").strip())
+            if core_clean and len(assembled or "") < min(650, int(len(core_clean) * 0.80)):
+                assembled = core_clean
+        except Exception:
+            pass
 
         if not assembled:
             return {}
