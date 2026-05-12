@@ -11914,7 +11914,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
-        return _sanitize_front_result_payload(out)
+        result = _sanitize_front_result_payload(out)
+
+        # Blindagem final:
+        # Garante que o objeto retornado carregue exatamente os textos já
+        # sanitizados e validados no pipeline, impedindo que qualquer envelope
+        # JSON bruto anteriormente armazenado em `result` seja propagado para
+        # persistência ou envio ao WhatsApp.
+        try:
+            if isinstance(result, dict):
+                result["replyText"] = str(reply_text or "").strip()
+                result["spokenText"] = str(spoken_text or reply_text or "").strip()
+        except Exception:
+            pass
+
+        return result
 
     except Exception as e:
         # Fail-safe absoluto: nunca quebrar o fluxo
