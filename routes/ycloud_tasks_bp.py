@@ -403,6 +403,12 @@ try:
 except Exception:
     perform_stt_logic = None  # type: ignore
 
+# TTS nativo (sem HTTP interno para o próprio Cloud Run)
+try:
+    from services.tts_fallback import tts_bytes as _tts_bytes_native  # type: ignore
+except Exception:
+    _tts_bytes_native = None  # type: ignore
+
 
 _IDENTITY_MODE = (os.environ.get("IDENTITY_MODE") or "on").strip().lower()  # on|off
 
@@ -3489,42 +3495,43 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     except Exception:
                         pass
 
-                    # Se não tem audio_url ainda, gera ACK institucional via /api/voz/tts e sobe Signed URL (padrão do worker)
+                    # gera ACK institucional via chamada nativa (sem HTTP interno)
                     if not audio_url:
                         try:
-                            base = _backend_base(request)
-                            tts_url = f"{base}/api/voz/tts"
                             voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
-                            if voice_id:
+                            if _tts_bytes_native and voice_id:
                                 nm = (display_name or "").strip()
                                 ack = _build_ack_audio(nm)
-                                tts_resp = _post_internal_with_retry(
-                                    url=tts_url,
-                                    headers={"Accept": "application/json"},
-                                    json_payload={
-                                        "text": ack,
-                                        "voice_id": voice_id,
-                                        "format": "mp3",
-                                    },
-                                    timeout=35,
-                                    max_attempts=3,
-                                )
-                                if not tts_resp.ok:
-                                    audio_debug["ttsAck"] = {"ok": False, "reason": f"tts_http_{tts_resp.status_code}"}
-                                    audio_url = ""
+                                b = _tts_bytes_native(text=ack, voice_id=voice_id)
+                                if b and len(b) > 256:
+                                    audio_url = _upload_audio_bytes_to_signed_url(
+                                        b=b,
+                                        audio_debug=audio_debug,
+                                        tag="ttsAck",
+                                        ext="mp3",
+                                        content_type="audio/mpeg",
+                                    )
                                 else:
-                                    b = tts_resp.content or b""
-                                    audio_url = _upload_audio_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck", ext="mp3", content_type="audio/mpeg")
+                                    audio_debug["ttsAck"] = {
+                                        "ok": False,
+                                        "reason": "empty_audio_from_native",
+                                    }
+                                    audio_url = ""
+                            elif not _tts_bytes_native:
+                                audio_debug["ttsAck"] = {
+                                    "ok": False,
+                                    "reason": "native_tts_unavailable",
+                                }
                             else:
-                                try:
-                                    audio_debug["ttsAck"] = {"ok": False, "reason": "missing_INSTITUTIONAL_VOICE_ID"}
-                                except Exception:
-                                    pass
+                                audio_debug["ttsAck"] = {
+                                    "ok": False,
+                                    "reason": "missing_INSTITUTIONAL_VOICE_ID",
+                                }
                         except Exception as e:
-                            try:
-                                audio_debug["ttsAck"] = {"ok": False, "reason": f"{type(e).__name__}:{str(e)[:120]}"}
-                            except Exception:
-                                pass
+                            audio_debug["ttsAck"] = {
+                                "ok": False,
+                                "reason": f"tts_native_exc:{type(e).__name__}:{str(e)[:120]}",
+                            }
 
                     # se gerou áudio, o outbound vai mandar áudio e depois texto (audio_plus_text_link)
                     # (não cair no "text_only_requested")
@@ -3536,48 +3543,50 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     if isinstance(audio_debug, dict):
                         audio_debug["ack_source"] = "worker_ack"
 
-                    # gera áudio curto institucional (sem url) para manter "entra áudio -> sai áudio"
+                    # gera áudio curto institucional (sem URL) via chamada nativa
                     if not audio_url:
                         try:
-                            base = _backend_base(request)
-                            tts_url = f"{base}/api/voz/tts"
                             voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
-                            if voice_id:
+                            if _tts_bytes_native and voice_id:
                                 nm = (display_name or "").strip()
-                                # tenta aproveitar override/premium speaker se existir
                                 try:
                                     if not nm and wa_key_effective and _IDENTITY_MODE != "off":
                                         nm = _get_active_speaker(wa_key_effective) or ""
                                 except Exception:
-                                    nm = nm
-                                ack = _build_ack_audio(nm)
-                                tts_resp = _post_internal_with_retry(
-                                    url=tts_url,
-                                    headers={"Accept": "application/json"},
-                                    json_payload={
-                                        "text": ack,
-                                        "voice_id": voice_id,
-                                        "format": "mp3",
-                                    },
-                                    timeout=35,
-                                    max_attempts=3,
-                                )
+                                    pass
 
-                                # (ACK) /api/voz/tts retorna MP3 bytes; sobe pro storage e gera Signed URL (mesmo padrão do worker)
-                                try:
-                                    if not tts_resp.ok:
-                                        audio_debug["ttsAck"] = {"ok": False, "reason": f"tts_http_{tts_resp.status_code}"}
-                                        audio_url = ""
-                                    else:
-                                        b = tts_resp.content or b""
-                                        audio_url = _upload_audio_bytes_to_signed_url(b=b, audio_debug=audio_debug, tag="ttsAck", ext="mp3", content_type="audio/mpeg")
-                                except Exception as e:
-                                    audio_debug["ttsAck"] = {"ok": False, "reason": f"tts_exception:{type(e).__name__}:{str(e)[:120]}"}
+                                ack = _build_ack_audio(nm)
+                                b = _tts_bytes_native(text=ack, voice_id=voice_id)
+
+                                if b and len(b) > 256:
+                                    audio_url = _upload_audio_bytes_to_signed_url(
+                                        b=b,
+                                        audio_debug=audio_debug,
+                                        tag="ttsAck",
+                                        ext="mp3",
+                                        content_type="audio/mpeg",
+                                    )
+                                else:
+                                    audio_debug["ttsAck"] = {
+                                        "ok": False,
+                                        "reason": "empty_audio_from_native",
+                                    }
                                     audio_url = ""
+                            elif not _tts_bytes_native:
+                                audio_debug["ttsAck"] = {
+                                    "ok": False,
+                                    "reason": "native_tts_unavailable",
+                                }
                             else:
-                                audio_debug["ttsAck"] = {"ok": False, "reason": "missing_INSTITUTIONAL_VOICE_ID"}
+                                audio_debug["ttsAck"] = {
+                                    "ok": False,
+                                    "reason": "missing_INSTITUTIONAL_VOICE_ID",
+                                }
                         except Exception as e:
-                            audio_debug["ttsAck"] = {"ok": False, "reason": f"exc:{type(e).__name__}"}
+                            audio_debug["ttsAck"] = {
+                                "ok": False,
+                                "reason": f"tts_native_exc:{type(e).__name__}:{str(e)[:120]}",
+                            }
 
                 elif prefers_text:
                     # Caso geral: realmente só texto (ex.: usuário pediu explicitamente texto)
@@ -3996,89 +4005,55 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                         tts_text_final_used = tts_text
 
-                        rr = _call_tts(tts_text_final_used)
-
-                        # Retry automático se bater 413 (texto ainda grande pro endpoint)
-                        if rr.status_code == 413:
-                            try:
-                                retry_text = _shorten_for_speech(tts_text, _SUPPORT_TTS_RETRY_MAX_CHARS)
-                                # ✅ Se precisou retry, o falado é o retry_text
-                                tts_text_final_used = retry_text
-                                audio_debug = dict(audio_debug or {})
-                                audio_debug["ttsRetry"] = {
-                                    "applied": True,
-                                    "http": 413,
-                                    "maxChars": _SUPPORT_TTS_RETRY_MAX_CHARS,
-                                    "retryLen": len(retry_text),
-                                    "safeBoundary": True,
-                                }
-                                rr = _call_tts(retry_text)
-                            except Exception as e_retry:
-                                audio_debug = dict(audio_debug or {})
-                                audio_debug["ttsRetry"] = {"applied": False, "reason": f"exc:{type(e_retry).__name__}"}
-
-                        if rr.status_code == 200:
-                            # 1) Tentativa normal: JSON com audioUrl
-                            try:
-                                j = rr.json()
-                                if isinstance(j, dict) and j.get("ok") is True and (j.get("audioUrl") or ""):
-                                    audio_url = (j.get("audioUrl") or "").strip()
-                                    audio_debug = dict(audio_debug or {})
-                                    _ct = (rr.headers.get("content-type") or "").lower()[:40]
-
-                                    _blen = int(len(rr.content or b"") or 0)
-
-                                    audio_debug["tts"] = {"ok": True, "mode": "json_audioUrl", "ct": _ct, "bytes": _blen}
-                                else:
-                                    raise ValueError("json_missing_audioUrl")
-                            except Exception:
-                                # 2) Fallback premium: MP3 bytes (ex.: começa com ID3)
-                                try:
-                                    b = rr.content or b""
-                                    head = b[:3]
-                                    ct = (rr.headers.get("content-type") or "").lower()
-
-                                    is_mp3 = (head == b"ID3") or ("audio" in ct) or b.startswith(b"\xff\xfb")
-                                    if not is_mp3 or len(b) < 256:
-                                        raise ValueError("not_mp3_bytes")
-
-                                    bucket_name = (os.environ.get("STORAGE_BUCKET") or "").strip()
-                                    if not bucket_name:
-                                        raise ValueError("missing_STORAGE_BUCKET")
-
-                                    # upload em um caminho estável (não conflita)
-                                    now = datetime.datetime.utcnow()
-                                    obj = f"sandbox/institutional_tts/{now:%Y/%m/%d}/{uuid.uuid4().hex}.mp3"
-
-                                    # IMPORTANT: usar client com credencial que tenha private_key
-                                    # (evita "you need a private key to sign credentials" no Cloud Run)
-                                    try:
-                                        from services.gcp_creds import get_storage_client as _get_storage_client
-                                        client = _get_storage_client()
-                                    except Exception as e_client:
-                                        raise RuntimeError(
-                                            f"storage_client_unavailable:{type(e_client).__name__}:{str(e_client)[:120]}"
-                                        )
-                                    bucket = client.bucket(bucket_name)
-                                    blob = bucket.blob(obj)
-                                    blob.upload_from_string(b, content_type="audio/mpeg")
-
-                                    exp_s = int(os.environ.get("SIGNED_URL_EXPIRES_SECONDS", "900") or "900")
-                                    audio_url = blob.generate_signed_url(
-                                        version="v4",
-                                        expiration=datetime.timedelta(seconds=exp_s),
-                                        method="GET",
-                                    )
-
-                                    audio_debug = dict(audio_debug or {})
-                                    audio_debug["tts"] = {"ok": True, "mode": "bytes_upload_signed", "bytes": len(b), "ct": ct[:40]}
-                                except Exception as e2:
-                                    # erro real: não conseguimos obter uma URL pra mandar ao WhatsApp
-                                    audio_debug = dict(audio_debug or {})
-                                    audio_debug["tts"] = {"ok": False, "reason": f"tts_bytes_fail:{type(e2).__name__}:{str(e2)[:80]}"}
-                        else:
+                        if _tts_bytes_native is None:
                             audio_debug = dict(audio_debug or {})
-                            audio_debug["tts"] = {"ok": False, "reason": f"tts_http_{rr.status_code}"}
+                            audio_debug["tts"] = {
+                                "ok": False,
+                                "reason": "tts_fallback_unavailable",
+                            }
+                        else:
+                            try:
+                                max_chars = int(os.environ.get("VOZ_TTS_MAX_CHARS", "1000"))
+                                if len(tts_text_final_used) > max_chars:
+                                    retry_text = _shorten_for_speech(
+                                        tts_text_final_used,
+                                        _SUPPORT_TTS_RETRY_MAX_CHARS,
+                                    )
+                                    tts_text_final_used = retry_text
+                                    audio_debug = dict(audio_debug or {})
+                                    audio_debug["ttsRetry"] = {
+                                        "applied": True,
+                                        "reason": "native_length_exceeded",
+                                        "maxChars": max_chars,
+                                        "retryLen": len(retry_text),
+                                    }
+
+                                b = _tts_bytes_native(
+                                    text=tts_text_final_used,
+                                    voice_id=voice_id,
+                                )
+
+                                if b and len(b) > 256:
+                                    audio_url = _upload_audio_bytes_to_signed_url(
+                                        b=b,
+                                        audio_debug=audio_debug,
+                                        tag="tts",
+                                        ext="mp3",
+                                        content_type="audio/mpeg",
+                                    )
+                                else:
+                                    audio_debug = dict(audio_debug or {})
+                                    audio_debug["tts"] = {
+                                        "ok": False,
+                                        "reason": "empty_audio_from_native_tts",
+                                    }
+
+                            except Exception as e2:
+                                audio_debug = dict(audio_debug or {})
+                                audio_debug["tts"] = {
+                                    "ok": False,
+                                    "reason": f"tts_native_fail:{type(e2).__name__}:{str(e2)[:80]}",
+                                }
                     else:
                         audio_debug = dict(audio_debug or {})
                         audio_debug["tts"] = {"ok": False, "reason": "missing_voice_id"}
