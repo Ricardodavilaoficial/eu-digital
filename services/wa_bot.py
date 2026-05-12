@@ -2312,6 +2312,21 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "ttsOwner": "worker",
                         }
 
+                        # Blindagem final:
+                        # Garante que o payload retornado pelo wa_bot utilize exatamente os
+                        # textos já limpos extraídos do front, impedindo que qualquer envelope
+                        # JSON bruto previamente presente em front_out seja persistido ou enviado.
+                        try:
+                            if isinstance(front_out, dict):
+                                reply_text = str(out.get("replyText") or "").strip()
+                                spoken_text = str(out.get("spokenText") or reply_text or "").strip()
+                                front_out["replyText"] = str(reply_text or "").strip()
+                                front_out["spokenText"] = str(spoken_text or reply_text or "").strip()
+                                out["replyText"] = str(reply_text or "").strip()
+                                out["spokenText"] = str(spoken_text or reply_text or "").strip()
+                        except Exception:
+                            pass
+
                         try:
                             logging.info(
                                 "[WA_BOT][FRONT_OUT_BUILT] "
