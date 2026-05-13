@@ -12076,4 +12076,23 @@ def _doc_identity_is_compatible_with_current_text(
         q = str(user_text or "").strip()
         if not q or not isinstance(doc, dict):
             return False
-            
+
+        identity_parts = [
+            str(doc_key or "").strip(),
+            str(doc.get("id") or "").strip(),
+            str(doc.get("name") or "").strip(),
+            str(doc.get("description") or "").strip(),
+            str(doc.get("segment_id") or "").strip(),
+            str(doc.get("archetype_id") or "").strip(),
+            str(doc.get("conversation_mode") or "").strip(),
+        ]
+
+        identity_text = " ".join([p for p in identity_parts if p]).strip()
+        if not identity_text:
+            return False
+
+        score = _lookup_token_overlap_score(q, identity_text)
+        return score >= int(min_score)
+    except Exception:
+        return False
+
