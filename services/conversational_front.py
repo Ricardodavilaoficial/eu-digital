@@ -496,12 +496,6 @@ def _front_structured_doc_content(docs: Dict[str, Any] | None) -> Dict[str, Any]
             source_doc.get("segment_id"),
         )
 
-        one_liner = _front_first_text(
-            sub_doc.get("one_liner"),
-            arch_doc.get("one_liner"),
-            seg_doc.get("one_liner"),
-        )
-
         scene = _front_first_text(
             sub_doc.get("micro_scene_conversational"),
             arch_doc.get("micro_scene_conversational"),
@@ -509,6 +503,18 @@ def _front_structured_doc_content(docs: Dict[str, Any] | None) -> Dict[str, Any]
             sub_doc.get("micro_scene"),
             arch_doc.get("micro_scene"),
             seg_doc.get("micro_scene"),
+            sub_doc.get("direct_scene"),
+            arch_doc.get("direct_scene"),
+            seg_doc.get("direct_scene"),
+            sub_doc.get("runtime_long_text"),
+            arch_doc.get("runtime_long_text"),
+            seg_doc.get("runtime_long_text"),
+        )
+
+        one_liner = _front_first_text(
+            sub_doc.get("one_liner"),
+            arch_doc.get("one_liner"),
+            seg_doc.get("one_liner"),
         )
 
         service_noun = _front_first_text(
@@ -524,10 +530,10 @@ def _front_structured_doc_content(docs: Dict[str, Any] | None) -> Dict[str, Any]
         )
 
         pieces = []
-        if one_liner:
-            pieces.append(one_liner)
-        if scene and scene not in pieces:
+        if scene:
             pieces.append(scene)
+        if one_liner and one_liner not in pieces:
+            pieces.append(one_liner)
 
         core = "\n\n".join([p for p in pieces if p]).strip()
         if not core:
@@ -3760,9 +3766,18 @@ def _merge_real_kb_operational_context(
 
         if not str(ctx.get("operational_reference") or "").strip():
             micro_scene = _pick(
+                sub_doc.get("micro_scene_conversational"),
+                arch_doc.get("micro_scene_conversational"),
+                (seg_doc.get("micro_scene_conversational") if use_seg else ""),
                 sub_doc.get("micro_scene"),
                 arch_doc.get("micro_scene"),
                 (seg_doc.get("micro_scene") if use_seg else ""),
+                sub_doc.get("direct_scene"),
+                arch_doc.get("direct_scene"),
+                (seg_doc.get("direct_scene") if use_seg else ""),
+                sub_doc.get("runtime_long_text"),
+                arch_doc.get("runtime_long_text"),
+                (seg_doc.get("runtime_long_text") if use_seg else ""),
             )
             if micro_scene:
                 ctx["operational_reference"] = micro_scene
@@ -4013,6 +4028,26 @@ def _build_operational_contract(
             "has_practical_scene": has_practical_scene,
             "allowed_next_step": allowed_next_step,
             "hydrated_from_docs": bool(sub_doc or seg_doc or arch_doc),
+            "micro_scene_conversational": _pick_str(
+                (sub_doc or {}).get("micro_scene_conversational"),
+                (arch_doc or {}).get("micro_scene_conversational"),
+                ((seg_doc or {}).get("micro_scene_conversational") if use_seg else ""),
+            ),
+            "micro_scene": _pick_str(
+                (sub_doc or {}).get("micro_scene"),
+                (arch_doc or {}).get("micro_scene"),
+                ((seg_doc or {}).get("micro_scene") if use_seg else ""),
+            ),
+            "direct_scene": _pick_str(
+                (sub_doc or {}).get("direct_scene"),
+                (arch_doc or {}).get("direct_scene"),
+                ((seg_doc or {}).get("direct_scene") if use_seg else ""),
+            ),
+            "runtime_long_text": _pick_str(
+                (sub_doc or {}).get("runtime_long_text"),
+                (arch_doc or {}).get("runtime_long_text"),
+                ((seg_doc or {}).get("runtime_long_text") if use_seg else ""),
+            ),
             "operational_reference": str(operational_reference or "").strip(),
             "reference_example": str(reference_example or "").strip(),
         }
@@ -4385,12 +4420,14 @@ def _build_direct_scene_payload(
                 )
         else:
             scene = (
-                c.get("direct_scene")
+                c.get("micro_scene_conversational")
+                or c.get("micro_scene")
+                or c.get("direct_scene")
                 or c.get("runtime_long_text")
-                or c.get("runtime_short_reply")
-                or c.get("reference_example")
                 or c.get("operational_reference")
                 or c.get("pack_micro_scene")
+                or c.get("runtime_short_reply")
+                or c.get("reference_example")
             )
 
         raw_core = str(scene or "").strip()
