@@ -1281,6 +1281,43 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
         def _size(obj: dict) -> int:
             return len(json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
 
+        def _lean_operational_docs(docs: Any) -> Dict[str, Any]:
+            """
+            Mantém um índice mínimo dos documentos operacionais para o front
+            conseguir reconhecer semanticamente segmento/subsegmento.
+            Não cria regra comercial, não usa palavra-chave fixa e não escolhe
+            segmento no código: apenas preserva campos já vindos do Firestore.
+            """
+            out: Dict[str, Any] = {}
+            try:
+                if not isinstance(docs, dict):
+                    return {}
+                keep_fields = (
+                    "id",
+                    "segment_id",
+                    "archetype_id",
+                    "name",
+                    "description",
+                    "one_liner",
+                    "keywords",
+                    "common_intents",
+                    "conversation_mode",
+                    "service_noun",
+                )
+                for doc_id, doc in list(docs.items()):
+                    if not isinstance(doc, dict):
+                        continue
+                    item: Dict[str, Any] = {}
+                    for field in keep_fields:
+                        value = doc.get(field)
+                        if value not in (None, "", [], {}):
+                            item[field] = value
+                    if item:
+                        out[str(doc_id)] = item
+                return out
+            except Exception:
+                return {}
+
         if _size(work) <= limit:
             return work
 
@@ -1290,21 +1327,20 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
             if _size(work) <= limit:
                 return work
 
-        # 2) poda banco operacional auxiliar antes dos packs globais.
-        # Em Vendas/lead sem segmento hidratado, value_packs_v1 + segment_value_map_v1
-        # são o fallback estrutural do platform_kb.
-        if work.get("kb_segments_v1"):
-            work["kb_segments_v1"] = {}
-            if _size(work) <= limit:
-                return work
-
-        if work.get("kb_archetypes_v1"):
-            work["kb_archetypes_v1"] = {}
-            if _size(work) <= limit:
-                return work
-
-        if work.get("kb_subsegments_v1"):
-            work["kb_subsegments_v1"] = {}
+        # 2) antes de apagar documentos operacionais inteiros, reduz esses docs
+        # para um índice semântico mínimo. Isso preserva a capacidade do front
+        # de reconhecer segmento/subsegmento informado em linguagem livre.
+        if (
+            work.get("kb_segments_v1")
+            or work.get("kb_subsegments_v1")
+            or work.get("kb_archetypes_v1")
+        ):
+            if work.get("kb_segments_v1"):
+                work["kb_segments_v1"] = _lean_operational_docs(work.get("kb_segments_v1"))
+            if work.get("kb_subsegments_v1"):
+                work["kb_subsegments_v1"] = _lean_operational_docs(work.get("kb_subsegments_v1"))
+            if work.get("kb_archetypes_v1"):
+                work["kb_archetypes_v1"] = _lean_operational_docs(work.get("kb_archetypes_v1"))
             if _size(work) <= limit:
                 return work
 
@@ -1328,9 +1364,26 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
             if _size(work) <= limit:
                 return work
 
-        # 5) último recurso: remove packs somente se nem o fallback global couber.
+        # 5) último recurso comercial: remove packs somente se nem o fallback global couber.
         if work.get("value_packs_v1"):
             work["value_packs_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        # 6) último recurso operacional: remove documentos estruturados só depois
+        # de tentar preservar o índice semântico mínimo.
+        if work.get("kb_archetypes_v1"):
+            work["kb_archetypes_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        if work.get("kb_segments_v1"):
+            work["kb_segments_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        if work.get("kb_subsegments_v1"):
+            work["kb_subsegments_v1"] = {}
             if _size(work) <= limit:
                 return work
 
