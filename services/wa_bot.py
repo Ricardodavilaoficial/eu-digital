@@ -831,11 +831,29 @@ def _compact_front_kb_doc(
         if d.get("one_question"):
             out["one_question"] = _clip_front_text(d.get("one_question"), 180)
 
+        if d.get("micro_scene_conversational"):
+            out["micro_scene_conversational"] = _clip_front_text(
+                d.get("micro_scene_conversational"),
+                900,
+            )
+
         if d.get("micro_scene"):
-            out["micro_scene"] = _clip_front_text(d.get("micro_scene"), 260)
+            out["micro_scene"] = _clip_front_text(d.get("micro_scene"), 500)
+
+        if d.get("direct_scene"):
+            out["direct_scene"] = _clip_front_text(d.get("direct_scene"), 900)
+
+        if d.get("runtime_long_text"):
+            out["runtime_long_text"] = _clip_front_text(d.get("runtime_long_text"), 900)
 
         if d.get("primary_goal"):
             out["primary_goal"] = _clip_front_text(d.get("primary_goal"), 120)
+
+        if d.get("customer_noun"):
+            out["customer_noun"] = _clip_front_text(d.get("customer_noun"), 80)
+
+        if d.get("conversion_noun"):
+            out["conversion_noun"] = _clip_front_text(d.get("conversion_noun"), 120)
 
         if d.get("service_noun"):
             out["service_noun"] = _clip_front_text(d.get("service_noun"), 80)
@@ -1299,8 +1317,18 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
                     "name",
                     "description",
                     "one_liner",
+                    "micro_scene_conversational",
+                    "micro_scene",
+                    "direct_scene",
+                    "runtime_long_text",
+                    "primary_goal",
+                    "customer_noun",
+                    "conversion_noun",
                     "keywords",
                     "common_intents",
+                    "preferred_capabilities",
+                    "operational_ritual",
+                    "handoff_format",
                     "conversation_mode",
                     "service_noun",
                 )
