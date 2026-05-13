@@ -5797,13 +5797,66 @@ def _resolve_reply_size_policy(
 
 
 def _apply_reply_size_policy(text: str, policy: Dict[str, Any] | None = None) -> str:
+    """
+    Aplica a política de tamanho já definida para a resposta final.
+    Esta função deve respeitar integralmente os limites calculados em
+    _resolve_reply_size_policy(...).
+    """
+    if not policy:
+        return str(text or "").strip()
+
+    s = str(text or "").strip()
+    if not s:
+        return ""
+
     try:
-        p = policy or {}
-        max_chars = int(p.get("max_chars") or FRONT_REPLY_MAX_CHARS)
-        max_chars = max(180, min(max_chars, FRONT_REPLY_MAX_CHARS))
-        return _smart_truncate_text(str(text or "").strip(), max_chars)
+        max_chars = int(policy.get("max_chars") or 0)
     except Exception:
-        return _smart_truncate_text(str(text or "").strip(), FRONT_REPLY_MAX_CHARS)
+        max_chars = 0
+
+    if max_chars <= 0:
+        return s
+
+    if len(s) <= max_chars:
+        return s
+
+    # ---------------------------------------------------------------
+    # Truncamento inteligente
+    #
+    # Preserva a política de tamanho existente e apenas melhora o
+    # ponto de corte, evitando terminar no meio de palavras.
+    #
+    # Estratégia:
+    # 1) Respeita exatamente max_chars.
+    # 2) Procura o último delimitador de frase no trecho permitido.
+    # 3) Se não encontrar, corta no último espaço.
+    # 4) Como fallback, usa o corte bruto.
+    # ---------------------------------------------------------------
+    clipped = s[:max_chars]
+
+    # Procura final natural de frase suficientemente próximo do fim.
+    sentence_cut = max(
+        clipped.rfind("."),
+        clipped.rfind("!"),
+        clipped.rfind("?"),
+    )
+
+    # Só utiliza a pontuação se ela não descartar conteúdo demais.
+    # Mantém ao menos ~70% do orçamento disponível.
+    if sentence_cut >= int(max_chars * 0.70):
+        natural = clipped[: sentence_cut + 1].rstrip()
+        if natural:
+            return natural
+
+    # Fallback: corta no último espaço.
+    word_cut = clipped.rfind(" ")
+    if word_cut >= int(max_chars * 0.70):
+        natural = clipped[:word_cut].rstrip()
+        if natural:
+            return natural
+
+    # Último fallback: corte bruto.
+    return clipped.rstrip()
 
 def _generate_consequence_with_model(contract: Dict[str, Any] | None = None) -> str:
     """
