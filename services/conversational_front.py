@@ -1022,7 +1022,16 @@ def _normalize_lookup_key(text: str) -> str:
 
 def _tokenize_lookup_text(text: str) -> list[str]:
     try:
-        s = _normalize_lookup_key(text)
+        # Importante:
+        # chaves estruturais do KB costumam vir com "_", "__" e combinações
+        # como comercio_varejista__loja_oculos.
+        # Para matching semântico estrutural, "_" precisa separar termos,
+        # não formar um token único.
+        #
+        # Isso NÃO cria palavra-chave de segmento.
+        # Apenas permite que os termos já existentes no Firestore participem
+        # do score de overlap.
+        s = _normalize_lookup_key(text).replace("_", " ")
         toks = [tok for tok in re.findall(r"[a-z0-9_]+", s) if len(tok) >= 3]
         return toks
     except Exception:
@@ -1035,14 +1044,33 @@ def _lookup_token_overlap_score(query: str, candidate: str) -> int:
         c_tokens = set(_tokenize_lookup_text(candidate.replace("__", " ")))
         if not q_tokens or not c_tokens:
             return 0
+
         overlap = q_tokens.intersection(c_tokens)
         score = len(overlap)
 
+        # Tolerância morfológica mínima e genérica.
+        # Não mapeia profissões/segmentos; só reduz plural simples para
+        # melhorar o score quando o KB e o lead usam flexões diferentes.
+        def _base(tok: str) -> str:
+            t = str(tok or "").strip()
+            if len(t) >= 5 and t.endswith("s"):
+                return t[:-1]
+            return t
+
+        q_base = {_base(tok) for tok in q_tokens}
+        c_base = {_base(tok) for tok in c_tokens}
+        base_overlap = q_base.intersection(c_base)
+        if base_overlap:
+            score += max(0, len(base_overlap) - len(overlap))
+
         q_norm = _normalize_lookup_key(query)
         c_norm = _normalize_lookup_key(candidate.replace("__", " "))
-        if c_norm and c_norm in q_norm:
+        q_norm_flat = q_norm.replace("_", " ")
+        c_norm_flat = c_norm.replace("_", " ")
+
+        if c_norm_flat and c_norm_flat in q_norm_flat:
             score += 2
-        elif q_norm and q_norm in c_norm:
+        elif q_norm_flat and q_norm_flat in c_norm_flat:
             score += 1
 
         return score
@@ -12048,22 +12076,4 @@ def _doc_identity_is_compatible_with_current_text(
         q = str(user_text or "").strip()
         if not q or not isinstance(doc, dict):
             return False
-
-        identity_parts = [
-            str(doc_key or "").strip(),
-            str(doc.get("id") or "").strip(),
-            str(doc.get("name") or "").strip(),
-            str(doc.get("description") or "").strip(),
-            str(doc.get("segment_id") or "").strip(),
-            str(doc.get("archetype_id") or "").strip(),
-            str(doc.get("conversation_mode") or "").strip(),
-        ]
-
-        identity_text = " ".join([p for p in identity_parts if p]).strip()
-        if not identity_text:
-            return False
-
-        score = _lookup_token_overlap_score(q, identity_text)
-        return score >= int(min_score)
-    except Exception:
-        return False
+            
