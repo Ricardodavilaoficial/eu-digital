@@ -1216,6 +1216,47 @@ def _best_doc_match(query: str, docs_map: Dict[str, Any], min_score: int = 2) ->
         return ""
 
 
+
+
+def _keyword_doc_match(query: str, docs_map: Dict[str, Any]) -> str:
+    """
+    Matching determinístico de alta confiança usando apenas o campo `keywords`
+    vindo do Firestore.
+
+    Não contém palavras-chave locais.
+    Não conhece segmentos, profissões ou exemplos específicos.
+    Não substitui o score atual: apenas antecipa matches explícitos do KB.
+    """
+    try:
+        q = _normalize_lookup_key(query).replace("_", " ")
+        q = re.sub(r"\s+", " ", q).strip()
+        if not q or not isinstance(docs_map, dict):
+            return ""
+
+        for key, doc in docs_map.items():
+            if not isinstance(doc, dict):
+                continue
+
+            keywords = doc.get("keywords") or []
+            if isinstance(keywords, str):
+                keywords = [keywords]
+            if not isinstance(keywords, list):
+                continue
+
+            for item in keywords:
+                kw = _normalize_lookup_key(item).replace("_", " ")
+                kw = re.sub(r"\s+", " ", kw).strip()
+                if len(kw) < 3:
+                    continue
+
+                pattern = r"(?<![a-z0-9])" + re.escape(kw) + r"(?![a-z0-9])"
+                if re.search(pattern, q):
+                    return str(key or "").strip()
+
+        return ""
+    except Exception:
+        return ""
+
 def _doc_identity_is_compatible_with_current_text(
     *,
     user_text: str,
@@ -3505,6 +3546,10 @@ def _infer_segment_from_docs(
         ).strip()
 
         if isinstance(kb_sub, dict) and kb_sub:
+            keyword_sub = _keyword_doc_match(search_text, kb_sub)
+            if keyword_sub:
+                return str(keyword_sub).strip().lower()
+
             best_sub = _best_doc_match(search_text, kb_sub, min_score=2)
             if best_sub:
                 best_doc = kb_sub.get(best_sub) or {}
@@ -3517,6 +3562,10 @@ def _infer_segment_from_docs(
                     return str(best_sub).strip().lower()
 
         if isinstance(kb_seg, dict) and kb_seg:
+            keyword_seg = _keyword_doc_match(search_text, kb_seg)
+            if keyword_seg:
+                return str(keyword_seg).strip().lower()
+
             best_seg = _best_doc_match(search_text, kb_seg, min_score=2)
             if best_seg:
                 best_doc = kb_seg.get(best_seg) or {}
@@ -12028,71 +12077,3 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             "kbSnapshotSizeChars": len((kb_snapshot or "")),
             "tokenUsage": {},
         }
-
-        aiMeta = error_out.setdefault("aiMeta", {})
-
-        # 🔒 Normalização de tipos (evita string "True"/"False")
-        aiMeta["kbUsed"] = bool(aiMeta.get("kbUsed"))
-        aiMeta["kbRequiredOk"] = bool(aiMeta.get("kbRequiredOk"))
-
-        aiMeta.setdefault("usedFallback", False)
-
-        aiMeta["responseOrigin"] = "conversational_front"
-
-        aiMeta["kbHasContext"] = bool(aiMeta.get("kbDocPath"))
-
-        return _sanitize_front_result_payload(error_out)
-
-
-# --- helpers added ---
-def _has_question(text: str) -> bool:
-    try:
-        return "?" in str(text or "")
-    except Exception:
-        return False
-
-def _is_weak_reply(text: str) -> bool:
-    try:
-        t = str(text or "").lower()
-        weak_patterns = [
-            "posso te ajudar",
-            "como posso ajudar",
-            "me diga mais",
-            "em que posso ajudar"
-        ]
-        return any(p in t for p in weak_patterns)
-    except Exception:
-        return False
-
-
-def _doc_identity_is_compatible_with_current_text(
-    *,
-    user_text: str,
-    doc: Dict[str, Any],
-    doc_key: str = "",
-    min_score: int = 2,
-) -> bool:
-    try:
-        q = str(user_text or "").strip()
-        if not q or not isinstance(doc, dict):
-            return False
-
-        identity_parts = [
-            str(doc_key or "").strip(),
-            str(doc.get("id") or "").strip(),
-            str(doc.get("name") or "").strip(),
-            str(doc.get("description") or "").strip(),
-            str(doc.get("segment_id") or "").strip(),
-            str(doc.get("archetype_id") or "").strip(),
-            str(doc.get("conversation_mode") or "").strip(),
-        ]
-
-        identity_text = " ".join([p for p in identity_parts if p]).strip()
-        if not identity_text:
-            return False
-
-        score = _lookup_token_overlap_score(q, identity_text)
-        return score >= int(min_score)
-    except Exception:
-        return False
-
