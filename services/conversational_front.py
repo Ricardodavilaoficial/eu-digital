@@ -9239,6 +9239,40 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             if response_mode == "SCENE":
                 response_mode = "DIRECT"
 
+        # ---------------------------------------------------------------
+        # Bypass estrutural de DISCOVERY com contrato operacional hidratado
+        #
+        # Quando o pipeline já entregou contrato operacional suficiente para
+        # demonstração prática, o modo demonstrativo passa a prevalecer sobre
+        # DISCOVERY. O critério usa apenas sinais estruturais já calculados.
+        # ---------------------------------------------------------------
+        try:
+            _contract_for_mode = operational_contract if isinstance(operational_contract, dict) else {}
+            _contract_has_reference = bool(
+                _contract_for_mode.get("has_reference_example")
+                or _contract_for_mode.get("has_practical_scene")
+                or str(_contract_for_mode.get("reference_example") or "").strip()
+                or str(_contract_for_mode.get("operational_reference") or "").strip()
+                or list(_contract_for_mode.get("operational_ritual") or [])
+            )
+            _contract_ready_for_scene = bool(
+                str(response_mode or "").strip().upper() == "DISCOVERY"
+                and str(next_step or "").strip().upper() != "SEND_LINK"
+                and str(needs_clarify or "").strip().lower() != "yes"
+                and not str(clarify_q or "").strip()
+                and bool(_contract_for_mode.get("hydrated_from_docs"))
+                and str(topic or "").strip().upper() == "SERVICOS"
+                and _contract_has_reference
+            )
+            if _contract_ready_for_scene:
+                response_mode = "SCENE"
+                needs_clarify = "no"
+                clarify_q = ""
+                _contract_for_mode["micro_scene_allowed"] = True
+                _contract_for_mode["response_mode"] = "SCENE"
+        except Exception:
+            pass
+
         try:
             reply_size_policy = _resolve_reply_size_policy(
                 ai_turns=ai_turns,
@@ -9268,35 +9302,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 question_type=question_type,
             )
 
-        # ---------------------------------------------------------------
-        # Discovery bypass estrutural (sem palavras-chave ou frases fixas)
-        #
-        # Quando já estamos no primeiro turno, com segmento plenamente
-        # hidratado e com referência operacional disponível, não há motivo
-        # para consumir um turno adicional com DISCOVERY genérico.
-        #
-        # A decisão utiliza apenas sinais estruturais já produzidos pelo
-        # pipeline, preservando o princípio:
-        # IA decide, código cumpre.
-        # ---------------------------------------------------------------
-        try:
-            if (
-                str(response_mode or "").upper() == "DISCOVERY"
-                and int(ai_turns or 0) == 0
-                and bool(contract.get("hydrated_from_docs"))
-                and str(intent or "").upper() == "SERVICOS"
-                and (
-                    bool(contract.get("has_reference_example"))
-                    or bool(contract.get("has_practical_scene"))
-                    or bool(contract.get("reference_example"))
-                    or bool(contract.get("operational_reference"))
-                )
-            ):
-                response_mode = "DIRECT"
-                micro_scene_allowed = True
-        except Exception:
-            pass
-
         # ----------------------------------------------------------
         # GATE SOBERANO DE MICROCENA / KB OPERACIONAL
         # response_mode decide o formato; microcena só existe em SCENE.
@@ -9309,6 +9314,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 or str((operational_contract or {}).get("reference_example") or "").strip()
                 or list((operational_contract or {}).get("operational_ritual") or [])
             )
+            contract_hydrated_scene_ready = bool(
+                str((operational_contract or {}).get("response_mode") or "").strip().upper() == "SCENE"
+                and bool((operational_contract or {}).get("hydrated_from_docs"))
+                and contract_has_operational_base
+            )
 
             if (
                 response_mode == "SCENE"
@@ -9318,6 +9328,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         and kb_anchor_strong
                     )
                     or global_pack_scene_ready
+                    or contract_hydrated_scene_ready
                 )
                 and contract_has_operational_base
             ):
