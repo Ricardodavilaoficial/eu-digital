@@ -541,6 +541,7 @@ def _front_structured_doc_content(docs: Dict[str, Any] | None) -> Dict[str, Any]
 
         return {
             "core": core,
+            "hasRichScene": bool(scene),
             "contentSourceType": source_type,
             "contentSourceId": source_id,
             "serviceNoun": service_noun,
@@ -700,6 +701,20 @@ def _front_build_structured_assembly_reply(
         core = str((source or {}).get("core") or "").strip()
         if not core:
             return {}
+
+        # Em SCENE com KB segmentada, não deixar um one_liner curto dominar
+        # a resposta final. Quando não há cena rica no documento, preserva o
+        # fluxo principal para a IA soberana/fallback operacional trabalhar.
+        try:
+            if (
+                mode == "SCENE"
+                and str((source or {}).get("contentSourceType") or "").strip() in ("subsegment", "archetype", "segment")
+                and not bool((source or {}).get("hasRichScene"))
+                and len(core) < 320
+            ):
+                return {}
+        except Exception:
+            pass
 
         assembled = _humanize_reply_with_lead_context(
             reply=core,
@@ -9952,37 +9967,55 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 except Exception:
                     direct_spoken = direct_text
 
-                return {
-                    "response_mode": response_mode,
-                    "replyText": direct_text,
-                    "spokenText": direct_spoken,
-                    "understanding": {
-                        "topic": topic,
-                        "intent": intent,
+                # Para SCENE com contrato segmentado hidratado, o direct_scene
+                # não deve encerrar o fluxo cedo. Ele serve como candidato
+                # inicial, mas a resposta ainda precisa passar pelas camadas
+                # de validação/enriquecimento operacional.
+                try:
+                    _continue_after_direct_scene = bool(
+                        str(response_mode or "").strip().upper() == "SCENE"
+                        and isinstance(operational_contract, dict)
+                        and bool(operational_contract.get("hydrated_from_docs"))
+                    )
+                except Exception:
+                    _continue_after_direct_scene = False
+
+                if _continue_after_direct_scene:
+                    reply_text = direct_text
+                    spoken_text = direct_spoken
+                    reply_source = "front_direct_scene"
+                else:
+                    return {
                         "response_mode": response_mode,
-                        "confidence": confidence,
-                        "question_type": question_type,
-                        "needsClarify": needs_clarify,
-                        "clarifyQuestion": clarify_q,
-                        "packProfile": pack_profile,
-                        "renderMode": render_mode,
-                        "segmentKey": segment_key,
-                        "segmentConfidence": segment_conf,
-                        "shouldAskSegment": should_ask_segment,
+                        "replyText": direct_text,
+                        "spokenText": direct_spoken,
+                        "understanding": {
+                            "topic": topic,
+                            "intent": intent,
+                            "response_mode": response_mode,
+                            "confidence": confidence,
+                            "question_type": question_type,
+                            "needsClarify": needs_clarify,
+                            "clarifyQuestion": clarify_q,
+                            "packProfile": pack_profile,
+                            "renderMode": render_mode,
+                            "segmentKey": segment_key,
+                            "segmentConfidence": segment_conf,
+                            "shouldAskSegment": should_ask_segment,
+                            "leadSegmentRaw": inferred_lead_segment_raw,
+                        },
+                        "nextStep": next_step,
+                        "leadName": inferred_lead_name or name_hint,
+                        "segmentHint": segment_hint,
                         "leadSegmentRaw": inferred_lead_segment_raw,
-                    },
-                    "nextStep": next_step,
-                    "leadName": inferred_lead_name or name_hint,
-                    "segmentHint": segment_hint,
-                    "leadSegmentRaw": inferred_lead_segment_raw,
-                    "shouldEnd": should_end,
-                    "nameUse": name_use,
-                    "prefersText": False,
-                    "replySource": "front_direct_scene",
-                    "kbSnapshotSizeChars": len(kb_snapshot or ""),
-                    "tokenUsage": token_usage if isinstance(token_usage, dict) else {},
-                    "operationalContract": operational_contract if isinstance(operational_contract, dict) else {},
-                }
+                        "shouldEnd": should_end,
+                        "nameUse": name_use,
+                        "prefersText": False,
+                        "replySource": "front_direct_scene",
+                        "kbSnapshotSizeChars": len(kb_snapshot or ""),
+                        "tokenUsage": token_usage if isinstance(token_usage, dict) else {},
+                        "operationalContract": operational_contract if isinstance(operational_contract, dict) else {},
+                    }
 
         # ----------------------------------------------------------
         # FREE MODE: nos primeiros turnos do lead, a IA responde direto.
