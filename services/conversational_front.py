@@ -9268,6 +9268,35 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 question_type=question_type,
             )
 
+        # ---------------------------------------------------------------
+        # Discovery bypass estrutural (sem palavras-chave ou frases fixas)
+        #
+        # Quando já estamos no primeiro turno, com segmento plenamente
+        # hidratado e com referência operacional disponível, não há motivo
+        # para consumir um turno adicional com DISCOVERY genérico.
+        #
+        # A decisão utiliza apenas sinais estruturais já produzidos pelo
+        # pipeline, preservando o princípio:
+        # IA decide, código cumpre.
+        # ---------------------------------------------------------------
+        try:
+            if (
+                str(response_mode or "").upper() == "DISCOVERY"
+                and int(ai_turns or 0) == 0
+                and bool(contract.get("hydrated_from_docs"))
+                and str(intent or "").upper() == "SERVICOS"
+                and (
+                    bool(contract.get("has_reference_example"))
+                    or bool(contract.get("has_practical_scene"))
+                    or bool(contract.get("reference_example"))
+                    or bool(contract.get("operational_reference"))
+                )
+            ):
+                response_mode = "DIRECT"
+                micro_scene_allowed = True
+        except Exception:
+            pass
+
         # ----------------------------------------------------------
         # GATE SOBERANO DE MICROCENA / KB OPERACIONAL
         # response_mode decide o formato; microcena só existe em SCENE.
