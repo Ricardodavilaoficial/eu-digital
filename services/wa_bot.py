@@ -534,17 +534,39 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
             or ""
         )
 
-        segment_raw = (
-            out.get("leadSegmentRaw")
+        understanding = out.get("understanding") if isinstance(out.get("understanding"), dict) else {}
+
+        operational_contract = (
+            out.get("operationalContract")
+            if isinstance(out.get("operationalContract"), dict)
+            else {}
+        )
+
+        segment = (
+            out.get("segment")
             or out.get("segmentHint")
+            or operational_contract.get("segment")
             or ctx.get("segment")
             or ctx.get("segment_hint")
-            or ctx.get("leadSegmentRaw")
             or ctx.get("segmentHint")
             or ""
         )
 
-        understanding = out.get("understanding") if isinstance(out.get("understanding"), dict) else {}
+        segment_hint = (
+            out.get("segmentHint")
+            or operational_contract.get("segment")
+            or ctx.get("segment_hint")
+            or ctx.get("segment")
+            or ctx.get("segmentHint")
+            or ""
+        )
+
+        lead_segment_raw = (
+            out.get("leadSegmentRaw")
+            or understanding.get("leadSegmentRaw")
+            or ctx.get("leadSegmentRaw")
+            or ""
+        )
 
 
 
@@ -644,9 +666,9 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
             "displayName": lead_name,
             "name_hint": lead_name,
             "leadName": lead_name,
-            "segment": segment_raw,
-            "segment_hint": segment_raw,
-            "leadSegmentRaw": segment_raw,
+            "segment": segment,
+            "segment_hint": segment_hint,
+            "leadSegmentRaw": lead_segment_raw,
             "lastIntent": last_intent,
             "lastTopic": last_topic,
             "nextStep": next_step,
@@ -2630,20 +2652,32 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             except Exception:
                                 understanding_obj = {}
 
+                            operational_contract_obj = (
+                                front_result.get("operationalContract")
+                                if isinstance(front_result.get("operationalContract"), dict)
+                                else {}
+                            )
+
                             segment_persisted = (
                                 str(ctx.get("segment") or "").strip()
                                 or str(ctx.get("segment_hint") or "").strip()
+                                or str(front_result.get("segment") or "").strip()
+                                or str(front_result.get("segmentHint") or "").strip()
+                                or str(operational_contract_obj.get("segment") or "").strip()
                                 or str(understanding_obj.get("segmentHint") or "").strip()
                                 or str(understanding_obj.get("leadSegmentRaw") or "").strip()
                             )
 
                             segment_hint_persisted = (
                                 str(ctx.get("segment_hint") or "").strip()
+                                or str(front_result.get("segmentHint") or "").strip()
+                                or str(operational_contract_obj.get("segment") or "").strip()
                                 or str(understanding_obj.get("segmentHint") or "").strip()
                             )
 
                             lead_segment_raw_persisted = (
-                                str(understanding_obj.get("leadSegmentRaw") or "").strip()
+                                str(front_result.get("leadSegmentRaw") or "").strip()
+                                or str(understanding_obj.get("leadSegmentRaw") or "").strip()
                             )
 
                             if segment_persisted:
