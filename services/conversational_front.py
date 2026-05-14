@@ -7599,6 +7599,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     last_user_goal = str(state_summary.get("last_user_goal") or "").strip()
     name_hint = str(state_summary.get("name_hint") or "").strip()
+    lead_memory_summary = str(
+        state_summary.get("lead_memory_summary") or ""
+    ).strip()
+    lead_memory_turns = int(
+        state_summary.get("lead_memory_turns") or 0
+    )
+    last_topic = str(
+        state_summary.get("last_topic") or ""
+    ).strip()
+    last_next_step = str(
+        state_summary.get("last_next_step") or ""
+    ).strip()
 
     # Sanitização leve: evita capturas inválidas de áudio
     if name_hint:
@@ -7615,6 +7627,55 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         or ""
     ).strip().lower()
     kb_snapshot, kb_compact, kb_snapshot_json_ok = _prepare_kb_snapshot_buffers(kb_snapshot)
+
+    # ---------------------------------------------------------------
+    # Memória conversacional persistida (best-effort)
+    #
+    # Informações já carregadas do Firestore são agregadas ao contexto
+    # atual para preservar continuidade entre turnos.
+    #
+    # A decisão estratégica permanece sob responsabilidade da IA.
+    # O código apenas fornece contexto estrutural adicional.
+    # ---------------------------------------------------------------
+    persistent_context_parts: list[str] = []
+
+    if lead_memory_summary:
+        persistent_context_parts.append(lead_memory_summary)
+
+    if last_topic:
+        persistent_context_parts.append(
+            f"Tema recente: {last_topic}."
+        )
+
+    if last_next_step:
+        persistent_context_parts.append(
+            f"Próximo passo em andamento: {last_next_step}."
+        )
+
+    persistent_context = " ".join(
+        part.strip()
+        for part in persistent_context_parts
+        if str(part or "").strip()
+    ).strip()
+
+    if persistent_context:
+        if last_user_goal:
+            last_user_goal = (
+                f"{persistent_context} Objetivo atual: {last_user_goal}"
+            ).strip()
+        else:
+            last_user_goal = persistent_context
+
+    try:
+        logging.info(
+            "[CONVERSATIONAL_FRONT][LEAD_MEMORY] has_summary=%s turns=%s has_topic=%s has_next_step=%s",
+            bool(lead_memory_summary),
+            lead_memory_turns,
+            bool(last_topic),
+            bool(last_next_step),
+        )
+    except Exception:
+        pass
 
     # 🔒 Snapshot em dict para regras determinísticas do platform_kb
     kb_snapshot_obj: Dict[str, Any] = {}
