@@ -2604,6 +2604,54 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
                             out["aiMeta"] = am
                             out = _apply_safe_ai_meta(out, ctx)
+                            # -------------------------------------------------------
+                            # Persistência do lead (best-effort)
+                            # -------------------------------------------------------
+                            #
+                            # Além do nome e do resumo, persistimos também o segmento
+                            # já identificado pela IA. Isso permite que interações
+                            # futuras reutilizem diretamente o contexto do negócio,
+                            # sem necessidade de redescoberta.
+                            #
+                            # A lógica abaixo apenas aproveita sinais já produzidos
+                            # pelo pipeline; nenhuma regra baseada em palavras-chave
+                            # é introduzida no código.
+                            # -------------------------------------------------------
+                            front_result = front_out
+                            understanding_obj = {}
+                            try:
+                                understanding_obj = (
+                                    front_result.get("understanding")
+                                    if isinstance(front_result, dict)
+                                    else {}
+                                ) or {}
+                            except Exception:
+                                understanding_obj = {}
+
+                            segment_persisted = (
+                                str(ctx.get("segment") or "").strip()
+                                or str(ctx.get("segment_hint") or "").strip()
+                                or str(understanding_obj.get("segmentHint") or "").strip()
+                                or str(understanding_obj.get("leadSegmentRaw") or "").strip()
+                            )
+
+                            segment_hint_persisted = (
+                                str(ctx.get("segment_hint") or "").strip()
+                                or str(understanding_obj.get("segmentHint") or "").strip()
+                            )
+
+                            lead_segment_raw_persisted = (
+                                str(understanding_obj.get("leadSegmentRaw") or "").strip()
+                            )
+
+                            if segment_persisted:
+                                ctx["segment"] = segment_persisted
+
+                            if segment_hint_persisted:
+                                ctx["segment_hint"] = segment_hint_persisted
+
+                            if lead_segment_raw_persisted:
+                                ctx["leadSegmentRaw"] = lead_segment_raw_persisted
                             try:
                                 _save_institutional_lead_memory(wa_key, out, ctx)
                             except Exception:
