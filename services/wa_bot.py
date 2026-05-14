@@ -2246,6 +2246,34 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             # Micro-contexto (best-effort). Se não vier, segue vazio.
                             "last_intent": ctx.get("last_intent") or ctx.get("lastIntent") or "",
                             "last_user_goal": ctx.get("last_user_goal") or ctx.get("lastUserGoal") or "",
+                            # ---------------------------------------------------
+                            # Memória conversacional persistida (best-effort)
+                            #
+                            # Apenas repassa ao front informações já carregadas
+                            # do Firestore, sem criar regras de decisão no código.
+                            # A IA continua soberana; o código apenas fornece
+                            # contexto estrutural adicional.
+                            # ---------------------------------------------------
+                            "lead_memory_summary": (
+                                ctx.get("lead_memory_summary")
+                                or ctx.get("summary")
+                                or ""
+                            ),
+                            "lead_memory_turns": (
+                                ctx.get("lead_memory_turns")
+                                or ctx.get("turns")
+                                or 0
+                            ),
+                            "last_topic": (
+                                ctx.get("last_topic")
+                                or ctx.get("lastTopic")
+                                or ""
+                            ),
+                            "last_next_step": (
+                                ctx.get("last_next_step")
+                                or ctx.get("lastNextStep")
+                                or ""
+                            ),
                         }
 
                         try:
