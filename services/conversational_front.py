@@ -9501,6 +9501,112 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        # ----------------------------------------------------------
+        # SANEAMENTO FINAL DOS DOCUMENTOS OPERACIONAIS
+        #
+        # O contrato pode ter sido esvaziado, mas o assembly estruturado
+        # ainda recebe real_kb_docs. Se subsegment_doc/segment_doc mantiver
+        # o documento incompatível, a resposta final ainda pode sair com
+        # microcena do segmento errado.
+        #
+        # Esta validação é genérica:
+        # - não usa palavras-chave de segmento;
+        # - não interpreta expressões do usuário;
+        # - não altera prompt;
+        # - não cria chamada nova ao modelo;
+        # - funciona para qualquer segmento/subsegmento escolhido por
+        #   similaridade indevida.
+        # ----------------------------------------------------------
+        try:
+            _docs_segment_ok = True
+            _selected_doc = {}
+            _selected_key = ""
+
+            if isinstance(real_kb_docs, dict):
+                _selected_doc = (
+                    real_kb_docs.get("subsegment_doc")
+                    or real_kb_docs.get("segment_doc")
+                    or {}
+                )
+
+            if isinstance(_selected_doc, dict) and _selected_doc:
+                _selected_key = str(
+                    _selected_doc.get("id")
+                    or _selected_doc.get("subsegment_id")
+                    or _selected_doc.get("segment_id")
+                    or ""
+                ).strip()
+
+                if str(user_text or "").strip():
+                    _docs_segment_ok = _doc_identity_is_compatible_with_current_text(
+                        user_text=user_text,
+                        doc=_selected_doc,
+                        doc_key=_selected_key,
+                        min_score=2,
+                    )
+
+            if not _docs_segment_ok:
+                real_kb_docs = {
+                    "subsegment_doc": {},
+                    "segment_doc": {},
+                    "archetype_doc": {},
+                }
+
+                try:
+                    hydrated_from_docs = False
+                    found_sub = False
+                    found_seg = False
+                    found_arch = False
+                    effective_segment = ""
+                    segment_for_prompt = ""
+                except Exception:
+                    pass
+
+                try:
+                    if isinstance(kb_context, dict):
+                        for key in (
+                            "subsegment_hint",
+                            "effective_subsegment",
+                            "segment_hint",
+                            "segment_id",
+                            "archetype_id",
+                            "segment_profile",
+                            "operational_family",
+                            "operational_reference",
+                            "segment_reference_example",
+                            "pack_micro_scene",
+                            "micro_scene",
+                            "micro_scene_conversational",
+                            "reference_example",
+                            "practical_scene",
+                            "direct_scene",
+                            "runtime_short_reply",
+                            "runtime_long_text",
+                            "has_reference_example",
+                            "has_practical_scene",
+                            "hydrated_from_docs",
+                            "micro_scene_allowed",
+                        ):
+                            kb_context.pop(key, None)
+
+                        kb_context["segment_context_status"] = (
+                            "final_docs_rejected_as_incompatible"
+                        )
+                except Exception:
+                    pass
+
+                try:
+                    operational_contract = {}
+                    base_operational_contract = {}
+                    operational_reference = ""
+                    reference_example = ""
+                    operational_family = ""
+                    selected_pack_id = ""
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         has_real_operational_context = False
         try:
             # ==========================================================
