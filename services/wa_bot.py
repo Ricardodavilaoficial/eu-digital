@@ -1580,22 +1580,16 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
         if _size(work) <= limit:
             return work
 
-        # 4) se ainda exceder, perde personalização segmentada, mas mantém pack global.
-        ap = dict(work.get("answer_playbook_v1") or {})
-        if ap.get("segment_value_map_v1"):
-            ap["segment_value_map_v1"] = {}
-            work["answer_playbook_v1"] = ap
-            if _size(work) <= limit:
-                return work
-
-        # 5) último recurso comercial: remove packs somente se nem o fallback global couber.
-        if work.get("value_packs_v1"):
-            work["value_packs_v1"] = {}
-            if _size(work) <= limit:
-                return work
-
-        # 6) último recurso operacional: remove documentos estruturados só depois
-        # de tentar preservar o índice semântico mínimo.
+        # 4) se ainda exceder, remove primeiro documentos operacionais
+        # segmentados. Eles são úteis quando há match confiável, mas não
+        # podem ter prioridade sobre o fallback neutro da platform_kb.
+        #
+        # Princípio:
+        # - sem palavras-chave;
+        # - sem prompt;
+        # - sem escolher "o segmento menos pior";
+        # - preserva value_packs_v1 para responder utilmente quando o
+        #   segmento específico ainda não estiver estruturado.
         if work.get("kb_archetypes_v1"):
             work["kb_archetypes_v1"] = {}
             if _size(work) <= limit:
@@ -1608,6 +1602,20 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
 
         if work.get("kb_subsegments_v1"):
             work["kb_subsegments_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        # 5) se ainda exceder, perde personalização segmentada, mas mantém pack global.
+        ap = dict(work.get("answer_playbook_v1") or {})
+        if ap.get("segment_value_map_v1"):
+            ap["segment_value_map_v1"] = {}
+            work["answer_playbook_v1"] = ap
+            if _size(work) <= limit:
+                return work
+
+        # 6) último recurso comercial: remove packs somente se nem o fallback global couber.
+        if work.get("value_packs_v1"):
+            work["value_packs_v1"] = {}
             if _size(work) <= limit:
                 return work
 
