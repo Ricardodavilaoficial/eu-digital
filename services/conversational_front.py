@@ -954,16 +954,42 @@ def _infer_segment_from_text(user_text: str, kb_snapshot: str) -> str:
         except Exception:
             obj = None
 
+        def _key_matches_text(key: str, text_norm: str) -> bool:
+            """
+            Matching estrutural e genérico entre chave do KB e texto do lead.
+            Não contém palavras-chave de segmento.
+            Serve para variações naturais como masculino/feminino/plural
+            quando a própria chave do KB já está próxima do texto.
+            """
+            try:
+                key_norm = _norm(str(key or "").replace("__", " ").replace("_", " "))
+                if not key_norm or not text_norm:
+                    return False
+                if key_norm in text_norm:
+                    return True
+
+                key_tokens = [t for t in _tokenize_lookup_text(key_norm) if len(t) >= 7]
+                text_tokens = [t for t in _tokenize_lookup_text(text_norm) if len(t) >= 7]
+
+                for kt in key_tokens:
+                    for tt in text_tokens:
+                        common = os.path.commonprefix([kt, tt])
+                        if len(common) >= 7:
+                            return True
+                return False
+            except Exception:
+                return False
+
         if isinstance(obj, dict):
-            kb_segments = obj.get("kb_segments_v1") or {}
+            kb_segments = _find_kb_map_anywhere(obj, "kb_segments_v1") or {}
             if isinstance(kb_segments, dict):
                 candidates.extend([str(k).strip().lower() for k in kb_segments.keys() if str(k).strip()])
 
-            kb_subsegments = obj.get("kb_subsegments_v1") or {}
+            kb_subsegments = _find_kb_map_anywhere(obj, "kb_subsegments_v1") or {}
             if isinstance(kb_subsegments, dict):
                 sub_candidates = [str(k).strip().lower() for k in kb_subsegments.keys() if str(k).strip()]
 
-            svm = obj.get("segment_value_map_v1") or {}
+            svm = _find_kb_map_anywhere(obj, "segment_value_map_v1") or {}
             if isinstance(svm, dict):
                 for k, profile in svm.items():
                     key = str(k).strip().lower()
@@ -986,19 +1012,38 @@ def _infer_segment_from_text(user_text: str, kb_snapshot: str) -> str:
         # Primeiro: se o conteúdo do perfil no KB casou com o texto,
         # retorna a chave estrutural do segmento.
         for seg in candidates:
-            s = _norm(seg)
-            if s and s in norm:
-                return s
+            if _key_matches_text(seg, norm):
+                return _norm(seg)
 
         for sub in sub_candidates:
-            s = _norm(sub.replace("__", " "))
-            if s and s in norm:
+            if _key_matches_text(sub, norm):
                 return sub
 
         for seg in candidates:
-            s = _norm(seg)
-            if s and s in norm:
-                return s
+            if _key_matches_text(seg, norm):
+                return _norm(seg)
+
+        # Fallback estrutural pelo conteúdo do próprio KB.
+        # Continua sem palavras-chave locais: usa somente documentos do Firestore/snapshot.
+        try:
+            if isinstance(obj, dict):
+                svm = _find_kb_map_anywhere(obj, "segment_value_map_v1") or {}
+                if isinstance(svm, dict) and svm:
+                    m = _keyword_doc_match(user_text, svm) or _best_doc_match(user_text, svm, min_score=2)
+                    if m:
+                        return _norm(m)
+        except Exception:
+            pass
+
+        try:
+            if isinstance(obj, dict):
+                kb_subsegments = _find_kb_map_anywhere(obj, "kb_subsegments_v1") or {}
+                if isinstance(kb_subsegments, dict) and kb_subsegments:
+                    m = _keyword_doc_match(user_text, kb_subsegments) or _best_doc_match(user_text, kb_subsegments, min_score=3)
+                    if m:
+                        return str(m or "").strip()
+        except Exception:
+            pass
 
         # fallback semântico mínimo para papéis claros
         _txt = (user_text or "").lower()
@@ -7810,6 +7855,52 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 user_text=user_text,
                 kb_context=kb_context if isinstance(kb_context, dict) else {},
             )
+
+            # ----------------------------------------------------------
+            # Prioridade estrutural do segmento declarado no turno atual
+            #
+            # Se o texto/STT do turno atual indicou um segmento via KB,
+            # esse sinal vence qualquer subsegmento antigo/fraco retornado
+            # pelo resolver. Não há palavras-chave nem regra por ramo:
+            # apenas preserva a inferência estrutural feita a partir do KB.
+            # ----------------------------------------------------------
+            try:
+                if inferred_segment_for_kb and isinstance(kb_context, dict):
+                    _turn_seg = _normalize_lookup_key(inferred_segment_for_kb)
+                    _resolved_seg = _normalize_lookup_key(
+                        " ".join(
+                            [
+                                str(kb_context.get("subsegment_hint") or ""),
+                                str(kb_context.get("effective_subsegment") or ""),
+                                str(kb_context.get("segment_hint") or ""),
+                                str(kb_context.get("segment_id") or ""),
+                            ]
+                        )
+                    )
+
+                    if (
+                        _turn_seg
+                        and _resolved_seg
+                        and _turn_seg not in _resolved_seg
+                        and _resolved_seg not in _turn_seg
+                    ):
+                        for k in (
+                            "subsegment_hint",
+                            "effective_subsegment",
+                            "segment_id",
+                            "archetype_id",
+                            "segment_profile",
+                            "operational_family",
+                            "operational_reference",
+                            "segment_reference_example",
+                            "pack_micro_scene",
+                        ):
+                            kb_context.pop(k, None)
+
+                        kb_context["segment_hint"] = inferred_segment_for_kb
+                        kb_context["segment_context_status"] = "current_turn_segment_preserved"
+            except Exception:
+                pass
     except Exception:
         kb_context = {}
 
