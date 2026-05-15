@@ -9449,6 +9449,58 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        # ----------------------------------------------------------
+        # SANEAMENTO FINAL DO CONTRATO OPERACIONAL
+        #
+        # IMPORTANTE:
+        # Mesmo que o kb_context tenha sido limpo anteriormente,
+        # o operational_contract pode já ter sido montado com um
+        # subsegmento escolhido por similaridade (ex.: ótica).
+        #
+        # Se a identidade estrutural desse contrato não for compatível
+        # com o texto atual do lead, o contrato é descartado aqui,
+        # imediatamente antes de qualquer decisão de SCENE/microcena.
+        #
+        # Princípios preservados:
+        # - sem palavras-chave hardcoded;
+        # - sem regex de linguagem;
+        # - sem alteração de prompts;
+        # - sem nova chamada ao modelo.
+        # ----------------------------------------------------------
+        try:
+            _contract_segment_ok = True
+
+            if (
+                isinstance(operational_contract, dict)
+                and str(operational_contract.get("segment") or "").strip()
+                and str(user_text or "").strip()
+            ):
+                _contract_segment_ok = _doc_identity_is_compatible_with_current_text(
+                    user_text=user_text,
+                    doc=operational_contract,
+                    doc_key=str(operational_contract.get("segment") or ""),
+                    min_score=2,
+                )
+
+            if not _contract_segment_ok:
+                operational_contract = {}
+                base_operational_contract = {}
+
+                operational_reference = ""
+                reference_example = ""
+                operational_family = ""
+                selected_pack_id = ""
+
+                try:
+                    if isinstance(kb_context, dict):
+                        kb_context["segment_context_status"] = (
+                            "final_contract_rejected_as_incompatible"
+                        )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         has_real_operational_context = False
         try:
             # ==========================================================
@@ -9480,6 +9532,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and (
                     str(operational_contract.get("segment") or "").strip()
                     or str(operational_contract.get("archetype_id") or "").strip()
+                )
+                and _doc_identity_is_compatible_with_current_text(
+                    user_text=user_text,
+                    doc=operational_contract,
+                    doc_key=str(operational_contract.get("segment") or ""),
+                    min_score=2,
                 )
             )
         except Exception:
