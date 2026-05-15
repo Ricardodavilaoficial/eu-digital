@@ -7857,13 +7857,28 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
 
             # ----------------------------------------------------------
-            # Prioridade estrutural do segmento declarado no turno atual
+            # Curto-circuito estrutural do segmento inferido no turno
             #
-            # Se o texto/STT do turno atual indicou um segmento via KB,
-            # esse sinal vence qualquer subsegmento antigo/fraco retornado
-            # pelo resolver. Não há palavras-chave nem regra por ramo:
-            # apenas preserva a inferência estrutural feita a partir do KB.
+            # Se _infer_segment_from_text() identificou um segmento a
+            # partir do texto/STT atual, esse valor deve prevalecer sobre
+            # qualquer contexto residual ou fallback por similaridade.
+            #
+            # Não há palavras-chave hardcoded.
+            # Não altera prompts.
+            # Não interfere quando nenhum segmento foi inferido.
             # ----------------------------------------------------------
+            try:
+                if (
+                    not inferred_segment_for_kb
+                    and user_text
+                    and kb_snapshot
+                ):
+                    inferred_segment_for_kb = (
+                        _infer_segment_from_text(user_text, kb_snapshot) or ""
+                    ).strip()
+            except Exception:
+                pass
+
             try:
                 if inferred_segment_for_kb and isinstance(kb_context, dict):
                     _turn_seg = _normalize_lookup_key(inferred_segment_for_kb)
@@ -7878,11 +7893,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         )
                     )
 
+                    # Se o segmento inferido no turno atual divergir do
+                    # segmento atualmente resolvido, limpamos apenas os
+                    # campos derivados para forçar re-hidratação coerente.
                     if (
                         _turn_seg
-                        and _resolved_seg
-                        and _turn_seg not in _resolved_seg
-                        and _resolved_seg not in _turn_seg
+                        and (
+                            not _resolved_seg
+                            or (
+                                _turn_seg not in _resolved_seg
+                                and _resolved_seg not in _turn_seg
+                            )
+                        )
                     ):
                         for k in (
                             "subsegment_hint",
@@ -7894,11 +7916,24 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             "operational_reference",
                             "segment_reference_example",
                             "pack_micro_scene",
+                            "micro_scene",
+                            "micro_scene_conversational",
+                            "reference_example",
+                            "practical_scene",
+                            "direct_scene",
+                            "runtime_short_reply",
+                            "runtime_long_text",
                         ):
                             kb_context.pop(k, None)
 
+                        # Preserva soberania do segmento detectado no
+                        # turno atual para o próximo lookup estrutural.
                         kb_context["segment_hint"] = inferred_segment_for_kb
-                        kb_context["segment_context_status"] = "current_turn_segment_preserved"
+                        kb_context["subsegment_hint"] = inferred_segment_for_kb
+                        kb_context["effective_subsegment"] = inferred_segment_for_kb
+                        kb_context["segment_context_status"] = (
+                            "current_turn_segment_short_circuit"
+                        )
             except Exception:
                 pass
     except Exception:
