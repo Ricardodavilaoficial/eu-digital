@@ -7762,11 +7762,56 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     # Seletor de fatos do KB (menos tokens, menos "chute")
     kb_context: Dict[str, Any] = {}
+    inferred_segment_for_kb = ""
+
+    # ----------------------------------------------------------
+    # Router semântico antecipado (antes do primeiro KB_LOOKUP)
+    #
+    # Objetivo:
+    # Consolidar o segmento declarado no turno atual antes que o
+    # resolver consulte o KB segmentado.
+    #
+    # Princípios preservados:
+    # - sem palavras-chave hardcoded;
+    # - sem alteração de prompts;
+    # - sem chamada extra ao modelo;
+    # - baixo risco de regressão.
+    #
+    # A função _infer_segment_from_text já utiliza apenas as
+    # estruturas existentes no próprio KB snapshot.
+    # ----------------------------------------------------------
+    try:
+        if (
+            not inferred_segment_for_kb
+            and user_text
+            and kb_snapshot
+        ):
+            _early_segment = (
+                _infer_segment_from_text(user_text, kb_snapshot) or ""
+            ).strip()
+
+            if _early_segment:
+                inferred_segment_for_kb = _early_segment
+
+                # Propaga imediatamente para o estado local
+                # consumido pelo resolver.
+                try:
+                    state_summary["segmentHint"] = _early_segment
+                except Exception:
+                    pass
+
+                try:
+                    state_summary["leadSegmentRaw"] = _early_segment
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     try:
         if FRONT_KB_RESOLVER_ENABLED and build_kb_context is not None:
-            inferred_segment_for_kb = ""
             try:
-                inferred_segment_for_kb = _infer_segment_from_text(user_text, kb_snapshot)
+                if not inferred_segment_for_kb:
+                    inferred_segment_for_kb = _infer_segment_from_text(user_text, kb_snapshot)
             except Exception:
                 inferred_segment_for_kb = ""
 
