@@ -650,6 +650,7 @@ def _front_build_structured_assembly_reply(
     ai_turns: int = 0,
     lead_name: str = "",
     lead_segment_raw: str = "",
+    question_type: str = "broad",
 ) -> Dict[str, Any]:
     """
     Monta resposta final por fonte estruturada, atrás de feature flag.
@@ -666,14 +667,11 @@ def _front_build_structured_assembly_reply(
             return {}
 
         mode = str(response_mode or "").strip().upper()
-        try:
-            turns = int(ai_turns or 0)
-        except Exception:
-            turns = 0
+        q_type = str(question_type or "broad").strip().lower()
 
         allow_structured_long = bool(
             mode == "SCENE"
-            or (mode == "DIRECT" and turns <= 0)
+            or (mode == "DIRECT" and q_type == "broad")
         )
 
         if not allow_structured_long:
@@ -8383,7 +8381,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # realmente cair num trilho prático.
     allow_scene_prompting = bool(
         free_mode
-        and ai_turns > 0
         and kb_anchor_strong
         and effective_segment
         and (
@@ -8433,7 +8430,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     allow_kb_payload_scene = bool(
         free_mode
-        and ai_turns > 0
         and allow_scene_prompting
         and (
             str(operational_reference or "").strip()
@@ -10919,6 +10915,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     ai_turns=ai_turns,
                     lead_name=inferred_lead_name or name_hint,
                     lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
+                    question_type=question_type,
                 )
 
                 if structured_assembly_result and structured_assembly_result.get("replyText"):
@@ -11970,6 +11967,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ai_turns=ai_turns,
                 lead_name=inferred_lead_name or name_hint,
                 lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
+                question_type=question_type,
             )
 
             if structured_assembly_result and structured_assembly_result.get("replyText"):
