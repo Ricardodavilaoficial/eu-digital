@@ -345,6 +345,116 @@ def _apply_sales_text_only_closure(out: Dict[str, Any], ctx: Optional[Dict[str, 
         return dict(out or {})
 
 
+
+
+def _clean_final_reply_tail(text: Any) -> str:
+    """
+    Saneamento final, determinístico e independente de segmento.
+
+    Objetivo: impedir que resíduos de montagem/polimento escapem no fim
+    da resposta, sem alterar estratégia, prompt, KB, intenção ou conteúdo
+    já aprovado pelo front.
+    """
+    try:
+        import re
+
+        t = str(text or "").strip()
+        if not t:
+            return ""
+
+        # Não mexe em respostas cujo fechamento operacional é um link.
+        # Evita quebrar URL, assinatura ou envio link-only.
+        last_line = (t.splitlines()[-1] if t.splitlines() else t).strip()
+        if re.search(r"https?://\S+$", last_line, flags=re.IGNORECASE):
+            return t
+
+        # Normaliza espaços sem destruir quebras de linha úteis.
+        t = re.sub(r"[ \t]+", " ", t).strip()
+        t = re.sub(r"\n{3,}", "\n\n", t).strip()
+
+        def _norm_tokens(x: str) -> list[str]:
+            try:
+                return re.findall(r"[a-z0-9áàâãéêíóôõúç]+", x.lower(), flags=re.IGNORECASE)
+            except Exception:
+                return []
+
+        def _cut_at_last_strong(s: str) -> str:
+            matches = list(re.finditer(r"[.!?](?:[\)\]\}'\"])?", s))
+            if not matches:
+                return s.strip()
+            return s[: matches[-1].end()].strip()
+
+        # 1) Se o final é uma pontuação fraca, preferimos remover o rabo
+        #    depois da última frase completa.
+        if t[-1:] in {",", ";", ":", "-", "–", "—"}:
+            cut = _cut_at_last_strong(t)
+            if cut and len(cut) >= max(40, int(len(t) * 0.55)):
+                t = cut
+            else:
+                t = t.rstrip(" ,;:-–—").strip()
+
+        # 2) Se sobrou um rabo parecido com o início da própria resposta,
+        #    é resíduo de duplicação. A comparação é estrutural por tokens,
+        #    sem depender de tema, segmento ou frase pronta.
+        if t and t[-1:] not in {".", "!", "?"}:
+            last_boundary = max(t.rfind("."), t.rfind("!"), t.rfind("?"))
+            if last_boundary != -1:
+                head = t[: last_boundary + 1].strip()
+                tail = t[last_boundary + 1 :].strip()
+                head_tokens = _norm_tokens(head)
+                tail_tokens = _norm_tokens(tail)
+                duplicated_opening = bool(
+                    head_tokens
+                    and tail_tokens
+                    and len(tail_tokens) >= 5
+                    and head_tokens[: len(tail_tokens)] == tail_tokens
+                )
+                if duplicated_opening:
+                    t = head
+
+        # 3) Garantia final: resposta útil termina com pontuação forte.
+        if t and t[-1:] not in {".", "!", "?"}:
+            t = t.rstrip(" ,;:-–—").strip()
+            if t:
+                t += "."
+
+        return t.strip()
+    except Exception:
+        return str(text or "").strip()
+
+
+def _apply_final_reply_tail_guard(out: Dict[str, Any]) -> Dict[str, Any]:
+    """Aplica o saneamento final em replyText e spokenText, sem mudar metadados."""
+    try:
+        if not isinstance(out, dict):
+            return out
+
+        before_reply = str(out.get("replyText") or "")
+        before_spoken = str(out.get("spokenText") or "")
+
+        after_reply = _clean_final_reply_tail(before_reply)
+        after_spoken = _clean_final_reply_tail(before_spoken or after_reply)
+
+        if after_reply:
+            out["replyText"] = after_reply
+        if after_spoken:
+            out["spokenText"] = after_spoken
+
+        try:
+            if before_reply.strip() != str(out.get("replyText") or "").strip() or before_spoken.strip() != str(out.get("spokenText") or "").strip():
+                logging.info(
+                    "[WA_BOT][FINAL_TAIL_GUARD] reply_len_before=%s reply_len_after=%s spoken_len_before=%s spoken_len_after=%s",
+                    len(before_reply.strip()),
+                    len(str(out.get("replyText") or "").strip()),
+                    len(before_spoken.strip()),
+                    len(str(out.get("spokenText") or "").strip()),
+                )
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return out
+
 def _log_sales_lead_fallback(ctx: Optional[Dict[str, Any]], *, reason: str, err: Optional[Exception] = None):
     try:
         ctx = ctx or {}
@@ -2535,6 +2645,11 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 out["replyText"] = _rt
                         except Exception:
                             pass
+
+                        # Guard final de acabamento: atua apenas no texto já pronto,
+                        # depois do front e do polimento, antes de persistir/enviar.
+                        # Não decide intenção, não consulta KB, não altera prompt.
+                        out = _apply_final_reply_tail_guard(out)
 
                         try:
                             logging.info(
