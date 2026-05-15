@@ -354,6 +354,11 @@ def _clean_final_reply_tail(text: Any) -> str:
     Objetivo: impedir que resíduos de montagem/polimento escapem no fim
     da resposta, sem alterar estratégia, prompt, KB, intenção ou conteúdo
     já aprovado pelo front.
+
+    Regra central:
+    - se já existe uma frase completa e o trecho final ficou sem fechamento,
+      o guard corta a sobra até a última pontuação forte;
+    - se não há frase completa anterior, apenas normaliza e pontua.
     """
     try:
         import re
@@ -371,6 +376,7 @@ def _clean_final_reply_tail(text: Any) -> str:
         # Normaliza espaços sem destruir quebras de linha úteis.
         t = re.sub(r"[ \t]+", " ", t).strip()
         t = re.sub(r"\n{3,}", "\n\n", t).strip()
+        t = t.strip(" \t\r\n\u200b\u200c\u200d\ufeff")
 
         def _norm_tokens(x: str) -> list[str]:
             try:
@@ -378,41 +384,97 @@ def _clean_final_reply_tail(text: Any) -> str:
             except Exception:
                 return []
 
-        def _cut_at_last_strong(s: str) -> str:
-            matches = list(re.finditer(r"[.!?](?:[\)\]\}'\"])?", s))
-            if not matches:
-                return s.strip()
-            return s[: matches[-1].end()].strip()
+        def _last_strong_match(s: str):
+            try:
+                matches = list(re.finditer(r"[.!?](?:[\)\]\}'\"])?", s))
+                return matches[-1] if matches else None
+            except Exception:
+                return None
 
-        # 1) Se o final é uma pontuação fraca, preferimos remover o rabo
-        #    depois da última frase completa.
-        if t[-1:] in {",", ";", ":", "-", "–", "—"}:
+        def _cut_at_last_strong(s: str) -> str:
+            m = _last_strong_match(s)
+            if not m:
+                return s.strip()
+            return s[: m.end()].strip()
+
+        def _looks_like_unfinished_tail(tail: str, full_text: str) -> bool:
+            """
+            Heurística estrutural, sem palavras-chave:
+            identifica sobra final quando já existe frase completa anterior.
+            """
+            try:
+                tail = str(tail or "").strip()
+                if not tail:
+                    return False
+
+                weak_end = tail[-1:] in {",", ";", ":", "-", "–", "—", "(", "[", "{", "/"}
+                if weak_end:
+                    return True
+
+                tail_tokens = _norm_tokens(tail)
+                if not tail_tokens:
+                    return True
+
+                # Palavra final muito curta em trecho longo costuma indicar corte duro
+                # no meio da geração, como final incompleto de uma palavra.
+                if len(tail) >= 70 and len(tail_tokens[-1]) <= 3:
+                    return True
+
+                # Um trecho final longo sem pontuação forte, depois de uma frase completa,
+                # é mais arriscado manter do que cortar.
+                if len(tail) >= 90:
+                    return True
+
+                # Se a cauda tem pontuação fraca interna e não fecha frase, é sobra.
+                if len(tail) >= 45 and re.search(r"[,;:]", tail):
+                    return True
+
+                # Se a resposta inteira já é longa e a cauda ficou média/sem fecho,
+                # prioriza preservar as frases completas já aprovadas.
+                if len(full_text) >= 500 and len(tail) >= 35:
+                    return True
+
+                return False
+            except Exception:
+                return False
+
+        # 1) Remove duplicação estrutural do início reaparecendo no fim.
+        #    A comparação é por tokens, sem depender de tema, segmento ou frase pronta.
+        last_strong = _last_strong_match(t)
+        if last_strong is not None and t[-1:] not in {".", "!", "?"}:
+            head = t[: last_strong.end()].strip()
+            tail = t[last_strong.end() :].strip()
+            head_tokens = _norm_tokens(head)
+            tail_tokens = _norm_tokens(tail)
+            duplicated_opening = bool(
+                head_tokens
+                and tail_tokens
+                and len(tail_tokens) >= 5
+                and head_tokens[: len(tail_tokens)] == tail_tokens
+            )
+            if duplicated_opening:
+                t = head
+
+        # 2) Se existe frase completa antes e o final ficou incompleto,
+        #    corta até a última pontuação forte. Isso corrige tanto rabo solto
+        #    quanto truncamento duro no meio de palavra.
+        last_strong = _last_strong_match(t)
+        if last_strong is not None and t[-1:] not in {".", "!", "?"}:
+            head = t[: last_strong.end()].strip()
+            tail = t[last_strong.end() :].strip()
+            if head and _looks_like_unfinished_tail(tail, t):
+                t = head
+
+        # 3) Se ainda terminou com pontuação fraca, corta no último fechamento forte.
+        if t and t[-1:] in {",", ";", ":", "-", "–", "—"}:
             cut = _cut_at_last_strong(t)
-            if cut and len(cut) >= max(40, int(len(t) * 0.55)):
+            if cut and cut != t:
                 t = cut
             else:
                 t = t.rstrip(" ,;:-–—").strip()
 
-        # 2) Se sobrou um rabo parecido com o início da própria resposta,
-        #    é resíduo de duplicação. A comparação é estrutural por tokens,
-        #    sem depender de tema, segmento ou frase pronta.
-        if t and t[-1:] not in {".", "!", "?"}:
-            last_boundary = max(t.rfind("."), t.rfind("!"), t.rfind("?"))
-            if last_boundary != -1:
-                head = t[: last_boundary + 1].strip()
-                tail = t[last_boundary + 1 :].strip()
-                head_tokens = _norm_tokens(head)
-                tail_tokens = _norm_tokens(tail)
-                duplicated_opening = bool(
-                    head_tokens
-                    and tail_tokens
-                    and len(tail_tokens) >= 5
-                    and head_tokens[: len(tail_tokens)] == tail_tokens
-                )
-                if duplicated_opening:
-                    t = head
-
-        # 3) Garantia final: resposta útil termina com pontuação forte.
+        # 4) Garantia final: resposta útil termina com pontuação forte.
+        #    Só pontua quando não houve evidência suficiente para cortar.
         if t and t[-1:] not in {".", "!", "?"}:
             t = t.rstrip(" ,;:-–—").strip()
             if t:
