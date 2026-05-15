@@ -1345,7 +1345,33 @@ def _doc_identity_is_compatible_with_current_text(
         if not q or not isinstance(doc, dict):
             return False
 
-        score = _score_query_against_doc(q, doc, str(doc_key or ""))
+        # Validação de identidade deve usar apenas campos identitários.
+        #
+        # Não usa palavras-chave de segmento.
+        # Não tenta interpretar formas de fala do lead.
+        # Não usa microcena, ritual operacional ou textos longos.
+        #
+        # Motivo:
+        # campos operacionais contêm termos genéricos como "cliente",
+        # "agenda" e "atendimento", que podem validar falsamente um
+        # subsegmento incompatível escolhido por similaridade.
+        identity_doc = {
+            "id": doc.get("id"),
+            "name": doc.get("name"),
+            "title": doc.get("title"),
+            "label": doc.get("label"),
+            "keywords": doc.get("keywords"),
+            "one_liner": doc.get("one_liner"),
+            "segment": doc.get("segment"),
+            "segment_id": doc.get("segment_id"),
+            "subsegment": doc.get("subsegment"),
+            "subsegment_id": doc.get("subsegment_id"),
+            "archetype_id": doc.get("archetype_id"),
+            "service_noun": doc.get("service_noun"),
+            "customer_noun": doc.get("customer_noun"),
+        }
+
+        score = _score_query_against_doc(q, identity_doc, str(doc_key or ""))
         return score >= int(min_score)
     except Exception:
         return False
@@ -1403,8 +1429,12 @@ def _clear_incompatible_kb_context_for_current_text(
         ):
             return ctx
 
-        # Contrato segmentado incompatível: limpa apenas a ancoragem de segmento.
-        # Preserva sinais globais do resolver para permitir fallback operacional.
+        # Contrato segmentado incompatível: limpa a ancoragem de segmento e
+        # todo material operacional derivado dela.
+        #
+        # Preserva apenas sinais globais úteis do resolver. Isso impede que
+        # uma microcena de subsegmento errado continue contaminando a geração
+        # depois que a identidade foi reprovada.
         for key in (
             "subsegment_hint",
             "effective_subsegment",
@@ -1416,6 +1446,18 @@ def _clear_incompatible_kb_context_for_current_text(
             "operational_reference",
             "segment_reference_example",
             "pack_micro_scene",
+            "micro_scene",
+            "micro_scene_conversational",
+            "reference_example",
+            "practical_scene",
+            "direct_scene",
+            "runtime_short_reply",
+            "runtime_long_text",
+            "has_reference_example",
+            "has_practical_scene",
+            "hydrated_from_docs",
+            "micro_scene_allowed",
+            "response_mode",
         ):
             ctx.pop(key, None)
 
@@ -9593,8 +9635,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and str(next_step or "").strip().upper() != "SEND_LINK"
                 and str(needs_clarify or "").strip().lower() != "yes"
                 and not str(clarify_q or "").strip()
-                and bool(_contract_for_mode.get("hydrated_from_docs"))
-                and str(topic or "").strip().upper() == "SERVICOS"
+                and has_real_operational_context
                 and _contract_has_reference
             )
             if _contract_ready_for_scene:
