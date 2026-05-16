@@ -183,6 +183,48 @@ def _extract_lead_name_from_current_turn(text: str) -> str:
         return ""
 
 
+def _front_remove_unsafe_nominal_opening(text: str, has_name: bool) -> str:
+    """
+    Guarda estrutural final para saudação nominal.
+    Se o sistema não tem nome confirmado, remove apenas vocativo curto
+    inserido na abertura.
+
+    Não usa palavra-chave de profissão/segmento.
+    Não altera prompt.
+    Não chama modelo.
+    """
+    try:
+        s = str(text or "").strip()
+        if not s or has_name:
+            return s
+
+        first_line, sep, rest = s.partition("\n")
+        head = first_line.strip()
+
+        m = re.match(r"^([^,\n!?\.]{1,24}),\s*([^,\n!?\.]{1,32})([!?\.])(\s*)(.*)$", head)
+        if not m:
+            return s
+
+        opener = str(m.group(1) or "").strip()
+        vocative = str(m.group(2) or "").strip()
+        punct = str(m.group(3) or "").strip()
+        tail = str(m.group(5) or "").strip()
+
+        if not opener or not vocative:
+            return s
+
+        safe_head = f"{opener}{punct}"
+        if tail:
+            safe_head = f"{safe_head} {tail}".strip()
+
+        if sep:
+            return f"{safe_head}\n{rest}".strip()
+        return safe_head.strip()
+
+    except Exception:
+        return str(text or "").strip()
+
+
 def _reply_has_lead_context(reply: str, lead_name: str = "", lead_segment_raw: str = "") -> bool:
     """
     Valida se a resposta final carregou os sinais humanos mínimos.
@@ -11954,6 +11996,59 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         except Exception:
                             pass
 
+                        try:
+                            _safe_preserved_reply = _front_remove_unsafe_nominal_opening(
+                                _safe_preserved_reply,
+                                has_name=has_name,
+                            )
+                            _safe_preserved_spoken = _front_remove_unsafe_nominal_opening(
+                                _safe_preserved_spoken or _safe_preserved_reply,
+                                has_name=has_name,
+                            )
+                        except Exception:
+                            pass
+
+                        try:
+                            _identity_question = str(
+                                clarify_q
+                                or question
+                                or (
+                                    (kb_context or {}).get("discovery_question_hint")
+                                    if isinstance(kb_context, dict)
+                                    else ""
+                                )
+                                or ""
+                            ).strip()
+
+                            _missing_identity = bool(
+                                not bool(has_name)
+                                or not bool(effective_segment or segment_for_prompt or segment_hint)
+                            )
+
+                            if (
+                                str(next_step or "").strip().upper() != "SEND_LINK"
+                                and _missing_identity
+                                and _identity_question
+                                and _front_normalize_identity_text(_identity_question)
+                                not in _front_normalize_identity_text(_safe_preserved_reply)
+                            ):
+                                _limit = 820
+                                _sep = "\n\n"
+                                _base_limit = max(
+                                    320,
+                                    _limit - len(_identity_question) - len(_sep),
+                                )
+                                _base_reply = _front_trim_to_word_boundary_limit(
+                                    _safe_preserved_reply,
+                                    _base_limit,
+                                )
+                                _safe_preserved_reply = f"{_base_reply}{_sep}{_identity_question}".strip()
+                                _safe_preserved_spoken = _safe_preserved_reply
+                                name_use = "clarify"
+                                needs_clarify = "yes"
+                        except Exception:
+                            pass
+
                         out["replyText"] = _front_trim_to_word_boundary_limit(
                             _safe_preserved_reply,
                             820,
@@ -11975,6 +12070,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                         if _spoken_probe.startswith("{") or _spoken_probe.startswith("```"):
                             _spoken_probe = _unwrap_front_json_envelope(_spoken_probe) or _reply_probe
+
+                        try:
+                            _reply_probe = _front_remove_unsafe_nominal_opening(
+                                _reply_probe,
+                                has_name=has_name,
+                            )
+                            _spoken_probe = _front_remove_unsafe_nominal_opening(
+                                _spoken_probe or _reply_probe,
+                                has_name=has_name,
+                            )
+                        except Exception:
+                            pass
 
                         try:
                             _reply_probe = _front_remove_unsafe_nominal_opening(
