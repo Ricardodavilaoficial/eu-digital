@@ -6953,8 +6953,15 @@ def _front_pick_rich_free_mode_base(
             txt = str(raw or "").strip()
             if not txt:
                 continue
+
+            # Nunca usar material de KB/contract que ainda tenha placeholders
+            # não hidratados. Isso evita respostas com {{...}} em produção.
+            if "{{" in txt or "}}" in txt:
+                continue
             if txt.startswith("{") or txt.startswith("```"):
                 txt = _unwrap_front_json_envelope(txt) or txt
+            if "{{" in txt or "}}" in txt:
+                continue
             txt = _front_clean_free_mode_tail(txt)
             if not txt:
                 continue
@@ -12559,10 +12566,35 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         )
                         _spoken_limit = max(280, min(_spoken_limit, 520))
 
-                    out["spokenText"] = _front_trim_free_mode_sentence(
-                        _spoken_source,
-                        _spoken_limit,
-                    )
+                    # Para áudio, a pergunta de identidade não pode ser
+                    # sacrificada pelo corte compacto. Primeiro cortamos a
+                    # base, depois anexamos a pergunta já calculada pelo fluxo.
+                    if (
+                        isinstance(reply_size_policy, dict)
+                        and bool(reply_size_policy.get("is_audio"))
+                        and _missing_identity
+                        and _identity_question
+                        and _front_normalize_identity_text(_identity_question)
+                        not in _front_normalize_identity_text(str(_spoken_source or ""))
+                    ):
+                        _sep = " "
+                        _base_limit = max(
+                            220,
+                            int(_spoken_limit) - len(_identity_question) - len(_sep),
+                        )
+                        _spoken_base = _front_trim_free_mode_sentence(
+                            _spoken_source,
+                            _base_limit,
+                        )
+                        out["spokenText"] = _front_trim_free_mode_sentence(
+                            f"{_spoken_base}{_sep}{_identity_question}".strip(),
+                            _spoken_limit,
+                        )
+                    else:
+                        out["spokenText"] = _front_trim_free_mode_sentence(
+                            _spoken_source,
+                            _spoken_limit,
+                        )
                 except Exception:
                     out["spokenText"] = _front_trim_free_mode_sentence(
                         _free_spoken or out["replyText"],
@@ -13380,6 +13412,26 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         len(reply_text or ""),
                         len(spoken_text or ""),
                     )
+                except Exception:
+                    pass
+
+                # Se o segmento foi declarado no turno atual, permita que ele
+                # saia no payload como segmento, nunca como nome. Isso ajuda o
+                # próximo turno a manter contexto sem criar vocativo indevido.
+                try:
+                    _declared_segment_for_payload = str(
+                        segment_hint
+                        or inferred_lead_segment_raw
+                        or inferred_lead_segment
+                        or ""
+                    ).strip()
+                    if _declared_segment_for_payload:
+                        out["leadSegmentRaw"] = _declared_segment_for_payload
+                        out["segmentHint"] = _declared_segment_for_payload
+                        _u = out.get("understanding")
+                        if isinstance(_u, dict):
+                            _u["leadSegmentRaw"] = _declared_segment_for_payload
+                            _u["segmentHint"] = _declared_segment_for_payload
                 except Exception:
                     pass
         except Exception:
