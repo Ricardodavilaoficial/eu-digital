@@ -340,6 +340,52 @@ def _front_sanitize_lead_name_candidate(value: Any, segment_refs: list | None = 
         return ""
 
 
+def _front_remove_unsafe_nominal_opening(text: str, has_name: bool) -> str:
+    """
+    Guarda estrutural final para saudação nominal.
+    Se o sistema não tem nome confirmado, remove apenas vocativo curto
+    inserido na abertura.
+
+    Não usa palavra-chave de profissão/segmento.
+    Não altera prompt.
+    Não chama modelo.
+    """
+    try:
+        s = str(text or "").strip()
+        if not s or has_name:
+            return s
+
+        first_line, sep, rest = s.partition("\n")
+        head = first_line.strip()
+
+        # Estrutura típica de abertura nominal curta:
+        # "X, Y! ..." ou "X, Y. ..."
+        # A regra não interpreta profissão/segmento; apenas impede vocativo
+        # curto quando o próprio estado diz que não há nome.
+        m = re.match(r"^([^,\n!?\.]{1,24}),\s*([^,\n!?\.]{1,32})([!?\.])(\s*)(.*)$", head)
+        if not m:
+            return s
+
+        opener = str(m.group(1) or "").strip()
+        vocative = str(m.group(2) or "").strip()
+        punct = str(m.group(3) or "").strip()
+        tail = str(m.group(5) or "").strip()
+
+        if not opener or not vocative:
+            return s
+
+        safe_head = f"{opener}{punct}"
+        if tail:
+            safe_head = f"{safe_head} {tail}".strip()
+
+        if sep:
+            return f"{safe_head}\n{rest}".strip()
+        return safe_head.strip()
+
+    except Exception:
+        return str(text or "").strip()
+
+
 def _front_first_text(*vals: Any) -> str:
     """
     Retorna o primeiro texto útil.
@@ -11422,14 +11468,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     response_mode=response_mode,
                     next_step=next_step,
                     ai_turns=ai_turns,
-                    lead_name=_front_sanitize_lead_name_candidate(
-                inferred_lead_name or name_hint,
-                segment_refs=[
-                    segment_hint,
-                    inferred_lead_segment_raw,
-                    inferred_lead_segment,
-                ],
-            ),
+                    lead_name=(
+                    _front_sanitize_lead_name_candidate(
+                        inferred_lead_name or name_hint,
+                        segment_refs=[
+                            segment_hint,
+                            inferred_lead_segment_raw,
+                            inferred_lead_segment,
+                        ],
+                    )
+                    if has_name else ""
+                ),
                     lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
                     question_type=question_type,
                 )
@@ -11629,8 +11678,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     str(next_step or "").strip().upper() != "SEND_LINK"
                     and (not bool(has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
                     and _identity_question
-                    and _front_normalize_identity_text(_identity_question)
-                    not in _front_normalize_identity_text(reply_text)
+                    and "?" not in str(reply_text or "")
                 ):
                     reply_text = f"{str(reply_text or '').rstrip()}\n\n{_identity_question}".strip()
                     spoken_text = reply_text
@@ -12548,14 +12596,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 response_mode=response_mode,
                 next_step=next_step,
                 ai_turns=ai_turns,
-                lead_name=_front_sanitize_lead_name_candidate(
-                inferred_lead_name or name_hint,
-                segment_refs=[
-                    segment_hint,
-                    inferred_lead_segment_raw,
-                    inferred_lead_segment,
-                ],
-            ),
+                lead_name=(
+                    _front_sanitize_lead_name_candidate(
+                        inferred_lead_name or name_hint,
+                        segment_refs=[
+                            segment_hint,
+                            inferred_lead_segment_raw,
+                            inferred_lead_segment,
+                        ],
+                    )
+                    if has_name else ""
+                ),
                 lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
                 question_type=question_type,
             )
@@ -12570,17 +12621,26 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         try:
             reply_text = _humanize_reply_with_lead_context(
                 reply=reply_text,
-                lead_name=_front_sanitize_lead_name_candidate(
-                inferred_lead_name or name_hint,
-                segment_refs=[
-                    segment_hint,
-                    inferred_lead_segment_raw,
-                    inferred_lead_segment,
-                ],
-            ),
+                lead_name=(
+                    _front_sanitize_lead_name_candidate(
+                        inferred_lead_name or name_hint,
+                        segment_refs=[
+                            segment_hint,
+                            inferred_lead_segment_raw,
+                            inferred_lead_segment,
+                        ],
+                    )
+                    if has_name else ""
+                ),
                 lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
             )
             spoken_text = reply_text
+        except Exception:
+            pass
+
+        try:
+            reply_text = _front_remove_unsafe_nominal_opening(reply_text, has_name=has_name)
+            spoken_text = _front_remove_unsafe_nominal_opening(spoken_text or reply_text, has_name=has_name)
         except Exception:
             pass
 

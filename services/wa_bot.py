@@ -686,18 +686,28 @@ def _load_institutional_lead_memory(wa_key: str) -> Dict[str, Any]:
         if not isinstance(data, dict):
             return {}
 
-        name = str(
-            data.get("name_hint")
-            or data.get("displayName")
-            or data.get("leadName")
-            or ""
-        ).strip()
         segment = str(
             data.get("segment")
             or data.get("segment_hint")
             or data.get("leadSegment")
             or ""
         ).strip()
+
+        name = _sanitize_lead_name_candidate(
+            (
+                data.get("name_hint")
+                or data.get("displayName")
+                or data.get("leadName")
+                or ""
+            ),
+            segment_refs=[
+                segment,
+                data.get("segment"),
+                data.get("segment_hint"),
+                data.get("leadSegment"),
+                data.get("leadSegmentRaw"),
+            ],
+        )
 
         out: Dict[str, Any] = {}
         if name:
@@ -799,27 +809,147 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
             or ""
         )
 
-        lead_name = _sanitize_lead_name_candidate(
+        existing_lead_name = _sanitize_lead_name_candidate(
+
             (
-                out.get("leadName")
-                or out.get("displayName")
-                or out.get("nameToSay")
-                or ctx.get("displayName")
-                or ctx.get("name_hint")
+
+                data.get("name_hint")
+
+                or data.get("displayName")
+
+                or data.get("leadName")
+
                 or ""
+
             ),
+
             segment_refs=[
+
+                data.get("segment"),
+
+                data.get("segment_hint"),
+
+                data.get("leadSegment"),
+
+                data.get("leadSegmentRaw"),
+
                 segment,
+
                 segment_hint,
+
                 lead_segment_raw,
-                out.get("segment"),
-                out.get("segmentHint"),
-                ctx.get("segment"),
-                ctx.get("segment_hint"),
-                ctx.get("segmentHint"),
+
             ],
+
         )
 
+
+        ctx_lead_name = _sanitize_lead_name_candidate(
+
+            (
+
+                ctx.get("displayName")
+
+                or ctx.get("name_hint")
+
+                or ctx.get("leadName")
+
+                or ""
+
+            ),
+
+            segment_refs=[
+
+                segment,
+
+                segment_hint,
+
+                lead_segment_raw,
+
+                ctx.get("segment"),
+
+                ctx.get("segment_hint"),
+
+                ctx.get("segmentHint"),
+
+            ],
+
+        )
+
+
+        front_lead_name = _sanitize_lead_name_candidate(
+
+            (
+
+                out.get("leadName")
+
+                or out.get("displayName")
+
+                or out.get("nameToSay")
+
+                or ""
+
+            ),
+
+            segment_refs=[
+
+                segment,
+
+                segment_hint,
+
+                lead_segment_raw,
+
+                ctx.get("segment"),
+
+                ctx.get("segment_hint"),
+
+                ctx.get("segmentHint"),
+
+            ],
+
+        )
+
+
+        reply_source = str(
+
+            out.get("replySource")
+
+            or out.get("source")
+
+            or out.get("iaSource")
+
+            or ""
+
+        ).strip()
+
+
+        # Quando não havia nome confiável salvo/contextual e a resposta veio
+
+        # da montagem estruturada do front, não persistir nome novo vindo do
+
+        # próprio front. Essa rota pode carregar rótulos operacionais úteis
+
+        # para a resposta, mas eles não são prova estrutural de nome do lead.
+
+        #
+
+        # Não usa palavra-chave, não altera prompt, não chama IA.
+
+        if existing_lead_name:
+
+            lead_name = existing_lead_name
+
+        elif ctx_lead_name:
+
+            lead_name = ctx_lead_name
+
+        elif reply_source == "front_structured_python_assembly":
+
+            lead_name = ""
+
+        else:
+
+            lead_name = front_lead_name
 
 
         last_intent = (
