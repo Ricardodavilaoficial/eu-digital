@@ -12546,10 +12546,28 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     _free_reply,
                     820,
                 )
-                out["spokenText"] = _front_trim_free_mode_sentence(
-                    _free_spoken or out["replyText"],
-                    820,
-                )
+
+                try:
+                    _spoken_limit = 820
+                    _spoken_source = _free_spoken or out["replyText"]
+
+                    if isinstance(reply_size_policy, dict) and bool(reply_size_policy.get("is_audio")):
+                        _spoken_limit = int(
+                            reply_size_policy.get("max_chars")
+                            or reply_size_policy.get("target_chars")
+                            or 460
+                        )
+                        _spoken_limit = max(280, min(_spoken_limit, 520))
+
+                    out["spokenText"] = _front_trim_free_mode_sentence(
+                        _spoken_source,
+                        _spoken_limit,
+                    )
+                except Exception:
+                    out["spokenText"] = _front_trim_free_mode_sentence(
+                        _free_spoken or out["replyText"],
+                        460,
+                    )
 
                 # Se o nome não está confirmado, não deixe hipótese do turno
                 # sair como leadName/name_hint no payload para o wa_bot salvar.
