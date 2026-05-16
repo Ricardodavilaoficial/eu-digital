@@ -83,6 +83,17 @@ FRONT_STRUCTURED_ASSEMBLY_ENABLED = (
 
 DEFAULT_TONE = "linguagem simples, direta, educada e comum de conversa no WhatsApp"
 
+def _has_question(text: str) -> bool:
+    """
+    Retorna True quando o texto contém ao menos um ponto de interrogação.
+    Utilitário estrutural para decisões de discovery.
+    """
+    try:
+        return "?" in str(text or "")
+    except Exception:
+        return False
+
+
 def _resolve_tone_hint(state_summary: dict | None, contract: dict | None = None) -> str:
     try:
         raw = ""
