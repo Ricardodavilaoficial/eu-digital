@@ -6854,6 +6854,54 @@ def _front_remove_known_open_question_tail(text: str, candidates: Optional[list[
         return str(text or "").strip()
 
 
+def _front_clean_free_mode_tail(text: str) -> str:
+    """
+    Limpa resíduos finais deixados por remoção de cauda aberta.
+    Atua apenas no fim do texto, sem classificar profissão/segmento
+    e sem depender de prompt.
+    """
+    try:
+        s = str(text or "").strip()
+        if not s:
+            return ""
+
+        # Remove fragmentos muito curtos no fim, como "Ho", gerados por
+        # corte imperfeito de uma pergunta aberta removida.
+        parts = s.split()
+        if len(parts) >= 2 and len(parts[-1]) <= 2 and parts[-1].isalpha():
+            s = " ".join(parts[:-1]).strip()
+
+        s = s.strip(" ,;:-\n\t")
+
+        if s and s[-1] not in ".!?":
+            s = s.rstrip() + "."
+        return s
+    except Exception:
+        return str(text or "").strip()
+
+
+def _front_trim_free_mode_sentence(text: str, limit: int = 820) -> str:
+    """
+    Corte local para o FREE_MODE: preserva frase completa quando possível.
+    Evita depender de versões duplicadas de _front_trim_to_complete_sentence.
+    """
+    try:
+        s = str(text or "").strip()
+        if not s:
+            return ""
+        if len(s) <= int(limit):
+            return _front_clean_free_mode_tail(s)
+
+        cut = s[: int(limit)].rstrip()
+        last = max(cut.rfind("."), cut.rfind("!"), cut.rfind("?"))
+        if last >= 220:
+            return _front_clean_free_mode_tail(cut[: last + 1])
+
+        return _front_clean_free_mode_tail(_front_trim_to_word_boundary_limit(cut, int(limit)))
+    except Exception:
+        return str(text or "").strip()[:limit].strip()
+
+
 def _ensure_discovery_identity_request(
     *,
     reply_text: str,
@@ -12365,6 +12413,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     _open_question_tails,
                 )
 
+                _free_reply = _front_clean_free_mode_tail(_free_reply)
+                _free_spoken = _front_clean_free_mode_tail(_free_spoken)
+
                 # Remove pergunta aberta que tenha escapado no free_mode,
                 # preservando perguntas apenas quando forem exatamente a
                 # pergunta de identidade já existente no fluxo.
@@ -12374,6 +12425,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     if not (_norm_identity and _norm_identity in _norm_reply):
                         _free_reply = _strip_trailing_question(_free_reply)
                         _free_spoken = _strip_trailing_question(_free_spoken)
+                        _free_reply = _front_clean_free_mode_tail(_free_reply)
+                        _free_spoken = _front_clean_free_mode_tail(_free_spoken)
 
                 # Cumprimento seguro no ramo regressivo.
                 # Não usa vocativo nominal e não depende do LLM.
@@ -12398,7 +12451,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         320,
                         _limit - len(_identity_question) - len(_sep),
                     )
-                    _base_reply = _front_trim_to_complete_sentence(
+                    _base_reply = _front_trim_free_mode_sentence(
                         _free_reply,
                         _base_limit,
                     )
@@ -12407,11 +12460,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     name_use = "clarify"
                     needs_clarify = "yes"
 
-                out["replyText"] = _front_trim_to_complete_sentence(
+                out["replyText"] = _front_trim_free_mode_sentence(
                     _free_reply,
                     820,
                 )
-                out["spokenText"] = _front_trim_to_complete_sentence(
+                out["spokenText"] = _front_trim_free_mode_sentence(
                     _free_spoken or out["replyText"],
                     820,
                 )
