@@ -12138,7 +12138,126 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 real_kb_docs if 'real_kb_docs' in locals() else {},
                 bool((operational_contract or {}).get("hydrated_from_docs")) if 'operational_contract' in locals() and isinstance(operational_contract, dict) else False,
             )
-            return _sanitize_front_result_payload(out)
+            # ---------------------------------------------------------
+            # FREE_MODE fallback final guard
+            #
+            # Este é o segundo ramo de saída do free_mode:
+            # ocorre quando a resposta estruturada não foi aceita e o
+            # fluxo não entrou no FREE_MODE_TECH_DIRECT_RETURN.
+            #
+            # Antes ele retornava direto, sem passar pelas mesmas guardas
+            # do ramo técnico. Isso permitia regressões como:
+            # - vocativo nominal sem nome confirmado;
+            # - pergunta aberta fora dos critérios;
+            # - corte por tamanho sem fechamento limpo;
+            # - replyText/spokenText divergentes.
+            #
+            # Não cria frase pronta.
+            # Não usa palavra-chave.
+            # Não altera prompt.
+            # Não chama modelo.
+            # ---------------------------------------------------------
+            try:
+                out = _sanitize_front_result_payload(out)
+
+                _free_reply = str(out.get("replyText") or reply_text or "").strip()
+                _free_spoken = str(out.get("spokenText") or spoken_text or _free_reply or "").strip()
+
+                if _free_reply.startswith("{") or _free_reply.startswith("```"):
+                    _free_reply = _unwrap_front_json_envelope(_free_reply) or _free_reply
+
+                if _free_spoken.startswith("{") or _free_spoken.startswith("```"):
+                    _free_spoken = _unwrap_front_json_envelope(_free_spoken) or _free_reply
+
+                _free_reply = _front_remove_unsafe_nominal_opening(
+                    _free_reply,
+                    has_name=confirmed_has_name,
+                )
+                _free_spoken = _front_remove_unsafe_nominal_opening(
+                    _free_spoken or _free_reply,
+                    has_name=confirmed_has_name,
+                )
+
+                _missing_identity = bool(
+                    not bool(confirmed_has_name)
+                    or not bool(effective_segment or segment_for_prompt or segment_hint)
+                )
+
+                # Neste ramo, não tratamos pergunta genérica como pergunta
+                # de identidade. Usamos apenas pergunta já marcada no KB/
+                # contexto como discovery, se ela existir.
+                _identity_question = ""
+                try:
+                    if isinstance(kb_context, dict):
+                        _identity_question = str(
+                            kb_context.get("discovery_question_hint")
+                            or kb_context.get("segment_question_preferred")
+                            or ""
+                        ).strip()
+                except Exception:
+                    _identity_question = ""
+
+                # Remove pergunta aberta que tenha escapado no free_mode,
+                # preservando perguntas apenas quando forem exatamente a
+                # pergunta de identidade já existente no fluxo.
+                if "?" in _free_reply:
+                    _norm_reply = _front_normalize_identity_text(_free_reply)
+                    _norm_identity = _front_normalize_identity_text(_identity_question)
+                    if not (_norm_identity and _norm_identity in _norm_reply):
+                        _free_reply = _strip_trailing_question(_free_reply)
+                        _free_spoken = _strip_trailing_question(_free_spoken)
+
+                if (
+                    str(next_step or "").strip().upper() != "SEND_LINK"
+                    and _missing_identity
+                    and _identity_question
+                    and _front_normalize_identity_text(_identity_question)
+                    not in _front_normalize_identity_text(_free_reply)
+                ):
+                    _limit = 820
+                    _sep = "\n\n"
+                    _base_limit = max(
+                        320,
+                        _limit - len(_identity_question) - len(_sep),
+                    )
+                    _base_reply = _front_trim_to_complete_sentence(
+                        _free_reply,
+                        _base_limit,
+                    )
+                    _free_reply = f"{_base_reply}{_sep}{_identity_question}".strip()
+                    _free_spoken = _free_reply
+                    name_use = "clarify"
+                    needs_clarify = "yes"
+
+                out["replyText"] = _front_trim_to_complete_sentence(
+                    _free_reply,
+                    820,
+                )
+                out["spokenText"] = _front_trim_to_complete_sentence(
+                    _free_spoken or out["replyText"],
+                    820,
+                )
+
+                if out["replyText"] and out["replyText"][-1] not in ".!?":
+                    out["replyText"] = out["replyText"].rstrip() + "."
+
+                if out["spokenText"] and out["spokenText"][-1] not in ".!?":
+                    out["spokenText"] = out["spokenText"].rstrip() + "."
+
+                out = _sanitize_front_result_payload(out)
+
+                logging.info(
+                    "[FREE_MODE_FINAL_GUARD] topic=%s reply_len=%s spoken_len=%s missing_identity=%s identity_question=%s",
+                    topic,
+                    len(str(out.get("replyText") or "")),
+                    len(str(out.get("spokenText") or "")),
+                    _missing_identity,
+                    bool(_identity_question),
+                )
+            except Exception:
+                out = _sanitize_front_result_payload(out)
+
+            return out
 
 
 
