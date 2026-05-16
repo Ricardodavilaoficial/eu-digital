@@ -484,7 +484,7 @@ def _front_trim_to_complete_sentence(text: str, max_chars: int) -> str:
         return str(text or "").strip()
 
 
-def _front_trim_to_word_boundary_limit(text: str, max_chars: int) -> str:
+def _front_trim_to_complete_sentence(text: str, max_chars: int) -> str:
     """
     Corta texto apenas no limite de palavra, sem procurar frase completa.
     Usado somente quando a resposta técnica DIRECT já foi aceita pela IA,
@@ -6764,7 +6764,7 @@ def _ensure_discovery_identity_request(
         if mode != "DISCOVERY" or not reply:
             return reply, spoken, "none"
 
-        name_missing = not bool(has_name)
+        name_missing = not bool(confirmed_has_name)
         segment_missing = not bool(str(effective_segment or "").strip())
 
         question = str(identity_question or "").strip()
@@ -7969,20 +7969,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     except Exception:
         pass
 
-    # Contexto explícito extraído pela IA no turno atual.
-    # Evita contradição do tipo has_name=false quando o usuário acabou de se apresentar.
-    if not name_hint and inferred_lead_name:
-        name_hint = _front_sanitize_lead_name_candidate(
-            inferred_lead_name,
-            segment_refs=[
-                segment_hint,
-                state_summary.get("segment"),
-                state_summary.get("segmentHint"),
-                state_summary.get("leadSegmentRaw"),
-            ],
-        )
-
-    has_name = bool(name_hint)
+    # Nome confirmado:
+    # has_name não pode ser recalculado a partir de inferência do LLM
+    # no mesmo turno. Ele deve representar apenas dado já consolidado
+    # vindo do estado/memória.
+    #
+    # Isso evita o padrão "Olá, clínico!" sem usar palavras-chave,
+    # sem alterar prompt e sem bloquear a persistência futura de um
+    # nome válido pelo fluxo próprio do wa_bot.py.
+    has_name = bool(str(name_hint or "").strip())
+    confirmed_has_name = has_name
 
     if not segment_hint and inferred_lead_segment:
         segment_hint = inferred_lead_segment
@@ -9346,16 +9342,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # antes do cálculo de has_name/has_segment_context e antes do retorno.
         # ----------------------------------------------------------
         try:
-            if inferred_lead_name and not name_hint:
-                name_hint = _front_sanitize_lead_name_candidate(
-                    inferred_lead_name,
-                    segment_refs=[
-                        segment_hint,
-                        inferred_lead_segment_raw,
-                        inferred_lead_segment,
-                    ],
-                )
-
             if inferred_lead_segment and not segment_hint:
                 segment_hint = inferred_lead_segment
 
@@ -9371,8 +9357,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 pass
 
-            has_name = bool(str(name_hint or "").strip())
-            has_lead_name = has_name
+            # Mantém has_name preso ao nome confirmado.
+            # Não promover inferred_lead_name/name_hint do turno atual
+            # para estado confirmado dentro do conversational_front.
+            has_name = bool(confirmed_has_name)
+            has_lead_name = bool(confirmed_has_name)
 
             if str(segment_hint or "").strip():
                 has_segment_context = True
@@ -10656,7 +10645,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     direct_text, direct_spoken, _identity_name_use = _ensure_discovery_identity_request(
                         reply_text=direct_text,
                         spoken_text=direct_spoken,
-                        has_name=has_name,
+                        has_name=confirmed_has_name,
                         effective_segment=effective_segment or segment_for_prompt,
                         response_mode=response_mode,
                         identity_question=clarify_q or question,
@@ -11553,7 +11542,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             # --- GARANTIA DE DISCOVERY ANTES DO EARLY RETURN ---
             if response_mode == "DISCOVERY":
-                missing_name = not bool(has_name)
+                missing_name = not bool(confirmed_has_name)
                 missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
@@ -11660,11 +11649,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     )
 
                     if _technical_direct_platform_kb:
-                        reply_text = _front_trim_to_word_boundary_limit(
+                        reply_text = _front_trim_to_complete_sentence(
                             reply_text,
                             820,
                         )
-                        spoken_text = _front_trim_to_word_boundary_limit(
+                        spoken_text = _front_trim_to_complete_sentence(
                             spoken_text or reply_text,
                             820,
                         )
@@ -11718,7 +11707,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 if (
                     str(next_step or "").strip().upper() != "SEND_LINK"
-                    and (not bool(has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
+                    and (not bool(confirmed_has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
                     and _identity_question
                     and "?" not in str(reply_text or "")
                 ):
@@ -11940,11 +11929,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         try:
                             _safe_preserved_reply = _front_remove_unsafe_nominal_opening(
                                 _safe_preserved_reply,
-                                has_name=has_name,
+                                has_name=confirmed_has_name,
                             )
                             _safe_preserved_spoken = _front_remove_unsafe_nominal_opening(
                                 _safe_preserved_spoken or _safe_preserved_reply,
-                                has_name=has_name,
+                                has_name=confirmed_has_name,
                             )
                         except Exception:
                             pass
@@ -11968,7 +11957,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             ).strip()
 
                             _missing_identity = bool(
-                                not bool(has_name)
+                                not bool(confirmed_has_name)
                                 or not bool(effective_segment or segment_for_prompt or segment_hint)
                             )
 
@@ -11985,7 +11974,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                     320,
                                     _limit - len(_identity_question) - len(_sep),
                                 )
-                                _base_reply = _front_trim_to_word_boundary_limit(
+                                _base_reply = _front_trim_to_complete_sentence(
                                     _safe_preserved_reply,
                                     _base_limit,
                                 )
@@ -11999,11 +11988,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         try:
                             _safe_preserved_reply = _front_remove_unsafe_nominal_opening(
                                 _safe_preserved_reply,
-                                has_name=has_name,
+                                has_name=confirmed_has_name,
                             )
                             _safe_preserved_spoken = _front_remove_unsafe_nominal_opening(
                                 _safe_preserved_spoken or _safe_preserved_reply,
-                                has_name=has_name,
+                                has_name=confirmed_has_name,
                             )
                         except Exception:
                             pass
@@ -12021,7 +12010,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             ).strip()
 
                             _missing_identity = bool(
-                                not bool(has_name)
+                                not bool(confirmed_has_name)
                                 or not bool(effective_segment or segment_for_prompt or segment_hint)
                             )
 
@@ -12038,7 +12027,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                     320,
                                     _limit - len(_identity_question) - len(_sep),
                                 )
-                                _base_reply = _front_trim_to_word_boundary_limit(
+                                _base_reply = _front_trim_to_complete_sentence(
                                     _safe_preserved_reply,
                                     _base_limit,
                                 )
@@ -12049,11 +12038,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         except Exception:
                             pass
 
-                        out["replyText"] = _front_trim_to_word_boundary_limit(
+                        out["replyText"] = _front_trim_to_complete_sentence(
                             _safe_preserved_reply,
                             820,
                         )
-                        out["spokenText"] = _front_trim_to_word_boundary_limit(
+                        out["spokenText"] = _front_trim_to_complete_sentence(
                             _safe_preserved_spoken or out["replyText"],
                             820,
                         )
@@ -12074,11 +12063,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         try:
                             _reply_probe = _front_remove_unsafe_nominal_opening(
                                 _reply_probe,
-                                has_name=has_name,
+                                has_name=confirmed_has_name,
                             )
                             _spoken_probe = _front_remove_unsafe_nominal_opening(
                                 _spoken_probe or _reply_probe,
-                                has_name=has_name,
+                                has_name=confirmed_has_name,
                             )
                         except Exception:
                             pass
@@ -12086,20 +12075,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         try:
                             _reply_probe = _front_remove_unsafe_nominal_opening(
                                 _reply_probe,
-                                has_name=has_name,
+                                has_name=confirmed_has_name,
                             )
                             _spoken_probe = _front_remove_unsafe_nominal_opening(
                                 _spoken_probe or _reply_probe,
-                                has_name=has_name,
+                                has_name=confirmed_has_name,
                             )
                         except Exception:
                             pass
 
-                        out["replyText"] = _front_trim_to_word_boundary_limit(
+                        out["replyText"] = _front_trim_to_complete_sentence(
                             _reply_probe,
                             820,
                         )
-                        out["spokenText"] = _front_trim_to_word_boundary_limit(
+                        out["spokenText"] = _front_trim_to_complete_sentence(
                             _spoken_probe or out["replyText"],
                             820,
                         )
@@ -12659,7 +12648,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
             elif response_mode == "DISCOVERY":
-                missing_name = not bool(has_name)
+                missing_name = not bool(confirmed_has_name)
                 missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
@@ -12679,7 +12668,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
             if response_mode == "DISCOVERY":
-                missing_name = not bool(has_name)
+                missing_name = not bool(confirmed_has_name)
                 missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
@@ -12730,7 +12719,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # GUARDA FINAL ABSOLUTA (POST-GENERATION ENFORCEMENT)
         # ----------------------------------------------------------
         if response_mode == "DISCOVERY":
-            missing_name = not bool(has_name)
+            missing_name = not bool(confirmed_has_name)
             missing_segment = not bool(segment_discovery_resolved)
 
             if missing_name or missing_segment:
@@ -12898,11 +12887,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
 
             if _is_technical_direct:
-                reply_text = _front_trim_to_word_boundary_limit(
+                reply_text = _front_trim_to_complete_sentence(
                     reply_text,
                     780,
                 )
-                spoken_text = _front_trim_to_word_boundary_limit(
+                spoken_text = _front_trim_to_complete_sentence(
                     spoken_text or reply_text,
                     780,
                 )
