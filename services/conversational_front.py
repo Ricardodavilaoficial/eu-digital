@@ -89,6 +89,24 @@ def _has_question(text: str) -> bool:
     Utilitário estrutural para decisões de discovery.
     """
     try:
+        # Em perguntas pontuais/de continuidade, principalmente após o
+        # primeiro turno, a resposta do turno atual deve ter prioridade.
+        # Caso contrário, o fallback rico volta a escolher a base genérica
+        # de agenda e repete a resposta anterior.
+        #
+        # Não usa lista de profissões/segmentos.
+        # Não altera prompt.
+        # Não chama IA extra.
+        if prefer_current:
+            cur = str(current_reply or "").strip()
+            if cur:
+                if cur.startswith("{") or cur.startswith("```"):
+                    cur = _unwrap_front_json_envelope(cur) or cur
+                if "{{" not in cur and "}}" not in cur:
+                    cur = _front_clean_free_mode_tail(cur)
+                    if len(cur) >= 60:
+                        return cur
+
         if prefer_current:
             cur = str(current_reply or "").strip()
             if cur and "{{" not in cur and "}}" not in cur:
@@ -6800,8 +6818,11 @@ def _front_has_identity_request_tail(text: str, identity_question: str = "") -> 
         q = str(identity_question or "").strip()
         if q:
             norm_q = _front_normalize_identity_text(q)
-            if norm_q and norm_tail.endswith(norm_q):
-                return True
+            # Quando já temos a pergunta de identidade calculada, só aceitamos
+            # como "pedido já presente" se a cauda terminar exatamente nela.
+            # Isso evita confundir explicações como "o robô pergunta o nome"
+            # com um pedido real de nome ao lead.
+            return bool(norm_q and norm_tail.endswith(norm_q))
 
         return _front_identity_request_is_valid(tail)
     except Exception:
@@ -12467,6 +12488,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     current_reply=_free_reply,
                     operational_contract=operational_contract if isinstance(operational_contract, dict) else {},
                     kb_context=kb_context if isinstance(kb_context, dict) else {},
+                    prefer_current=(
+                        str(question_type or "").strip().lower() == "punctual"
+                        and int(ai_turns or 0) > 0
+                    ),
                 )
                 _free_spoken = _free_reply
 
@@ -12628,15 +12653,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         and bool(reply_size_policy.get("is_audio"))
                         and _missing_identity
                         and _identity_question
-                        and not _front_has_identity_request_tail(
-                            str(_spoken_source or ""),
-                            _identity_question,
-                        )
                     ):
                         _sep = " "
                         _base_limit = max(
                             220,
                             int(_spoken_limit) - len(_identity_question) - len(_sep),
+                        )
+                        _spoken_source = _front_remove_known_open_question_tail(
+                            str(_spoken_source or ""),
+                            [_identity_question],
                         )
                         _spoken_base = _front_trim_free_mode_sentence(
                             _spoken_source,
@@ -12670,6 +12695,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             _u["lead_name"] = ""
                     except Exception:
                         pass
+
+                try:
+                    if _missing_identity and _identity_question:
+                        out["needsClarify"] = "yes"
+                        out["clarifyQuestion"] = _identity_question
+                        _u = out.get("understanding")
+                        if isinstance(_u, dict):
+                            _u["needsClarify"] = "yes"
+                            _u["clarifyQuestion"] = _identity_question
+                except Exception:
+                    pass
 
                 if out["replyText"] and out["replyText"][-1] not in ".!?":
                     out["replyText"] = out["replyText"].rstrip() + "."
