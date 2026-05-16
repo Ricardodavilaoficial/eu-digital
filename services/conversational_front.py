@@ -11629,7 +11629,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     str(next_step or "").strip().upper() != "SEND_LINK"
                     and (not bool(has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
                     and _identity_question
-                    and "?" not in str(reply_text or "")
+                    and _front_normalize_identity_text(_identity_question)
+                    not in _front_normalize_identity_text(reply_text)
                 ):
                     reply_text = f"{str(reply_text or '').rstrip()}\n\n{_identity_question}".strip()
                     spoken_text = reply_text
