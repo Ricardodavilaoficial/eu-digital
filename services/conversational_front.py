@@ -6785,6 +6785,75 @@ def _front_build_identity_request(*, has_name: bool, has_segment: bool) -> str:
         return ""
 
 
+def _front_extract_declared_segment_from_user_text(text: str) -> str:
+    """
+    Extrai segmento/autodescrição quando o lead se apresenta em estrutura
+    simples do tipo "sou ..." ou equivalente gramatical.
+
+    Não usa lista de profissões.
+    Não usa palavras-chave de segmento.
+    Não altera prompt.
+    Não chama modelo.
+    """
+    try:
+        s = str(text or "").strip()
+        if not s:
+            return ""
+
+        patterns = [
+            r"(?i)(?:^|[.!?\n]\s*)sou\s+([^.!?\n,;:]{3,80})",
+            r"(?i)(?:^|[.!?\n]\s*)atuo\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
+            r"(?i)(?:^|[.!?\n]\s*)trabalho\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
+        ]
+        for pat in patterns:
+            m = re.search(pat, s)
+            if not m:
+                continue
+            value = str(m.group(1) or "").strip(" .,!?:;-\n\t")
+            if value:
+                return value[:80].strip()
+        return ""
+    except Exception:
+        return ""
+
+
+def _front_remove_known_open_question_tail(text: str, candidates: Optional[list[str]] = None) -> str:
+    """
+    Remove cauda de pergunta aberta já conhecida pelo próprio contexto,
+    inclusive quando ela perdeu o ponto de interrogação no trim.
+
+    Não classifica profissão/segmento.
+    Não usa lista de palavras-chave de negócio.
+    """
+    try:
+        s = str(text or "").strip()
+        if not s:
+            return ""
+
+        for cand in candidates or []:
+            c = str(cand or "").strip()
+            if not c:
+                continue
+
+            norm_s = _front_normalize_identity_text(s)
+            norm_c = _front_normalize_identity_text(c)
+            if not norm_c:
+                continue
+
+            pos = norm_s.rfind(norm_c)
+            if pos < 0:
+                continue
+
+            # Remove apenas quando a cauda conhecida aparece perto do fim.
+            if len(norm_s) - pos <= len(norm_c) + 8:
+                raw_pos = max(0, len(s) - (len(norm_s) - pos))
+                return s[:raw_pos].strip(" .,!?:;-\n\t")
+
+        return s
+    except Exception:
+        return str(text or "").strip()
+
+
 def _ensure_discovery_identity_request(
     *,
     reply_text: str,
@@ -9390,6 +9459,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if inferred_lead_segment_raw and not segment_hint:
                 segment_hint = inferred_lead_segment_raw
+
+            if not segment_hint:
+                _declared_segment = _front_extract_declared_segment_from_user_text(user_text)
+                if _declared_segment:
+                    segment_hint = _declared_segment
+                    inferred_lead_segment_raw = inferred_lead_segment_raw or _declared_segment
+                    inferred_lead_segment = inferred_lead_segment or _declared_segment
 
             try:
                 if isinstance(operational_contract, dict):
@@ -12225,9 +12301,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     effective_segment or segment_for_prompt or segment_hint
                 )
 
+                if not _has_segment_for_identity:
+                    _declared_segment = _front_extract_declared_segment_from_user_text(user_text)
+                    if _declared_segment:
+                        segment_hint = segment_hint or _declared_segment
+                        inferred_lead_segment_raw = inferred_lead_segment_raw or _declared_segment
+                        inferred_lead_segment = inferred_lead_segment or _declared_segment
+                        _has_segment_for_identity = True
+                        _missing_identity = bool(not bool(confirmed_has_name))
+
                 # Neste ramo, pergunta aberta comercial não é identidade.
                 # Só aceitamos pergunta existente se ela pedir nome.
                 _identity_question = ""
+                _open_question_tails = []
                 try:
                     _candidate_identity_question = str(
                         clarify_q
@@ -12235,10 +12321,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         or ""
                     ).strip()
 
+                    if _candidate_identity_question:
+                        _open_question_tails.append(_candidate_identity_question)
+
                     if _front_identity_request_is_valid(_candidate_identity_question):
                         _identity_question = _candidate_identity_question
 
                     if isinstance(kb_context, dict):
+                        for _k in (
+                            "discovery_question_hint",
+                            "segment_question_preferred",
+                            "question",
+                            "clarify_q",
+                        ):
+                            _v = str(kb_context.get(_k) or "").strip()
+                            if _v:
+                                _open_question_tails.append(_v)
+
                         _kb_identity_question = str(
                             kb_context.get("identity_question_hint")
                             or ""
@@ -12256,6 +12355,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         )
                 except Exception:
                     _identity_question = ""
+
+                _free_reply = _front_remove_known_open_question_tail(
+                    _free_reply,
+                    _open_question_tails,
+                )
+                _free_spoken = _front_remove_known_open_question_tail(
+                    _free_spoken,
+                    _open_question_tails,
+                )
 
                 # Remove pergunta aberta que tenha escapado no free_mode,
                 # preservando perguntas apenas quando forem exatamente a
