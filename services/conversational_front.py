@@ -6902,6 +6902,80 @@ def _front_trim_free_mode_sentence(text: str, limit: int = 820) -> str:
         return str(text or "").strip()[:limit].strip()
 
 
+def _front_pick_rich_free_mode_base(
+    *,
+    current_reply: str,
+    operational_contract: Optional[dict] = None,
+    kb_context: Optional[dict] = None,
+) -> str:
+    """
+    Seleciona a melhor base textual já existente no KB/contract para o
+    FREE_MODE.
+
+    Objetivo: quando a IA principal for rejeitada, o fallback interno
+    continua usando material operacional rico, em vez de depender apenas
+    da resposta curta gerada no turno.
+
+    Não usa palavras-chave de segmento/profissão.
+    Não altera prompt.
+    Não chama modelo.
+    """
+    try:
+        candidates = []
+
+        if isinstance(operational_contract, dict):
+            candidates.extend(
+                [
+                    operational_contract.get("runtime_short_reply"),
+                    operational_contract.get("runtime_compact_reply"),
+                    operational_contract.get("reference_example"),
+                    operational_contract.get("micro_scene_conversational"),
+                    operational_contract.get("micro_scene"),
+                ]
+            )
+
+        if isinstance(kb_context, dict):
+            candidates.extend(
+                [
+                    kb_context.get("runtime_short_reply"),
+                    kb_context.get("runtime_compact_reply"),
+                    kb_context.get("reference_example"),
+                    kb_context.get("micro_scene_conversational"),
+                    kb_context.get("micro_scene"),
+                ]
+            )
+
+        candidates.append(current_reply)
+
+        best = ""
+        best_score = -1
+        for raw in candidates:
+            txt = str(raw or "").strip()
+            if not txt:
+                continue
+            if txt.startswith("{") or txt.startswith("```"):
+                txt = _unwrap_front_json_envelope(txt) or txt
+            txt = _front_clean_free_mode_tail(txt)
+            if not txt:
+                continue
+
+            # Score estrutural: favorece textos com mais substância e
+            # sequenciamento operacional, sem classificar segmento.
+            score = min(len(txt), 900)
+            score += 30 * txt.count("→")
+            score += 12 * txt.count(".")
+            score += 8 * txt.count(",")
+
+            if score > best_score:
+                best = txt
+                best_score = score
+
+        return best or str(current_reply or "").strip()
+    except Exception:
+        return str(current_reply or "").strip()
+
+
+
 def _ensure_discovery_identity_request(
     *,
     reply_text: str,
@@ -12330,6 +12404,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 if _free_spoken.startswith("{") or _free_spoken.startswith("```"):
                     _free_spoken = _unwrap_front_json_envelope(_free_spoken) or _free_reply
+
+                _free_reply = _front_pick_rich_free_mode_base(
+                    current_reply=_free_reply,
+                    operational_contract=operational_contract if isinstance(operational_contract, dict) else {},
+                    kb_context=kb_context if isinstance(kb_context, dict) else {},
+                )
+                _free_spoken = _free_reply
+
 
                 _free_reply = _front_remove_unsafe_nominal_opening(
                     _free_reply,
