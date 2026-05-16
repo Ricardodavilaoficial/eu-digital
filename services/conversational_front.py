@@ -6753,6 +6753,38 @@ def _reply_mentions_name_request(text: str) -> bool:
         return False
 
 
+def _front_identity_request_is_valid(text: str) -> bool:
+    """
+    Valida se uma pergunta/solicitação é realmente de identidade.
+    Não valida profissão, segmento específico ou palavras de negócio.
+    Apenas exige que o texto peça nome de forma estrutural.
+    """
+    try:
+        return _reply_mentions_name_request(text)
+    except Exception:
+        return False
+
+
+def _front_build_identity_request(*, has_name: bool, has_segment: bool) -> str:
+    """
+    Solicitação estrutural mínima para identidade ausente.
+    Não usa lista de segmentos/profissões.
+    Não altera prompt.
+    Não chama modelo.
+    """
+    try:
+        missing = []
+        if not bool(has_name):
+            missing.append("seu nome")
+        if not bool(has_segment):
+            missing.append("seu segmento")
+        if not missing:
+            return ""
+        return "Me diga " + " e ".join(missing) + "."
+    except Exception:
+        return ""
+
+
 def _ensure_discovery_identity_request(
     *,
     reply_text: str,
@@ -10705,14 +10737,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             "leadSegmentRaw": inferred_lead_segment_raw,
                         },
                         "nextStep": next_step,
-                        "leadName": _front_sanitize_lead_name_candidate(
-                inferred_lead_name or name_hint,
-                segment_refs=[
-                    segment_hint,
-                    inferred_lead_segment_raw,
-                    inferred_lead_segment,
-                ],
-            ),
+                        "leadName": (
+                            _front_sanitize_lead_name_candidate(
+                                name_hint,
+                                segment_refs=[
+                                    segment_hint,
+                                    inferred_lead_segment_raw,
+                                    inferred_lead_segment,
+                                ],
+                            )
+                            if confirmed_has_name else ""
+                        ),
                         "segmentHint": segment_hint,
                         "leadSegmentRaw": inferred_lead_segment_raw,
                         "shouldEnd": should_end,
@@ -11740,7 +11775,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     "question_type": question_type,
                     "needsClarify": needs_clarify,
                     "clarifyQuestion": clarify_q,
-                    "leadName": name_hint,
+                    "leadName": name_hint if confirmed_has_name else "",
                     "segmentHint": segment_hint,
                     "leadSegmentRaw": inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
                 },
@@ -11753,14 +11788,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "tokenUsage": token_usage,
                 "replySizePolicy": reply_size_policy if isinstance(reply_size_policy, dict) else {},
                 "operationalContract": operational_contract if 'operational_contract' in locals() else {},
-                "leadName": _front_sanitize_lead_name_candidate(
-                inferred_lead_name or name_hint,
-                segment_refs=[
-                    segment_hint,
-                    inferred_lead_segment_raw,
-                    inferred_lead_segment,
-                ],
-            ),
+                "leadName": (
+                    _front_sanitize_lead_name_candidate(
+                        name_hint,
+                        segment_refs=[
+                            segment_hint,
+                            inferred_lead_segment_raw,
+                            inferred_lead_segment,
+                        ],
+                    )
+                    if confirmed_has_name else ""
+                ),
                 "segmentHint": segment_hint,
             }
 
@@ -12183,17 +12221,39 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     or not bool(effective_segment or segment_for_prompt or segment_hint)
                 )
 
-                # Neste ramo, não tratamos pergunta genérica como pergunta
-                # de identidade. Usamos apenas pergunta já marcada no KB/
-                # contexto como discovery, se ela existir.
+                _has_segment_for_identity = bool(
+                    effective_segment or segment_for_prompt or segment_hint
+                )
+
+                # Neste ramo, pergunta aberta comercial não é identidade.
+                # Só aceitamos pergunta existente se ela pedir nome.
                 _identity_question = ""
                 try:
+                    _candidate_identity_question = str(
+                        clarify_q
+                        or question
+                        or ""
+                    ).strip()
+
+                    if _front_identity_request_is_valid(_candidate_identity_question):
+                        _identity_question = _candidate_identity_question
+
                     if isinstance(kb_context, dict):
-                        _identity_question = str(
-                            kb_context.get("discovery_question_hint")
-                            or kb_context.get("segment_question_preferred")
+                        _kb_identity_question = str(
+                            kb_context.get("identity_question_hint")
                             or ""
                         ).strip()
+                        if (
+                            not _identity_question
+                            and _front_identity_request_is_valid(_kb_identity_question)
+                        ):
+                            _identity_question = _kb_identity_question
+
+                    if _missing_identity and not _identity_question:
+                        _identity_question = _front_build_identity_request(
+                            has_name=confirmed_has_name,
+                            has_segment=_has_segment_for_identity,
+                        )
                 except Exception:
                     _identity_question = ""
 
@@ -12206,6 +12266,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     if not (_norm_identity and _norm_identity in _norm_reply):
                         _free_reply = _strip_trailing_question(_free_reply)
                         _free_spoken = _strip_trailing_question(_free_spoken)
+
+                # Cumprimento seguro no ramo regressivo.
+                # Não usa vocativo nominal e não depende do LLM.
+                try:
+                    if _free_reply and not re.match(r"(?i)^\s*ol[áa]\b", _free_reply):
+                        _free_reply = f"Olá. {_free_reply}".strip()
+                    if _free_spoken and not re.match(r"(?i)^\s*ol[áa]\b", _free_spoken):
+                        _free_spoken = f"Olá. {_free_spoken}".strip()
+                except Exception:
+                    pass
 
                 if (
                     str(next_step or "").strip().upper() != "SEND_LINK"
@@ -12237,6 +12307,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     _free_spoken or out["replyText"],
                     820,
                 )
+
+                # Se o nome não está confirmado, não deixe hipótese do turno
+                # sair como leadName/name_hint no payload para o wa_bot salvar.
+                if not bool(confirmed_has_name):
+                    out["leadName"] = ""
+                    out["name_hint"] = ""
+                    try:
+                        _u = out.get("understanding")
+                        if isinstance(_u, dict):
+                            _u["leadName"] = ""
+                            _u["name_hint"] = ""
+                            _u["lead_name"] = ""
+                    except Exception:
+                        pass
 
                 if out["replyText"] and out["replyText"][-1] not in ".!?":
                     out["replyText"] = out["replyText"].rstrip() + "."
@@ -13055,13 +13139,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "leadSegmentRaw": inferred_lead_segment_raw,
             },
             "nextStep": next_step,
-            "leadName": _front_sanitize_lead_name_candidate(
-                inferred_lead_name or name_hint,
-                segment_refs=[
-                    segment_hint,
-                    inferred_lead_segment_raw,
-                    inferred_lead_segment,
-                ],
+            "leadName": (
+                _front_sanitize_lead_name_candidate(
+                    name_hint,
+                    segment_refs=[
+                        segment_hint,
+                        inferred_lead_segment_raw,
+                        inferred_lead_segment,
+                    ],
+                )
+                if confirmed_has_name else ""
             ),
             "segmentHint": segment_hint,
             "leadSegmentRaw": inferred_lead_segment_raw,
