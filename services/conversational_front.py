@@ -11940,10 +11940,34 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             _should_run_late_payload = True
 
+            # Exceção segura:
+            # Em DIRECT, quando a IA já entendeu o segmento mas não existe doc
+            # estruturado hidratado, o fallback global do platform_kb pode ser
+            # mais operacional do que a resposta livre curta da IA.
+            #
+            # Mantém os pilares:
+            # - IA decide intenção/segmento/modo.
+            # - Código cumpre usando material já presente no KB.
+            # - Sem palavras-chave hardcoded.
+            # - Sem nova chamada ao modelo.
+            # - Sem afetar SCENE com doc estruturado.
+            _allow_direct_global_fallback_payload = bool(
+                str(response_mode or "").strip().upper() == "DIRECT"
+                and isinstance(_contract_for_direct, dict)
+                and not bool(_contract_for_direct.get("hydrated_from_docs"))
+                and bool(_contract_for_direct.get("global_pack_fallback"))
+                and bool(_contract_for_direct.get("platform_segment_key"))
+                and bool(
+                    _contract_for_direct.get("runtime_compact_reply")
+                    or _contract_for_direct.get("runtime_short_reply")
+                )
+            )
+
             if (
                 str(response_mode or "").strip().upper() == "DIRECT"
                 and bool(ia_accepted)
                 and str(reply_text or "").strip()
+                and not _allow_direct_global_fallback_payload
             ):
                 _should_run_late_payload = False
 
