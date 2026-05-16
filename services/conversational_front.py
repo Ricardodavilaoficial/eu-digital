@@ -700,6 +700,40 @@ def _front_build_structured_assembly_reply(
         if not core:
             return {}
 
+        # Ajuste fino para DIRECT + fallback global do platform_kb:
+        #
+        # Quando não há documento estruturado do segmento, o pack global ajuda
+        # a dar densidade operacional. Porém, se a IA soberana já respondeu
+        # diretamente a pergunta específica do lead, essa resposta não deve ser
+        # descartada pelo montador estruturado.
+        #
+        # Assim preservamos:
+        # - IA decide e responde a intenção específica do turno.
+        # - Código complementa com material confiável do KB.
+        # - Sem palavras-chave hardcoded.
+        # - Sem lista manual de profissões.
+        # - Sem regex para interpretar fala.
+        # - Sem alteração de prompt.
+        # - Sem nova chamada ao modelo.
+        # - Sem afetar SCENE nem docs estruturados.
+        try:
+            current_clean = _unwrap_front_json_envelope(current_reply) or current_reply
+            current_clean = _sanitize_user_facing_reply(str(current_clean or "").strip())
+
+            source_type = str((source or {}).get("contentSourceType") or "").strip()
+
+            if (
+                mode == "DIRECT"
+                and source_type == "platform_kb_pack"
+                and current_clean
+                and core
+                and current_clean not in core
+                and core not in current_clean
+            ):
+                core = f"{current_clean}\n\n{core}".strip()
+        except Exception:
+            pass
+
         # Em SCENE com KB segmentada, não deixar um one_liner curto dominar
         # a resposta final. Quando não há cena rica no documento, preserva o
         # fluxo principal para a IA soberana/fallback operacional trabalhar.
