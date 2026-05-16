@@ -89,6 +89,15 @@ def _has_question(text: str) -> bool:
     Utilitário estrutural para decisões de discovery.
     """
     try:
+        if prefer_current:
+            cur = str(current_reply or "").strip()
+            if cur and "{{" not in cur and "}}" not in cur:
+                if cur.startswith("{") or cur.startswith("```"):
+                    cur = _unwrap_front_json_envelope(cur) or cur
+                cur = _front_clean_free_mode_tail(cur)
+                if len(cur) >= 120:
+                    return cur
+
         return "?" in str(text or "")
     except Exception:
         return False
@@ -6765,6 +6774,40 @@ def _front_identity_request_is_valid(text: str) -> bool:
         return False
 
 
+
+
+def _front_has_identity_request_tail(text: str, identity_question: str = "") -> bool:
+    """
+    Verifica se o texto já termina com uma solicitação de identidade.
+
+    Importante:
+    - não basta o texto mencionar "nome" dentro de uma explicação técnica;
+    - "o robô pergunta o nome..." não é pedido de nome ao lead;
+    - a validação precisa olhar a cauda do texto, onde ficam pedidos reais.
+
+    Não usa lista de segmentos/profissões.
+    Não altera prompt.
+    Não chama modelo.
+    """
+    try:
+        s = str(text or "").strip()
+        if not s:
+            return False
+
+        tail = s[-180:].strip()
+        norm_tail = _front_normalize_identity_text(tail)
+
+        q = str(identity_question or "").strip()
+        if q:
+            norm_q = _front_normalize_identity_text(q)
+            if norm_q and norm_tail.endswith(norm_q):
+                return True
+
+        return _front_identity_request_is_valid(tail)
+    except Exception:
+        return False
+
+
 def _front_build_identity_request(*, has_name: bool, has_segment: bool) -> str:
     """
     Solicitação estrutural mínima para identidade ausente.
@@ -6802,8 +6845,11 @@ def _front_extract_declared_segment_from_user_text(text: str) -> str:
 
         patterns = [
             r"(?i)(?:^|[.!?\n]\s*)sou\s+([^.!?\n,;:]{3,80})",
+            r"(?i)(?:^|[.!?\n]\s*|\s+)eu\s+sou\s+([^.!?\n,;:]{3,80})",
             r"(?i)(?:^|[.!?\n]\s*)atuo\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
+            r"(?i)(?:^|[.!?\n]\s*|\s+)eu\s+atuo\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
             r"(?i)(?:^|[.!?\n]\s*)trabalho\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
+            r"(?i)(?:^|[.!?\n]\s*|\s+)eu\s+trabalho\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
         ]
         for pat in patterns:
             m = re.search(pat, s)
@@ -6907,6 +6953,7 @@ def _front_pick_rich_free_mode_base(
     current_reply: str,
     operational_contract: Optional[dict] = None,
     kb_context: Optional[dict] = None,
+    prefer_current: bool = False,
 ) -> str:
     """
     Seleciona a melhor base textual já existente no KB/contract para o
@@ -8700,6 +8747,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     kb_snapshot=kb_snapshot,
                     effective_segment=effective_segment,
                     kb_context=kb_context if isinstance(kb_context, dict) else {},
+                    prefer_current=(
+                        str(question_type or "").strip().lower() == "punctual"
+                        and int(ai_turns or 0) > 0
+                    ),
                 )
                 kb_context = _merge_real_kb_operational_context(
                     kb_context=kb_context if isinstance(kb_context, dict) else {},
@@ -12520,9 +12571,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 # Cumprimento seguro no ramo regressivo.
                 # Não usa vocativo nominal e não depende do LLM.
                 try:
-                    if _free_reply and not re.match(r"(?i)^\s*ol[áa]\b", _free_reply):
+                    _allow_safe_greeting = int(ai_turns or 0) <= 0
+                    if _allow_safe_greeting and _free_reply and not re.match(r"(?i)^\s*ol[áa]\b", _free_reply):
                         _free_reply = f"Olá. {_free_reply}".strip()
-                    if _free_spoken and not re.match(r"(?i)^\s*ol[áa]\b", _free_spoken):
+                    if _allow_safe_greeting and _free_spoken and not re.match(r"(?i)^\s*ol[áa]\b", _free_spoken):
                         _free_spoken = f"Olá. {_free_spoken}".strip()
                 except Exception:
                     pass
@@ -12531,8 +12583,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     str(next_step or "").strip().upper() != "SEND_LINK"
                     and _missing_identity
                     and _identity_question
-                    and _front_normalize_identity_text(_identity_question)
-                    not in _front_normalize_identity_text(_free_reply)
+                    and not _front_has_identity_request_tail(
+                        _free_reply,
+                        _identity_question,
+                    )
                 ):
                     _limit = 820
                     _sep = "\n\n"
@@ -12574,8 +12628,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         and bool(reply_size_policy.get("is_audio"))
                         and _missing_identity
                         and _identity_question
-                        and _front_normalize_identity_text(_identity_question)
-                        not in _front_normalize_identity_text(str(_spoken_source or ""))
+                        and not _front_has_identity_request_tail(
+                            str(_spoken_source or ""),
+                            _identity_question,
+                        )
                     ):
                         _sep = " "
                         _base_limit = max(
