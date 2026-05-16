@@ -223,6 +223,15 @@ def _get_signup_url() -> str:
 def _pick_lead_name(out: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None) -> str:
     try:
         ctx = ctx or {}
+        segment_refs = [
+            out.get("segment"),
+            out.get("segmentHint"),
+            out.get("leadSegmentRaw"),
+            ctx.get("segment"),
+            ctx.get("segment_hint"),
+            ctx.get("segmentHint"),
+            ctx.get("leadSegmentRaw"),
+        ]
         candidates = [
             out.get("nameToSay"),
             out.get("leadName"),
@@ -233,10 +242,68 @@ def _pick_lead_name(out: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None) -
             ctx.get("leadName"),
         ]
         for v in candidates:
-            s = str(v or "").strip()
+            s = _sanitize_lead_name_candidate(v, segment_refs=segment_refs)
             if s:
                 return s
         return ""
+    except Exception:
+        return ""
+
+
+
+def _normalize_lead_identity_text(value: Any) -> str:
+    try:
+        s = str(value or "").strip().lower()
+        s = "".join(
+            ch for ch in s
+            if ch.isalnum() or ch.isspace()
+        )
+        return " ".join(s.split())
+    except Exception:
+        return ""
+
+
+def _sanitize_lead_name_candidate(value: Any, segment_refs: Optional[list] = None) -> str:
+    """
+    Validação estrutural de nome.
+    Não identifica profissão/segmento por palavra-chave.
+    Apenas impede que o mesmo texto usado como segmento/atividade
+    seja reaproveitado como nome do lead.
+    """
+    try:
+        s = str(value or "").strip()
+        if not s:
+            return ""
+
+        if len(s) > 32:
+            return ""
+
+        tokens = [t for t in s.replace("\n", " ").split(" ") if t.strip()]
+        if len(tokens) > 3:
+            return ""
+
+        if not any(ch.isalpha() for ch in s):
+            return ""
+
+        if any(ch.isdigit() for ch in s):
+            return ""
+
+        cand_norm = _normalize_lead_identity_text(s)
+        cand_tokens = set(cand_norm.split())
+        if not cand_norm or not cand_tokens:
+            return ""
+
+        for ref in (segment_refs or []):
+            ref_norm = _normalize_lead_identity_text(ref)
+            ref_tokens = set(ref_norm.split())
+            if not ref_norm or not ref_tokens:
+                continue
+            if cand_norm == ref_norm:
+                return ""
+            if cand_tokens and cand_tokens.issubset(ref_tokens):
+                return ""
+
+        return s
     except Exception:
         return ""
 
@@ -697,15 +764,6 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
 
         created_at = data.get("createdAt") if isinstance(data, dict) else None
 
-        lead_name = (
-            out.get("leadName")
-            or out.get("displayName")
-            or out.get("nameToSay")
-            or ctx.get("displayName")
-            or ctx.get("name_hint")
-            or ""
-        )
-
         understanding = out.get("understanding") if isinstance(out.get("understanding"), dict) else {}
 
         operational_contract = (
@@ -739,6 +797,27 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
             or ctx.get("leadSegmentRaw")
             or segment
             or ""
+        )
+
+        lead_name = _sanitize_lead_name_candidate(
+            (
+                out.get("leadName")
+                or out.get("displayName")
+                or out.get("nameToSay")
+                or ctx.get("displayName")
+                or ctx.get("name_hint")
+                or ""
+            ),
+            segment_refs=[
+                segment,
+                segment_hint,
+                lead_segment_raw,
+                out.get("segment"),
+                out.get("segmentHint"),
+                ctx.get("segment"),
+                ctx.get("segment_hint"),
+                ctx.get("segmentHint"),
+            ],
         )
 
 

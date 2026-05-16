@@ -223,7 +223,7 @@ def _humanize_reply_with_lead_context(
         name = str(lead_name or "").strip()
         segment_raw = str(lead_segment_raw or "").strip()
 
-        if not name and not segment_raw:
+        if not name:
             return text
 
         lower = text.lower()
@@ -281,6 +281,63 @@ atividade: {segment_raw}
 
     except Exception:
         return str(reply or "").strip()
+
+
+def _front_normalize_identity_text(value: Any) -> str:
+    try:
+        s = str(value or "").strip().lower()
+        s = "".join(
+            ch for ch in s
+            if ch.isalnum() or ch.isspace()
+        )
+        return " ".join(s.split())
+    except Exception:
+        return ""
+
+
+def _front_sanitize_lead_name_candidate(value: Any, segment_refs: list | None = None) -> str:
+    """
+    Guarda estrutural para nome do lead.
+    Não usa palavras-chave de profissão/segmento.
+    Apenas rejeita textos que coincidam estruturalmente com atividade,
+    segmento ou descrição operacional já conhecida no contexto.
+    """
+    try:
+        s = str(value or "").strip()
+        if not s:
+            return ""
+
+        if len(s) > 32:
+            return ""
+
+        tokens = [t for t in s.replace("\n", " ").split(" ") if t.strip()]
+        if len(tokens) > 3:
+            return ""
+
+        if not any(ch.isalpha() for ch in s):
+            return ""
+
+        if any(ch.isdigit() for ch in s):
+            return ""
+
+        cand_norm = _front_normalize_identity_text(s)
+        cand_tokens = set(cand_norm.split())
+        if not cand_norm or not cand_tokens:
+            return ""
+
+        for ref in (segment_refs or []):
+            ref_norm = _front_normalize_identity_text(ref)
+            ref_tokens = set(ref_norm.split())
+            if not ref_norm or not ref_tokens:
+                continue
+            if cand_norm == ref_norm:
+                return ""
+            if cand_tokens and cand_tokens.issubset(ref_tokens):
+                return ""
+
+        return s
+    except Exception:
+        return ""
 
 
 def _front_first_text(*vals: Any) -> str:
@@ -7718,6 +7775,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     last_user_goal = str(state_summary.get("last_user_goal") or "").strip()
     name_hint = str(state_summary.get("name_hint") or "").strip()
+    name_hint = _front_sanitize_lead_name_candidate(
+        name_hint,
+        segment_refs=[
+            segment_hint,
+            state_summary.get("segment"),
+            state_summary.get("segmentHint"),
+            state_summary.get("leadSegmentRaw"),
+        ],
+    )
     lead_memory_summary = str(
         state_summary.get("lead_memory_summary") or ""
     ).strip()
@@ -9240,9 +9306,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 or ""
             ).strip().lower()
 
-            if (not has_name) and _name_use_probe in ("greet", "empathy"):
-                has_name = True
-                has_lead_name = True
+            if not has_name:
+                has_lead_name = False
 
             current_turn_segment_resolved = bool(
                 str(segment_key or "").strip()
@@ -10109,11 +10174,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
                 if _safe_core:
-                    _safe_lead_name = str(
-                        inferred_lead_name
-                        or name_hint
-                        or ""
-                    ).strip()
+                    _safe_lead_name = _front_sanitize_lead_name_candidate(
+                        _front_sanitize_lead_name_candidate(
+                inferred_lead_name or name_hint,
+                segment_refs=[
+                    segment_hint,
+                    inferred_lead_segment_raw,
+                    inferred_lead_segment,
+                ],
+            ) or "",
+                        segment_refs=[
+                            inferred_lead_segment_raw,
+                            inferred_lead_segment,
+                            segment_hint,
+                            operational_contract.get("segment"),
+                            operational_contract.get("platform_segment_key"),
+                        ],
+                    )
 
                     _safe_segment_raw = str(
                         inferred_lead_segment_raw
@@ -10126,7 +10203,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                     _safe_reply = _humanize_reply_with_lead_context(
                         reply=_safe_core,
-                        lead_name=_safe_lead_name,
+                        lead_name=_safe_lead_name if has_name else "",
                         lead_segment_raw=_safe_segment_raw,
                     )
 
@@ -10525,7 +10602,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             "leadSegmentRaw": inferred_lead_segment_raw,
                         },
                         "nextStep": next_step,
-                        "leadName": inferred_lead_name or name_hint,
+                        "leadName": _front_sanitize_lead_name_candidate(
+                inferred_lead_name or name_hint,
+                segment_refs=[
+                    segment_hint,
+                    inferred_lead_segment_raw,
+                    inferred_lead_segment,
+                ],
+            ),
                         "segmentHint": segment_hint,
                         "leadSegmentRaw": inferred_lead_segment_raw,
                         "shouldEnd": should_end,
@@ -11323,7 +11407,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     response_mode=response_mode,
                     next_step=next_step,
                     ai_turns=ai_turns,
-                    lead_name=inferred_lead_name or name_hint,
+                    lead_name=_front_sanitize_lead_name_candidate(
+                inferred_lead_name or name_hint,
+                segment_refs=[
+                    segment_hint,
+                    inferred_lead_segment_raw,
+                    inferred_lead_segment,
+                ],
+            ),
                     lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
                     question_type=question_type,
                 )
@@ -11411,10 +11502,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ):
                     operational_contract["segment"] = _context_segment_raw
 
-                if reply_text and (_context_lead_name or _context_segment_raw):
+                _context_lead_name = _front_sanitize_lead_name_candidate(
+                    _context_lead_name,
+                    segment_refs=[
+                        _context_segment_raw,
+                        segment_hint,
+                        inferred_lead_segment_raw,
+                        inferred_lead_segment,
+                    ],
+                )
+
+                if reply_text and _context_lead_name:
                     reply_text = _humanize_reply_with_lead_context(
                         reply=reply_text,
-                        lead_name=_context_lead_name,
+                        lead_name=_context_lead_name if has_name else "",
                         lead_segment_raw=_context_segment_raw,
                     )
                     spoken_text = reply_text
@@ -11521,7 +11622,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "tokenUsage": token_usage,
                 "replySizePolicy": reply_size_policy if isinstance(reply_size_policy, dict) else {},
                 "operationalContract": operational_contract if 'operational_contract' in locals() else {},
-                "leadName": inferred_lead_name or name_hint,
+                "leadName": _front_sanitize_lead_name_candidate(
+                inferred_lead_name or name_hint,
+                segment_refs=[
+                    segment_hint,
+                    inferred_lead_segment_raw,
+                    inferred_lead_segment,
+                ],
+            ),
                 "segmentHint": segment_hint,
             }
 
@@ -12399,7 +12507,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 response_mode=response_mode,
                 next_step=next_step,
                 ai_turns=ai_turns,
-                lead_name=inferred_lead_name or name_hint,
+                lead_name=_front_sanitize_lead_name_candidate(
+                inferred_lead_name or name_hint,
+                segment_refs=[
+                    segment_hint,
+                    inferred_lead_segment_raw,
+                    inferred_lead_segment,
+                ],
+            ),
                 lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
                 question_type=question_type,
             )
@@ -12414,7 +12529,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         try:
             reply_text = _humanize_reply_with_lead_context(
                 reply=reply_text,
-                lead_name=inferred_lead_name or name_hint,
+                lead_name=_front_sanitize_lead_name_candidate(
+                inferred_lead_name or name_hint,
+                segment_refs=[
+                    segment_hint,
+                    inferred_lead_segment_raw,
+                    inferred_lead_segment,
+                ],
+            ),
                 lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
             )
             spoken_text = reply_text
@@ -12526,7 +12648,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "leadSegmentRaw": inferred_lead_segment_raw,
             },
             "nextStep": next_step,
-            "leadName": inferred_lead_name or name_hint,
+            "leadName": _front_sanitize_lead_name_candidate(
+                inferred_lead_name or name_hint,
+                segment_refs=[
+                    segment_hint,
+                    inferred_lead_segment_raw,
+                    inferred_lead_segment,
+                ],
+            ),
             "segmentHint": segment_hint,
             "leadSegmentRaw": inferred_lead_segment_raw,
             "shouldEnd": should_end,
