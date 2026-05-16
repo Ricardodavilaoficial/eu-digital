@@ -6661,6 +6661,7 @@ def _ensure_discovery_identity_request(
     has_name: bool,
     effective_segment: str,
     response_mode: str,
+    identity_question: str = "",
 ) -> tuple[str, str, str]:
     """
     Guarda determinística mínima para discovery.
@@ -6678,12 +6679,10 @@ def _ensure_discovery_identity_request(
         name_missing = not bool(has_name)
         segment_missing = not bool(str(effective_segment or "").strip())
 
-        question = ""
+        question = str(identity_question or "").strip()
 
-        if name_missing:
-            question = "Como posso te chamar?"
-        elif segment_missing:
-            question = "Qual é o segmento do teu negócio?"
+        if (name_missing or segment_missing) and not question:
+            return reply, spoken, "clarify"
 
         if question:
             reply = str(reply or "").strip()
@@ -7774,6 +7773,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         upstream_topic_hint = ""
 
     last_user_goal = str(state_summary.get("last_user_goal") or "").strip()
+    segment_hint = str(state_summary.get("segment_hint") or "").strip()
     name_hint = str(state_summary.get("name_hint") or "").strip()
     name_hint = _front_sanitize_lead_name_candidate(
         name_hint,
@@ -7803,7 +7803,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if len(tokens) > 2 or len(name_hint) > 20:
             name_hint = ""
 
-    segment_hint = str(state_summary.get("segment_hint") or "").strip()
     is_lead = bool(state_summary.get("is_lead") or False)
     msg_type = str(
         state_summary.get("msg_type")
@@ -7885,7 +7884,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     # Contexto explícito extraído pela IA no turno atual.
     # Evita contradição do tipo has_name=false quando o usuário acabou de se apresentar.
     if not name_hint and inferred_lead_name:
-        name_hint = inferred_lead_name
+        name_hint = _front_sanitize_lead_name_candidate(
+            inferred_lead_name,
+            segment_refs=[
+                segment_hint,
+                state_summary.get("segment"),
+                state_summary.get("segmentHint"),
+                state_summary.get("leadSegmentRaw"),
+            ],
+        )
 
     has_name = bool(name_hint)
 
@@ -9252,7 +9259,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # ----------------------------------------------------------
         try:
             if inferred_lead_name and not name_hint:
-                name_hint = inferred_lead_name
+                name_hint = _front_sanitize_lead_name_candidate(
+                    inferred_lead_name,
+                    segment_refs=[
+                        segment_hint,
+                        inferred_lead_segment_raw,
+                        inferred_lead_segment,
+                    ],
+                )
 
             if inferred_lead_segment and not segment_hint:
                 segment_hint = inferred_lead_segment
@@ -10557,6 +10571,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         has_name=has_name,
                         effective_segment=effective_segment or segment_for_prompt,
                         response_mode=response_mode,
+                        identity_question=clarify_q or question,
                     )
                     if _identity_name_use == "clarify":
                         name_use = "clarify"
@@ -11595,6 +11610,31 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             spoken_text or reply_text,
                             520 if _is_audio_policy else _max_structured_chars,
                         )
+            except Exception:
+                pass
+
+            # ---------------------------------------------------------
+            # Guarda final de identidade sem frase pronta.
+            # Usa somente pergunta já produzida pela IA/KB.
+            # ---------------------------------------------------------
+            try:
+                _identity_question = str(
+                    clarify_q
+                    or question
+                    or ((kb_context or {}).get("discovery_question_hint") if isinstance(kb_context, dict) else "")
+                    or ""
+                ).strip()
+
+                if (
+                    str(next_step or "").strip().upper() != "SEND_LINK"
+                    and (not bool(has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
+                    and _identity_question
+                    and "?" not in str(reply_text or "")
+                ):
+                    reply_text = f"{str(reply_text or '').rstrip()}\n\n{_identity_question}".strip()
+                    spoken_text = reply_text
+                    name_use = "clarify"
+                    needs_clarify = "yes"
             except Exception:
                 pass
 
