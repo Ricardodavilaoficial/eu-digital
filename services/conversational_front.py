@@ -11886,6 +11886,74 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 else:
                                     _safe_preserved_spoken = _safe_preserved_reply
 
+                        # -------------------------------------------------
+                        # Guarda final antes do retorno técnico antecipado.
+                        # Este ramo retorna antes do caminho comum; portanto
+                        # precisa aplicar aqui a proteção contra vocativo
+                        # nominal quando has_name=False.
+                        #
+                        # Não usa palavra-chave, não altera prompt,
+                        # não chama modelo e não muda arquitetura.
+                        # -------------------------------------------------
+                        try:
+                            _safe_preserved_reply = _front_remove_unsafe_nominal_opening(
+                                _safe_preserved_reply,
+                                has_name=has_name,
+                            )
+                            _safe_preserved_spoken = _front_remove_unsafe_nominal_opening(
+                                _safe_preserved_spoken or _safe_preserved_reply,
+                                has_name=has_name,
+                            )
+                        except Exception:
+                            pass
+
+                        # -------------------------------------------------
+                        # Guarda de identidade no mesmo ramo antecipado.
+                        # Usa somente pergunta já existente no fluxo
+                        # (clarify_q/question/discovery_question_hint).
+                        # Não cria frase pronta no código.
+                        # -------------------------------------------------
+                        try:
+                            _identity_question = str(
+                                clarify_q
+                                or question
+                                or (
+                                    (kb_context or {}).get("discovery_question_hint")
+                                    if isinstance(kb_context, dict)
+                                    else ""
+                                )
+                                or ""
+                            ).strip()
+
+                            _missing_identity = bool(
+                                not bool(has_name)
+                                or not bool(effective_segment or segment_for_prompt or segment_hint)
+                            )
+
+                            if (
+                                str(next_step or "").strip().upper() != "SEND_LINK"
+                                and _missing_identity
+                                and _identity_question
+                                and _front_normalize_identity_text(_identity_question)
+                                not in _front_normalize_identity_text(_safe_preserved_reply)
+                            ):
+                                _limit = 820
+                                _sep = "\n\n"
+                                _base_limit = max(
+                                    320,
+                                    _limit - len(_identity_question) - len(_sep),
+                                )
+                                _base_reply = _front_trim_to_word_boundary_limit(
+                                    _safe_preserved_reply,
+                                    _base_limit,
+                                )
+                                _safe_preserved_reply = f"{_base_reply}{_sep}{_identity_question}".strip()
+                                _safe_preserved_spoken = _safe_preserved_reply
+                                name_use = "clarify"
+                                needs_clarify = "yes"
+                        except Exception:
+                            pass
+
                         out["replyText"] = _front_trim_to_word_boundary_limit(
                             _safe_preserved_reply,
                             820,
@@ -11907,6 +11975,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                         if _spoken_probe.startswith("{") or _spoken_probe.startswith("```"):
                             _spoken_probe = _unwrap_front_json_envelope(_spoken_probe) or _reply_probe
+
+                        try:
+                            _reply_probe = _front_remove_unsafe_nominal_opening(
+                                _reply_probe,
+                                has_name=has_name,
+                            )
+                            _spoken_probe = _front_remove_unsafe_nominal_opening(
+                                _spoken_probe or _reply_probe,
+                                has_name=has_name,
+                            )
+                        except Exception:
+                            pass
 
                         out["replyText"] = _front_trim_to_word_boundary_limit(
                             _reply_probe,
