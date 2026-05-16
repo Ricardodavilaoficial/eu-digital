@@ -737,6 +737,7 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
             out.get("leadSegmentRaw")
             or understanding.get("leadSegmentRaw")
             or ctx.get("leadSegmentRaw")
+            or segment
             or ""
         )
 
