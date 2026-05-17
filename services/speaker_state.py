@@ -22,6 +22,39 @@ _CUSTOMER_RESET_SECONDS = int(os.environ.get("CUSTOMER_AI_TURNS_RESET_SECONDS") 
 _mem: Dict[str, Tuple[Dict[str, Any], float]] = {}
 
 
+def _sanitize_name_candidate(value: Any) -> str:
+    """
+    Sanitização estrutural e conservadora para nomes.
+
+    Objetivo:
+    impedir que frases longas ("Rosália como eu confiro...")
+    retornem como displayName/name_hint/leadName.
+
+    Não usa palavras-chave de profissões ou segmentos.
+    Não altera prompts.
+    """
+    try:
+        text = " ".join(str(value or "").strip().split())
+        if not text:
+            return ""
+
+        parts = [p for p in text.split(" ") if p]
+
+        # Conservador:
+        # nomes normalmente têm 1 a 3 tokens.
+        if len(parts) > 3:
+            return ""
+
+        # Limite razoável de tamanho.
+        if len(text) > 40:
+            return ""
+
+        return text
+    except Exception:
+        return ""
+
+
+
 def _now() -> float:
     return time.time()
 
@@ -166,6 +199,26 @@ def get_speaker_state(wa_key: str, uid_owner: Optional[str] = None) -> Dict[str,
                         data["ai_turns"] = 0
             # ✅ Reset por inatividade (LEAD vs CUSTOMER)
             data = _apply_inactivity_reset(did, dict(data), now, uid_owner, db)
+
+            # -------------------------------------------------------
+            # Blindagem estrutural de identidade
+            #
+            # Se displayName / leadName / name_hint tiverem sido
+            # contaminados por frases longas, removemos antes de
+            # devolver o estado ao restante do pipeline.
+            #
+            # Não grava no Firestore; apenas higieniza a leitura.
+            # -------------------------------------------------------
+            try:
+                for _key in ("displayName", "leadName", "name_hint"):
+                    if _key in data:
+                        _safe = _sanitize_name_candidate(data.get(_key))
+                        if _safe:
+                            data[_key] = _safe
+                        else:
+                            data.pop(_key, None)
+            except Exception:
+                pass
 
             # cache local
             _mem[did] = (dict(data), now + _TTL_SECONDS)

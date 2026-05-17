@@ -2400,24 +2400,28 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
             # ==========================================================
             # IDENTIDADE PREMIUM (interlocutor ativo)
-            # - Primeiro tenta override por regex (barato)
-            # - Se não tiver, e houver gatilho, chama IA (curta) e persiste
+            # - Mantém interlocutor ativo para suporte/customer final.
+            # - Em Vendas institucional, a identidade do lead deve vir do
+            #   front/wa_bot, onde a IA soberana entende e o código valida.
             # ==========================================================
+            _identity_runtime_enabled = bool(uid)
+
             try:
-                nm = _detect_name_override(text_in)
-                if nm and wa_key_effective:
-                    _set_name_override(wa_key_effective, nm)
-                    # também seta interlocutor ativo (garante 2ª mensagem)
-                    if _IDENTITY_MODE != "off":
-                        _set_active_speaker(wa_key_effective, nm, source="regex", confidence=0.70)
-                    audio_debug = dict(audio_debug or {})
-                    audio_debug["nameOverrideProbe_set"] = {"waKey": wa_key_effective, "name": nm}
+                if _identity_runtime_enabled:
+                    nm = _detect_name_override(text_in)
+                    if nm and wa_key_effective:
+                        _set_name_override(wa_key_effective, nm)
+                        # também seta interlocutor ativo (garante 2ª mensagem)
+                        if _IDENTITY_MODE != "off":
+                            _set_active_speaker(wa_key_effective, nm, source="regex", confidence=0.70)
+                        audio_debug = dict(audio_debug or {})
+                        audio_debug["nameOverrideProbe_set"] = {"waKey": wa_key_effective, "name": nm}
             except Exception:
                 pass
 
             # IA: só quando tem sinal de troca/apresentação e ainda não temos speaker bom
             try:
-                if _IDENTITY_MODE != "off" and wa_key_effective and text_in:
+                if _identity_runtime_enabled and _IDENTITY_MODE != "off" and wa_key_effective and text_in:
                     active_now = _get_active_speaker(wa_key_effective)
                     # se já temos active speaker e não há sinal, não gasta IA
                     if _looks_like_identity_signal(text_in) and (not active_now):

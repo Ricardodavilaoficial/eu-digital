@@ -251,6 +251,21 @@ def _pick_lead_name(out: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None) -
 
 
 
+
+
+def _sanitize_state_name_candidate(value: str, segment_hint: str = "") -> str:
+    try:
+        s = str(value or "").strip()
+        if not s:
+            return ""
+        seg = str(segment_hint or "").strip()
+        cleaned = _sanitize_lead_name_candidate(s, segment_refs=[seg] if seg else [])
+        if cleaned:
+            return cleaned
+        return ""
+    except Exception:
+        return ""
+
 def _normalize_lead_identity_text(value: Any) -> str:
     try:
         s = str(value or "").strip().lower()
@@ -2648,10 +2663,27 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         topic_hint = _front_topic_hint(text or "")
                         kb_snapshot = _build_front_kb_snapshot(topic_hint)
 
+                        _segment_for_name_guard = (
+                            ctx.get("segment_hint")
+                            or ctx.get("leadSegmentRaw")
+                            or ctx.get("segment")
+                            or ""
+                        )
+
+                        _safe_name_hint = _sanitize_state_name_candidate(
+                            (
+                                ctx.get("name_hint")
+                                or ctx.get("displayName")
+                                or ctx.get("leadName")
+                                or ""
+                            ),
+                            segment_hint=_segment_for_name_guard,
+                        )
+
                         state_summary = {
                             "ai_turns": ai_turns,
                             "is_lead": True,
-                            "name_hint": ctx.get("name_hint") or ctx.get("displayName") or ctx.get("leadName") or "",
+                            "name_hint": _safe_name_hint,
                             "segment_hint": ctx.get("segment_hint") or "",
                             "msg_type": ctx.get("msg_type") or "",
                             "entry_type": ctx.get("msg_type") or "",
@@ -2804,6 +2836,44 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
                         # saída compatível com o worker
                         und = front_out.get("understanding") or {}
+
+                        # ---------------------------------------------------
+                        # Blindagem estrutural de identidade na saída do front
+                        #
+                        # O estado/contexto já é sanitizado antes de chamar o
+                        # front, mas aqui impedimos que qualquer leadName cru
+                        # vindo de front_out seja repassado ao worker, ao TTS
+                        # ou à persistência.
+                        #
+                        # Não usa lista de profissões/segmentos.
+                        # Não altera prompt.
+                        # Não chama IA adicional.
+                        # ---------------------------------------------------
+                        try:
+                            _front_segment_for_name_guard = (
+                                front_out.get("segmentHint")
+                                or front_out.get("leadSegmentRaw")
+                                or (und.get("segmentHint") if isinstance(und, dict) else "")
+                                or (und.get("leadSegmentRaw") if isinstance(und, dict) else "")
+                                or ctx.get("segment_hint")
+                                or ctx.get("leadSegmentRaw")
+                                or ctx.get("segment")
+                                or ""
+                            )
+                            _safe_front_lead_name = _sanitize_state_name_candidate(
+                                (
+                                    front_out.get("leadName")
+                                    or front_out.get("displayName")
+                                    or front_out.get("nameToSay")
+                                    or (und.get("leadName") if isinstance(und, dict) else "")
+                                    or (und.get("lead_name") if isinstance(und, dict) else "")
+                                    or ""
+                                ),
+                                segment_hint=_front_segment_for_name_guard,
+                            )
+                        except Exception:
+                            _safe_front_lead_name = ""
+
                         # espelha nextStep/shouldEnd dentro de understanding também (tolerante)
                         try:
                             if isinstance(und, dict):
@@ -2819,7 +2889,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "replyText": str(front_out.get("replyText") or "").strip(),
                             "spokenText": str(front_out.get("spokenText") or front_out.get("spoken_text") or "").strip(),
                             "understanding": und,
-                            "leadName": str(front_out.get("leadName") or "").strip(),
+                            "leadName": _safe_front_lead_name,
                             "segmentHint": str(front_out.get("segmentHint") or "").strip(),
                             "planNextStep": front_out.get("nextStep") or "NONE",
                             "nameUse": front_out.get("nameUse") or "none",
@@ -2834,6 +2904,21 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             "prefersText": bool(front_out.get("prefersText", False)),
                             "ttsOwner": "worker",
                         }
+
+                        try:
+                            if _safe_front_lead_name:
+                                out["displayName"] = _safe_front_lead_name
+                                out["name_hint"] = _safe_front_lead_name
+                                if isinstance(front_out, dict):
+                                    front_out["leadName"] = _safe_front_lead_name
+                                    front_out["displayName"] = _safe_front_lead_name
+                                    front_out["name_hint"] = _safe_front_lead_name
+                            elif isinstance(front_out, dict):
+                                front_out.pop("leadName", None)
+                                front_out.pop("displayName", None)
+                                front_out.pop("name_hint", None)
+                        except Exception:
+                            pass
 
                         # Blindagem final:
                         # Garante que o payload retornado pelo wa_bot utilize exatamente os

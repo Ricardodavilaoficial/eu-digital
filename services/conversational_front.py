@@ -89,33 +89,6 @@ def _has_question(text: str) -> bool:
     Utilitário estrutural para decisões de discovery.
     """
     try:
-        # Em perguntas pontuais/de continuidade, principalmente após o
-        # primeiro turno, a resposta do turno atual deve ter prioridade.
-        # Caso contrário, o fallback rico volta a escolher a base genérica
-        # de agenda e repete a resposta anterior.
-        #
-        # Não usa lista de profissões/segmentos.
-        # Não altera prompt.
-        # Não chama IA extra.
-        if prefer_current:
-            cur = str(current_reply or "").strip()
-            if cur:
-                if cur.startswith("{") or cur.startswith("```"):
-                    cur = _unwrap_front_json_envelope(cur) or cur
-                if "{{" not in cur and "}}" not in cur:
-                    cur = _front_clean_free_mode_tail(cur)
-                    if len(cur) >= 60:
-                        return cur
-
-        if prefer_current:
-            cur = str(current_reply or "").strip()
-            if cur and "{{" not in cur and "}}" not in cur:
-                if cur.startswith("{") or cur.startswith("```"):
-                    cur = _unwrap_front_json_envelope(cur) or cur
-                cur = _front_clean_free_mode_tail(cur)
-                if len(cur) >= 120:
-                    return cur
-
         return "?" in str(text or "")
     except Exception:
         return False
@@ -6989,6 +6962,24 @@ def _front_pick_rich_free_mode_base(
     Não chama modelo.
     """
     try:
+        # Em perguntas pontuais/de continuidade, principalmente após o
+        # primeiro turno, a resposta do turno atual deve ter prioridade.
+        # Caso contrário, o fallback rico volta a escolher a base genérica
+        # de agenda e repete a resposta anterior.
+        #
+        # Não usa lista de profissões/segmentos.
+        # Não altera prompt.
+        # Não chama IA extra.
+        if prefer_current:
+            cur = str(current_reply or "").strip()
+            if cur:
+                if cur.startswith("{") or cur.startswith("```"):
+                    cur = _unwrap_front_json_envelope(cur) or cur
+                if "{{" not in cur and "}}" not in cur:
+                    cur = _front_clean_free_mode_tail(cur)
+                    if len(cur) >= 60:
+                        return cur
+
         candidates = []
 
         if isinstance(operational_contract, dict):
@@ -8768,10 +8759,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     kb_snapshot=kb_snapshot,
                     effective_segment=effective_segment,
                     kb_context=kb_context if isinstance(kb_context, dict) else {},
-                    prefer_current=(
-                        str(question_type or "").strip().lower() == "punctual"
-                        and int(ai_turns or 0) > 0
-                    ),
                 )
                 kb_context = _merge_real_kb_operational_context(
                     kb_context=kb_context if isinstance(kb_context, dict) else {},
