@@ -8084,8 +8084,10 @@ def _front_build_continuity_reply_from_platform_kb(
         memory_positioning = _platform_get_map(kb_obj, "memory_positioning")
         product_truth = _platform_get_map(kb_obj, "product_truth_v1")
 
-        def _clean_fact(v: Any, max_len: int = 260) -> str:
+        def _clean_fact(v: Any, max_len: int = 420) -> str:
             try:
+                if isinstance(v, list):
+                    v = " ".join(str(x or "").strip() for x in v if str(x or "").strip())
                 s = " ".join(str(v or "").strip().split())
                 if not s:
                     return ""
@@ -8119,39 +8121,40 @@ def _front_build_continuity_reply_from_platform_kb(
                 return ""
 
         facts: list[str] = []
+        fallback_facts: list[str] = []
 
         if pack_u == "PACK_A_AGENDA":
             facts.extend([
+                _clean_fact(operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else ""),
                 _clean_fact(process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else ""),
                 _clean_fact(process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else ""),
-                _clean_fact(operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else ""),
                 _block_text("scheduling_scene"),
                 _clean_fact(operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else ""),
-                _pack_runtime_short(),
             ])
+            fallback_facts.append(_pack_runtime_short())
         elif pack_u == "PACK_B_SERVICOS":
             facts.extend([
                 _clean_fact(operational_capabilities.get("services_practice") if isinstance(operational_capabilities, dict) else ""),
                 _clean_fact(product_truth.get("core_rule") if isinstance(product_truth, dict) else ""),
                 _block_text("services_quote_scene"),
-                _pack_runtime_short(),
             ])
+            fallback_facts.append(_pack_runtime_short())
         elif pack_u == "PACK_C_PEDIDOS":
             facts.extend([
                 _clean_fact(operational_capabilities.get("quotes_practice") if isinstance(operational_capabilities, dict) else ""),
                 _block_text("services_quote_scene"),
-                _pack_runtime_short(),
             ])
+            fallback_facts.append(_pack_runtime_short())
         elif pack_u == "PACK_D_STATUS":
             core = memory_positioning.get("core") if isinstance(memory_positioning, dict) else []
             if isinstance(core, list):
                 facts.extend([_clean_fact(x) for x in core[:2]])
             facts.extend([
                 _clean_fact(operational_flows.get("agenda_do_dia") if isinstance(operational_flows, dict) else ""),
-                _pack_runtime_short(),
             ])
+            fallback_facts.append(_pack_runtime_short())
         else:
-            facts.append(_pack_runtime_short())
+            fallback_facts.append(_pack_runtime_short())
 
         cleaned: list[str] = []
         seen = set()
@@ -8166,6 +8169,21 @@ def _front_build_continuity_reply_from_platform_kb(
             if len(cleaned) >= 3:
                 break
 
+        # Em continuidade, runtime_short é fallback final.
+        # Ele costuma ser one-liner de abertura do pack; útil quando não há
+        # outro material, mas fraco para responder pergunta pontual.
+        if not cleaned:
+            for f in fallback_facts:
+                f = _clean_fact(f)
+                if not f:
+                    continue
+                key = _normalize_lookup_key(f[:120])
+                if key and key not in seen:
+                    seen.add(key)
+                    cleaned.append(f)
+                if len(cleaned) >= 2:
+                    break
+
         if not cleaned:
             return base
 
@@ -8178,6 +8196,11 @@ def _front_build_continuity_reply_from_platform_kb(
 
         # Se a IA já trouxe pelo menos dois fatos úteis do KB, preserva.
         if overlap >= 2:
+            return base
+
+        # Evita piorar a resposta aceita pela IA com um fallback curto demais.
+        useful_probe = " ".join(cleaned).strip()
+        if len(useful_probe) < 220 and len(cleaned) < 2:
             return base
 
         name = _front_sanitize_lead_name_candidate(user_name)
