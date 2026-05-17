@@ -1197,6 +1197,7 @@ def _infer_segment_from_text(user_text: str, kb_snapshot: str) -> str:
                         if blob_norm and any(tok in norm for tok in _tokenize_lookup_text(blob_norm)):
                             candidates.append(key)
                     except Exception:
+                        _preserve_continuity_reply = False
                         pass
 
         # Primeiro: se o conteúdo do perfil no KB casou com o texto,
@@ -6929,7 +6930,24 @@ def _front_trim_free_mode_sentence(text: str, limit: int = 820) -> str:
         s = str(text or "").strip()
         if not s:
             return ""
+        # Mesmo quando o texto já vem abaixo do limite, ele pode ter sido
+        # truncado antes por alguma camada anterior do pipeline.
+        # Neste caso, não basta acrescentar ponto: isso gera saídas como
+        # "confere a duração do serviço e.".
+        #
+        # A regra é estrutural:
+        # - se já termina em frase completa, preserva;
+        # - se não termina em pontuação, tenta voltar para a última frase
+        #   completa útil;
+        # - se não houver frase completa útil, aplica o acabamento antigo.
         if len(s) <= int(limit):
+            if s[-1:] in ".!?":
+                return _front_clean_free_mode_tail(s)
+
+            last = max(s.rfind("."), s.rfind("!"), s.rfind("?"))
+            if last >= 220:
+                return _front_clean_free_mode_tail(s[: last + 1])
+
             return _front_clean_free_mode_tail(s)
 
         cut = s[: int(limit)].rstrip()
@@ -12728,32 +12746,76 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if not _continuity_pack_id:
                     _continuity_pack_id = _pick_pack_for_intent(_continuity_topic)
 
+                # -----------------------------------------------------
+                # Identidade estrutural para continuidade
+                #
+                # No turno em que o lead informa o nome e já faz uma
+                # pergunta prática, `has_name` pode ainda estar falso,
+                # porque a persistência só será consolidada depois.
+                #
+                # Para o helper de continuidade, o que importa é se já
+                # existe nome sanitizado neste turno ou em estado válido.
+                # Isso evita perder a resposta rica da KB exatamente no
+                # segundo turno, sem aceitar segmento como nome.
+                # -----------------------------------------------------
+                try:
+                    _continuity_safe_name = _front_sanitize_lead_name_candidate(
+                        name_hint or current_turn_lead_name or inferred_lead_name,
+                        segment_refs=[
+                            segment_hint,
+                            inferred_lead_segment_raw,
+                            inferred_lead_segment,
+                        ],
+                    )
+                except Exception:
+                    _continuity_safe_name = ""
+
+                _continuity_has_identity = bool(
+                    has_name
+                    or str(_continuity_safe_name or "").strip()
+                )
+
+                _continuity_has_segment = bool(
+                    effective_segment
+                    or segment_for_prompt
+                    or segment_hint
+                    or inferred_lead_segment_raw
+                    or inferred_lead_segment
+                )
+
+                _free_reply_before_continuity = str(_free_reply or "").strip()
                 _free_reply = _front_build_continuity_reply_from_platform_kb(
                     current_reply=_free_reply,
                     kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
                     topic=_continuity_topic,
                     pack_id=_continuity_pack_id,
-                    user_name=name_hint or current_turn_lead_name,
+                    user_name=_continuity_safe_name,
                     ai_turns=int(ai_turns or 0),
-                    has_identity=bool(has_name),
-                    has_segment=bool(effective_segment or segment_for_prompt or segment_hint),
+                    has_identity=_continuity_has_identity,
+                    has_segment=_continuity_has_segment,
                     next_step=next_step,
                 )
+
+                _continuity_reply_built = bool(
+                    str(_free_reply or "").strip()
+                    and str(_free_reply or "").strip() != _free_reply_before_continuity
+                )
+
                 _free_spoken = _front_build_continuity_reply_from_platform_kb(
                     current_reply=_free_spoken or _free_reply,
                     kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
                     topic=_continuity_topic,
                     pack_id=_continuity_pack_id,
-                    user_name=name_hint or current_turn_lead_name,
+                    user_name=_continuity_safe_name,
                     ai_turns=int(ai_turns or 0),
-                    has_identity=bool(has_name),
-                    has_segment=bool(effective_segment or segment_for_prompt or segment_hint),
+                    has_identity=_continuity_has_identity,
+                    has_segment=_continuity_has_segment,
                     next_step=next_step,
                 )
 
                 _missing_identity = bool(
-                    not bool(has_name)
-                    or not bool(effective_segment or segment_for_prompt or segment_hint)
+                    not bool(_continuity_has_identity)
+                    or not bool(_continuity_has_segment)
                 )
 
                 _has_segment_for_identity = bool(
@@ -12909,7 +12971,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             int(ai_turns or 0) > 0
                             and not _missing_identity
                             and not bool(_identity_question)
-                            and len(str(out.get("replyText") or "").strip()) >= 400
+                            and (
+                                bool(_continuity_reply_built)
+                                or len(str(out.get("replyText") or "").strip()) >= 400
+                            )
                             and bool(
                                 _continuity_pack_id
                                 or (
@@ -12933,6 +12998,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             or 460
                         )
                         _spoken_limit = max(280, min(_spoken_limit, 520))
+
+                    # Continuidade útil não deve ser recompactada para o
+                    # limite curto padrão de áudio. O texto já foi montado
+                    # por KB estruturada e será cortado em frase completa.
+                    try:
+                        if bool(_preserve_continuity_reply):
+                            _spoken_limit = max(int(_spoken_limit or 0), 700)
+                            _spoken_limit = min(_spoken_limit, 760)
+                    except Exception:
+                        pass
 
                     # Para áudio, a pergunta de identidade não pode ser
                     # sacrificada pelo corte compacto. Primeiro cortamos a
