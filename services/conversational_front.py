@@ -12883,6 +12883,49 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     _spoken_limit = 820
                     _spoken_source = _free_spoken or out["replyText"]
 
+                    # -------------------------------------------------------
+                    # Preservação estrutural de respostas de continuidade
+                    #
+                    # Quando já temos:
+                    # - identidade validada (nome e segmento conhecidos),
+                    # - pergunta de clarificação inexistente,
+                    # - turno posterior ao primeiro,
+                    # - resposta rica já construída a partir da platform_kb,
+                    #
+                    # o pipeline de áudio não deve substituir esse conteúdo
+                    # por uma versão curta/genérica baseada em runtime_short.
+                    #
+                    # Neste caso, o áudio usa como base o próprio replyText
+                    # final, aplicando apenas corte de tamanho.
+                    #
+                    # Regras:
+                    # - sem palavras-chave;
+                    # - sem alteração de prompt;
+                    # - sem IA adicional;
+                    # - impacto apenas na compactação do spokenText.
+                    # -------------------------------------------------------
+                    try:
+                        _preserve_continuity_reply = bool(
+                            int(ai_turns or 0) > 0
+                            and not _missing_identity
+                            and not bool(_identity_question)
+                            and len(str(out.get("replyText") or "").strip()) >= 400
+                            and bool(
+                                _continuity_pack_id
+                                or (
+                                    isinstance(kb_snapshot_obj, dict)
+                                    and bool(kb_snapshot_obj.get("value_packs_v1"))
+                                )
+                            )
+                        )
+
+                        if _preserve_continuity_reply:
+                            _spoken_source = str(
+                                out.get("replyText") or _spoken_source or ""
+                            ).strip()
+                    except Exception:
+                        pass
+
                     if isinstance(reply_size_policy, dict) and bool(reply_size_policy.get("is_audio")):
                         _spoken_limit = int(
                             reply_size_policy.get("max_chars")
