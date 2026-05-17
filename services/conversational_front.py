@@ -8145,6 +8145,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     question_type = "broad"
     _final_candidate = None
     inferred_lead_name = ""
+    current_turn_lead_name = ""
     inferred_lead_segment = ""
     inferred_lead_segment_raw = ""
 
@@ -9664,11 +9665,31 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 pass
 
-            # Mantém has_name preso ao nome confirmado.
-            # Não promover inferred_lead_name/name_hint do turno atual
-            # para estado confirmado dentro do conversational_front.
-            has_name = bool(confirmed_has_name)
-            has_lead_name = bool(confirmed_has_name)
+            # Nome do turno atual:
+            # o lead pode informar o nome em qualquer ordem da conversa.
+            # Se o nome foi dito neste turno e passou pela sanitização
+            # estrutural, ele já deve contar como identidade resolvida
+            # para este retorno e sair no payload para persistência.
+            #
+            # Não usa lista de nomes, profissões ou segmentos.
+            # Não altera prompt.
+            # Não chama IA adicional.
+            current_turn_lead_name = _front_sanitize_lead_name_candidate(
+                inferred_lead_name,
+                segment_refs=[
+                    segment_hint,
+                    inferred_lead_segment_raw,
+                    inferred_lead_segment,
+                    state_summary.get("segment"),
+                    state_summary.get("segmentHint"),
+                    state_summary.get("leadSegmentRaw"),
+                ],
+            )
+            if current_turn_lead_name and not name_hint:
+                name_hint = current_turn_lead_name
+
+            has_name = bool(confirmed_has_name or current_turn_lead_name)
+            has_lead_name = has_name
 
             if str(segment_hint or "").strip():
                 has_segment_context = True
@@ -10952,7 +10973,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     direct_text, direct_spoken, _identity_name_use = _ensure_discovery_identity_request(
                         reply_text=direct_text,
                         spoken_text=direct_spoken,
-                        has_name=confirmed_has_name,
+                        has_name=has_name,
                         effective_segment=effective_segment or segment_for_prompt,
                         response_mode=response_mode,
                         identity_question=clarify_q or question,
@@ -11010,7 +11031,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                     inferred_lead_segment,
                                 ],
                             )
-                            if confirmed_has_name else ""
+                            if has_name else ""
                         ),
                         "segmentHint": segment_hint,
                         "leadSegmentRaw": inferred_lead_segment_raw,
@@ -11744,6 +11765,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     )
                 elif _contract_strong or _contract_allows_operational_output:
                     _accept_current = bool(current_show)
+                elif int(ai_turns or 0) > 0:
+                    _accept_current = bool(
+                        len(str(current_text or "").strip()) >= 60
+                        and not _looks_like_technical_output(current_text)
+                    )
                 else:
                     _accept_current = bool(
                         current_live
@@ -12039,7 +12065,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     "question_type": question_type,
                     "needsClarify": needs_clarify,
                     "clarifyQuestion": clarify_q,
-                    "leadName": name_hint if confirmed_has_name else "",
+                    "leadName": name_hint if has_name else "",
                     "segmentHint": segment_hint,
                     "leadSegmentRaw": inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
                 },
@@ -12061,7 +12087,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             inferred_lead_segment,
                         ],
                     )
-                    if confirmed_has_name else ""
+                    if has_name else ""
                 ),
                 "segmentHint": segment_hint,
             }
@@ -12242,11 +12268,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         try:
                             _safe_preserved_reply = _front_remove_unsafe_nominal_opening(
                                 _safe_preserved_reply,
-                                has_name=confirmed_has_name,
+                                has_name=has_name,
                             )
                             _safe_preserved_spoken = _front_remove_unsafe_nominal_opening(
                                 _safe_preserved_spoken or _safe_preserved_reply,
-                                has_name=confirmed_has_name,
+                                has_name=has_name,
                             )
                         except Exception:
                             pass
@@ -12270,7 +12296,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             ).strip()
 
                             _missing_identity = bool(
-                                not bool(confirmed_has_name)
+                                not bool(has_name)
                                 or not bool(effective_segment or segment_for_prompt or segment_hint)
                             )
 
@@ -12301,11 +12327,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         try:
                             _safe_preserved_reply = _front_remove_unsafe_nominal_opening(
                                 _safe_preserved_reply,
-                                has_name=confirmed_has_name,
+                                has_name=has_name,
                             )
                             _safe_preserved_spoken = _front_remove_unsafe_nominal_opening(
                                 _safe_preserved_spoken or _safe_preserved_reply,
-                                has_name=confirmed_has_name,
+                                has_name=has_name,
                             )
                         except Exception:
                             pass
@@ -12323,7 +12349,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             ).strip()
 
                             _missing_identity = bool(
-                                not bool(confirmed_has_name)
+                                not bool(has_name)
                                 or not bool(effective_segment or segment_for_prompt or segment_hint)
                             )
 
@@ -12376,11 +12402,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         try:
                             _reply_probe = _front_remove_unsafe_nominal_opening(
                                 _reply_probe,
-                                has_name=confirmed_has_name,
+                                has_name=has_name,
                             )
                             _spoken_probe = _front_remove_unsafe_nominal_opening(
                                 _spoken_probe or _reply_probe,
-                                has_name=confirmed_has_name,
+                                has_name=has_name,
                             )
                         except Exception:
                             pass
@@ -12388,11 +12414,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         try:
                             _reply_probe = _front_remove_unsafe_nominal_opening(
                                 _reply_probe,
-                                has_name=confirmed_has_name,
+                                has_name=has_name,
                             )
                             _spoken_probe = _front_remove_unsafe_nominal_opening(
                                 _spoken_probe or _reply_probe,
-                                has_name=confirmed_has_name,
+                                has_name=has_name,
                             )
                         except Exception:
                             pass
@@ -12471,29 +12497,31 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if _free_spoken.startswith("{") or _free_spoken.startswith("```"):
                     _free_spoken = _unwrap_front_json_envelope(_free_spoken) or _free_reply
 
+                _prefer_current_reply = bool(
+                    int(ai_turns or 0) > 0
+                    and len(str(_free_reply or "").strip()) >= 60
+                )
+
                 _free_reply = _front_pick_rich_free_mode_base(
                     current_reply=_free_reply,
                     operational_contract=operational_contract if isinstance(operational_contract, dict) else {},
                     kb_context=kb_context if isinstance(kb_context, dict) else {},
-                    prefer_current=(
-                        str(question_type or "").strip().lower() == "punctual"
-                        and int(ai_turns or 0) > 0
-                    ),
+                    prefer_current=_prefer_current_reply,
                 )
                 _free_spoken = _free_reply
 
 
                 _free_reply = _front_remove_unsafe_nominal_opening(
                     _free_reply,
-                    has_name=confirmed_has_name,
+                    has_name=has_name,
                 )
                 _free_spoken = _front_remove_unsafe_nominal_opening(
                     _free_spoken or _free_reply,
-                    has_name=confirmed_has_name,
+                    has_name=has_name,
                 )
 
                 _missing_identity = bool(
-                    not bool(confirmed_has_name)
+                    not bool(has_name)
                     or not bool(effective_segment or segment_for_prompt or segment_hint)
                 )
 
@@ -12508,7 +12536,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         inferred_lead_segment_raw = inferred_lead_segment_raw or _declared_segment
                         inferred_lead_segment = inferred_lead_segment or _declared_segment
                         _has_segment_for_identity = True
-                        _missing_identity = bool(not bool(confirmed_has_name))
+                        _missing_identity = bool(not bool(has_name))
 
                 # Neste ramo, pergunta aberta comercial não é identidade.
                 # Só aceitamos pergunta existente se ela pedir nome.
@@ -12550,7 +12578,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                     if _missing_identity and not _identity_question:
                         _identity_question = _front_build_identity_request(
-                            has_name=confirmed_has_name,
+                            has_name=has_name,
                             has_segment=_has_segment_for_identity,
                         )
                 except Exception:
@@ -12669,9 +12697,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         460,
                     )
 
-                # Se o nome não está confirmado, não deixe hipótese do turno
-                # sair como leadName/name_hint no payload para o wa_bot salvar.
-                if not bool(confirmed_has_name):
+                # Identidade no retorno:
+                # se o nome veio do turno atual e foi sanitizado, ele pode
+                # sair para o wa_bot persistir. Caso contrário, seguimos
+                # bloqueando hipóteses não validadas.
+                _safe_payload_name = _front_sanitize_lead_name_candidate(
+                    name_hint or current_turn_lead_name or inferred_lead_name,
+                    segment_refs=[
+                        segment_hint,
+                        inferred_lead_segment_raw,
+                        inferred_lead_segment,
+                    ],
+                )
+
+                if not bool(_safe_payload_name):
                     out["leadName"] = ""
                     out["name_hint"] = ""
                     try:
@@ -12680,6 +12719,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             _u["leadName"] = ""
                             _u["name_hint"] = ""
                             _u["lead_name"] = ""
+                    except Exception:
+                        pass
+                else:
+                    out["leadName"] = _safe_payload_name
+                    out["name_hint"] = _safe_payload_name
+                    try:
+                        _u = out.get("understanding")
+                        if isinstance(_u, dict):
+                            _u["leadName"] = _safe_payload_name
+                            _u["name_hint"] = _safe_payload_name
+                            _u["lead_name"] = _safe_payload_name
                     except Exception:
                         pass
 
