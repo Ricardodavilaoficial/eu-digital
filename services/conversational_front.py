@@ -8017,6 +8017,178 @@ def _platform_get_map(kb_obj: Dict[str, Any], key: str) -> Dict[str, Any]:
         return {}
 
 
+
+def _front_build_continuity_reply_from_platform_kb(
+    *,
+    current_reply: str,
+    kb_obj: Dict[str, Any],
+    topic: str = "",
+    pack_id: str = "",
+    user_name: str = "",
+    ai_turns: int = 0,
+    has_identity: bool = False,
+    has_segment: bool = False,
+    next_step: str = "",
+) -> str:
+    """
+    Constrói resposta útil de continuidade a partir da platform_kb.
+
+    Objetivo comercial:
+    quando o lead faz uma pergunta de continuidade, a resposta precisa
+    mostrar utilidade prática — painel, registro, filtros, resumo, acervo,
+    orçamento, pedido, status, histórico — conforme o tema já resolvido.
+
+    Fonte de verdade:
+    somente campos já existentes na platform_kb.
+
+    Não usa lista de profissões/segmentos.
+    Não altera prompt.
+    Não chama IA adicional.
+    Não depende de ordem fixa dos turnos.
+    """
+    try:
+        base = " ".join(str(current_reply or "").strip().split())
+        if not base:
+            return ""
+
+        if str(next_step or "").strip().upper() == "SEND_LINK":
+            return base
+
+        if not isinstance(kb_obj, dict) or not kb_obj:
+            return base
+
+        if not bool(has_identity and has_segment):
+            return base
+
+        # Continuidade estrutural:
+        # pode ocorrer no 2º turno, 3º turno ou no próprio turno em que o
+        # lead já trouxe nome/segmento e fez pergunta prática.
+        if not bool(int(ai_turns or 0) > 0 or str(user_name or "").strip()):
+            return base
+
+        topic_u = str(topic or "").strip().upper()
+        pack_u = str(pack_id or "").strip().upper() or _pick_pack_for_intent(topic_u)
+        if not pack_u:
+            return base
+
+        packs = _platform_get_map(kb_obj, "value_packs_v1")
+        pack = packs.get(pack_u) if isinstance(packs, dict) else {}
+        if not isinstance(pack, dict):
+            pack = {}
+
+        process_facts = _platform_get_map(kb_obj, "process_facts")
+        operational_capabilities = _platform_get_map(kb_obj, "operational_capabilities")
+        value_blocks = _platform_get_map(kb_obj, "value_in_action_blocks")
+        operational_flows = _platform_get_map(kb_obj, "operational_flows")
+        operational_scenarios = _platform_get_map(kb_obj, "operational_value_scenarios")
+        memory_positioning = _platform_get_map(kb_obj, "memory_positioning")
+        product_truth = _platform_get_map(kb_obj, "product_truth_v1")
+
+        def _clean_fact(v: Any, max_len: int = 260) -> str:
+            try:
+                s = " ".join(str(v or "").strip().split())
+                if not s:
+                    return ""
+                if "{{" in s or "}}" in s:
+                    return ""
+                return s[:max_len].strip(" ,;:-")
+            except Exception:
+                return ""
+
+        def _block_text(key: str) -> str:
+            try:
+                b = value_blocks.get(key) if isinstance(value_blocks, dict) else {}
+                if isinstance(b, dict):
+                    return _clean_fact(b.get(f"{key}_text") or b.get("text") or b.get("scene") or "")
+                return _clean_fact(b)
+            except Exception:
+                return ""
+
+        def _pack_runtime_short() -> str:
+            try:
+                short = pack.get("runtime_short") if isinstance(pack, dict) else {}
+                if not isinstance(short, dict):
+                    return ""
+                return _clean_fact(
+                    short.get("value_one_liner")
+                    or short.get("micro_scene_conversational")
+                    or short.get("micro_scene")
+                    or ""
+                )
+            except Exception:
+                return ""
+
+        facts: list[str] = []
+
+        if pack_u == "PACK_A_AGENDA":
+            facts.extend([
+                _clean_fact(process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else ""),
+                _clean_fact(process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else ""),
+                _clean_fact(operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else ""),
+                _block_text("scheduling_scene"),
+                _clean_fact(operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else ""),
+                _pack_runtime_short(),
+            ])
+        elif pack_u == "PACK_B_SERVICOS":
+            facts.extend([
+                _clean_fact(operational_capabilities.get("services_practice") if isinstance(operational_capabilities, dict) else ""),
+                _clean_fact(product_truth.get("core_rule") if isinstance(product_truth, dict) else ""),
+                _block_text("services_quote_scene"),
+                _pack_runtime_short(),
+            ])
+        elif pack_u == "PACK_C_PEDIDOS":
+            facts.extend([
+                _clean_fact(operational_capabilities.get("quotes_practice") if isinstance(operational_capabilities, dict) else ""),
+                _block_text("services_quote_scene"),
+                _pack_runtime_short(),
+            ])
+        elif pack_u == "PACK_D_STATUS":
+            core = memory_positioning.get("core") if isinstance(memory_positioning, dict) else []
+            if isinstance(core, list):
+                facts.extend([_clean_fact(x) for x in core[:2]])
+            facts.extend([
+                _clean_fact(operational_flows.get("agenda_do_dia") if isinstance(operational_flows, dict) else ""),
+                _pack_runtime_short(),
+            ])
+        else:
+            facts.append(_pack_runtime_short())
+
+        cleaned: list[str] = []
+        seen = set()
+        for f in facts:
+            f = _clean_fact(f)
+            if not f:
+                continue
+            key = _normalize_lookup_key(f[:120])
+            if key and key not in seen:
+                seen.add(key)
+                cleaned.append(f)
+            if len(cleaned) >= 3:
+                break
+
+        if not cleaned:
+            return base
+
+        low_base = _normalize_lookup_key(base)
+        overlap = 0
+        for f in cleaned:
+            probe = _normalize_lookup_key(" ".join(f.split()[:7]))
+            if probe and probe in low_base:
+                overlap += 1
+
+        # Se a IA já trouxe pelo menos dois fatos úteis do KB, preserva.
+        if overlap >= 2:
+            return base
+
+        name = _front_sanitize_lead_name_candidate(user_name)
+        prefix = f"{name}, " if name else ""
+        useful = " ".join(cleaned).strip()
+        useful = _front_trim_free_mode_sentence(f"{prefix}{useful}", 760)
+        return useful or base
+    except Exception:
+        return str(current_reply or "").strip()
+
+
 def _resolve_canonical_topic(
     *,
     kb_snapshot_obj: Dict[str, Any],
@@ -12520,6 +12692,42 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     has_name=has_name,
                 )
 
+
+                _continuity_topic = str(
+                    (canonical_topic if 'canonical_topic' in locals() else "")
+                    or topic
+                    or upstream_topic_hint
+                    or ""
+                ).strip().upper()
+                _continuity_pack_id = str(
+                    selected_pack_id if 'selected_pack_id' in locals() else ""
+                ).strip().upper()
+                if not _continuity_pack_id:
+                    _continuity_pack_id = _pick_pack_for_intent(_continuity_topic)
+
+                _free_reply = _front_build_continuity_reply_from_platform_kb(
+                    current_reply=_free_reply,
+                    kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                    topic=_continuity_topic,
+                    pack_id=_continuity_pack_id,
+                    user_name=name_hint or current_turn_lead_name,
+                    ai_turns=int(ai_turns or 0),
+                    has_identity=bool(has_name),
+                    has_segment=bool(effective_segment or segment_for_prompt or segment_hint),
+                    next_step=next_step,
+                )
+                _free_spoken = _front_build_continuity_reply_from_platform_kb(
+                    current_reply=_free_spoken or _free_reply,
+                    kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                    topic=_continuity_topic,
+                    pack_id=_continuity_pack_id,
+                    user_name=name_hint or current_turn_lead_name,
+                    ai_turns=int(ai_turns or 0),
+                    has_identity=bool(has_name),
+                    has_segment=bool(effective_segment or segment_for_prompt or segment_hint),
+                    next_step=next_step,
+                )
+
                 _missing_identity = bool(
                     not bool(has_name)
                     or not bool(effective_segment or segment_for_prompt or segment_hint)
@@ -12732,6 +12940,33 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             _u["lead_name"] = _safe_payload_name
                     except Exception:
                         pass
+
+                try:
+                    if not _missing_identity and not _identity_question:
+                        out["needsClarify"] = "no"
+                        out["clarifyQuestion"] = ""
+                        try:
+                            _u = out.get("understanding")
+                            if isinstance(_u, dict):
+                                _u["needsClarify"] = "no"
+                                _u["clarifyQuestion"] = ""
+                        except Exception:
+                            pass
+
+                    if (
+                        not _missing_identity
+                        and int(ai_turns or 0) > 0
+                        and str(out.get("question_type") or "").strip().lower() == "broad"
+                    ):
+                        out["question_type"] = "continuity"
+                        try:
+                            _u = out.get("understanding")
+                            if isinstance(_u, dict):
+                                _u["question_type"] = "continuity"
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
 
                 try:
                     if _missing_identity and _identity_question:
