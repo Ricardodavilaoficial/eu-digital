@@ -12077,6 +12077,99 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 structured_assembly_result = {}
 
+            # ---------------------------------------------------------
+            # GOVERNANÇA PÓS-IA: SCENE sem autorização estrutural
+            # ---------------------------------------------------------
+            # A IA segue soberana para entender intenção/tema/entidades.
+            # Quando ela devolve modo SCENE, mas a própria camada de contrato
+            # indica que microcena não está permitida, a resposta factual da KB
+            # deve prevalecer.
+            #
+            # Não interpreta linguagem humana.
+            # Não usa palavras-chave/frases-gatilho.
+            # Não altera prompt.
+            # Não chama IA adicional.
+            # Não muda regras de nome, segmento, áudio ou tamanho; apenas troca
+            # a base textual por fatos estruturais da platform_kb.
+            # ---------------------------------------------------------
+            try:
+                _oc_for_kb_factual = operational_contract if isinstance(operational_contract, dict) else {}
+                _mode_for_kb_factual = str(response_mode or "").strip().upper()
+                _pack_for_kb_factual = str(
+                    selected_pack_id
+                    or _oc_for_kb_factual.get("selected_pack_id")
+                    or ""
+                ).strip().upper()
+                if not _pack_for_kb_factual:
+                    _pack_for_kb_factual = _pick_pack_for_intent(
+                        str(
+                            (canonical_topic if 'canonical_topic' in locals() else "")
+                            or topic
+                            or upstream_topic_hint
+                            or ""
+                        ).strip().upper()
+                    )
+
+                _scene_without_permission = bool(
+                    _mode_for_kb_factual == "SCENE"
+                    and not bool(_oc_for_kb_factual.get("micro_scene_allowed"))
+                )
+
+                if (
+                    bool(platform_kb_mode if 'platform_kb_mode' in locals() else False)
+                    and _scene_without_permission
+                    and _pack_for_kb_factual
+                    and isinstance(kb_snapshot_obj, dict)
+                ):
+                    try:
+                        _safe_name_for_kb_factual = _front_sanitize_lead_name_candidate(
+                            name_hint or current_turn_lead_name or inferred_lead_name,
+                            segment_refs=[
+                                segment_hint,
+                                inferred_lead_segment_raw,
+                                inferred_lead_segment,
+                            ],
+                        )
+                    except Exception:
+                        _safe_name_for_kb_factual = ""
+
+                    _kb_factual_reply = _front_build_continuity_reply_from_platform_kb(
+                        current_reply=reply_text,
+                        kb_obj=kb_snapshot_obj,
+                        topic=str(
+                            (canonical_topic if 'canonical_topic' in locals() else "")
+                            or topic
+                            or upstream_topic_hint
+                            or ""
+                        ).strip().upper(),
+                        pack_id=_pack_for_kb_factual,
+                        user_name=_safe_name_for_kb_factual,
+                        ai_turns=int(ai_turns or 0),
+                        has_identity=bool(has_name or _safe_name_for_kb_factual),
+                        has_segment=bool(
+                            effective_segment
+                            or segment_for_prompt
+                            or segment_hint
+                            or inferred_lead_segment_raw
+                            or inferred_lead_segment
+                        ),
+                        next_step=next_step,
+                    )
+
+                    if _kb_factual_reply and _kb_factual_reply != str(reply_text or "").strip():
+                        reply_text = _kb_factual_reply
+                        spoken_text = _kb_factual_reply
+                        reply_source = "front_platform_kb_factual_guard"
+                        response_mode = "DIRECT"
+                        accepted = True
+                        ia_accepted = True
+                        try:
+                            operational_contract["response_mode"] = "DIRECT"
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             logging.info(
                 "[IA_FINAL_DECISION] source=%s accepted=%s len=%s live=%s density=%s",
                 str(reply_source or "").strip(),
