@@ -8049,17 +8049,19 @@ def _front_build_continuity_reply_from_platform_kb(
     next_step: str = "",
 ) -> str:
     """
-    Constrói resposta útil de continuidade a partir da platform_kb.
+    Constrói resposta útil a partir da platform_kb para perguntas práticas
+    do lead, independentemente da ordem do turno.
 
     Objetivo comercial:
-    quando o lead faz uma pergunta de continuidade, a resposta precisa
-    mostrar utilidade prática — painel, registro, filtros, resumo, acervo,
-    orçamento, pedido, status, histórico — conforme o tema já resolvido.
+    quando o lead pergunta algo operacional, a resposta precisa mostrar
+    utilidade prática — painel, registro, filtros, resumo, acervo, orçamento,
+    pedido, status, histórico — conforme o tema/pack já resolvido.
 
     Fonte de verdade:
     somente campos já existentes na platform_kb.
 
     Não usa lista de profissões/segmentos.
+    Não usa palavras-chave/frases-gatilho de linguagem humana.
     Não altera prompt.
     Não chama IA adicional.
     Não depende de ordem fixa dos turnos.
@@ -8075,15 +8077,10 @@ def _front_build_continuity_reply_from_platform_kb(
         if not isinstance(kb_obj, dict) or not kb_obj:
             return base
 
-        if not bool(has_identity and has_segment):
-            return base
-
-        # Continuidade estrutural:
-        # pode ocorrer no 2º turno, 3º turno ou no próprio turno em que o
-        # lead já trouxe nome/segmento e fez pergunta prática.
-        if not bool(int(ai_turns or 0) > 0 or str(user_name or "").strip()):
-            return base
-
+        # Ordem de turno não é critério de utilidade.
+        # O lead pode fazer a pergunta prática no 1º, 2º ou 5º turno;
+        # nome/segmento faltantes continuam sendo tratados fora deste helper
+        # pelas guardas já existentes de identidade.
         topic_u = str(topic or "").strip().upper()
         pack_u = str(pack_id or "").strip().upper() or _pick_pack_for_intent(topic_u)
         if not pack_u:
@@ -8138,45 +8135,53 @@ def _front_build_continuity_reply_from_platform_kb(
             except Exception:
                 return ""
 
-        facts: list[str] = []
+        facts: list[tuple[int, str]] = []
         fallback_facts: list[str] = []
 
+        def _add_fact(priority: int, value: Any) -> None:
+            """
+            Adiciona fatos por prioridade estrutural da KB.
+
+            Prioridade menor = fato mais curto/auditável e mais adequado
+            para pergunta operacional direta. Cenas amplas continuam
+            disponíveis, mas não devem encobrir fatos objetivos do pack.
+            """
+            try:
+                fact = _clean_fact(value)
+                if fact:
+                    facts.append((int(priority or 100), fact))
+            except Exception:
+                return
+
         if pack_u == "PACK_A_AGENDA":
-            facts.extend([
-                _clean_fact(operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else ""),
-                _clean_fact(process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else ""),
-                _clean_fact(process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else ""),
-                _block_text("scheduling_scene"),
-                _clean_fact(operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else ""),
-            ])
+            _add_fact(10, process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else "")
+            _add_fact(10, process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else "")
+            _add_fact(30, operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else "")
+            _add_fact(40, _block_text("scheduling_scene"))
+            _add_fact(50, operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else "")
             fallback_facts.append(_pack_runtime_short())
         elif pack_u == "PACK_B_SERVICOS":
-            facts.extend([
-                _clean_fact(operational_capabilities.get("services_practice") if isinstance(operational_capabilities, dict) else ""),
-                _clean_fact(product_truth.get("core_rule") if isinstance(product_truth, dict) else ""),
-                _block_text("services_quote_scene"),
-            ])
+            _add_fact(10, product_truth.get("core_rule") if isinstance(product_truth, dict) else "")
+            _add_fact(30, operational_capabilities.get("services_practice") if isinstance(operational_capabilities, dict) else "")
+            _add_fact(40, _block_text("services_quote_scene"))
             fallback_facts.append(_pack_runtime_short())
         elif pack_u == "PACK_C_PEDIDOS":
-            facts.extend([
-                _clean_fact(operational_capabilities.get("quotes_practice") if isinstance(operational_capabilities, dict) else ""),
-                _block_text("services_quote_scene"),
-            ])
+            _add_fact(30, operational_capabilities.get("quotes_practice") if isinstance(operational_capabilities, dict) else "")
+            _add_fact(40, _block_text("services_quote_scene"))
             fallback_facts.append(_pack_runtime_short())
         elif pack_u == "PACK_D_STATUS":
             core = memory_positioning.get("core") if isinstance(memory_positioning, dict) else []
             if isinstance(core, list):
-                facts.extend([_clean_fact(x) for x in core[:2]])
-            facts.extend([
-                _clean_fact(operational_flows.get("agenda_do_dia") if isinstance(operational_flows, dict) else ""),
-            ])
+                for item in core[:2]:
+                    _add_fact(10, item)
+            _add_fact(30, operational_flows.get("agenda_do_dia") if isinstance(operational_flows, dict) else "")
             fallback_facts.append(_pack_runtime_short())
         else:
             fallback_facts.append(_pack_runtime_short())
 
         cleaned: list[str] = []
         seen = set()
-        for f in facts:
+        for _, f in sorted(facts, key=lambda item: item[0]):
             f = _clean_fact(f)
             if not f:
                 continue
