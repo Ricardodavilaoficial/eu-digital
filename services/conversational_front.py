@@ -8233,22 +8233,28 @@ def _front_build_continuity_reply_from_platform_kb(
         if pack_u == "PACK_A_AGENDA":
             _add_fact(10, process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else "")
             _add_fact(10, process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else "")
-            for _outcome in _pack_outcomes():
-                _add_fact(20, _outcome)
+            # Outcomes são úteis como reforço apenas quando a reconstrução
+            # factual é forçada pela guarda final. Fora desse cenário, eles
+            # podem alongar e contaminar a resposta inicial.
+            if bool(force_rebuild):
+                for _outcome in _pack_outcomes():
+                    _add_fact(20, _outcome)
             _add_fact(30, operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else "")
             _add_fact(40, _block_text("scheduling_scene"))
             _add_fact(50, operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else "")
             fallback_facts.extend(_pack_runtime_fallbacks())
         elif pack_u == "PACK_B_SERVICOS":
             _add_fact(10, product_truth.get("core_rule") if isinstance(product_truth, dict) else "")
-            for _outcome in _pack_outcomes():
-                _add_fact(20, _outcome)
+            if bool(force_rebuild):
+                for _outcome in _pack_outcomes():
+                    _add_fact(20, _outcome)
             _add_fact(30, operational_capabilities.get("services_practice") if isinstance(operational_capabilities, dict) else "")
             _add_fact(40, _block_text("services_quote_scene"))
             fallback_facts.extend(_pack_runtime_fallbacks())
         elif pack_u == "PACK_C_PEDIDOS":
-            for _outcome in _pack_outcomes():
-                _add_fact(20, _outcome)
+            if bool(force_rebuild):
+                for _outcome in _pack_outcomes():
+                    _add_fact(20, _outcome)
             _add_fact(30, operational_capabilities.get("quotes_practice") if isinstance(operational_capabilities, dict) else "")
             _add_fact(40, _block_text("services_quote_scene"))
             fallback_facts.extend(_pack_runtime_fallbacks())
@@ -8257,8 +8263,9 @@ def _front_build_continuity_reply_from_platform_kb(
             if isinstance(core, list):
                 for item in core[:2]:
                     _add_fact(10, item)
-            for _outcome in _pack_outcomes():
-                _add_fact(20, _outcome)
+            if bool(force_rebuild):
+                for _outcome in _pack_outcomes():
+                    _add_fact(20, _outcome)
             _add_fact(30, operational_flows.get("agenda_do_dia") if isinstance(operational_flows, dict) else "")
             fallback_facts.extend(_pack_runtime_fallbacks())
         else:
@@ -8290,6 +8297,25 @@ def _front_build_continuity_reply_from_platform_kb(
                 cleaned.append(f)
             if len(cleaned) >= 3:
                 break
+
+        # -------------------------------------------------------------
+        # Reconstrução factual forçada:
+        # se já temos fatos objetivos do pack, devolvemos somente esses
+        # fatos, sem usar outcomes, one-liners ou fallbacks estruturais.
+        #
+        # Isso preserva a resposta inicial (mensagem 1) e faz a guarda
+        # final (mensagem 2) responder diretamente com:
+        # - painel da agenda
+        # - filtro por datas
+        # - e-mail diário das 06:30
+        # - prática operacional do pack
+        # -------------------------------------------------------------
+        if bool(force_rebuild) and cleaned:
+            name = _front_sanitize_lead_name_candidate(user_name)
+            factual = " ".join(cleaned[:3]).strip()
+            if name:
+                return f"{name}, {factual}"
+            return factual
 
         # Em reconstrução factual, fatos objetivos vencem sempre.
         # Fallbacks só entram quando nenhum fato objetivo foi encontrado.
