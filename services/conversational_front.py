@@ -49,6 +49,14 @@ except Exception:
     _HAS_OPENAI_CLIENT = False
 import openai  # compat SDK antigo
 
+# Utilitários puros extraídos (Fase 1A).
+# Mantém os mesmos nomes internos usados pelo conversational_front.py.
+from services.front_utils import (
+    has_question as _has_question,
+    split_sentences_pt as _split_sentences_pt,
+    strip_trailing_question as _strip_trailing_question,
+)
+
 # -----------------------------
 # Configuração fixa (produto)
 # -----------------------------
@@ -82,17 +90,6 @@ FRONT_STRUCTURED_ASSEMBLY_ENABLED = (
 ).strip().lower() in ("1", "true", "yes", "on")
 
 DEFAULT_TONE = "linguagem simples, direta, educada e comum de conversa no WhatsApp"
-
-def _has_question(text: str) -> bool:
-    """
-    Retorna True quando o texto contém ao menos um ponto de interrogação.
-    Utilitário estrutural para decisões de discovery.
-    """
-    try:
-        return "?" in str(text or "")
-    except Exception:
-        return False
-
 
 def _resolve_tone_hint(state_summary: dict | None, contract: dict | None = None) -> str:
     try:
@@ -158,18 +155,6 @@ RESPONSE_MODES = {
 # -----------------------------
 # Funções Utilitárias de Texto
 # -----------------------------
-
-def _split_sentences_pt(text: str) -> list[str]:
-    try:
-        t = str(text or "").strip()
-        if not t:
-            return []
-        parts = re.split(r'(?<=[.!?])\s+', t)
-        return [p.strip() for p in parts if p.strip()]
-    except Exception:
-        return [str(text or "").strip()]
-
-
 
 def _extract_lead_name_from_current_turn(text: str) -> str:
     """
@@ -1998,17 +1983,6 @@ def _extract_value_line(reply_text: str) -> str:
         return base.rstrip(".!?").strip()
     except Exception:
         return (reply_text or "").strip()
-
-
-def _strip_trailing_question(text: str) -> str:
-    try:
-        t = str(text or "").strip()
-        qpos = t.rfind("?")
-        if qpos == -1:
-            return t
-        return t[:qpos].strip()
-    except Exception:
-        return str(text or "").strip()
 
 
 
