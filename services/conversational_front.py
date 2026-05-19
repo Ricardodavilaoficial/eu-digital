@@ -2011,6 +2011,68 @@ def _strip_trailing_question(text: str) -> str:
         return str(text or "").strip()
 
 
+def _front_strip_trailing_question_sentence(text: str) -> str:
+    """
+    Remove pergunta residual no fim da resposta sem depender do texto
+    específico da pergunta.
+
+    Regra estrutural:
+    se há uma pergunta final não autorizada, remove a sentença interrogativa
+    final e preserva a resposta anterior.
+
+    Não usa palavras-chave do lead.
+    Não usa frase pronta.
+    Não altera prompt.
+    """
+    try:
+        t = str(text or "").strip()
+        if "?" not in t:
+            return t
+
+        qpos = t.rfind("?")
+        prefix = t[:qpos].rstrip()
+        if not prefix:
+            return ""
+
+        # Procura o início estrutural da sentença final.
+        cut = max(
+            prefix.rfind("."),
+            prefix.rfind("!"),
+            prefix.rfind("?"),
+            prefix.rfind("\n"),
+        )
+
+        if cut >= 0:
+            return _front_clean_free_mode_tail(prefix[: cut + 1])
+
+        return _front_clean_free_mode_tail(prefix)
+    except Exception:
+        return str(text or "").strip()
+
+
+def _front_enforce_authorized_followup(text: str, authorized_followup: str = "") -> str:
+    """
+    Mantém pergunta final somente quando ela vem de um estado autorizado:
+    nome, segmento ou esclarecimento real de intenção.
+
+    Não classifica conteúdo por palavras.
+    Apenas usa o follow-up estrutural já decidido pelo front.
+    """
+    try:
+        base = _front_strip_trailing_question_sentence(text)
+        follow = str(authorized_followup or "").strip()
+        if not follow:
+            return base
+
+        if follow.lower() in base.lower()[-180:]:
+            return base
+
+        joiner = " " if not base or base[-1:] in ".!?" else ". "
+        return f"{base}{joiner}{follow}".strip()
+    except Exception:
+        return str(text or "").strip()
+
+
 
 
 
@@ -8238,7 +8300,7 @@ def _front_build_continuity_reply_from_platform_kb(
             # podem alongar e contaminar a resposta inicial.
             if bool(force_rebuild):
                 for _outcome in _pack_outcomes():
-                    _add_fact(20, _outcome)
+                    _add_fact(60, _outcome)
             _add_fact(30, operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else "")
             _add_fact(40, _block_text("scheduling_scene"))
             _add_fact(50, operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else "")
@@ -8247,14 +8309,14 @@ def _front_build_continuity_reply_from_platform_kb(
             _add_fact(10, product_truth.get("core_rule") if isinstance(product_truth, dict) else "")
             if bool(force_rebuild):
                 for _outcome in _pack_outcomes():
-                    _add_fact(20, _outcome)
+                    _add_fact(60, _outcome)
             _add_fact(30, operational_capabilities.get("services_practice") if isinstance(operational_capabilities, dict) else "")
             _add_fact(40, _block_text("services_quote_scene"))
             fallback_facts.extend(_pack_runtime_fallbacks())
         elif pack_u == "PACK_C_PEDIDOS":
             if bool(force_rebuild):
                 for _outcome in _pack_outcomes():
-                    _add_fact(20, _outcome)
+                    _add_fact(60, _outcome)
             _add_fact(30, operational_capabilities.get("quotes_practice") if isinstance(operational_capabilities, dict) else "")
             _add_fact(40, _block_text("services_quote_scene"))
             fallback_facts.extend(_pack_runtime_fallbacks())
@@ -8265,7 +8327,7 @@ def _front_build_continuity_reply_from_platform_kb(
                     _add_fact(10, item)
             if bool(force_rebuild):
                 for _outcome in _pack_outcomes():
-                    _add_fact(20, _outcome)
+                    _add_fact(60, _outcome)
             _add_fact(30, operational_flows.get("agenda_do_dia") if isinstance(operational_flows, dict) else "")
             fallback_facts.extend(_pack_runtime_fallbacks())
         else:
@@ -12177,7 +12239,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ).strip().upper()
 
                 structured_assembly_result = _front_build_structured_assembly_reply(
-                    current_reply=reply_text,
+                    # A guarda factual não deve reaproveitar a resposta
+                        # narrativa anterior como base, porque isso faz o
+                        # texto genérico competir com os fatos objetivos
+                        # da KB.
+                        current_reply="",
                     real_kb_docs=real_kb_docs if 'real_kb_docs' in locals() else {},
                     kb_snapshot_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
                     platform_segment_profile=platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
@@ -12386,7 +12452,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     ],
                 )
 
-                if reply_text and _context_lead_name:
+                if (
+                    reply_text
+                    and _context_lead_name
+                    and str(reply_source or "").strip() != "front_platform_kb_factual_guard"
+                ):
                     reply_text = _humanize_reply_with_lead_context(
                         reply=reply_text,
                         lead_name=_context_lead_name if has_name else "",
@@ -13862,6 +13932,48 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     },
                 ):
                     spoken_text = _strip_trailing_question(spoken_text)
+            except Exception:
+                pass
+
+            # ---------------------------------------------------------
+            # Política estrutural de perguntas finais
+            # ---------------------------------------------------------
+            # Só permite pergunta/follow-up quando há uma das três razões
+            # autorizadas: falta de nome, falta de segmento ou falta real
+            # de entendimento da intenção.
+            #
+            # Não usa palavras-chave nem frases específicas.
+            # Usa somente estados estruturais já calculados.
+            # ---------------------------------------------------------
+            try:
+                _missing_name_followup = not bool(has_name)
+                _missing_segment_followup = not bool(
+                    segment_discovery_resolved
+                    or segment_hint
+                    or inferred_lead_segment_raw
+                    or inferred_lead_segment
+                )
+                _intent_unclear_followup = bool(
+                    str(needs_clarify or "").strip().lower() == "yes"
+                    and str(confidence or "").strip().lower() != "high"
+                )
+
+                _authorized_followup = ""
+                if str(clarify_q or "").strip() and (
+                    _missing_name_followup
+                    or _missing_segment_followup
+                    or _intent_unclear_followup
+                ):
+                    _authorized_followup = str(clarify_q or "").strip()
+
+                reply_text = _front_enforce_authorized_followup(
+                    reply_text,
+                    authorized_followup=_authorized_followup,
+                )
+                spoken_text = _front_enforce_authorized_followup(
+                    spoken_text or reply_text,
+                    authorized_followup=_authorized_followup,
+                )
             except Exception:
                 pass
 
