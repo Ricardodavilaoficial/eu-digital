@@ -2011,68 +2011,6 @@ def _strip_trailing_question(text: str) -> str:
         return str(text or "").strip()
 
 
-def _front_strip_trailing_question_sentence(text: str) -> str:
-    """
-    Remove pergunta residual no fim da resposta sem depender do texto
-    específico da pergunta.
-
-    Regra estrutural:
-    se há uma pergunta final não autorizada, remove a sentença interrogativa
-    final e preserva a resposta anterior.
-
-    Não usa palavras-chave do lead.
-    Não usa frase pronta.
-    Não altera prompt.
-    """
-    try:
-        t = str(text or "").strip()
-        if "?" not in t:
-            return t
-
-        qpos = t.rfind("?")
-        prefix = t[:qpos].rstrip()
-        if not prefix:
-            return ""
-
-        # Procura o início estrutural da sentença final.
-        cut = max(
-            prefix.rfind("."),
-            prefix.rfind("!"),
-            prefix.rfind("?"),
-            prefix.rfind("\n"),
-        )
-
-        if cut >= 0:
-            return _front_clean_free_mode_tail(prefix[: cut + 1])
-
-        return _front_clean_free_mode_tail(prefix)
-    except Exception:
-        return str(text or "").strip()
-
-
-def _front_enforce_authorized_followup(text: str, authorized_followup: str = "") -> str:
-    """
-    Mantém pergunta final somente quando ela vem de um estado autorizado:
-    nome, segmento ou esclarecimento real de intenção.
-
-    Não classifica conteúdo por palavras.
-    Apenas usa o follow-up estrutural já decidido pelo front.
-    """
-    try:
-        base = _front_strip_trailing_question_sentence(text)
-        follow = str(authorized_followup or "").strip()
-        if not follow:
-            return base
-
-        if follow.lower() in base.lower()[-180:]:
-            return base
-
-        joiner = " " if not base or base[-1:] in ".!?" else ". "
-        return f"{base}{joiner}{follow}".strip()
-    except Exception:
-        return str(text or "").strip()
-
-
 
 
 
@@ -8109,54 +8047,46 @@ def _front_build_continuity_reply_from_platform_kb(
     has_identity: bool = False,
     has_segment: bool = False,
     next_step: str = "",
-    force_rebuild: bool = False,
-    structural_fallbacks: Any = None,
 ) -> str:
     """
-    Constrói resposta útil a partir da platform_kb para perguntas práticas
-    do lead, independentemente da ordem do turno.
+    Constrói resposta útil de continuidade a partir da platform_kb.
 
     Objetivo comercial:
-    quando o lead pergunta algo operacional, a resposta precisa mostrar
-    utilidade prática — painel, registro, filtros, resumo, acervo, orçamento,
-    pedido, status, histórico — conforme o tema/pack já resolvido.
+    quando o lead faz uma pergunta de continuidade, a resposta precisa
+    mostrar utilidade prática — painel, registro, filtros, resumo, acervo,
+    orçamento, pedido, status, histórico — conforme o tema já resolvido.
 
     Fonte de verdade:
     somente campos já existentes na platform_kb.
 
     Não usa lista de profissões/segmentos.
-    Não usa palavras-chave/frases-gatilho de linguagem humana.
     Não altera prompt.
     Não chama IA adicional.
     Não depende de ordem fixa dos turnos.
-    Quando force_rebuild=True, ignora a resposta aceita pela IA e renderiza
-    somente fatos estruturais da KB.
     """
     try:
         base = " ".join(str(current_reply or "").strip().split())
-        if not base and not bool(force_rebuild):
+        if not base:
             return ""
 
         if str(next_step or "").strip().upper() == "SEND_LINK":
             return base
 
-        _structural_fallbacks = structural_fallbacks
-        if not isinstance(_structural_fallbacks, list):
-            _structural_fallbacks = []
-
         if not isinstance(kb_obj, dict) or not kb_obj:
             return base
 
-        # Ordem de turno não é critério de utilidade.
-        # O lead pode fazer a pergunta prática no 1º, 2º ou 5º turno;
-        # nome/segmento faltantes continuam sendo tratados fora deste helper
-        # pelas guardas já existentes de identidade.
+        if not bool(has_identity and has_segment):
+            return base
+
+        # Continuidade estrutural:
+        # pode ocorrer no 2º turno, 3º turno ou no próprio turno em que o
+        # lead já trouxe nome/segmento e fez pergunta prática.
+        if not bool(int(ai_turns or 0) > 0 or str(user_name or "").strip()):
+            return base
+
         topic_u = str(topic or "").strip().upper()
         pack_u = str(pack_id or "").strip().upper() or _pick_pack_for_intent(topic_u)
         if not pack_u:
-            return base
-
-        if not bool(force_rebuild) and (not bool(has_identity) or not bool(has_segment)):
             return base
 
         packs = _platform_get_map(kb_obj, "value_packs_v1")
@@ -8185,37 +8115,6 @@ def _front_build_continuity_reply_from_platform_kb(
             except Exception:
                 return ""
 
-        def _deep_fact(container: Any, key: str, max_len: int = 420) -> str:
-            try:
-                wanted = str(key or "").strip()
-                if not wanted:
-                    return ""
-
-                stack = [container]
-                seen_ids = set()
-                while stack:
-                    cur = stack.pop(0)
-                    cur_id = id(cur)
-                    if cur_id in seen_ids:
-                        continue
-                    seen_ids.add(cur_id)
-
-                    if isinstance(cur, dict):
-                        if wanted in cur:
-                            fact = _clean_fact(cur.get(wanted), max_len=max_len)
-                            if fact:
-                                return fact
-                        for v in cur.values():
-                            if isinstance(v, (dict, list)):
-                                stack.append(v)
-                    elif isinstance(cur, list):
-                        for v in cur:
-                            if isinstance(v, (dict, list)):
-                                stack.append(v)
-                return ""
-            except Exception:
-                return ""
-
         def _block_text(key: str) -> str:
             try:
                 b = value_blocks.get(key) if isinstance(value_blocks, dict) else {}
@@ -8239,157 +8138,45 @@ def _front_build_continuity_reply_from_platform_kb(
             except Exception:
                 return ""
 
-
-        def _pack_runtime_fallbacks() -> list[str]:
-            """
-            Material de apoio do runtime_short, separado dos fatos objetivos.
-
-            Em reconstrução factual, o one-liner não pode dominar a resposta.
-            Ele continua disponível como último recurso, mas cenas compactas
-            do próprio pack são mais úteis do que uma frase institucional curta.
-
-            Não interpreta linguagem humana.
-            Não usa palavras-chave.
-            Não altera prompt.
-            """
-            try:
-                short = pack.get("runtime_short") if isinstance(pack, dict) else {}
-                if not isinstance(short, dict):
-                    return []
-                ordered_keys = (
-                    ("micro_scene_conversational", "micro_scene", "bridge_line", "value_one_liner")
-                    if bool(force_rebuild)
-                    else ("value_one_liner", "micro_scene_conversational", "micro_scene")
-                )
-                out: list[str] = []
-                for k in ordered_keys:
-                    v = _clean_fact(short.get(k))
-                    if v:
-                        out.append(v)
-                return out
-            except Exception:
-                return []
-
-        def _pack_outcomes() -> list[str]:
-            """
-            Outcomes do pack são fatos objetivos de produto, não fallback.
-            Servem como camada segura quando o snapshot compacto não traz
-            todos os process_facts na forma esperada.
-
-            Não interpreta linguagem humana.
-            Não usa palavras-chave/frases-gatilho.
-            Não altera prompt.
-            """
-            try:
-                out: list[str] = []
-                vals = pack.get("outcomes") if isinstance(pack, dict) else []
-                if isinstance(vals, list):
-                    for item in vals:
-                        fact = _clean_fact(item)
-                        if fact:
-                            out.append(fact)
-                return out
-            except Exception:
-                return []
-
-        def _structural_chunks(value: Any) -> list[str]:
-            """
-            Divide material estrutural já montado pelo contrato em partes
-            operacionais quando ele usa separador de fluxo.
-
-            O separador vem da própria KB/contrato, não do texto do lead.
-            """
-            try:
-                raw = _clean_fact(value, max_len=760)
-                if not raw:
-                    return []
-                parts = [p.strip(" .;:-") for p in raw.split("→")]
-                return [_clean_fact(p, max_len=260) for p in parts if _clean_fact(p, max_len=260)]
-            except Exception:
-                return []
-
-        facts: list[tuple[int, str]] = []
+        facts: list[str] = []
         fallback_facts: list[str] = []
 
-        def _add_fact(priority: int, value: Any) -> None:
-            """
-            Adiciona fatos por prioridade estrutural da KB.
-
-            Prioridade menor = fato mais curto/auditável e mais adequado
-            para pergunta operacional direta. Cenas amplas continuam
-            disponíveis, mas não devem encobrir fatos objetivos do pack.
-            """
-            try:
-                fact = _clean_fact(value)
-                if fact:
-                    facts.append((int(priority or 100), fact))
-            except Exception:
-                return
-
         if pack_u == "PACK_A_AGENDA":
-            _dashboard_agenda = process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else ""
-            _daily_email_digest = process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else ""
-            _scheduling_practice = operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else ""
-
-            if bool(force_rebuild):
-                _dashboard_agenda = _dashboard_agenda or _deep_fact(kb_obj, "dashboard_agenda")
-                _daily_email_digest = _daily_email_digest or _deep_fact(kb_obj, "daily_email_digest")
-                _scheduling_practice = _scheduling_practice or _deep_fact(kb_obj, "scheduling_practice")
-
-                _add_fact(10, _dashboard_agenda)
-                _add_fact(20, _daily_email_digest)
-                _add_fact(30, _scheduling_practice)
-            else:
-                _add_fact(10, _dashboard_agenda)
-                _add_fact(10, _daily_email_digest)
-                _add_fact(30, _scheduling_practice)
-                _add_fact(40, _block_text("scheduling_scene"))
-                _add_fact(50, operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else "")
-                fallback_facts.extend(_pack_runtime_fallbacks())
+            facts.extend([
+                _clean_fact(operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else ""),
+                _clean_fact(process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else ""),
+                _clean_fact(process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else ""),
+                _block_text("scheduling_scene"),
+                _clean_fact(operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else ""),
+            ])
+            fallback_facts.append(_pack_runtime_short())
         elif pack_u == "PACK_B_SERVICOS":
-            _add_fact(10, product_truth.get("core_rule") if isinstance(product_truth, dict) else "")
-            if bool(force_rebuild):
-                for _outcome in _pack_outcomes():
-                    _add_fact(60, _outcome)
-            _add_fact(30, operational_capabilities.get("services_practice") if isinstance(operational_capabilities, dict) else "")
-            _add_fact(40, _block_text("services_quote_scene"))
-            fallback_facts.extend(_pack_runtime_fallbacks())
+            facts.extend([
+                _clean_fact(operational_capabilities.get("services_practice") if isinstance(operational_capabilities, dict) else ""),
+                _clean_fact(product_truth.get("core_rule") if isinstance(product_truth, dict) else ""),
+                _block_text("services_quote_scene"),
+            ])
+            fallback_facts.append(_pack_runtime_short())
         elif pack_u == "PACK_C_PEDIDOS":
-            if bool(force_rebuild):
-                for _outcome in _pack_outcomes():
-                    _add_fact(60, _outcome)
-            _add_fact(30, operational_capabilities.get("quotes_practice") if isinstance(operational_capabilities, dict) else "")
-            _add_fact(40, _block_text("services_quote_scene"))
-            fallback_facts.extend(_pack_runtime_fallbacks())
+            facts.extend([
+                _clean_fact(operational_capabilities.get("quotes_practice") if isinstance(operational_capabilities, dict) else ""),
+                _block_text("services_quote_scene"),
+            ])
+            fallback_facts.append(_pack_runtime_short())
         elif pack_u == "PACK_D_STATUS":
             core = memory_positioning.get("core") if isinstance(memory_positioning, dict) else []
             if isinstance(core, list):
-                for item in core[:2]:
-                    _add_fact(10, item)
-            if bool(force_rebuild):
-                for _outcome in _pack_outcomes():
-                    _add_fact(60, _outcome)
-            _add_fact(30, operational_flows.get("agenda_do_dia") if isinstance(operational_flows, dict) else "")
-            fallback_facts.extend(_pack_runtime_fallbacks())
+                facts.extend([_clean_fact(x) for x in core[:2]])
+            facts.extend([
+                _clean_fact(operational_flows.get("agenda_do_dia") if isinstance(operational_flows, dict) else ""),
+            ])
+            fallback_facts.append(_pack_runtime_short())
         else:
-            fallback_facts.extend(_pack_runtime_fallbacks())
-
-        # Quando a reconstrução é forçada, material estrutural já resolvido
-        # pelo contrato entra como apoio, não como fato objetivo. Assim ele
-        # não compete com process_facts/operational_capabilities quando esses
-        # existem.
-        if bool(force_rebuild) and pack_u != "PACK_A_AGENDA":
-            for _sf in _structural_fallbacks:
-                sf = _clean_fact(_sf)
-                if sf:
-                    for chunk in _structural_chunks(sf):
-                        if chunk:
-                            fallback_facts.append(chunk)
-                    fallback_facts.append(sf)
+            fallback_facts.append(_pack_runtime_short())
 
         cleaned: list[str] = []
         seen = set()
-        for _, f in sorted(facts, key=lambda item: item[0]):
+        for f in facts:
             f = _clean_fact(f)
             if not f:
                 continue
@@ -8400,49 +8187,56 @@ def _front_build_continuity_reply_from_platform_kb(
             if len(cleaned) >= 3:
                 break
 
-        # -------------------------------------------------------------
-        # Reconstrução factual forçada:
-        # se já temos fatos objetivos do pack, devolvemos somente esses
-        # fatos, sem usar outcomes, one-liners ou fallbacks estruturais.
-        #
-        # Isso preserva a resposta inicial (mensagem 1) e faz a guarda
-        # final (mensagem 2) responder diretamente com:
-        # - painel da agenda
-        # - filtro por datas
-        # - e-mail diário das 06:30
-        # - prática operacional do pack
-        # -------------------------------------------------------------
-        if bool(force_rebuild) and cleaned:
-            name = _front_sanitize_lead_name_candidate(user_name)
-            factual = " ".join(cleaned[:3]).strip()
-            if name:
-                return f"{name}, {factual}"
-            return factual
-
-        # Em reconstrução factual, fatos objetivos vencem sempre.
-        # Fallbacks só entram quando nenhum fato objetivo foi encontrado.
-        # Isso impede o one-liner institucional de dominar respostas práticas.
-        if bool(force_rebuild) and cleaned:
-            pass
-        else:
-            # Em continuidade, runtime_short é fallback final.
-            # Ele costuma ser one-liner de abertura do pack; útil quando não há
-            # outro material, mas fraco para responder pergunta pontual.
-            if not cleaned:
-                for f in fallback_facts:
-                    f = _clean_fact(f)
-                    if not f:
-                        continue
-                    key = _normalize_lookup_key(f[:120])
-                    if key and key not in seen:
-                        seen.add(key)
-                        cleaned.append(f)
-                    fallback_limit = 3 if bool(force_rebuild) else 2
-                    if len(cleaned) >= fallback_limit:
-                        break
+        # Em continuidade, runtime_short é fallback final.
+        # Ele costuma ser one-liner de abertura do pack; útil quando não há
+        # outro material, mas fraco para responder pergunta pontual.
+        if not cleaned:
+            for f in fallback_facts:
+                f = _clean_fact(f)
+                if not f:
+                    continue
+                key = _normalize_lookup_key(f[:120])
+                if key and key not in seen:
+                    seen.add(key)
+                    cleaned.append(f)
+                if len(cleaned) >= 2:
+                    break
 
         if not cleaned:
             return base
+
+        # Continuidade factual da agenda:
+        # quando a platform_kb já trouxe fatos estruturados específicos
+        # sobre acompanhamento/visibilidade da agenda, eles devem vencer
+        # o texto genérico aceito pela IA.
+        #
+        # Escopo seguro:
+        # - só entra após as guardas de identidade, segmento e continuidade;
+        # - só usa campos já existentes na própria platform_kb;
+        # - não altera prompt, roteamento, microcena nem a primeira resposta.
+        if pack_u == "PACK_A_AGENDA":
+            agenda_direct: list[str] = []
+            agenda_seen = set()
+            for f in (
+                process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else "",
+                process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else "",
+                operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else "",
+            ):
+                f = _clean_fact(f)
+                if not f:
+                    continue
+                key = _normalize_lookup_key(f[:120])
+                if key and key not in agenda_seen:
+                    agenda_seen.add(key)
+                    agenda_direct.append(f)
+
+            if len(agenda_direct) >= 2:
+                name = _front_sanitize_lead_name_candidate(user_name)
+                prefix = f"{name}, " if name else ""
+                useful = " ".join(agenda_direct).strip()
+                useful = _front_trim_free_mode_sentence(f"{prefix}{useful}", 760)
+                if useful and len(useful) >= 180:
+                    return useful
 
         low_base = _normalize_lookup_key(base)
         overlap = 0
@@ -8452,12 +8246,12 @@ def _front_build_continuity_reply_from_platform_kb(
                 overlap += 1
 
         # Se a IA já trouxe pelo menos dois fatos úteis do KB, preserva.
-        if overlap >= 2 and not bool(force_rebuild):
+        if overlap >= 2:
             return base
 
         # Evita piorar a resposta aceita pela IA com um fallback curto demais.
         useful_probe = " ".join(cleaned).strip()
-        if len(useful_probe) < 220 and len(cleaned) < 2 and not bool(force_rebuild):
+        if len(useful_probe) < 220 and len(cleaned) < 2:
             return base
 
         name = _front_sanitize_lead_name_candidate(user_name)
@@ -12279,11 +12073,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ).strip().upper()
 
                 structured_assembly_result = _front_build_structured_assembly_reply(
-                    # A guarda factual não deve reaproveitar a resposta
-                        # narrativa anterior como base, porque isso faz o
-                        # texto genérico competir com os fatos objetivos
-                        # da KB.
-                        current_reply="",
+                    current_reply=reply_text,
                     real_kb_docs=real_kb_docs if 'real_kb_docs' in locals() else {},
                     kb_snapshot_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
                     platform_segment_profile=platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
@@ -12314,109 +12104,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     ia_accepted = True
             except Exception:
                 structured_assembly_result = {}
-
-            # ---------------------------------------------------------
-            # GOVERNANÇA PÓS-IA: SCENE sem autorização estrutural
-            # ---------------------------------------------------------
-            # A IA segue soberana para entender intenção/tema/entidades.
-            # Quando ela devolve modo SCENE, mas a própria camada de contrato
-            # indica que microcena não está permitida, a resposta factual da KB
-            # deve prevalecer.
-            #
-            # Não interpreta linguagem humana.
-            # Não usa palavras-chave/frases-gatilho.
-            # Não altera prompt.
-            # Não chama IA adicional.
-            # Não muda regras de nome, segmento, áudio ou tamanho; apenas troca
-            # a base textual por fatos estruturais da platform_kb.
-            # ---------------------------------------------------------
-            try:
-                _oc_for_kb_factual = operational_contract if isinstance(operational_contract, dict) else {}
-                _mode_for_kb_factual = str(response_mode or "").strip().upper()
-                _pack_for_kb_factual = str(
-                    selected_pack_id
-                    or _oc_for_kb_factual.get("selected_pack_id")
-                    or ""
-                ).strip().upper()
-                if not _pack_for_kb_factual:
-                    _pack_for_kb_factual = _pick_pack_for_intent(
-                        str(
-                            (canonical_topic if 'canonical_topic' in locals() else "")
-                            or topic
-                            or upstream_topic_hint
-                            or ""
-                        ).strip().upper()
-                    )
-
-                _scene_without_permission = bool(
-                    _mode_for_kb_factual == "SCENE"
-                    and not bool(_oc_for_kb_factual.get("micro_scene_allowed"))
-                )
-
-                try:
-                    _safe_name_for_kb_factual = _front_sanitize_lead_name_candidate(
-                        name_hint or current_turn_lead_name or inferred_lead_name,
-                        segment_refs=[
-                            segment_hint,
-                            inferred_lead_segment_raw,
-                            inferred_lead_segment,
-                        ],
-                    )
-                except Exception:
-                    _safe_name_for_kb_factual = ""
-
-                _has_segment_for_kb_factual = bool(
-                    effective_segment
-                    or segment_for_prompt
-                    or segment_hint
-                    or inferred_lead_segment_raw
-                    or inferred_lead_segment
-                )
-
-                if (
-                    bool(platform_kb_mode if 'platform_kb_mode' in locals() else False)
-                    and _scene_without_permission
-                    and _pack_for_kb_factual
-                    and isinstance(kb_snapshot_obj, dict)
-                    and bool(has_name or _safe_name_for_kb_factual)
-                    and bool(_has_segment_for_kb_factual)
-                ):
-                    _kb_factual_reply = _front_build_continuity_reply_from_platform_kb(
-                        current_reply=reply_text,
-                        kb_obj=kb_snapshot_obj,
-                        topic=str(
-                            (canonical_topic if 'canonical_topic' in locals() else "")
-                            or topic
-                            or upstream_topic_hint
-                            or ""
-                        ).strip().upper(),
-                        pack_id=_pack_for_kb_factual,
-                        user_name=_safe_name_for_kb_factual,
-                        ai_turns=int(ai_turns or 0),
-                        has_identity=bool(has_name or _safe_name_for_kb_factual),
-                        has_segment=bool(
-                            effective_segment
-                            or segment_for_prompt
-                            or segment_hint
-                            or inferred_lead_segment_raw
-                            or inferred_lead_segment
-                        ),
-                        next_step=next_step,
-                    )
-
-                    if _kb_factual_reply and _kb_factual_reply != str(reply_text or "").strip():
-                        reply_text = _kb_factual_reply
-                        spoken_text = _kb_factual_reply
-                        reply_source = "front_platform_kb_factual_guard"
-                        response_mode = "DIRECT"
-                        accepted = True
-                        ia_accepted = True
-                        try:
-                            operational_contract["response_mode"] = "DIRECT"
-                        except Exception:
-                            pass
-            except Exception:
-                pass
 
             logging.info(
                 "[IA_FINAL_DECISION] source=%s accepted=%s len=%s live=%s density=%s",
@@ -12502,11 +12189,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     ],
                 )
 
-                if (
-                    reply_text
-                    and _context_lead_name
-                    and str(reply_source or "").strip() != "front_platform_kb_factual_guard"
-                ):
+                if reply_text and _context_lead_name:
                     reply_text = _humanize_reply_with_lead_context(
                         reply=reply_text,
                         lead_name=_context_lead_name if has_name else "",
@@ -13151,111 +12834,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     and str(_free_reply or "").strip() != _free_reply_before_continuity
                 )
 
-
-                # -----------------------------------------------------
-                # Guarda factual no último ramo comum do FREE_MODE
-                # -----------------------------------------------------
-                # Se a IA trouxe SCENE, mas o contrato operacional diz que
-                # microcena não está permitida, este é o último ponto seguro
-                # antes do corte de áudio/texto e do return.
-                #
-                # Aqui a saída é reconstruída a partir dos fatos estruturais
-                # da platform_kb, sem interpretar linguagem humana, sem
-                # palavras-chave, sem prompt e sem IA adicional.
-                # -----------------------------------------------------
-                try:
-                    _contract_for_final_factual = (
-                        operational_contract
-                        if isinstance(operational_contract, dict)
-                        else {}
-                    )
-                    _mode_for_final_factual = str(
-                        out.get("response_mode")
-                        or response_mode
-                        or _contract_for_final_factual.get("response_mode")
-                        or ""
-                    ).strip().upper()
-                    _scene_without_permission_final = bool(
-                        _mode_for_final_factual == "SCENE"
-                        and not bool(_contract_for_final_factual.get("micro_scene_allowed"))
-                    )
-
-                    _pack_for_final_factual = str(
-                        _continuity_pack_id
-                        or _contract_for_final_factual.get("selected_pack_id")
-                        or ""
-                    ).strip().upper()
-                    if not _pack_for_final_factual:
-                        _pack_for_final_factual = _pick_pack_for_intent(_continuity_topic)
-
-                    if (
-                        bool(platform_kb_mode if 'platform_kb_mode' in locals() else False)
-                        and _scene_without_permission_final
-                        and _pack_for_final_factual
-                        and isinstance(kb_snapshot_obj, dict)
-                    ):
-                        _structural_fallbacks_for_guard = []
-                        try:
-                            for _k in (
-                                "runtime_compact_reply",
-                                "runtime_short_reply",
-                                "reference_example",
-                            ):
-                                _v = _contract_for_final_factual.get(_k)
-                                if str(_v or "").strip():
-                                    _structural_fallbacks_for_guard.append(_v)
-                        except Exception:
-                            _structural_fallbacks_for_guard = []
-
-                        _forced_kb_reply = _front_build_continuity_reply_from_platform_kb(
-                            current_reply=_free_reply,
-                            kb_obj=kb_snapshot_obj,
-                            topic=_continuity_topic,
-                            pack_id=_pack_for_final_factual,
-                            user_name=_continuity_safe_name,
-                            ai_turns=int(ai_turns or 0),
-                            has_identity=_continuity_has_identity,
-                            has_segment=_continuity_has_segment,
-                            next_step=next_step,
-                            force_rebuild=True,
-                            structural_fallbacks=_structural_fallbacks_for_guard,
-                        )
-                        if _forced_kb_reply:
-                            _free_reply = _forced_kb_reply
-                            _free_spoken = _forced_kb_reply
-                            _continuity_pack_id = _pack_for_final_factual
-                            _continuity_reply_built = True
-                            response_mode = "DIRECT"
-                            reply_source = "front_platform_kb_factual_guard"
-                            out["response_mode"] = "DIRECT"
-                            _final_factual_guard_applied = True
-                            out["replySource"] = reply_source
-                            try:
-                                out["operationalContract"]["response_mode"] = "DIRECT"
-                            except Exception:
-                                pass
-                            try:
-                                _u = out.get("understanding")
-                                if isinstance(_u, dict):
-                                    _u["question_type"] = "continuity"
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-                if _final_factual_guard_applied:
-                    _free_spoken = _free_reply
-                else:
-                    _free_spoken = _front_build_continuity_reply_from_platform_kb(
-                        current_reply=_free_spoken or _free_reply,
-                        kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
-                        topic=_continuity_topic,
-                        pack_id=_continuity_pack_id,
-                        user_name=_continuity_safe_name,
-                        ai_turns=int(ai_turns or 0),
-                        has_identity=_continuity_has_identity,
-                        has_segment=_continuity_has_segment,
-                        next_step=next_step,
-                    )
+                _free_spoken = _front_build_continuity_reply_from_platform_kb(
+                    current_reply=_free_spoken or _free_reply,
+                    kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                    topic=_continuity_topic,
+                    pack_id=_continuity_pack_id,
+                    user_name=_continuity_safe_name,
+                    ai_turns=int(ai_turns or 0),
+                    has_identity=_continuity_has_identity,
+                    has_segment=_continuity_has_segment,
+                    next_step=next_step,
+                )
 
                 _missing_identity = bool(
                     not bool(_continuity_has_identity)
@@ -13982,48 +13571,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     },
                 ):
                     spoken_text = _strip_trailing_question(spoken_text)
-            except Exception:
-                pass
-
-            # ---------------------------------------------------------
-            # Política estrutural de perguntas finais
-            # ---------------------------------------------------------
-            # Só permite pergunta/follow-up quando há uma das três razões
-            # autorizadas: falta de nome, falta de segmento ou falta real
-            # de entendimento da intenção.
-            #
-            # Não usa palavras-chave nem frases específicas.
-            # Usa somente estados estruturais já calculados.
-            # ---------------------------------------------------------
-            try:
-                _missing_name_followup = not bool(has_name)
-                _missing_segment_followup = not bool(
-                    segment_discovery_resolved
-                    or segment_hint
-                    or inferred_lead_segment_raw
-                    or inferred_lead_segment
-                )
-                _intent_unclear_followup = bool(
-                    str(needs_clarify or "").strip().lower() == "yes"
-                    and str(confidence or "").strip().lower() != "high"
-                )
-
-                _authorized_followup = ""
-                if str(clarify_q or "").strip() and (
-                    _missing_name_followup
-                    or _missing_segment_followup
-                    or _intent_unclear_followup
-                ):
-                    _authorized_followup = str(clarify_q or "").strip()
-
-                reply_text = _front_enforce_authorized_followup(
-                    reply_text,
-                    authorized_followup=_authorized_followup,
-                )
-                spoken_text = _front_enforce_authorized_followup(
-                    spoken_text or reply_text,
-                    authorized_followup=_authorized_followup,
-                )
             except Exception:
                 pass
 
