@@ -8156,6 +8156,9 @@ def _front_build_continuity_reply_from_platform_kb(
         if not pack_u:
             return base
 
+        if not bool(force_rebuild) and (not bool(has_identity) or not bool(has_segment)):
+            return base
+
         packs = _platform_get_map(kb_obj, "value_packs_v1")
         pack = packs.get(pack_u) if isinstance(packs, dict) else {}
         if not isinstance(pack, dict):
@@ -8179,6 +8182,37 @@ def _front_build_continuity_reply_from_platform_kb(
                 if "{{" in s or "}}" in s:
                     return ""
                 return s[:max_len].strip(" ,;:-")
+            except Exception:
+                return ""
+
+        def _deep_fact(container: Any, key: str, max_len: int = 420) -> str:
+            try:
+                wanted = str(key or "").strip()
+                if not wanted:
+                    return ""
+
+                stack = [container]
+                seen_ids = set()
+                while stack:
+                    cur = stack.pop(0)
+                    cur_id = id(cur)
+                    if cur_id in seen_ids:
+                        continue
+                    seen_ids.add(cur_id)
+
+                    if isinstance(cur, dict):
+                        if wanted in cur:
+                            fact = _clean_fact(cur.get(wanted), max_len=max_len)
+                            if fact:
+                                return fact
+                        for v in cur.values():
+                            if isinstance(v, (dict, list)):
+                                stack.append(v)
+                    elif isinstance(cur, list):
+                        for v in cur:
+                            if isinstance(v, (dict, list)):
+                                stack.append(v)
+                return ""
             except Exception:
                 return ""
 
@@ -8293,18 +8327,25 @@ def _front_build_continuity_reply_from_platform_kb(
                 return
 
         if pack_u == "PACK_A_AGENDA":
-            _add_fact(10, process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else "")
-            _add_fact(10, process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else "")
-            # Outcomes são úteis como reforço apenas quando a reconstrução
-            # factual é forçada pela guarda final. Fora desse cenário, eles
-            # podem alongar e contaminar a resposta inicial.
+            _dashboard_agenda = process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else ""
+            _daily_email_digest = process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else ""
+            _scheduling_practice = operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else ""
+
             if bool(force_rebuild):
-                for _outcome in _pack_outcomes():
-                    _add_fact(60, _outcome)
-            _add_fact(30, operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else "")
-            _add_fact(40, _block_text("scheduling_scene"))
-            _add_fact(50, operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else "")
-            fallback_facts.extend(_pack_runtime_fallbacks())
+                _dashboard_agenda = _dashboard_agenda or _deep_fact(kb_obj, "dashboard_agenda")
+                _daily_email_digest = _daily_email_digest or _deep_fact(kb_obj, "daily_email_digest")
+                _scheduling_practice = _scheduling_practice or _deep_fact(kb_obj, "scheduling_practice")
+
+                _add_fact(10, _dashboard_agenda)
+                _add_fact(20, _daily_email_digest)
+                _add_fact(30, _scheduling_practice)
+            else:
+                _add_fact(10, _dashboard_agenda)
+                _add_fact(10, _daily_email_digest)
+                _add_fact(30, _scheduling_practice)
+                _add_fact(40, _block_text("scheduling_scene"))
+                _add_fact(50, operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else "")
+                fallback_facts.extend(_pack_runtime_fallbacks())
         elif pack_u == "PACK_B_SERVICOS":
             _add_fact(10, product_truth.get("core_rule") if isinstance(product_truth, dict) else "")
             if bool(force_rebuild):
@@ -8337,14 +8378,13 @@ def _front_build_continuity_reply_from_platform_kb(
         # pelo contrato entra como apoio, não como fato objetivo. Assim ele
         # não compete com process_facts/operational_capabilities quando esses
         # existem.
-        if bool(force_rebuild):
+        if bool(force_rebuild) and pack_u != "PACK_A_AGENDA":
             for _sf in _structural_fallbacks:
                 sf = _clean_fact(_sf)
                 if sf:
-                    if bool(force_rebuild):
-                        for chunk in _structural_chunks(sf):
-                            if chunk:
-                                fallback_facts.append(chunk)
+                    for chunk in _structural_chunks(sf):
+                        if chunk:
+                            fallback_facts.append(chunk)
                     fallback_facts.append(sf)
 
         cleaned: list[str] = []
@@ -12313,24 +12353,34 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     and not bool(_oc_for_kb_factual.get("micro_scene_allowed"))
                 )
 
+                try:
+                    _safe_name_for_kb_factual = _front_sanitize_lead_name_candidate(
+                        name_hint or current_turn_lead_name or inferred_lead_name,
+                        segment_refs=[
+                            segment_hint,
+                            inferred_lead_segment_raw,
+                            inferred_lead_segment,
+                        ],
+                    )
+                except Exception:
+                    _safe_name_for_kb_factual = ""
+
+                _has_segment_for_kb_factual = bool(
+                    effective_segment
+                    or segment_for_prompt
+                    or segment_hint
+                    or inferred_lead_segment_raw
+                    or inferred_lead_segment
+                )
+
                 if (
                     bool(platform_kb_mode if 'platform_kb_mode' in locals() else False)
                     and _scene_without_permission
                     and _pack_for_kb_factual
                     and isinstance(kb_snapshot_obj, dict)
+                    and bool(has_name or _safe_name_for_kb_factual)
+                    and bool(_has_segment_for_kb_factual)
                 ):
-                    try:
-                        _safe_name_for_kb_factual = _front_sanitize_lead_name_candidate(
-                            name_hint or current_turn_lead_name or inferred_lead_name,
-                            segment_refs=[
-                                segment_hint,
-                                inferred_lead_segment_raw,
-                                inferred_lead_segment,
-                            ],
-                        )
-                    except Exception:
-                        _safe_name_for_kb_factual = ""
-
                     _kb_factual_reply = _front_build_continuity_reply_from_platform_kb(
                         current_reply=reply_text,
                         kb_obj=kb_snapshot_obj,
