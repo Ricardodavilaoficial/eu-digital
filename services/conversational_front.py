@@ -8047,6 +8047,7 @@ def _front_build_continuity_reply_from_platform_kb(
     has_identity: bool = False,
     has_segment: bool = False,
     next_step: str = "",
+    force_rebuild: bool = False,
 ) -> str:
     """
     Constrói resposta útil a partir da platform_kb para perguntas práticas
@@ -8065,10 +8066,12 @@ def _front_build_continuity_reply_from_platform_kb(
     Não altera prompt.
     Não chama IA adicional.
     Não depende de ordem fixa dos turnos.
+    Quando force_rebuild=True, ignora a resposta aceita pela IA e renderiza
+    somente fatos estruturais da KB.
     """
     try:
         base = " ".join(str(current_reply or "").strip().split())
-        if not base:
+        if not base and not bool(force_rebuild):
             return ""
 
         if str(next_step or "").strip().upper() == "SEND_LINK":
@@ -8218,12 +8221,12 @@ def _front_build_continuity_reply_from_platform_kb(
                 overlap += 1
 
         # Se a IA já trouxe pelo menos dois fatos úteis do KB, preserva.
-        if overlap >= 2:
+        if overlap >= 2 and not bool(force_rebuild):
             return base
 
         # Evita piorar a resposta aceita pela IA com um fallback curto demais.
         useful_probe = " ".join(cleaned).strip()
-        if len(useful_probe) < 220 and len(cleaned) < 2:
+        if len(useful_probe) < 220 and len(cleaned) < 2 and not bool(force_rebuild):
             return base
 
         name = _front_sanitize_lead_name_candidate(user_name)
@@ -12898,6 +12901,83 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     str(_free_reply or "").strip()
                     and str(_free_reply or "").strip() != _free_reply_before_continuity
                 )
+
+
+                # -----------------------------------------------------
+                # Guarda factual no último ramo comum do FREE_MODE
+                # -----------------------------------------------------
+                # Se a IA trouxe SCENE, mas o contrato operacional diz que
+                # microcena não está permitida, este é o último ponto seguro
+                # antes do corte de áudio/texto e do return.
+                #
+                # Aqui a saída é reconstruída a partir dos fatos estruturais
+                # da platform_kb, sem interpretar linguagem humana, sem
+                # palavras-chave, sem prompt e sem IA adicional.
+                # -----------------------------------------------------
+                try:
+                    _contract_for_final_factual = (
+                        operational_contract
+                        if isinstance(operational_contract, dict)
+                        else {}
+                    )
+                    _mode_for_final_factual = str(
+                        out.get("response_mode")
+                        or response_mode
+                        or _contract_for_final_factual.get("response_mode")
+                        or ""
+                    ).strip().upper()
+                    _scene_without_permission_final = bool(
+                        _mode_for_final_factual == "SCENE"
+                        and not bool(_contract_for_final_factual.get("micro_scene_allowed"))
+                    )
+
+                    _pack_for_final_factual = str(
+                        _continuity_pack_id
+                        or _contract_for_final_factual.get("selected_pack_id")
+                        or ""
+                    ).strip().upper()
+                    if not _pack_for_final_factual:
+                        _pack_for_final_factual = _pick_pack_for_intent(_continuity_topic)
+
+                    if (
+                        bool(platform_kb_mode if 'platform_kb_mode' in locals() else False)
+                        and _scene_without_permission_final
+                        and _pack_for_final_factual
+                        and isinstance(kb_snapshot_obj, dict)
+                    ):
+                        _forced_kb_reply = _front_build_continuity_reply_from_platform_kb(
+                            current_reply=_free_reply,
+                            kb_obj=kb_snapshot_obj,
+                            topic=_continuity_topic,
+                            pack_id=_pack_for_final_factual,
+                            user_name=_continuity_safe_name,
+                            ai_turns=int(ai_turns or 0),
+                            has_identity=_continuity_has_identity,
+                            has_segment=_continuity_has_segment,
+                            next_step=next_step,
+                            force_rebuild=True,
+                        )
+                        if _forced_kb_reply:
+                            _free_reply = _forced_kb_reply
+                            _free_spoken = _forced_kb_reply
+                            _continuity_pack_id = _pack_for_final_factual
+                            _continuity_reply_built = True
+                            response_mode = "DIRECT"
+                            reply_source = "front_platform_kb_factual_guard"
+                            out["response_mode"] = "DIRECT"
+                            out["replySource"] = reply_source
+                            try:
+                                out["operationalContract"]["response_mode"] = "DIRECT"
+                            except Exception:
+                                pass
+                            try:
+                                _u = out.get("understanding")
+                                if isinstance(_u, dict):
+                                    _u["question_type"] = "continuity"
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
 
                 _free_spoken = _front_build_continuity_reply_from_platform_kb(
                     current_reply=_free_spoken or _free_reply,
