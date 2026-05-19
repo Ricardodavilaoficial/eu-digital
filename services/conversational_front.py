@@ -8143,6 +8143,37 @@ def _front_build_continuity_reply_from_platform_kb(
             except Exception:
                 return ""
 
+
+        def _pack_runtime_fallbacks() -> list[str]:
+            """
+            Material de apoio do runtime_short, separado dos fatos objetivos.
+
+            Em reconstrução factual, o one-liner não pode dominar a resposta.
+            Ele continua disponível como último recurso, mas cenas compactas
+            do próprio pack são mais úteis do que uma frase institucional curta.
+
+            Não interpreta linguagem humana.
+            Não usa palavras-chave.
+            Não altera prompt.
+            """
+            try:
+                short = pack.get("runtime_short") if isinstance(pack, dict) else {}
+                if not isinstance(short, dict):
+                    return []
+                ordered_keys = (
+                    ("micro_scene_conversational", "micro_scene", "bridge_line", "value_one_liner")
+                    if bool(force_rebuild)
+                    else ("value_one_liner", "micro_scene_conversational", "micro_scene")
+                )
+                out: list[str] = []
+                for k in ordered_keys:
+                    v = _clean_fact(short.get(k))
+                    if v:
+                        out.append(v)
+                return out
+            except Exception:
+                return []
+
         facts: list[tuple[int, str]] = []
         fallback_facts: list[str] = []
 
@@ -8167,32 +8198,35 @@ def _front_build_continuity_reply_from_platform_kb(
             _add_fact(30, operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else "")
             _add_fact(40, _block_text("scheduling_scene"))
             _add_fact(50, operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else "")
-            fallback_facts.append(_pack_runtime_short())
+            fallback_facts.extend(_pack_runtime_fallbacks())
         elif pack_u == "PACK_B_SERVICOS":
             _add_fact(10, product_truth.get("core_rule") if isinstance(product_truth, dict) else "")
             _add_fact(30, operational_capabilities.get("services_practice") if isinstance(operational_capabilities, dict) else "")
             _add_fact(40, _block_text("services_quote_scene"))
-            fallback_facts.append(_pack_runtime_short())
+            fallback_facts.extend(_pack_runtime_fallbacks())
         elif pack_u == "PACK_C_PEDIDOS":
             _add_fact(30, operational_capabilities.get("quotes_practice") if isinstance(operational_capabilities, dict) else "")
             _add_fact(40, _block_text("services_quote_scene"))
-            fallback_facts.append(_pack_runtime_short())
+            fallback_facts.extend(_pack_runtime_fallbacks())
         elif pack_u == "PACK_D_STATUS":
             core = memory_positioning.get("core") if isinstance(memory_positioning, dict) else []
             if isinstance(core, list):
                 for item in core[:2]:
                     _add_fact(10, item)
             _add_fact(30, operational_flows.get("agenda_do_dia") if isinstance(operational_flows, dict) else "")
-            fallback_facts.append(_pack_runtime_short())
+            fallback_facts.extend(_pack_runtime_fallbacks())
         else:
-            fallback_facts.append(_pack_runtime_short())
+            fallback_facts.extend(_pack_runtime_fallbacks())
 
-        # Quando a reconstrução é forçada pela guarda factual, fatos já
-        # resolvidos no contrato operacional também são material seguro:
-        # vêm da KB/seleção estrutural e não de interpretação nova.
+        # Quando a reconstrução é forçada, material estrutural já resolvido
+        # pelo contrato entra como apoio, não como fato objetivo. Assim ele
+        # não compete com process_facts/operational_capabilities quando esses
+        # existem.
         if bool(force_rebuild):
             for _sf in _structural_fallbacks:
-                _add_fact(20, _sf)
+                sf = _clean_fact(_sf)
+                if sf:
+                    fallback_facts.append(sf)
 
         cleaned: list[str] = []
         seen = set()
@@ -8207,20 +8241,26 @@ def _front_build_continuity_reply_from_platform_kb(
             if len(cleaned) >= 3:
                 break
 
-        # Em continuidade, runtime_short é fallback final.
-        # Ele costuma ser one-liner de abertura do pack; útil quando não há
-        # outro material, mas fraco para responder pergunta pontual.
-        if not cleaned:
-            for f in fallback_facts:
-                f = _clean_fact(f)
-                if not f:
-                    continue
-                key = _normalize_lookup_key(f[:120])
-                if key and key not in seen:
-                    seen.add(key)
-                    cleaned.append(f)
-                if len(cleaned) >= 2:
-                    break
+        # Em reconstrução factual, fatos objetivos vencem sempre.
+        # Fallbacks só entram quando nenhum fato objetivo foi encontrado.
+        # Isso impede o one-liner institucional de dominar respostas práticas.
+        if bool(force_rebuild) and cleaned:
+            pass
+        else:
+            # Em continuidade, runtime_short é fallback final.
+            # Ele costuma ser one-liner de abertura do pack; útil quando não há
+            # outro material, mas fraco para responder pergunta pontual.
+            if not cleaned:
+                for f in fallback_facts:
+                    f = _clean_fact(f)
+                    if not f:
+                        continue
+                    key = _normalize_lookup_key(f[:120])
+                    if key and key not in seen:
+                        seen.add(key)
+                        cleaned.append(f)
+                    if len(cleaned) >= 2:
+                        break
 
         if not cleaned:
             return base
