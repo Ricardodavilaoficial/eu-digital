@@ -8048,6 +8048,7 @@ def _front_build_continuity_reply_from_platform_kb(
     has_segment: bool = False,
     next_step: str = "",
     force_rebuild: bool = False,
+    structural_fallbacks: Any = None,
 ) -> str:
     """
     Constrói resposta útil a partir da platform_kb para perguntas práticas
@@ -8076,6 +8077,10 @@ def _front_build_continuity_reply_from_platform_kb(
 
         if str(next_step or "").strip().upper() == "SEND_LINK":
             return base
+
+        _structural_fallbacks = structural_fallbacks
+        if not isinstance(_structural_fallbacks, list):
+            _structural_fallbacks = []
 
         if not isinstance(kb_obj, dict) or not kb_obj:
             return base
@@ -8181,6 +8186,13 @@ def _front_build_continuity_reply_from_platform_kb(
             fallback_facts.append(_pack_runtime_short())
         else:
             fallback_facts.append(_pack_runtime_short())
+
+        # Quando a reconstrução é forçada pela guarda factual, fatos já
+        # resolvidos no contrato operacional também são material seguro:
+        # vêm da KB/seleção estrutural e não de interpretação nova.
+        if bool(force_rebuild):
+            for _sf in _structural_fallbacks:
+                _add_fact(20, _sf)
 
         cleaned: list[str] = []
         seen = set()
@@ -12945,6 +12957,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         and _pack_for_final_factual
                         and isinstance(kb_snapshot_obj, dict)
                     ):
+                        _structural_fallbacks_for_guard = []
+                        try:
+                            for _k in (
+                                "runtime_compact_reply",
+                                "runtime_short_reply",
+                                "reference_example",
+                            ):
+                                _v = _contract_for_final_factual.get(_k)
+                                if str(_v or "").strip():
+                                    _structural_fallbacks_for_guard.append(_v)
+                        except Exception:
+                            _structural_fallbacks_for_guard = []
+
                         _forced_kb_reply = _front_build_continuity_reply_from_platform_kb(
                             current_reply=_free_reply,
                             kb_obj=kb_snapshot_obj,
@@ -12956,6 +12981,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             has_segment=_continuity_has_segment,
                             next_step=next_step,
                             force_rebuild=True,
+                            structural_fallbacks=_structural_fallbacks_for_guard,
                         )
                         if _forced_kb_reply:
                             _free_reply = _forced_kb_reply
@@ -12965,6 +12991,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             response_mode = "DIRECT"
                             reply_source = "front_platform_kb_factual_guard"
                             out["response_mode"] = "DIRECT"
+                            _final_factual_guard_applied = True
                             out["replySource"] = reply_source
                             try:
                                 out["operationalContract"]["response_mode"] = "DIRECT"
@@ -12978,18 +13005,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 pass
                 except Exception:
                     pass
-
-                _free_spoken = _front_build_continuity_reply_from_platform_kb(
-                    current_reply=_free_spoken or _free_reply,
-                    kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
-                    topic=_continuity_topic,
-                    pack_id=_continuity_pack_id,
-                    user_name=_continuity_safe_name,
-                    ai_turns=int(ai_turns or 0),
-                    has_identity=_continuity_has_identity,
-                    has_segment=_continuity_has_segment,
-                    next_step=next_step,
-                )
+                if _final_factual_guard_applied:
+                    _free_spoken = _free_reply
+                else:
+                    _free_spoken = _front_build_continuity_reply_from_platform_kb(
+                        current_reply=_free_spoken or _free_reply,
+                        kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                        topic=_continuity_topic,
+                        pack_id=_continuity_pack_id,
+                        user_name=_continuity_safe_name,
+                        ai_turns=int(ai_turns or 0),
+                        has_identity=_continuity_has_identity,
+                        has_segment=_continuity_has_segment,
+                        next_step=next_step,
+                    )
 
                 _missing_identity = bool(
                     not bool(_continuity_has_identity)
