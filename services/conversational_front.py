@@ -6223,6 +6223,7 @@ def _front_build_continuity_reply_from_platform_kb(
     has_identity: bool = False,
     has_segment: bool = False,
     next_step: str = "",
+    question_type: str = "broad",
 ) -> str:
     """
     Constrói resposta útil de continuidade a partir da platform_kb.
@@ -6259,6 +6260,8 @@ def _front_build_continuity_reply_from_platform_kb(
         # lead já trouxe nome/segmento e fez pergunta prática.
         if not bool(int(ai_turns or 0) > 0 or str(user_name or "").strip()):
             return base
+
+        is_continuity = str(question_type or "").strip().lower() == "continuity"
 
         topic_u = str(topic or "").strip().upper()
         pack_u = str(pack_id or "").strip().upper() or _pick_pack_for_intent(topic_u)
@@ -6407,6 +6410,8 @@ def _front_build_continuity_reply_from_platform_kb(
                 prefix = f"{name}, " if name else ""
                 useful = " ".join(agenda_direct).strip()
                 useful = _front_trim_free_mode_sentence(f"{prefix}{useful}", 760)
+                if is_continuity and useful and len(useful) >= 30:
+                    return useful
                 if useful and len(useful) >= 60:
                     return useful
 
@@ -6418,12 +6423,12 @@ def _front_build_continuity_reply_from_platform_kb(
                 overlap += 1
 
         # Se a IA já trouxe pelo menos dois fatos úteis do KB, preserva.
-        if overlap >= 2:
+        if overlap >= 2 and not is_continuity:
             return base
 
         # Evita piorar a resposta aceita pela IA com um fallback curto demais.
         useful_probe = " ".join(cleaned).strip()
-        if len(useful_probe) < 220 and len(cleaned) < 2:
+        if len(useful_probe) < 220 and len(cleaned) < 2 and not is_continuity:
             return base
 
         name = _front_sanitize_lead_name_candidate(user_name)
@@ -11018,6 +11023,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     has_identity=_continuity_has_identity,
                     has_segment=_continuity_has_segment,
                     next_step=next_step,
+                    question_type=question_type,
                 )
 
                 _continuity_reply_built = bool(
@@ -11035,6 +11041,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     has_identity=_continuity_has_identity,
                     has_segment=_continuity_has_segment,
                     next_step=next_step,
+                    question_type=question_type,
                 )
 
                 _missing_identity = bool(
