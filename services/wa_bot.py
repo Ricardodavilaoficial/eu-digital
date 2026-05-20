@@ -1651,6 +1651,7 @@ def _safe_json_dumps_with_limit(payload: dict, limit: int) -> str:
             },
             "value_packs_v1": payload.get("value_packs_v1") or {},
             "platform_pricing": {},
+            "process_facts": payload.get("process_facts") or {},
             "kb_segments_v1": {},
             "kb_subsegments_v1": {},
             "kb_archetypes_v1": {},
@@ -1669,6 +1670,7 @@ def _safe_json_dumps_with_limit(payload: dict, limit: int) -> str:
             },
             "value_packs_v1": payload.get("value_packs_v1") or {},
             "platform_pricing": {},
+            "process_facts": payload.get("process_facts") or {},
             "kb_segments_v1": {},
             "kb_subsegments_v1": {},
             "kb_archetypes_v1": {},
@@ -1685,6 +1687,7 @@ def _safe_json_dumps_with_limit(payload: dict, limit: int) -> str:
             "kb_segments_v1": {},
             "platform_pricing": {},
             "value_packs_v1": payload.get("value_packs_v1") or {},
+            "process_facts": payload.get("process_facts") or {},
             "kb_subsegments_v1": {},
             "kb_archetypes_v1": {},
         }
@@ -1700,6 +1703,7 @@ def _safe_json_dumps_with_limit(payload: dict, limit: int) -> str:
             "kb_segments_v1": {},
             "value_packs_v1": {},
             "platform_pricing": {},
+            "process_facts": payload.get("process_facts") or {},
             "kb_subsegments_v1": {},
             "kb_archetypes_v1": {},
         }
@@ -2106,6 +2110,7 @@ def _build_front_kb_snapshot(topic: str) -> str:
             segment_value_map_source = _front_find_kb_map_anywhere(kb, "segment_value_map_v1")
             pack_selection_policy_source = _front_find_kb_map_anywhere(kb, "pack_selection_policy_v1")
             segment_template_source = _front_find_kb_map_anywhere(kb, "segment_template_v1")
+            process_facts_source = _front_find_kb_map_anywhere(kb, "process_facts")
             # pricing compacto (canônico: platform_pricing/current)
             pricing_compact = {}
             try:
@@ -2132,6 +2137,7 @@ def _build_front_kb_snapshot(topic: str) -> str:
                 },
                 "value_packs_v1": _compact_value_packs_for_front(value_packs_source or kb.get("value_packs_v1") or {}),
                 "platform_pricing": {"current": pricing_compact} if pricing_compact else {},
+                "process_facts": process_facts_source or kb.get("process_facts") or {},
                 "kb_segments_v1": compact_segments,
                 "kb_subsegments_v1": compact_subsegments,
                 "kb_archetypes_v1": compact_archetypes,
