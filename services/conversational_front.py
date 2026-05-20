@@ -5384,21 +5384,27 @@ Se ele informou nome, profissão, segmento ou contexto de uso, use essas informa
 → Limite o texto a no máximo 2 frases.
 → Inclua o nome do usuário ou o segmento dele na resposta, caso essas informações já existam no contexto.
 
-4. SE question_type = broad E existir conteúdo operacional:
+4. SE question_type = continuity:
+→ Responda diretamente à pergunta do usuário.
+→ Use apenas fatos do contexto.
+→ Escreva no máximo 2 frases.
+→ Inclua o nome do usuário ou o segmento dele na resposta, caso essas informações já existam no contexto.
+
+5. SE question_type = broad E existir conteúdo operacional:
 → Descreva o fluxo de atendimento usando os passos listados no conteúdo operacional.
 → Escreva o texto em ordem cronológica dos acontecimentos.
 → Encerre o texto com exatamente uma frase afirmando o benefício final gerado para o dono do negócio.
 
-5. SE for SCENE:
+6. SE for SCENE:
 → descrever ações reais, sem opinião
 → usar frases curtas e conectadas
 → encerrar na última ação
 
-5. SE for DISCOVERY:
+7. SE for DISCOVERY:
 → responder algo útil
 → incluir exatamente 1 pergunta pedindo nome e/ou segmento
 
-6. SE for CLOSING:
+8. SE for CLOSING:
 → agradecer
 → usar nome se existir
 → informar envio do link
