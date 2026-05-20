@@ -5179,7 +5179,7 @@ def _front_pick_rich_free_mode_base(
                     cur = _unwrap_front_json_envelope(cur) or cur
                 if "{{" not in cur and "}}" not in cur:
                     cur = _front_clean_free_mode_tail(cur)
-                    if len(cur) >= 60:
+                    if len(cur) >= 40:
                         return cur
 
         candidates = []
@@ -6313,11 +6313,8 @@ def _front_build_continuity_reply_from_platform_kb(
 
         if pack_u == "PACK_A_AGENDA":
             facts.extend([
-                _clean_fact(operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else ""),
                 _clean_fact(process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else ""),
                 _clean_fact(process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else ""),
-                _block_text("scheduling_scene"),
-                _clean_fact(operational_scenarios.get("resumo_do_dia_sem_cacar_mensagem") if isinstance(operational_scenarios, dict) else ""),
             ])
             fallback_facts.append(_pack_runtime_short())
         elif pack_u == "PACK_B_SERVICOS":
@@ -6390,7 +6387,6 @@ def _front_build_continuity_reply_from_platform_kb(
             for f in (
                 process_facts.get("dashboard_agenda") if isinstance(process_facts, dict) else "",
                 process_facts.get("daily_email_digest") if isinstance(process_facts, dict) else "",
-                operational_capabilities.get("scheduling_practice") if isinstance(operational_capabilities, dict) else "",
             ):
                 f = _clean_fact(f)
                 if not f:
@@ -6400,12 +6396,12 @@ def _front_build_continuity_reply_from_platform_kb(
                     agenda_seen.add(key)
                     agenda_direct.append(f)
 
-            if len(agenda_direct) >= 2:
+            if len(agenda_direct) >= 1:
                 name = _front_sanitize_lead_name_candidate(user_name)
                 prefix = f"{name}, " if name else ""
                 useful = " ".join(agenda_direct).strip()
                 useful = _front_trim_free_mode_sentence(f"{prefix}{useful}", 760)
-                if useful and len(useful) >= 180:
+                if useful and len(useful) >= 60:
                     return useful
 
         low_base = _normalize_lookup_key(base)
@@ -8853,6 +8849,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # NÃO reabre SCENE procedural.
         # Apenas reutiliza a camada humana já existente.
         # ==========================================================
+        _is_broad_question = str(question_type or "").strip().lower() not in ("punctual", "continuity")
+
         use_direct_scene = bool(
             has_structured_scene
             and (
@@ -8869,6 +8867,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         (operational_contract or {}).get("runtime_compact_reply")
                         or (operational_contract or {}).get("runtime_short_reply")
                     )
+                    and _is_broad_question
                 )
             )
         )
@@ -10921,9 +10920,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if _free_spoken.startswith("{") or _free_spoken.startswith("```"):
                     _free_spoken = _unwrap_front_json_envelope(_free_spoken) or _free_reply
 
+                _is_broad_question_fallback = str(question_type or "").strip().lower() not in ("punctual", "continuity")
                 _prefer_current_reply = bool(
-                    int(ai_turns or 0) > 0
-                    and len(str(_free_reply or "").strip()) >= 60
+                    (int(ai_turns or 0) > 0 and len(str(_free_reply or "").strip()) >= 60)
+                    or not _is_broad_question_fallback
                 )
 
                 _free_reply = _front_pick_rich_free_mode_base(
