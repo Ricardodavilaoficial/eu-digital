@@ -5365,7 +5365,7 @@ SE o usuário pedir preço, funcionamento, voz, suporte ou configuração
 SE o nome ou segmento não estiver claro
 → response_mode = DISCOVERY
 
-SE o segmento estiver claro E existir base operacional no KB
+SE o segmento estiver claro E existir base operacional no KB E question_type = broad
 → response_mode = SCENE
 
 SE o usuário quiser contratar, ativar ou pedir link
@@ -8712,6 +8712,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 operational_contract["micro_scene_allowed"] = True
         elif str(needs_clarify or "").strip().lower() == "yes" or str(clarify_q or "").strip():
             response_mode = "DISCOVERY"
+        elif str(question_type or "").strip().lower() in ("punctual", "continuity"):
+            if response_mode == "SCENE":
+                response_mode = "DIRECT"
+            if isinstance(operational_contract, dict):
+                operational_contract["response_mode"] = "DIRECT"
         elif str(topic or "").strip().upper() in ("PRECO", "TRIAL", "ATIVAR", "WHAT_IS", "SOCIAL", "VOZ"):
             if response_mode == "SCENE":
                 response_mode = "DIRECT"
@@ -8980,11 +8985,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         response_mode = "SCENE"
                         micro_scene_allowed = True
                         operational_contract["micro_scene_allowed"] = True
+                        operational_contract["response_mode"] = "SCENE"
                     else:
                         if response_mode == "SCENE":
                             response_mode = "DIRECT"
                         micro_scene_allowed = False
                         operational_contract["micro_scene_allowed"] = False
+                        operational_contract["response_mode"] = "DIRECT"
         except Exception:
             pass
 
