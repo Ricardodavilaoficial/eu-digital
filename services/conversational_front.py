@@ -10157,12 +10157,54 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             ia_accepted = accepted
 
+            # ---------------------------------------------------------
+            # INTERCEPTAÇÃO DE CONTINUIDADE
+            # Quando a pergunta é de continuidade, a IA pode responder
+            # com um texto genérico mais longo, mesmo com o roteamento
+            # correto. Neste ponto, reconstruímos a resposta usando os
+            # fatos objetivos da platform_kb (ex.: process_facts) e
+            # preservamos a classificação semântica já feita pela IA.
+            # ---------------------------------------------------------
+            if str(question_type or "").strip().lower() == "continuity":
+                _continuity_current_reply = str(reply_text or "").strip()
+                _continuity_reply = _front_build_continuity_reply_from_platform_kb(
+                    current_reply=_continuity_current_reply,
+                    kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                    topic=topic,
+                    pack_id=selected_pack_id,
+                    user_name=inferred_lead_name or name_hint,
+                    ai_turns=ai_turns,
+                    has_identity=(
+                        has_name
+                        or bool(inferred_lead_name or name_hint)
+                    ),
+                    has_segment=bool(
+                        effective_segment
+                        or segment_hint
+                        or inferred_lead_segment_raw
+                        or inferred_lead_segment
+                    ),
+                    next_step=next_step,
+                    question_type=question_type,
+                )
+                if (
+                    _continuity_reply
+                    and len(_continuity_reply) >= 30
+                    and _continuity_reply != _continuity_current_reply
+                ):
+                    reply_text = _continuity_reply
+                    spoken_text = _continuity_reply
+                    reply_source = "front_continuity_facts"
+                    accepted = True
+                    ia_accepted = True
+
             if accepted:
                 final_reply = str(reply_text or "").strip()
                 final_spoken = str(spoken_text or final_reply).strip()
                 reply_text = final_reply
                 spoken_text = final_spoken
-                reply_source = "front_ia_soberana"
+                if reply_source != "front_continuity_facts":
+                    reply_source = "front_ia_soberana"
 
             if not accepted:
                 current_text = str(reply_text or "").strip()
