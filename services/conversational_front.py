@@ -4957,6 +4957,7 @@ def _infer_response_mode_from_signals(
     effective_segment: str,
     kb_anchor_strong: bool,
     operational_contract: Dict[str, Any] | None = None,
+    question_type: str = "broad",
 ) -> str:
     """
     Decide o formato da resposta sem palavras-chave.
@@ -4973,6 +4974,7 @@ def _infer_response_mode_from_signals(
         cq = str(clarify_q or "").strip()
         ns = str(next_step or "").strip().upper()
         seg = str(effective_segment or "").strip()
+        qt = str(question_type or "").strip().lower()
         contract = operational_contract if isinstance(operational_contract, dict) else {}
 
         if ns == "SEND_LINK":
@@ -4980,6 +4982,12 @@ def _infer_response_mode_from_signals(
 
         if nc == "yes" or cq:
             return "DISCOVERY"
+
+        # Perguntas pontuais/continuidade devem responder direto.
+        # Não altera prompt e não interpreta palavras do usuário; usa somente
+        # o tipo estrutural já produzido pelo próprio front/modelo.
+        if qt in ("punctual", "continuity"):
+            return "DIRECT"
 
         has_operational_base = bool(
             str(contract.get("operational_reference") or "").strip()
@@ -7966,8 +7974,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or "broad"
         ).strip().lower()
 
-        if question_type not in ("broad", "punctual"):
+        if question_type not in ("broad", "punctual", "continuity"):
             question_type = "broad"
+
+        # Continuidade estrutural: depois do primeiro turno, uma pergunta que
+        # veio como broad ainda pode ser acompanhamento do assunto anterior.
+        # A normalização já existia no fim do pipeline; trazemos o sinal para
+        # antes do roteamento, sem usar palavras-chave e sem mexer em prompt.
+        if int(ai_turns or 0) > 0 and question_type == "broad":
+            question_type = "continuity"
 
         needs_clarify = str(
             data.get("needsClarify")
@@ -8686,13 +8701,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 effective_segment=segment_for_prompt,
                 kb_anchor_strong=kb_anchor_strong,
                 operational_contract=operational_contract,
+                question_type=question_type,
             )
 
         # Hierarquia de risco: o código pode rebaixar/elevar o modo quando
         # sinais estruturais fortes contradizem o JSON do modelo.
         if str(next_step or "").strip().upper() == "SEND_LINK":
             response_mode = "CLOSING"
-        elif global_pack_scene_ready:
+        elif global_pack_scene_ready and str(question_type or "").strip().lower() not in ("punctual", "continuity"):
             response_mode = "SCENE"
             needs_clarify = "no"
             clarify_q = ""
@@ -8961,7 +8977,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         operational_contract["reference_example"] = _late_reference
                         operational_contract["has_reference_example"] = True
 
-                    if has_real_operational_context:
+                    if has_real_operational_context and str(question_type or "").strip().lower() not in ("punctual", "continuity"):
                         response_mode = "SCENE"
                         micro_scene_allowed = True
                         operational_contract["micro_scene_allowed"] = True
