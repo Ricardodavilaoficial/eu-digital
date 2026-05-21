@@ -1524,6 +1524,213 @@ def ycloud_inbound_worker():
         return jsonify({"ok": True, "error": "worker_exception"}), 200
 
 
+@ycloud_tasks_bp.route("/tasks/ycloud-flush", methods=["POST"])
+def ycloud_flush_worker():
+    """
+    Flush transacional do buffer de mensagens picotadas do WhatsApp.
+    Junta mensagens próximas por waKey e repassa um payload sintético
+    ao worker principal.
+    """
+    secret = (os.environ.get("CLOUD_TASKS_SECRET") or "").strip()
+    got = (
+        (request.headers.get("X-MR-Tasks-Secret") or "").strip()
+        or (request.headers.get("X-CloudTasks-Secret") or "").strip()
+        or (request.headers.get("X-Cloudtasks-Secret") or "").strip()
+    )
+    if (not secret) or (not got) or (got != secret):
+        logger.warning("[tasks][flush] unauthorized")
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    wa_key = "".join(ch for ch in str(data.get("waKey") or "") if ch.isdigit())
+    if not wa_key:
+        return jsonify({"ok": False, "error": "missing_waKey"}), 400
+
+    db = _db()
+    fs = _fs_admin()
+    buffer_ref = db.collection("platform_wa_buffers").document(wa_key)
+
+    @fs.transactional
+    def _claim_buffer(transaction, ref):
+        snap = ref.get(transaction=transaction)
+        if not snap.exists:
+            return {}
+
+        row = snap.to_dict() or {}
+        if bool(row.get("isProcessing")):
+            return {}
+
+        messages_by_id = row.get("messagesById") or {}
+        if not isinstance(messages_by_id, dict) or not messages_by_id:
+            return {}
+
+        transaction.update(
+            ref,
+            {
+                "isProcessing": True,
+                "processingStartedAt": fs.SERVER_TIMESTAMP,
+                "processingStartedAtEpoch": time.time(),
+                "processingMessagesById": messages_by_id,
+                "messagesById": {},
+            },
+        )
+        return messages_by_id
+
+    messages_by_id = {}
+    try:
+        transaction = db.transaction()
+        messages_by_id = _claim_buffer(transaction, buffer_ref) or {}
+    except Exception:
+        logger.exception("[tasks][flush] claim_failed waKey=%s", wa_key)
+        return jsonify({"ok": True, "error": "claim_failed"}), 200
+
+    if not messages_by_id:
+        return jsonify({"ok": True, "reason": "empty_or_locked"}), 200
+
+    sent_response = False
+    try:
+        items = []
+        for key, item in messages_by_id.items():
+            if not isinstance(item, dict):
+                continue
+            payload = item.get("payload") or {}
+            if not isinstance(payload, dict):
+                continue
+            items.append(
+                {
+                    "key": str(key or ""),
+                    "eventKey": str(item.get("eventKey") or ""),
+                    "payload": payload,
+                    "receivedAt": float(item.get("receivedAt") or 0.0),
+                    "wamid": str(item.get("wamid") or ""),
+                }
+            )
+
+        items.sort(key=lambda x: (x.get("receivedAt") or 0.0, x.get("wamid") or ""))
+
+        parts = []
+        has_audio = False
+        last_payload = {}
+        last_media = {}
+        wamids = []
+        event_keys = []
+
+        for item in items:
+            payload = item.get("payload") or {}
+            last_payload = payload
+            if item.get("wamid"):
+                wamids.append(str(item.get("wamid")))
+            if item.get("eventKey"):
+                event_keys.append(str(item.get("eventKey")))
+
+            msg_type = str(payload.get("messageType") or payload.get("msgType") or "").strip().lower()
+            text = ""
+            raw_text = payload.get("text")
+            if isinstance(raw_text, dict):
+                text = str(raw_text.get("body") or raw_text.get("text") or raw_text.get("message") or "").strip()
+            else:
+                text = str(raw_text or "").strip()
+
+            if msg_type in ("audio", "voice", "ptt"):
+                has_audio = True
+                media = payload.get("media") or {}
+                if isinstance(media, dict):
+                    last_media = media
+
+                if text:
+                    parts.append(text)
+                    continue
+
+                try:
+                    from services.voice_wa_download import download_media_bytes  # type: ignore
+                    provider = payload.get("provider") or "ycloud"
+                    audio_bytes, mime = download_media_bytes(provider, media)
+                    if audio_bytes and len(audio_bytes) > 200 and perform_stt_logic is not None:
+                        from subprocess import Popen, PIPE
+                        p = Popen(
+                            [
+                                "ffmpeg",
+                                "-i", "pipe:0",
+                                "-ac", "1",
+                                "-ar", "16000",
+                                "-f", "wav",
+                                "pipe:1",
+                            ],
+                            stdin=PIPE,
+                            stdout=PIPE,
+                            stderr=PIPE,
+                        )
+                        wav_bytes, _ = p.communicate(audio_bytes)
+                        stt_payload, stt_status = perform_stt_logic(
+                            wav_bytes if wav_bytes else audio_bytes,
+                            "audio/wav",
+                        )
+                        if stt_status == 200 and bool(stt_payload.get("ok")):
+                            transcript = str(stt_payload.get("transcript") or "").strip()
+                            if transcript:
+                                parts.append(transcript)
+                except Exception as e:
+                    logger.warning("[tasks][flush] stt_failed waKey=%s err=%s", wa_key, f"{type(e).__name__}:{str(e)[:120]}")
+            elif text:
+                parts.append(text)
+
+        final_text = "\n".join([p for p in parts if str(p or "").strip()]).strip()
+
+        if not final_text:
+            logger.info("[tasks][flush] empty_text waKey=%s count=%s has_audio=%s", wa_key, len(items), bool(has_audio))
+            return jsonify({"ok": True, "reason": "empty_text", "count": len(items)}), 200
+
+        synthetic_payload = dict(last_payload or {})
+        synthetic_payload["text"] = final_text
+        synthetic_payload["msgType"] = "audio" if has_audio else "text"
+        synthetic_payload["messageType"] = "audio" if has_audio else "text"
+        synthetic_payload["media"] = last_media if has_audio else {}
+        synthetic_payload["buffered"] = True
+        synthetic_payload["bufferCount"] = len(items)
+        synthetic_payload["bufferWamids"] = wamids[:20]
+
+        synthetic_basis = "|".join(event_keys or wamids or [wa_key, str(time.time())])
+        synthetic_event_key = "ycloud:buffered:" + _sha1_id(synthetic_basis)
+
+        logger.info(
+            "[tasks][flush] executing waKey=%s count=%s textLen=%s hasAudio=%s eventKey=%s",
+            wa_key,
+            len(items),
+            len(final_text),
+            bool(has_audio),
+            synthetic_event_key,
+        )
+
+        resp = _ycloud_inbound_worker_impl(
+            event_key=synthetic_event_key,
+            payload=synthetic_payload,
+            data={
+                "eventType": synthetic_payload.get("eventType"),
+                "payload": synthetic_payload,
+                "buffered": True,
+            },
+        )
+        sent_response = True
+        return resp
+
+    except Exception:
+        logger.exception("[tasks][flush] worker_failed waKey=%s", wa_key)
+        return jsonify({"ok": True, "error": "flush_exception"}), 200
+    finally:
+        try:
+            update_payload = {
+                "isProcessing": False,
+                "processingFinishedAt": fs.SERVER_TIMESTAMP,
+                "processingFinishedAtEpoch": time.time(),
+            }
+            if sent_response:
+                update_payload["lastProcessedAt"] = fs.SERVER_TIMESTAMP
+                update_payload["processingMessagesById"] = {}
+            buffer_ref.set(update_payload, merge=True)
+        except Exception:
+            pass
+
+
 def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     """
     Implementação do worker. Conteúdo original (Render) foi movido para cá

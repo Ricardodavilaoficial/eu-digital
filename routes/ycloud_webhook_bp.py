@@ -291,6 +291,60 @@ def ycloud_webhook_ingress():
 
     # cloudtasks: tenta enfileirar; fallback inline se falhar (sempre 200)
     try:
+        buffer_enabled = (os.getenv("WA_INBOUND_BUFFER_ENABLED", "1") or "1").strip().lower() not in ("0", "false", "off", "no")
+
+        if buffer_enabled:
+            from services.cloud_tasks import enqueue_ycloud_buffer_flush  # lazy import
+            from firebase_admin import firestore as admin_fs  # type: ignore
+
+            from_e164 = _safe_str(env.get("from"))
+            wa_key = _digits_only(from_e164) or from_e164
+            if not wa_key:
+                raise RuntimeError("buffer_missing_wa_key")
+
+            msg_id = _safe_str(env.get("wamid") or event_key, 300)
+            item_key = hashlib.sha1((msg_id or event_key).encode("utf-8")).hexdigest()
+
+            buffer_ref = _db().collection("platform_wa_buffers").document(wa_key)
+            buffer_ref.set(
+                {
+                    "waKey": wa_key,
+                    "updatedAt": admin_fs.SERVER_TIMESTAMP,
+                    "updatedAtEpoch": time.time(),
+                    "messagesById": {
+                        item_key: {
+                            "eventKey": event_key,
+                            "payload": env,
+                            "receivedAt": time.time(),
+                            "wamid": msg_id,
+                        }
+                    },
+                },
+                merge=True,
+            )
+
+            delay_s = int(os.getenv("WA_INBOUND_BUFFER_DELAY_SECONDS", "4") or "4")
+            task_name = enqueue_ycloud_buffer_flush(wa_key, delay_seconds=delay_s)
+
+            try:
+                event_type = _safe_str(env.get("eventType"))
+                msg_type = _safe_str(env.get("messageType"))
+                text_len = len(_safe_str(env.get("text"), 2000) or "")
+                logger.info(
+                    "[ycloud_webhook] buffered_ok: task=%s type=%s msgType=%s from=%s wamid=%s textLen=%s waKey=%s",
+                    _safe_str(task_name),
+                    event_type,
+                    msg_type,
+                    from_e164,
+                    _safe_str(env.get("wamid")),
+                    text_len,
+                    wa_key,
+                )
+            except Exception:
+                pass
+
+            return jsonify({"ok": True, "buffered": True, "eventKey": event_key, "task": task_name}), 200
+
         from services.cloud_tasks import enqueue_ycloud_inbound  # lazy import
 
         # Enfileira no Cloud Tasks (NÃO mentir: só loga "enqueued" depois de sucesso)
