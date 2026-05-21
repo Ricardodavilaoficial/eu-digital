@@ -291,7 +291,15 @@ def ycloud_webhook_ingress():
 
     # cloudtasks: tenta enfileirar; fallback inline se falhar (sempre 200)
     try:
-        buffer_enabled = (os.getenv("WA_INBOUND_BUFFER_ENABLED", "1") or "1").strip().lower() not in ("0", "false", "off", "no")
+        buffer_flag_raw = (os.getenv("WA_INBOUND_BUFFER_ENABLED", "1") or "1").strip()
+        buffer_enabled = buffer_flag_raw.lower() not in ("0", "false", "off", "no")
+
+        logger.info(
+            "[ycloud_webhook] buffer_probe enabled=%s raw=%s queue_mode=%s",
+            bool(buffer_enabled),
+            buffer_flag_raw,
+            queue_mode,
+        )
 
         if buffer_enabled:
             from services.cloud_tasks import enqueue_ycloud_buffer_flush  # lazy import
