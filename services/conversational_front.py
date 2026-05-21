@@ -8124,6 +8124,39 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     state_summary.get("leadSegmentRaw"),
                 ],
             )
+
+            # Quando o modelo devolve um leadName inválido (ex.: atividade/segmento)
+            # no mesmo inbound consolidado, o fallback anterior não roda porque
+            # inferred_lead_name não está vazio. Ainda assim, o usuário pode ter
+            # informado o nome no próprio texto.
+            #
+            # Aqui não usamos lista de nomes, profissão ou segmento; apenas
+            # reaproveitamos o extrator estrutural já existente e validamos o
+            # resultado contra os mesmos segment_refs. Não altera prompt.
+            if not current_turn_lead_name:
+                try:
+                    _turn_name = _extract_lead_name_from_current_turn(user_text)
+                    _turn_name = _front_sanitize_lead_name_candidate(
+                        _turn_name,
+                        segment_refs=[
+                            segment_hint,
+                            inferred_lead_segment_raw,
+                            inferred_lead_segment,
+                            state_summary.get("segment"),
+                            state_summary.get("segmentHint"),
+                            state_summary.get("leadSegmentRaw"),
+                        ],
+                    )
+                    if _turn_name:
+                        current_turn_lead_name = _turn_name
+                        inferred_lead_name = _turn_name
+                        data["lead_name"] = _turn_name
+                        data["leadName"] = _turn_name
+                        if isinstance(understanding, dict):
+                            understanding["lead_name"] = _turn_name
+                            understanding["leadName"] = _turn_name
+                except Exception:
+                    pass
             if current_turn_lead_name and not name_hint:
                 name_hint = current_turn_lead_name
 
