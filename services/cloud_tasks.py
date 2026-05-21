@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from google.cloud import tasks_v2  # type: ignore
 from google.protobuf import timestamp_pb2  # type: ignore
+from google.api_core import exceptions as gcloud_exceptions  # type: ignore
 
 logger = logging.getLogger("mei_robo.cloud_tasks")
 
@@ -70,10 +71,18 @@ def enqueue_ycloud_inbound(payload: Dict[str, Any], event_key: str) -> Dict[str,
     try:
         created = _client().create_task(request={"parent": parent, "task": task})
         return {"ok": True, "taskName": getattr(created, "name", ""), "deduped": False}
+    except gcloud_exceptions.AlreadyExists:
+        return {"ok": True, "taskName": task_name, "deduped": True}
     except Exception as e:
         # Se já existe, é dedupe OK. Não explode.
         msg = str(e)
-        if "ALREADY_EXISTS" in msg or "AlreadyExists" in msg:
+        if (
+            "ALREADY_EXISTS" in msg
+            or "AlreadyExists" in msg
+            or "Already Exists" in msg
+            or "already exists" in msg.lower()
+            or "Requested entity already exists" in msg
+        ):
             return {"ok": True, "taskName": task_name, "deduped": True}
         raise
 
@@ -138,9 +147,17 @@ def enqueue_ycloud_buffer_flush(wa_key: str, delay_seconds: int = 4) -> Dict[str
     try:
         created = _client().create_task(request={"parent": parent, "task": task})
         return {"ok": True, "taskName": getattr(created, "name", ""), "deduped": False}
+    except gcloud_exceptions.AlreadyExists:
+        return {"ok": True, "taskName": task_name, "deduped": True}
     except Exception as e:
         msg = str(e)
-        if "ALREADY_EXISTS" in msg or "AlreadyExists" in msg:
+        if (
+            "ALREADY_EXISTS" in msg
+            or "AlreadyExists" in msg
+            or "Already Exists" in msg
+            or "already exists" in msg.lower()
+            or "Requested entity already exists" in msg
+        ):
             return {"ok": True, "taskName": task_name, "deduped": True}
         raise
 
