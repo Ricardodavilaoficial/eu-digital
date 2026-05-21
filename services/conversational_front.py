@@ -6252,16 +6252,25 @@ def _front_build_continuity_reply_from_platform_kb(
         if not isinstance(kb_obj, dict) or not kb_obj:
             return base
 
-        if not bool(has_identity and has_segment):
+        # Continuidade factual depende de contexto operacional/segmento.
+        # O nome ajuda na humanização, mas não pode bloquear uma resposta
+        # objetiva para pergunta pontual de follow-up.
+        #
+        # Escopo:
+        # - não usa palavra-chave do usuário;
+        # - não altera prompt;
+        # - não chama IA adicional;
+        # - mantém o segmento/contexto como guarda estrutural contra fatos genéricos.
+        if not bool(has_segment):
             return base
 
         # Continuidade estrutural:
         # pode ocorrer no 2º turno, 3º turno ou no próprio turno em que o
         # lead já trouxe nome/segmento e fez pergunta prática.
-        if not bool(int(ai_turns or 0) > 0 or str(user_name or "").strip()):
+        if not bool(int(ai_turns or 0) > 0 or str(user_name or "").strip() or has_segment):
             return base
 
-        is_continuity = str(question_type or "").strip().lower() == "continuity"
+        is_continuity = str(question_type or "").strip().lower() in ("continuity", "punctual")
 
         topic_u = str(topic or "").strip().upper()
         pack_u = str(pack_id or "").strip().upper() or _pick_pack_for_intent(topic_u)
@@ -10165,7 +10174,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             # fatos objetivos da platform_kb (ex.: process_facts) e
             # preservamos a classificação semântica já feita pela IA.
             # ---------------------------------------------------------
-            if str(question_type or "").strip().lower() == "continuity":
+            if str(question_type or "").strip().lower() in ("continuity", "punctual"):
                 _continuity_current_reply = str(reply_text or "").strip()
                 _continuity_reply = _front_build_continuity_reply_from_platform_kb(
                     current_reply=_continuity_current_reply,
