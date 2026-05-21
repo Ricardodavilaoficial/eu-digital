@@ -911,9 +911,37 @@ def _detect_social_gesture(t: str) -> Dict[str, str]:
 
 
 
-def sales_box_decider(*, user_text: str) -> Dict[str, Any]:
+def sales_box_decider(
+    *,
+    user_text: str,
+    state: Dict[str, Any] = None,
+) -> Dict[str, Any]:
     """Decider econômico: escolhe 1 caixa e (quando necessário) 1 pergunta."""
     t = (user_text or "").strip()
+
+    st = state or {}
+
+    # ==========================================================
+    # Continuidade de fechamento herdada do front soberano
+    # - evita regressão do SEND_LINK no pós-5º turno
+    # ==========================================================
+    try:
+        inherited_next = str(
+            st.get("nextStep") or ""
+        ).strip().upper()
+
+        if inherited_next == "SEND_LINK":
+            return {
+                "intent": "ACTIVATE_SEND_LINK",
+                "confidence": 0.90,
+                "needs_clarification": False,
+                "clarifying_question": "",
+                "next_step": "SEND_LINK",
+                "gratitude": "NONE",
+            }
+    except Exception:
+        pass
+
     if not t:
         return {"intent": "OTHER", "confidence": 0.3, "needs_clarification": False, "clarifying_question": "", "next_step": "NONE", "gratitude": "NONE"}
 
@@ -2085,7 +2113,10 @@ def _sales_box_handle_turn(text_in: str, st: Dict[str, Any]) -> Optional[str]:
         st["understand_confidence"] = "high"
         return _smalltalk_bridge(user_text)
 
-    dec = sales_box_decider(user_text=user_text) or {}
+    dec = sales_box_decider(
+        user_text=user_text,
+        state=st,
+    ) or {}
     intent = str(dec.get("intent") or "OTHER").strip().upper()
     conf = float(dec.get("confidence") or 0.55)
     needs = bool(dec.get("needs_clarification"))
@@ -3456,7 +3487,18 @@ def _load_state(from_sender: str) -> Tuple[dict, str]:
                 sess["uid"] = uidp
 
         if isinstance(lead, dict) and lead:
-            for k in ("name", "segment", "goal", "interest_level"):
+            for k in (
+                "name",
+                "segment",
+                "goal",
+                "interest_level",
+                "summary",
+                "lastTopic",
+                "lastIntent",
+                "nextStep",
+                "segment_hint",
+                "leadSegmentRaw",
+            ):
                 v = lead.get(k)
                 if isinstance(v, str):
                     v = v.strip()
@@ -3708,6 +3750,7 @@ def sales_ai_decider(
         "Você decide o 'modo correto' de responder ANTES do texto final.\n"
         "Regras:\n"
         "- Não inventar. Não vender. Não falar preço se o usuário não pediu.\n"
+        "- CONTINUIDADE: se houver contexto anterior, continue a conversa de onde ela parou.\n"
         "- Se estiver ambíguo e precisar de dado essencial: needs_clarification=true e faça UMA pergunta curta.\n"
         "- Se estiver claro: needs_clarification=false.\n"
         "- VOICE: quando a pessoa pergunta se o robô 'parece ela', 'fala como ela', 'usa a voz dela', etc.\n\n"
@@ -4276,11 +4319,26 @@ def sales_ai_plan(
             pass
 
 
+    _resumo = str(state.get("summary") or "—").strip()
+    _topico_anterior = str(
+        state.get("lastTopic")
+        or state.get("lastIntent")
+        or "—"
+    ).strip()
+
+    _next_step_anterior = str(
+        state.get("nextStep")
+        or "—"
+    ).strip()
+
     user = (
         f"STAGE={stage}\n"
         f"TURNS={int(turns or 0)}\n"
         f"NOME={name or '—'}\n"
         f"RAMO={segment or '—'}\n"
+        f"TOPICO_ANTERIOR={_topico_anterior}\n"
+        f"NEXT_STEP_ANTERIOR={_next_step_anterior}\n"
+        f"RESUMO_ANTERIOR={_resumo}\n"
         f"OBJETIVO={goal or '—'}\n"
         f"NLU_INTENT={nlu_intent or '—'}\n"
         f"ULTIMA_RESPOSTA_NAO_REPETIR={last_bot_excerpt or '—'}\n\n"
@@ -5725,6 +5783,28 @@ def generate_reply(text: str, ctx: Optional[Dict[str, Any]] = None) -> Dict[str,
     st, wa_key = _load_state(from_e164)
     if isinstance(st, dict):
         st["wa_key"] = wa_key
+
+        # ==========================================================
+        # Herança de contexto do orchestrator (wa_bot)
+        # - evita shadow-state entre RAM e Firestore
+        # - não sobrescreve estado já consolidado
+        # ==========================================================
+        try:
+            if isinstance(ctx, dict):
+                for _k in (
+                    "summary",
+                    "lastTopic",
+                    "lastIntent",
+                    "nextStep",
+                    "segment_hint",
+                    "leadSegmentRaw",
+                ):
+                    _v = ctx.get(_k)
+                    if _v and not st.get(_k):
+                        st[_k] = _v
+        except Exception:
+            pass
+
         # Se o worker já sabe o nome (display_name), aproveita como contexto.
         # Isso NÃO injeta nome no texto; só ajuda a IA e o gate do ÁUDIO.
         try:
