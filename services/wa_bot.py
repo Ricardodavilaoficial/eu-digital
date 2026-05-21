@@ -1842,7 +1842,52 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
             if _size(work) <= limit:
                 return work
 
-        # 6) último recurso comercial: remove packs somente se nem o fallback global couber.
+        # 6) antes de sacrificar fatos operacionais curtos, reduz agressivamente
+        # campos longos dos packs globais.
+        #
+        # Princípio arquitetural:
+        # - continuidade depende mais de fatos objetivos curtos do que de
+        #   microcenas longas;
+        # - process_facts deve sobreviver o máximo possível;
+        # - não introduzimos regras comerciais nem palavras-chave;
+        # - apenas priorizamos densidade operacional por token.
+        try:
+            vp = dict(work.get("value_packs_v1") or {})
+            trimmed = {}
+
+            for pid, pack in list(vp.items()):
+                if not isinstance(pack, dict):
+                    continue
+
+                p = dict(pack)
+
+                rs = dict(p.get("runtime_short") or {})
+                if rs:
+                    # continuidade precisa mais do núcleo factual do que de
+                    # cenas longas conversacionais.
+                    rs.pop("micro_scene_conversational", None)
+                    rs.pop("micro_scene", None)
+
+                    if rs:
+                        p["runtime_short"] = rs
+                    else:
+                        p.pop("runtime_short", None)
+
+                # runtime_long é o maior consumidor de snapshot e não é
+                # essencial para respostas de continuidade.
+                p.pop("runtime_long", None)
+
+                trimmed[pid] = p
+
+            if trimmed:
+                work["value_packs_v1"] = trimmed
+
+            if _size(work) <= limit:
+                return work
+        except Exception:
+            pass
+
+        # 7) último recurso comercial: remove packs somente se nem o fallback global couber.
         if work.get("value_packs_v1"):
             work["value_packs_v1"] = {}
             if _size(work) <= limit:
@@ -1853,6 +1898,14 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
             work["answer_playbook_v1"] = {
                 "runtime_selector_v1": ap.get("runtime_selector_v1") or {},
             }
+            if _size(work) <= limit:
+                return work
+
+        # 8) process_facts é a última estrutura operacional a cair.
+        # Ela alimenta respostas objetivas de continuidade e possui alta
+        # densidade de valor por caractere.
+        if work.get("process_facts"):
+            work["process_facts"] = {}
             if _size(work) <= limit:
                 return work
 
