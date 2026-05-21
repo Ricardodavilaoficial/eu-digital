@@ -3133,7 +3133,7 @@ def _build_operational_contract(
     try:
         docs = _kb_lookup_operational_docs(
             kb_snapshot=kb_snapshot,
-            effective_segment=effective_segment,
+                        effective_segment=effective_segment,
             kb_context=kb_context if isinstance(kb_context, dict) else {},
         )
 
@@ -4331,7 +4331,7 @@ Retorne somente o texto.
             text=micro_scene,
             operational_reference="",
             reference_example=str(c.get("reference_example") or "").strip(),
-            effective_segment=str(c.get("segment") or "").strip(),
+                        effective_segment=str(c.get("segment") or "").strip(),
             operational_family=str(c.get("operational_family") or "").strip(),
         )
 
@@ -4795,7 +4795,7 @@ def _resolve_best_operational_reply(
         refreshed_anchor = _refresh_operational_anchor(
             kb_snapshot=kb_snapshot,
             kb_context=kb_context if isinstance(kb_context, dict) else {},
-            effective_segment=effective_segment,
+                        effective_segment=effective_segment,
             selected_pack_id=selected_pack_id,
             operational_family=operational_family,
         )
@@ -7105,7 +7105,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     try:
         real_kb_docs = _kb_lookup_operational_docs(
             kb_snapshot=kb_snapshot,
-            effective_segment=effective_segment,
+                        effective_segment=effective_segment,
             kb_context=kb_context if isinstance(kb_context, dict) else {},
         )
         kb_context = _merge_real_kb_operational_context(
@@ -7144,7 +7144,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         platform_segment_key, platform_segment_profile = _platform_segment_profile_from_kb(
             kb_snapshot_obj,
             user_text,
-            effective_segment,
+                        effective_segment,
         )
     except Exception:
         platform_segment_key, platform_segment_profile = "", {}
@@ -8390,7 +8390,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         operational_contract = _build_operational_contract(
             kb_snapshot=kb_snapshot,
             kb_context=kb_context if isinstance(kb_context, dict) else {},
-            effective_segment=effective_segment,
+                        effective_segment=effective_segment,
             operational_reference=operational_reference,
             reference_example=reference_example,
             operational_family=operational_family,
@@ -9168,7 +9168,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             topic=topic,
             confidence=confidence,
             ai_turns=ai_turns,
-            effective_segment=segment_for_prompt,
+                        effective_segment=segment_for_prompt,
             operational_family=operational_family,
             operational_reference="",
             reference_example=reference_example,
@@ -10207,7 +10207,22 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             # fatos objetivos da platform_kb (ex.: process_facts) e
             # preservamos a classificação semântica já feita pela IA.
             # ---------------------------------------------------------
-            if str(question_type or "").strip().lower() in ("continuity", "punctual"):
+            _qt = str(question_type or "").strip().lower()
+
+            _should_force_continuity = (
+                _qt in ("continuity", "punctual")
+                or (
+                    str(topic or "").strip().upper() == "AGENDA"
+                    and bool(
+                        effective_segment
+                        or segment_hint
+                        or inferred_lead_segment_raw
+                        or inferred_lead_segment
+                    )
+                )
+            )
+
+            if _should_force_continuity:
                 _continuity_current_reply = str(reply_text or "").strip()
                 _continuity_reply = _front_build_continuity_reply_from_platform_kb(
                     current_reply=_continuity_current_reply,
@@ -10961,20 +10976,36 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     # Interceptação factual antes do retorno técnico
                     # antecipado.
                     #
-                    # O fluxo geral já intercepta continuity/punctual
-                    # mais abaixo, mas FREE_MODE_TECH_DIRECT_RETURN encerra
-                    # a execução antes desse ponto. Por isso, reaplicamos
-                    # aqui o mesmo mecanismo factual já existente.
+                    # Com o buffer temporal, uma pergunta pontual pode vir
+                    # dentro do primeiro inbound consolidado junto com
+                    # saudação, nome e segmento. Nessa situação, o modelo
+                    # pode classificar o conjunto como broad, mas o front já
+                    # possui sinais estruturais suficientes para tentar a
+                    # resposta factual curta.
                     #
                     # Escopo:
                     # - não usa palavra-chave do usuário;
                     # - não altera prompt;
-                    # - não chama IA adicional;
-                    # - só atua quando a IA já classificou a pergunta
-                    #   como continuidade/pontual.
+                    # - não usa regex;
+                    # - não cria frase pronta;
+                    # - reaproveita facts da KB via função existente.
                     # -------------------------------------------------
                     try:
-                        if str(question_type or "").strip().lower() in ("continuity", "punctual"):
+                        _qt = str(question_type or "").strip().lower()
+                        _should_force_continuity = (
+                            _qt in ("continuity", "punctual")
+                            or (
+                                str(topic or "").strip().upper() == "AGENDA"
+                                and bool(
+                                    effective_segment
+                                    or segment_hint
+                                    or inferred_lead_segment_raw
+                                    or inferred_lead_segment
+                                )
+                            )
+                        )
+
+                        if _should_force_continuity:
                             _continuity_current_reply = str(out.get("replyText") or "").strip()
                             _continuity_reply = _front_build_continuity_reply_from_platform_kb(
                                 current_reply=_continuity_current_reply,
@@ -11003,20 +11034,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             ):
                                 out["replyText"] = _continuity_reply
                                 out["spokenText"] = _continuity_reply
-                                reply_source = "front_continuity_facts"
-                                try:
-                                    out["replySource"] = "front_continuity_facts"
-                                    _am = out.get("aiMeta") or {}
-                                    if isinstance(_am, dict):
-                                        _am["replySource"] = "front_continuity_facts"
-                                        _am["spokenSource"] = "front_continuity_facts"
-                                        out["aiMeta"] = _am
-                                except Exception:
-                                    pass
+                                out["replySource"] = "front_continuity_facts"
                                 logging.info(
                                     "[FREE_MODE_TECH_DIRECT_CONTINUITY_FACTS] topic=%s question_type=%s reply_len=%s",
                                     str(topic or "").strip().upper(),
-                                    str(question_type or "").strip().lower(),
+                                    _qt,
                                     len(_continuity_reply),
                                 )
                     except Exception:
