@@ -10924,6 +10924,71 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             820,
                         )
 
+                    # -------------------------------------------------
+                    # Interceptação factual antes do retorno técnico
+                    # antecipado.
+                    #
+                    # O fluxo geral já intercepta continuity/punctual
+                    # mais abaixo, mas FREE_MODE_TECH_DIRECT_RETURN encerra
+                    # a execução antes desse ponto. Por isso, reaplicamos
+                    # aqui o mesmo mecanismo factual já existente.
+                    #
+                    # Escopo:
+                    # - não usa palavra-chave do usuário;
+                    # - não altera prompt;
+                    # - não chama IA adicional;
+                    # - só atua quando a IA já classificou a pergunta
+                    #   como continuidade/pontual.
+                    # -------------------------------------------------
+                    try:
+                        if str(question_type or "").strip().lower() in ("continuity", "punctual"):
+                            _continuity_current_reply = str(out.get("replyText") or "").strip()
+                            _continuity_reply = _front_build_continuity_reply_from_platform_kb(
+                                current_reply=_continuity_current_reply,
+                                kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                                topic=topic,
+                                pack_id=selected_pack_id if "selected_pack_id" in locals() else "",
+                                user_name=inferred_lead_name or name_hint,
+                                ai_turns=ai_turns,
+                                has_identity=(
+                                    has_name
+                                    or bool(inferred_lead_name or name_hint)
+                                ),
+                                has_segment=bool(
+                                    effective_segment
+                                    or segment_hint
+                                    or inferred_lead_segment_raw
+                                    or inferred_lead_segment
+                                ),
+                                next_step=next_step,
+                                question_type=question_type,
+                            )
+                            if (
+                                _continuity_reply
+                                and len(_continuity_reply) >= 30
+                                and _continuity_reply != _continuity_current_reply
+                            ):
+                                out["replyText"] = _continuity_reply
+                                out["spokenText"] = _continuity_reply
+                                reply_source = "front_continuity_facts"
+                                try:
+                                    out["replySource"] = "front_continuity_facts"
+                                    _am = out.get("aiMeta") or {}
+                                    if isinstance(_am, dict):
+                                        _am["replySource"] = "front_continuity_facts"
+                                        _am["spokenSource"] = "front_continuity_facts"
+                                        out["aiMeta"] = _am
+                                except Exception:
+                                    pass
+                                logging.info(
+                                    "[FREE_MODE_TECH_DIRECT_CONTINUITY_FACTS] topic=%s question_type=%s reply_len=%s",
+                                    str(topic or "").strip().upper(),
+                                    str(question_type or "").strip().lower(),
+                                    len(_continuity_reply),
+                                )
+                    except Exception:
+                        pass
+
                     try:
                         out = _sanitize_front_result_payload(out)
 
