@@ -938,18 +938,6 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
         ).strip()
 
 
-        # Quando não havia nome confiável salvo/contextual e a resposta veio
-
-        # da montagem estruturada do front, não persistir nome novo vindo do
-
-        # próprio front. Essa rota pode carregar rótulos operacionais úteis
-
-        # para a resposta, mas eles não são prova estrutural de nome do lead.
-
-        #
-
-        # Não usa palavra-chave, não altera prompt, não chama IA.
-
         if existing_lead_name:
 
             lead_name = existing_lead_name
@@ -957,10 +945,6 @@ def _save_institutional_lead_memory(wa_key: str, out: Optional[Dict[str, Any]] =
         elif ctx_lead_name:
 
             lead_name = ctx_lead_name
-
-        elif reply_source == "front_structured_python_assembly":
-
-            lead_name = ""
 
         else:
 

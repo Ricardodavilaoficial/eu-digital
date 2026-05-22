@@ -10211,15 +10211,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             _should_force_continuity = (
                 _qt in ("continuity", "punctual")
-                or (
-                    str(topic or "").strip().upper() == "AGENDA"
-                    and bool(
-                        effective_segment
-                        or segment_hint
-                        or inferred_lead_segment_raw
-                        or inferred_lead_segment
-                    )
-                )
             )
 
             if _should_force_continuity:
@@ -10992,16 +10983,32 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     # -------------------------------------------------
                     try:
                         _qt = str(question_type or "").strip().lower()
+                        # -------------------------------------------------
+                        # No retorno técnico antecipado, a IA já montou
+                        # toda a resposta. Aqui podemos tentar continuidade
+                        # factual somente como refinamento estrutural final.
+                        #
+                        # Regras:
+                        # - respeitar perguntas amplas (broad);
+                        # - permitir factual curta em perguntas objetivas;
+                        # - sem depender de tema específico;
+                        # - sem regex/palavras-chave;
+                        # - sem matar microcenas cedo demais.
+                        # -------------------------------------------------
+                        _reply_len = len(str(out.get("replyText") or "").strip())
+
+                        _has_process_facts = bool(
+                            isinstance(kb_snapshot_obj, dict)
+                            and kb_snapshot_obj.get("process_facts")
+                        )
+
                         _should_force_continuity = (
                             _qt in ("continuity", "punctual")
                             or (
-                                str(topic or "").strip().upper() == "AGENDA"
-                                and bool(
-                                    effective_segment
-                                    or segment_hint
-                                    or inferred_lead_segment_raw
-                                    or inferred_lead_segment
-                                )
+                                _qt != "broad"
+                                and ai_turns == 0
+                                and _reply_len >= 260
+                                and _has_process_facts
                             )
                         )
 
