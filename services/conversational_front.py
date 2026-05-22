@@ -7971,12 +7971,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or understanding.get("responseMode")
         )
 
-        intent = str(
+        raw_intent = str(
             data.get("intent")
             or understanding.get("intent")
             or understanding.get("topic")
-            or "OTHER"
+            or ""
         ).strip().upper()
+
+        intent = raw_intent or "OTHER"
 
         confidence = str(
             data.get("confidence")
@@ -7993,12 +7995,45 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if question_type not in ("broad", "punctual", "continuity"):
             question_type = "broad"
 
-        # Continuidade estrutural: depois do primeiro turno, uma pergunta que
-        # veio como broad ainda pode ser acompanhamento do assunto anterior.
-        # A normalização já existia no fim do pipeline; trazemos o sinal para
-        # antes do roteamento, sem usar palavras-chave e sem mexer em prompt.
-        if int(ai_turns or 0) > 0 and question_type == "broad":
-            question_type = "continuity"
+        # ----------------------------------------------------------
+        # Trava estrutural contra topic bleeding.
+        #
+        # Continuidade factual deve continuar existindo para perguntas
+        # pontuais/continuity, mas uma pergunta ampla em turno posterior
+        # não deve herdar automaticamente o tópico anterior quando o
+        # próprio modelo/roteamento não confirmou esse tópico.
+        #
+        # Não usa palavra-chave de assunto, não lista segmentos e não
+        # altera prompt: só combina sinais estruturais já existentes.
+        # ----------------------------------------------------------
+        try:
+            raw_topic_signal = str(
+                data.get("topic")
+                or understanding.get("topic")
+                or raw_intent
+                or ""
+            ).strip().upper()
+
+            upstream_topic_signal = str(upstream_topic_hint or "").strip().upper()
+
+            _front_topic_pivot_detected = bool(
+                int(ai_turns or 0) > 0
+                and question_type == "broad"
+                and upstream_topic_signal in ("", "OTHER")
+                and (
+                    (
+                        raw_topic_signal
+                        and raw_topic_signal not in TOPICS
+                        and raw_topic_signal != "OTHER"
+                    )
+                    or (
+                        intent == "OTHER"
+                        and confidence in ("high", "medium")
+                    )
+                )
+            )
+        except Exception:
+            _front_topic_pivot_detected = False
 
         needs_clarify = str(
             data.get("needsClarify")
@@ -8259,6 +8294,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and canonical_topic in TOPICS
                 and canonical_topic != "OTHER"
                 and topic == "OTHER"
+                and not _front_topic_pivot_detected
             ):
                 topic = canonical_topic
                 intent = canonical_topic
@@ -8273,7 +8309,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         try:
             if platform_kb_mode:
                 forced_topic = str((platform_runtime or {}).get("topic") or "").strip().upper()
-                if forced_topic in TOPICS and forced_topic != "OTHER":
+                if (
+                    forced_topic in TOPICS
+                    and forced_topic != "OTHER"
+                    and not _front_topic_pivot_detected
+                ):
                     topic = forced_topic
                     intent = forced_topic
         except Exception:
@@ -8333,6 +8373,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and canonical_topic in TOPICS
                 and canonical_topic != "OTHER"
                 and topic == "OTHER"
+                and not _front_topic_pivot_detected
             ):
                 topic = canonical_topic
                 intent = canonical_topic
@@ -8342,7 +8383,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
         try:
-            if platform_kb_mode and forced_topic in TOPICS and forced_topic != "OTHER":
+            if (
+                platform_kb_mode
+                and forced_topic in TOPICS
+                and forced_topic != "OTHER"
+                and not _front_topic_pivot_detected
+            ):
                 topic = forced_topic
                 intent = forced_topic
                 if confidence not in ("high", "medium"):
@@ -8355,7 +8401,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 kb_context=kb_context if isinstance(kb_context, dict) else {},
                 current_topic=topic,
             )
-            if topic in ("OTHER", "") and preferred_topic in TOPICS and preferred_topic not in ("OTHER", ""):
+            if (
+                topic in ("OTHER", "")
+                and preferred_topic in TOPICS
+                and preferred_topic not in ("OTHER", "")
+                and not _front_topic_pivot_detected
+            ):
                 topic = preferred_topic
                 if confidence not in ("high", "medium"):
                     confidence = "medium"
@@ -8399,7 +8450,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         try:
             if platform_kb_mode and isinstance(operational_contract, dict):
-                if canonical_topic and canonical_topic in TOPICS and canonical_topic != "OTHER":
+                if (
+                    canonical_topic
+                    and canonical_topic in TOPICS
+                    and canonical_topic != "OTHER"
+                    and not _front_topic_pivot_detected
+                ):
                     operational_contract["topic"] = canonical_topic
                     topic = canonical_topic
                     intent = canonical_topic
