@@ -2126,6 +2126,12 @@ def _parse_free_mode_text_response(
         if topic not in TOPICS:
             topic = "OTHER"
 
+        if current_turn_topic_reset:
+            topic = "OTHER"
+            intent = "OTHER"
+            if response_mode == "SCENE":
+                response_mode = "DIRECT"
+
         confidence = str(confidence_hint or "medium").strip().lower() or "medium"
         if confidence not in ("high", "medium", "low"):
             confidence = "medium"
@@ -4340,6 +4346,27 @@ Retorne somente o texto.
             operational_reference="",
             contract=c,
         )
+
+        if current_turn_topic_reset and isinstance(operational_contract, dict):
+            topic = "OTHER"
+            intent = "OTHER"
+            response_mode = "DIRECT"
+            operational_contract["topic"] = "OTHER"
+            operational_contract["response_mode"] = "DIRECT"
+            operational_contract["has_practical_scene"] = False
+            operational_contract["micro_scene_allowed"] = False
+            operational_contract["global_pack_fallback"] = False
+            for _reset_key in (
+                "direct_scene",
+                "operational_reference",
+                "pack_micro_scene",
+                "reference_example",
+                "runtime_long_text",
+                "runtime_short_reply",
+                "operational_ritual",
+                "selected_pack_id",
+            ):
+                operational_contract.pop(_reset_key, None)
 
         try:
             if micro_scene and _looks_explanatory_reply(
@@ -6596,6 +6623,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     if upstream_topic_hint not in TOPICS:
         upstream_topic_hint = ""
 
+    # Quando o wa_bot informa OTHER no turno atual, isso não significa
+    # ausência de sinal: significa que o texto atual não confirmou o
+    # tópico operacional anterior. A memória continua existindo, mas
+    # não pode promover AGENDA/PEDIDOS/etc. neste turno.
+    current_turn_topic_reset = bool(upstream_topic_hint == "OTHER")
+
     last_user_goal = str(state_summary.get("last_user_goal") or "").strip()
     segment_hint = str(state_summary.get("segment_hint") or "").strip()
     name_hint = str(state_summary.get("name_hint") or "").strip()
@@ -6811,7 +6844,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 kb_context = build_kb_context(
                     kb_snapshot=kb_snapshot,
                     user_text=user_text,
-                    last_intent=(last_intent or ""),
+                    last_intent=("" if current_turn_topic_reset else (last_intent or "")),
                     # Prioridade estrutural:
                     # o segmento inferido do turno atual vence memória/contexto antigo.
                     # Se não houver inferência nova, preserva continuidade com segment_hint.
@@ -7289,7 +7322,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 for _k, _v in platform_runtime.items():
                     if _v:
                         kb_context[_k] = _v
-                if platform_runtime.get("topic"):
+                if platform_runtime.get("topic") and not current_turn_topic_reset:
                     kb_context["intent_hint"] = platform_runtime["topic"]
     except Exception:
         platform_kb_mode = False
@@ -7397,14 +7430,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     platform_topic_hint = ""
     try:
         if platform_kb_mode:
-            platform_topic_hint = _platform_topic_from_kb_rules(kb_snapshot_obj, user_text)
-            if platform_topic_hint:
+            platform_topic_hint = "" if current_turn_topic_reset else _platform_topic_from_kb_rules(kb_snapshot_obj, user_text)
+            if platform_topic_hint and not current_turn_topic_reset:
                 kb_context["topic"] = platform_topic_hint
                 kb_context["intent_hint"] = platform_topic_hint
 
             selected_pack_id = _platform_pack_from_profile(
                 kb_snapshot_obj,
-                platform_topic_hint or str((kb_context or {}).get("intent_hint") or last_intent or ""),
+                "" if current_turn_topic_reset else (platform_topic_hint or str((kb_context or {}).get("intent_hint") or last_intent or "")),
                 platform_segment_profile,
                 selected_pack_id,
             )
@@ -8319,6 +8352,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and canonical_topic in TOPICS
                 and canonical_topic != "OTHER"
                 and topic == "OTHER"
+                and not current_turn_topic_reset
                 and not _front_topic_pivot_detected
             ):
                 topic = canonical_topic
@@ -8332,11 +8366,38 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # Só atua sem KB segmentado hidratado.
         forced_topic = ""
         try:
-            if platform_kb_mode:
+            if current_turn_topic_reset:
+                selected_pack_id = ""
+                operational_reference = ""
+                reference_example = ""
+                micro_scene = ""
+                direct_scene = ""
+                runtime_short_reply = ""
+                runtime_long_text = ""
+                if isinstance(kb_context, dict):
+                    for _reset_key in (
+                        "pack_id",
+                        "pack_micro_scene",
+                        "micro_scene",
+                        "micro_scene_conversational",
+                        "reference_example",
+                        "segment_reference_example",
+                        "operational_reference",
+                        "direct_scene",
+                        "runtime_short_reply",
+                        "runtime_long_text",
+                        "operational_ritual",
+                        "has_practical_scene",
+                        "micro_scene_allowed",
+                    ):
+                        kb_context.pop(_reset_key, None)
+
+            if platform_kb_mode and not current_turn_topic_reset:
                 forced_topic = str((platform_runtime or {}).get("topic") or "").strip().upper()
                 if (
                     forced_topic in TOPICS
                     and forced_topic != "OTHER"
+                    and not current_turn_topic_reset
                     and not _front_topic_pivot_detected
                 ):
                     topic = forced_topic
@@ -8398,6 +8459,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and canonical_topic in TOPICS
                 and canonical_topic != "OTHER"
                 and topic == "OTHER"
+                and not current_turn_topic_reset
                 and not _front_topic_pivot_detected
             ):
                 topic = canonical_topic
@@ -8430,6 +8492,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 topic in ("OTHER", "")
                 and preferred_topic in TOPICS
                 and preferred_topic not in ("OTHER", "")
+                and not current_turn_topic_reset
                 and not _front_topic_pivot_detected
             ):
                 topic = preferred_topic
@@ -8800,6 +8863,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        if current_turn_topic_reset:
+            response_mode = "DIRECT"
+            micro_scene_allowed = False
+            if isinstance(operational_contract, dict):
+                operational_contract["topic"] = "OTHER"
+                operational_contract["response_mode"] = "DIRECT"
+                operational_contract["has_practical_scene"] = False
+                operational_contract["micro_scene_allowed"] = False
+                operational_contract["global_pack_fallback"] = False
+
         global_pack_scene_ready = False
         try:
             global_pack_scene_ready = bool(
@@ -9027,6 +9100,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         try:
             if (
                 platform_kb_mode
+                and not current_turn_topic_reset
                 and isinstance(operational_contract, dict)
                 and selected_pack_id
                 and str(next_step or "").strip().upper() != "SEND_LINK"
