@@ -6270,40 +6270,6 @@ def _front_build_continuity_reply_from_platform_kb(
         if not bool(int(ai_turns or 0) > 0 or str(user_name or "").strip() or has_segment):
             return base
 
-        is_continuity = str(question_type or "").strip().lower() in ("continuity", "punctual")
-
-        # ==========================================================
-        # GUARDA ESTRUTURAL DE CONTINUIDADE
-        #
-        # Evita "topic lock" / semantic inertia.
-        #
-        # Continuidade factual só deve ocorrer quando a própria IA
-        # classificou o turno como continuidade legítima.
-        #
-        # Isso impede que tópicos herdados do turno anterior
-        # sobrescrevam um novo assunto introduzido pelo lead.
-        #
-        # NÃO:
-        # - usa palavras-chave
-        # - altera prompts
-        # - proceduraliza intenção
-        # - remove soberania da IA
-        # ==========================================================
-        if not is_continuity:
-            try:
-                logging.info(
-                    "[FRONT_CONTINUITY_SKIP] "
-                    "qt=%s topic=%s pack=%s ai_turns=%s",
-                    str(question_type or "").strip().lower(),
-                    str(topic or "").strip().upper(),
-                    str(pack_id or "").strip().upper(),
-                    int(ai_turns or 0),
-                )
-            except Exception:
-                pass
-
-            return base
-
         topic_u = str(topic or "").strip().upper()
         pack_u = str(pack_id or "").strip().upper() or _pick_pack_for_intent(topic_u)
         if not pack_u:
@@ -6846,7 +6812,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     # Se não houver inferência nova, preserva continuidade com segment_hint.
                     segment_hint=(inferred_segment_for_kb or segment_hint or ""),
                     operational_family_hint=operational_family_hint,
-                    topic_hint=(last_intent or ""),
+                    # O tópico atual deve vir do turno atual, não da memória.
+                    # last_intent continua disponível como memória em last_intent,
+                    # mas não pode contaminar topic_hint.
+                    topic_hint=(
+                        str(upstream_topic_hint or "").strip().upper()
+                        if str(upstream_topic_hint or "").strip().upper() != "OTHER"
+                        else ""
+                    ),
                 )
             except TypeError:
                 # compat com assinatura antiga
@@ -7333,7 +7306,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 or (platform_runtime or {}).get("topic")
                 or ""
             ),
-            last_intent=(upstream_topic_hint or last_intent),
+            # Se o turno atual veio como OTHER, não promover memória antiga
+            # para tópico canônico. Isso evita OTHER -> AGENDA por herança.
+            last_intent=(
+                ""
+                if str(upstream_topic_hint or "").strip().upper() == "OTHER"
+                else (upstream_topic_hint or last_intent)
+            ),
         )
 
         if canonical_topic and platform_kb_mode and isinstance(kb_context, dict):
