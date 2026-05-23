@@ -10564,7 +10564,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             # --- GARANTIA DE DISCOVERY ANTES DO EARLY RETURN ---
             if response_mode == "DISCOVERY":
-                missing_name = not bool(confirmed_has_name)
+                missing_name = not bool(has_name)
                 missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
@@ -10729,7 +10729,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 if (
                     str(next_step or "").strip().upper() != "SEND_LINK"
-                    and (not bool(confirmed_has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
+                    and (not bool(has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
                     and _identity_question
                     and "?" not in str(reply_text or "")
                 ):
@@ -12224,7 +12224,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
             elif response_mode == "DISCOVERY":
-                missing_name = not bool(confirmed_has_name)
+                missing_name = not bool(has_name)
                 missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
@@ -12244,7 +12244,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
             if response_mode == "DISCOVERY":
-                missing_name = not bool(confirmed_has_name)
+                missing_name = not bool(has_name)
                 missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
@@ -12295,7 +12295,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # GUARDA FINAL ABSOLUTA (POST-GENERATION ENFORCEMENT)
         # ----------------------------------------------------------
         if response_mode == "DISCOVERY":
-            missing_name = not bool(confirmed_has_name)
+            missing_name = not bool(has_name)
             missing_segment = not bool(segment_discovery_resolved)
 
             if missing_name or missing_segment:
@@ -12523,14 +12523,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             "nextStep": next_step,
             "leadName": (
                 _front_sanitize_lead_name_candidate(
-                    name_hint,
+                    name_hint or current_turn_lead_name or inferred_lead_name,
                     segment_refs=[
                         segment_hint,
                         inferred_lead_segment_raw,
                         inferred_lead_segment,
                     ],
                 )
-                if confirmed_has_name else ""
+                if has_name else ""
             ),
             "segmentHint": segment_hint,
             "leadSegmentRaw": inferred_lead_segment_raw,
