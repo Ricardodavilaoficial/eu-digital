@@ -6272,6 +6272,38 @@ def _front_build_continuity_reply_from_platform_kb(
 
         is_continuity = str(question_type or "").strip().lower() in ("continuity", "punctual")
 
+        # ==========================================================
+        # GUARDA ESTRUTURAL DE CONTINUIDADE
+        #
+        # Evita "topic lock" / semantic inertia.
+        #
+        # Continuidade factual só deve ocorrer quando a própria IA
+        # classificou o turno como continuidade legítima.
+        #
+        # Isso impede que tópicos herdados do turno anterior
+        # sobrescrevam um novo assunto introduzido pelo lead.
+        #
+        # NÃO:
+        # - usa palavras-chave
+        # - altera prompts
+        # - proceduraliza intenção
+        # - remove soberania da IA
+        # ==========================================================
+        if not is_continuity:
+            try:
+                logging.info(
+                    "[FRONT_CONTINUITY_SKIP] "
+                    "qt=%s topic=%s pack=%s ai_turns=%s",
+                    str(question_type or "").strip().lower(),
+                    str(topic or "").strip().upper(),
+                    str(pack_id or "").strip().upper(),
+                    int(ai_turns or 0),
+                )
+            except Exception:
+                pass
+
+            return base
+
         topic_u = str(topic or "").strip().upper()
         pack_u = str(pack_id or "").strip().upper() or _pick_pack_for_intent(topic_u)
         if not pack_u:
