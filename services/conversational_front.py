@@ -11197,40 +11197,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
 
-                # -----------------------------------------------------
-                # Continuidade tardia (FREE_MODE)
-                #
-                # Problema estrutural observado:
-                # o canonical_topic antigo estava tendo prioridade máxima,
-                # ressuscitando o eixo semântico anterior mesmo quando:
-                #
-                # - o front já respondeu corretamente;
-                # - houve mudança semântica clara;
-                # - upstream_topic_hint veio OTHER;
-                # - a IA já aceitou uma resposta nova/rica.
-                #
-                # Regra arquitetural:
-                # - tópico atual do turno SEMPRE tem prioridade;
-                # - canonical_topic vira apenas fallback contextual;
-                # - continuidade factual não pode sequestrar resposta rica.
-                #
-                # Não há palavras-chave.
-                # Não há árvore procedural.
-                # Não altera prompt.
-                # -----------------------------------------------------
-                _current_topic_signal = str(
-                    topic
-                    or upstream_topic_hint
-                    or ""
-                ).strip().upper()
-
-                _canonical_topic_signal = str(
-                    (canonical_topic if 'canonical_topic' in locals() else "") or ""
-                ).strip().upper()
-
                 _continuity_topic = str(
-                    _current_topic_signal
-                    or _canonical_topic_signal
+                    (canonical_topic if 'canonical_topic' in locals() else "")
+                    or topic
+                    or upstream_topic_hint
                     or ""
                 ).strip().upper()
                 _continuity_pack_id = str(
@@ -11277,81 +11247,36 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
                 _free_reply_before_continuity = str(_free_reply or "").strip()
-
-                # -----------------------------------------------------
-                # Guard estrutural contra topic bleeding tardio
-                #
-                # Continuidade factual é permitida quando:
-                # - a pergunta realmente parece continuidade/pontual;
-                # - OU a resposta atual ainda está fraca/vazia;
-                # - OU o tópico atual coincide com o tópico herdado.
-                #
-                # NÃO permitimos overwrite quando:
-                # - já existe resposta rica válida;
-                # - o turno atual aponta para novo eixo semântico;
-                # - canonical_topic diverge do tópico atual.
-                #
-                # Isso preserva:
-                # - perguntas curtas contextuais;
-                # - continuidade útil;
-                # - assembly rico já aprovado pela IA.
-                # -----------------------------------------------------
-                _reply_len_before_continuity = len(_free_reply_before_continuity)
-
-                _question_type_norm = str(question_type or "").strip().lower()
-
-                _continuity_question = bool(
-                    _question_type_norm in ("continuity", "punctual")
+                _free_reply = _front_build_continuity_reply_from_platform_kb(
+                    current_reply=_free_reply,
+                    kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                    topic=_continuity_topic,
+                    pack_id=_continuity_pack_id,
+                    user_name=_continuity_safe_name,
+                    ai_turns=int(ai_turns or 0),
+                    has_identity=_continuity_has_identity,
+                    has_segment=_continuity_has_segment,
+                    next_step=next_step,
+                    question_type=question_type,
                 )
-
-                _same_semantic_axis = bool(
-                    _current_topic_signal
-                    and _canonical_topic_signal
-                    and _current_topic_signal == _canonical_topic_signal
-                )
-
-                _reply_already_rich = bool(
-                    _reply_len_before_continuity >= 220
-                )
-
-                _allow_final_continuity_facts = bool(
-                    _continuity_question
-                    or not _reply_already_rich
-                    or _same_semantic_axis
-                )
-
-                if _allow_final_continuity_facts:
-                    _free_reply = _front_build_continuity_reply_from_platform_kb(
-                        current_reply=_free_reply,
-                        kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
-                        topic=_continuity_topic,
-                        pack_id=_continuity_pack_id,
-                        user_name=_continuity_safe_name,
-                        ai_turns=int(ai_turns or 0),
-                        has_identity=_continuity_has_identity,
-                        has_segment=_continuity_has_segment,
-                        next_step=next_step,
-                        question_type=question_type,
-                    )
 
                 _continuity_reply_built = bool(
                     str(_free_reply or "").strip()
                     and str(_free_reply or "").strip() != _free_reply_before_continuity
                 )
 
-                if _allow_final_continuity_facts:
-                    _free_spoken = _front_build_continuity_reply_from_platform_kb(
-                        current_reply=_free_spoken or _free_reply,
-                        kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
-                        topic=_continuity_topic,
-                        pack_id=_continuity_pack_id,
-                        user_name=_continuity_safe_name,
-                        ai_turns=int(ai_turns or 0),
-                        has_identity=_continuity_has_identity,
-                        has_segment=_continuity_has_segment,
-                        next_step=next_step,
-                        question_type=question_type,
-                    )
+                _free_spoken = _front_build_continuity_reply_from_platform_kb(
+                    current_reply=_free_spoken or _free_reply,
+                    kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                    topic=_continuity_topic,
+                    pack_id=_continuity_pack_id,
+                    user_name=_continuity_safe_name,
+                    ai_turns=int(ai_turns or 0),
+                    has_identity=_continuity_has_identity,
+                    has_segment=_continuity_has_segment,
+                    next_step=next_step,
+                    question_type=question_type,
+                )
 
                 _missing_identity = bool(
                     not bool(_continuity_has_identity)
