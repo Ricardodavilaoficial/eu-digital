@@ -6454,6 +6454,7 @@ def _resolve_canonical_topic(
     user_text: str,
     current_topic: str = "",
     last_intent: str = "",
+    block_memory_topic_inheritance: bool = False,
 ) -> str:
     """
     Preserva a intenção do lead separada da resolução do KB.
@@ -6461,6 +6462,10 @@ def _resolve_canonical_topic(
     Não contém palavras-chave locais: usa apenas sinais já existentes e routing_hints do platform_kb.
     """
     try:
+        current_t = str(current_topic or "").strip().upper()
+        if block_memory_topic_inheritance and current_t == "OTHER":
+            return "OTHER"
+
         for candidate in (
             current_topic,
             (kb_context or {}).get("topic"),
@@ -7313,7 +7318,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if str(upstream_topic_hint or "").strip().upper() == "OTHER"
                 else (upstream_topic_hint or last_intent)
             ),
+            block_memory_topic_inheritance=(
+                str(upstream_topic_hint or "").strip().upper() == "OTHER"
+            ),
         )
+
+        if (
+            str(upstream_topic_hint or "").strip().upper() == "OTHER"
+            and canonical_topic != "OTHER"
+        ):
+            canonical_topic = "OTHER"
 
         if canonical_topic and platform_kb_mode and isinstance(kb_context, dict):
             kb_context["topic"] = canonical_topic
