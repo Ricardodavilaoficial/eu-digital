@@ -569,6 +569,15 @@ def _front_build_structured_assembly_reply(
 
             source_type = str((source or {}).get("contentSourceType") or "").strip()
 
+            if (
+                mode == "DIRECT"
+                and source_type == "platform_kb_pack"
+                and current_clean
+                and core
+                and current_clean not in core
+                and core not in current_clean
+            ):
+                core = f"{current_clean}\n\n{core}".strip()
         except Exception:
             pass
 
@@ -6479,7 +6488,6 @@ def _resolve_canonical_topic(
     user_text: str,
     current_topic: str = "",
     last_intent: str = "",
-    question_type: str = "broad",
 ) -> str:
     """
     Preserva a intenção do lead separada da resolução do KB.
@@ -6487,25 +6495,12 @@ def _resolve_canonical_topic(
     Não contém palavras-chave locais: usa apenas sinais já existentes e routing_hints do platform_kb.
     """
     try:
-        # ==========================================================
-        # CONTINUIDADE SEMÂNTICA CONTROLADA
-        #
-        # O tópico anterior só deve influenciar quando a própria IA
-        # classificou o turno como continuidade legítima.
-        #
-        # Isso evita "topic lock" / semantic inertia.
-        # ==========================================================
-        is_continuity_question = (
-            str(question_type or "broad").strip().lower()
-            in ("continuity", "punctual")
-        )
-
         for candidate in (
             current_topic,
             (kb_context or {}).get("topic"),
             (kb_context or {}).get("topic_hint"),
             (kb_context or {}).get("intent_hint"),
-            last_intent if is_continuity_question else "",
+            last_intent,
         ):
             t = str(candidate or "").strip().upper()
             if t in TOPICS and t != "OTHER":
@@ -7339,7 +7334,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 or ""
             ),
             last_intent=(upstream_topic_hint or last_intent),
-            question_type=question_type,
         )
 
         if canonical_topic and platform_kb_mode and isinstance(kb_context, dict):
