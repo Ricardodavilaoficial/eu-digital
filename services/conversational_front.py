@@ -253,6 +253,31 @@ def _humanize_reply_with_lead_context(
         if not name:
             return text
 
+        # ---------------------------------------------------------
+        # Continuidade factual curta:
+        # evita reabrir emocionalmente perguntas objetivas.
+        #
+        # Preserva respostas curtas já úteis da IA soberana.
+        # ---------------------------------------------------------
+        try:
+            compact_text = str(text or "").strip()
+
+            compact_density = len(
+                re.findall(r"[.!?]", compact_text)
+            )
+
+            is_short_continuity = (
+                len(compact_text) <= 340
+                and compact_density <= 4
+                and "\n" not in compact_text
+            )
+
+            if is_short_continuity:
+                return compact_text
+
+        except Exception:
+            pass
+
         lower = text.lower()
 
         # Verifica se o nome já está na abertura do texto.
@@ -577,7 +602,27 @@ def _front_build_structured_assembly_reply(
                 and current_clean not in core
                 and core not in current_clean
             ):
-                core = f"{current_clean}\n\n{core}".strip()
+                # ---------------------------------------------------------
+                # Evita duplicação destrutiva:
+                # se a IA já entregou uma resposta operacional substancial,
+                # ela deve prevalecer sobre o pack global.
+                #
+                # Não usamos regex, keywords ou prompt.
+                # Apenas evitamos colar fallback em respostas já densas.
+                # ---------------------------------------------------------
+                current_density = len(
+                    re.findall(r"[.!?]", str(current_clean or ""))
+                )
+
+                current_has_structure = (
+                    len(str(current_clean or "")) >= 260
+                    or current_density >= 3
+                )
+
+                if current_has_structure:
+                    core = str(current_clean or "").strip()
+                else:
+                    core = f"{current_clean}\n\n{core}".strip()
         except Exception:
             pass
 
@@ -10727,9 +10772,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     or ""
                 ).strip()
 
+                _current_has_segment = bool(
+                    effective_segment
+                    or segment_for_prompt
+                    or segment_hint
+                )
+
+                _current_missing_identity = (
+                    not bool(has_name)
+                    or not _current_has_segment
+                )
+
                 if (
                     str(next_step or "").strip().upper() != "SEND_LINK"
-                    and (not bool(has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
+                    and _current_missing_identity
                     and _identity_question
                     and "?" not in str(reply_text or "")
                 ):
