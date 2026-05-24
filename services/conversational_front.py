@@ -12527,6 +12527,27 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        try:
+            _payload_name_probe = _front_sanitize_lead_name_candidate(
+                name_hint or current_turn_lead_name or inferred_lead_name,
+                segment_refs=[
+                    segment_hint,
+                    inferred_lead_segment_raw,
+                    inferred_lead_segment,
+                ],
+            )
+            logging.info(
+                "[FRONT_PAYLOAD_NAME_PROBE] has_name=%s name_hint=%s current_turn=%s inferred=%s payload_name=%s segment_hint=%s",
+                bool(has_name),
+                bool(str(name_hint or "").strip()),
+                bool(str(current_turn_lead_name or "").strip()),
+                bool(str(inferred_lead_name or "").strip()),
+                bool(str(_payload_name_probe or "").strip()),
+                bool(str(segment_hint or "").strip()),
+            )
+        except Exception as _e:
+            logging.info("[FRONT_PAYLOAD_NAME_PROBE_FAIL] err=%s", str(_e)[:120])
+
         out = {
             "response_mode": response_mode,
             "replyText": reply_text,
@@ -12551,7 +12572,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         inferred_lead_segment,
                     ],
                 )
-                if has_name else ""
+                if (
+                    has_name
+                    or bool(
+                        str(name_hint or "").strip()
+                        or str(current_turn_lead_name or "").strip()
+                        or str(inferred_lead_name or "").strip()
+                    )
+                )
+                else ""
             ),
             "segmentHint": segment_hint,
             "leadSegmentRaw": inferred_lead_segment_raw,
