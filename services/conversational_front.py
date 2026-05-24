@@ -569,26 +569,10 @@ def _front_build_structured_assembly_reply(
 
             source_type = str((source or {}).get("contentSourceType") or "").strip()
 
-            # Fase 1 — baixo risco:
-            # Em DIRECT com fallback global do platform_kb, evitar colisão de
-            # duas superfícies longas sobre o mesmo tópico.
-            #
-            # Antes, o montador sempre fazia:
-            #   current_clean + core
-            # quando ambos existiam. Isso gerava duplicação semântica e
-            # empurrava a resposta para o trim final, causando cortes como
-            # "...registrado pa".
-            #
-            # A regra abaixo preserva o complemento do pack apenas quando a
-            # resposta atual ainda está curta. Não altera prompt, não cria
-            # roteamento, não usa regex, não muda topic lock e não afeta SCENE.
-            current_already_substantial = bool(len(current_clean) >= 360)
-
             if (
                 mode == "DIRECT"
                 and source_type == "platform_kb_pack"
                 and current_clean
-                and not current_already_substantial
                 and core
                 and current_clean not in core
                 and core not in current_clean
