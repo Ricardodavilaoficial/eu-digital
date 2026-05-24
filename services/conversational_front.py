@@ -2126,6 +2126,12 @@ def _parse_free_mode_text_response(
         if topic not in TOPICS:
             topic = "OTHER"
 
+        if current_turn_topic_reset:
+            topic = "OTHER"
+            intent = "OTHER"
+            if response_mode == "SCENE":
+                response_mode = "DIRECT"
+
         confidence = str(confidence_hint or "medium").strip().lower() or "medium"
         if confidence not in ("high", "medium", "low"):
             confidence = "medium"
@@ -4341,6 +4347,27 @@ Retorne somente o texto.
             contract=c,
         )
 
+        if current_turn_topic_reset and isinstance(operational_contract, dict):
+            topic = "OTHER"
+            intent = "OTHER"
+            response_mode = "DIRECT"
+            operational_contract["topic"] = "OTHER"
+            operational_contract["response_mode"] = "DIRECT"
+            operational_contract["has_practical_scene"] = False
+            operational_contract["micro_scene_allowed"] = False
+            operational_contract["global_pack_fallback"] = False
+            for _reset_key in (
+                "direct_scene",
+                "operational_reference",
+                "pack_micro_scene",
+                "reference_example",
+                "runtime_long_text",
+                "runtime_short_reply",
+                "operational_ritual",
+                "selected_pack_id",
+            ):
+                operational_contract.pop(_reset_key, None)
+
         try:
             if micro_scene and _looks_explanatory_reply(
                 text=micro_scene,
@@ -6270,8 +6297,6 @@ def _front_build_continuity_reply_from_platform_kb(
         if not bool(int(ai_turns or 0) > 0 or str(user_name or "").strip() or has_segment):
             return base
 
-        is_continuity = str(question_type or "").strip().lower() in ("continuity", "punctual")
-
         topic_u = str(topic or "").strip().upper()
         pack_u = str(pack_id or "").strip().upper() or _pick_pack_for_intent(topic_u)
         if not pack_u:
@@ -6456,6 +6481,7 @@ def _resolve_canonical_topic(
     user_text: str,
     current_topic: str = "",
     last_intent: str = "",
+    block_memory_topic_inheritance: bool = False,
 ) -> str:
     """
     Preserva a intenção do lead separada da resolução do KB.
@@ -6463,6 +6489,10 @@ def _resolve_canonical_topic(
     Não contém palavras-chave locais: usa apenas sinais já existentes e routing_hints do platform_kb.
     """
     try:
+        current_t = str(current_topic or "").strip().upper()
+        if block_memory_topic_inheritance and current_t == "OTHER":
+            return "OTHER"
+
         for candidate in (
             current_topic,
             (kb_context or {}).get("topic"),
@@ -6592,6 +6622,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
     if upstream_topic_hint not in TOPICS:
         upstream_topic_hint = ""
+
+    # Quando o wa_bot informa OTHER no turno atual, isso não significa
+    # ausência de sinal: significa que o texto atual não confirmou o
+    # tópico operacional anterior. A memória continua existindo, mas
+    # não pode promover AGENDA/PEDIDOS/etc. neste turno.
+    current_turn_topic_reset = bool(upstream_topic_hint == "OTHER")
 
     last_user_goal = str(state_summary.get("last_user_goal") or "").strip()
     segment_hint = str(state_summary.get("segment_hint") or "").strip()
@@ -6808,13 +6844,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 kb_context = build_kb_context(
                     kb_snapshot=kb_snapshot,
                     user_text=user_text,
-                    last_intent=(last_intent or ""),
+                    last_intent=("" if current_turn_topic_reset else (last_intent or "")),
                     # Prioridade estrutural:
                     # o segmento inferido do turno atual vence memória/contexto antigo.
                     # Se não houver inferência nova, preserva continuidade com segment_hint.
                     segment_hint=(inferred_segment_for_kb or segment_hint or ""),
                     operational_family_hint=operational_family_hint,
-                    topic_hint=(last_intent or ""),
+                    # O tópico atual deve vir do turno atual, não da memória.
+                    # last_intent continua disponível como memória em last_intent,
+                    # mas não pode contaminar topic_hint.
+                    topic_hint=(
+                        str(upstream_topic_hint or "").strip().upper()
+                        if str(upstream_topic_hint or "").strip().upper() != "OTHER"
+                        else ""
+                    ),
                 )
             except TypeError:
                 # compat com assinatura antiga
@@ -7279,7 +7322,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 for _k, _v in platform_runtime.items():
                     if _v:
                         kb_context[_k] = _v
-                if platform_runtime.get("topic"):
+                if platform_runtime.get("topic") and not current_turn_topic_reset:
                     kb_context["intent_hint"] = platform_runtime["topic"]
     except Exception:
         platform_kb_mode = False
@@ -7301,8 +7344,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 or (platform_runtime or {}).get("topic")
                 or ""
             ),
-            last_intent=(upstream_topic_hint or last_intent),
+            # Se o turno atual veio como OTHER, não promover memória antiga
+            # para tópico canônico. Isso evita OTHER -> AGENDA por herança.
+            last_intent=(
+                ""
+                if str(upstream_topic_hint or "").strip().upper() == "OTHER"
+                else (upstream_topic_hint or last_intent)
+            ),
+            block_memory_topic_inheritance=(
+                str(upstream_topic_hint or "").strip().upper() == "OTHER"
+            ),
         )
+
+        if (
+            str(upstream_topic_hint or "").strip().upper() == "OTHER"
+            and canonical_topic != "OTHER"
+        ):
+            canonical_topic = "OTHER"
 
         if canonical_topic and platform_kb_mode and isinstance(kb_context, dict):
             kb_context["topic"] = canonical_topic
@@ -7372,14 +7430,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     platform_topic_hint = ""
     try:
         if platform_kb_mode:
-            platform_topic_hint = _platform_topic_from_kb_rules(kb_snapshot_obj, user_text)
-            if platform_topic_hint:
+            platform_topic_hint = "" if current_turn_topic_reset else _platform_topic_from_kb_rules(kb_snapshot_obj, user_text)
+            if platform_topic_hint and not current_turn_topic_reset:
                 kb_context["topic"] = platform_topic_hint
                 kb_context["intent_hint"] = platform_topic_hint
 
             selected_pack_id = _platform_pack_from_profile(
                 kb_snapshot_obj,
-                platform_topic_hint or str((kb_context or {}).get("intent_hint") or last_intent or ""),
+                "" if current_turn_topic_reset else (platform_topic_hint or str((kb_context or {}).get("intent_hint") or last_intent or "")),
                 platform_segment_profile,
                 selected_pack_id,
             )
@@ -7971,12 +8029,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or understanding.get("responseMode")
         )
 
-        intent = str(
+        raw_intent = str(
             data.get("intent")
             or understanding.get("intent")
             or understanding.get("topic")
-            or "OTHER"
+            or ""
         ).strip().upper()
+
+        intent = raw_intent or "OTHER"
 
         confidence = str(
             data.get("confidence")
@@ -7993,12 +8053,45 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if question_type not in ("broad", "punctual", "continuity"):
             question_type = "broad"
 
-        # Continuidade estrutural: depois do primeiro turno, uma pergunta que
-        # veio como broad ainda pode ser acompanhamento do assunto anterior.
-        # A normalização já existia no fim do pipeline; trazemos o sinal para
-        # antes do roteamento, sem usar palavras-chave e sem mexer em prompt.
-        if int(ai_turns or 0) > 0 and question_type == "broad":
-            question_type = "continuity"
+        # ----------------------------------------------------------
+        # Trava estrutural contra topic bleeding.
+        #
+        # Continuidade factual deve continuar existindo para perguntas
+        # pontuais/continuity, mas uma pergunta ampla em turno posterior
+        # não deve herdar automaticamente o tópico anterior quando o
+        # próprio modelo/roteamento não confirmou esse tópico.
+        #
+        # Não usa palavra-chave de assunto, não lista segmentos e não
+        # altera prompt: só combina sinais estruturais já existentes.
+        # ----------------------------------------------------------
+        try:
+            raw_topic_signal = str(
+                data.get("topic")
+                or understanding.get("topic")
+                or raw_intent
+                or ""
+            ).strip().upper()
+
+            upstream_topic_signal = str(upstream_topic_hint or "").strip().upper()
+
+            _front_topic_pivot_detected = bool(
+                int(ai_turns or 0) > 0
+                and question_type == "broad"
+                and upstream_topic_signal in ("", "OTHER")
+                and (
+                    (
+                        raw_topic_signal
+                        and raw_topic_signal not in TOPICS
+                        and raw_topic_signal != "OTHER"
+                    )
+                    or (
+                        intent == "OTHER"
+                        and confidence in ("high", "medium")
+                    )
+                )
+            )
+        except Exception:
+            _front_topic_pivot_detected = False
 
         needs_clarify = str(
             data.get("needsClarify")
@@ -8259,6 +8352,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and canonical_topic in TOPICS
                 and canonical_topic != "OTHER"
                 and topic == "OTHER"
+                and not current_turn_topic_reset
+                and not _front_topic_pivot_detected
             ):
                 topic = canonical_topic
                 intent = canonical_topic
@@ -8271,9 +8366,40 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # Só atua sem KB segmentado hidratado.
         forced_topic = ""
         try:
-            if platform_kb_mode:
+            if current_turn_topic_reset:
+                selected_pack_id = ""
+                operational_reference = ""
+                reference_example = ""
+                micro_scene = ""
+                direct_scene = ""
+                runtime_short_reply = ""
+                runtime_long_text = ""
+                if isinstance(kb_context, dict):
+                    for _reset_key in (
+                        "pack_id",
+                        "pack_micro_scene",
+                        "micro_scene",
+                        "micro_scene_conversational",
+                        "reference_example",
+                        "segment_reference_example",
+                        "operational_reference",
+                        "direct_scene",
+                        "runtime_short_reply",
+                        "runtime_long_text",
+                        "operational_ritual",
+                        "has_practical_scene",
+                        "micro_scene_allowed",
+                    ):
+                        kb_context.pop(_reset_key, None)
+
+            if platform_kb_mode and not current_turn_topic_reset:
                 forced_topic = str((platform_runtime or {}).get("topic") or "").strip().upper()
-                if forced_topic in TOPICS and forced_topic != "OTHER":
+                if (
+                    forced_topic in TOPICS
+                    and forced_topic != "OTHER"
+                    and not current_turn_topic_reset
+                    and not _front_topic_pivot_detected
+                ):
                     topic = forced_topic
                     intent = forced_topic
         except Exception:
@@ -8333,6 +8459,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and canonical_topic in TOPICS
                 and canonical_topic != "OTHER"
                 and topic == "OTHER"
+                and not current_turn_topic_reset
+                and not _front_topic_pivot_detected
             ):
                 topic = canonical_topic
                 intent = canonical_topic
@@ -8342,7 +8470,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
         try:
-            if platform_kb_mode and forced_topic in TOPICS and forced_topic != "OTHER":
+            if (
+                platform_kb_mode
+                and forced_topic in TOPICS
+                and forced_topic != "OTHER"
+                and not _front_topic_pivot_detected
+            ):
                 topic = forced_topic
                 intent = forced_topic
                 if confidence not in ("high", "medium"):
@@ -8355,7 +8488,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 kb_context=kb_context if isinstance(kb_context, dict) else {},
                 current_topic=topic,
             )
-            if topic in ("OTHER", "") and preferred_topic in TOPICS and preferred_topic not in ("OTHER", ""):
+            if (
+                topic in ("OTHER", "")
+                and preferred_topic in TOPICS
+                and preferred_topic not in ("OTHER", "")
+                and not current_turn_topic_reset
+                and not _front_topic_pivot_detected
+            ):
                 topic = preferred_topic
                 if confidence not in ("high", "medium"):
                     confidence = "medium"
@@ -8399,7 +8538,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         try:
             if platform_kb_mode and isinstance(operational_contract, dict):
-                if canonical_topic and canonical_topic in TOPICS and canonical_topic != "OTHER":
+                if (
+                    canonical_topic
+                    and canonical_topic in TOPICS
+                    and canonical_topic != "OTHER"
+                    and not _front_topic_pivot_detected
+                ):
                     operational_contract["topic"] = canonical_topic
                     topic = canonical_topic
                     intent = canonical_topic
@@ -8719,6 +8863,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        if current_turn_topic_reset:
+            response_mode = "DIRECT"
+            micro_scene_allowed = False
+            if isinstance(operational_contract, dict):
+                operational_contract["topic"] = "OTHER"
+                operational_contract["response_mode"] = "DIRECT"
+                operational_contract["has_practical_scene"] = False
+                operational_contract["micro_scene_allowed"] = False
+                operational_contract["global_pack_fallback"] = False
+
         global_pack_scene_ready = False
         try:
             global_pack_scene_ready = bool(
@@ -8946,6 +9100,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         try:
             if (
                 platform_kb_mode
+                and not current_turn_topic_reset
                 and isinstance(operational_contract, dict)
                 and selected_pack_id
                 and str(next_step or "").strip().upper() != "SEND_LINK"
@@ -10409,7 +10564,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             # --- GARANTIA DE DISCOVERY ANTES DO EARLY RETURN ---
             if response_mode == "DISCOVERY":
-                missing_name = not bool(confirmed_has_name)
+                missing_name = not bool(has_name)
                 missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
@@ -10574,7 +10729,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 if (
                     str(next_step or "").strip().upper() != "SEND_LINK"
-                    and (not bool(confirmed_has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
+                    and (not bool(has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
                     and _identity_question
                     and "?" not in str(reply_text or "")
                 ):
@@ -12069,7 +12224,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
             elif response_mode == "DISCOVERY":
-                missing_name = not bool(confirmed_has_name)
+                missing_name = not bool(has_name)
                 missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
@@ -12089,7 +12244,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
             if response_mode == "DISCOVERY":
-                missing_name = not bool(confirmed_has_name)
+                missing_name = not bool(has_name)
                 missing_segment = not bool(segment_discovery_resolved)
 
                 if missing_name or missing_segment:
@@ -12140,7 +12295,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # GUARDA FINAL ABSOLUTA (POST-GENERATION ENFORCEMENT)
         # ----------------------------------------------------------
         if response_mode == "DISCOVERY":
-            missing_name = not bool(confirmed_has_name)
+            missing_name = not bool(has_name)
             missing_segment = not bool(segment_discovery_resolved)
 
             if missing_name or missing_segment:
@@ -12368,14 +12523,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             "nextStep": next_step,
             "leadName": (
                 _front_sanitize_lead_name_candidate(
-                    name_hint,
+                    name_hint or current_turn_lead_name or inferred_lead_name,
                     segment_refs=[
                         segment_hint,
                         inferred_lead_segment_raw,
                         inferred_lead_segment,
                     ],
                 )
-                if confirmed_has_name else ""
+                if has_name else ""
             ),
             "segmentHint": segment_hint,
             "leadSegmentRaw": inferred_lead_segment_raw,
