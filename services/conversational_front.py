@@ -10393,13 +10393,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     )
 
                     if _technical_direct_platform_kb:
-                        reply_text = _front_trim_to_complete_sentence(
+                        reply_text = _front_finalize_reply_surface(
                             reply_text,
-                            820,
+                            has_name=bool(has_name),
+                            max_chars=820,
+                            ensure_punctuation=False,
                         )
-                        spoken_text = _front_trim_to_complete_sentence(
+
+                        spoken_text = _front_finalize_reply_surface(
                             spoken_text or reply_text,
-                            820,
+                            has_name=bool(has_name),
+                            max_chars=820,
+                            ensure_punctuation=False,
                         )
 
                         # Cópia preservada para o retorno técnico DIRECT.
