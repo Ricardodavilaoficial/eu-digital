@@ -200,3 +200,69 @@ def _front_fmt_brl_from_cents(cents: Any) -> str:
     except Exception:
         return ""
 
+
+def _split_user_operational_clauses(user_text: str) -> list[str]:
+    """
+    Extrai cláusulas operacionais do próprio texto do usuário sem usar
+    listas de negócio, palavras-chave por segmento ou frase pronta.
+    """
+    try:
+        t = str(user_text or "").strip()
+        if not t:
+            return []
+
+        t = re.sub(r"\s{2,}", " ", t).strip()
+        t = t.replace("\n", " ")
+        t = re.sub(r"[?]+", ".", t)
+        t = re.sub(r"[!]+", ".", t)
+
+        raw_parts = re.split(r"\s*(?:,|;|\.|\s+-\s+|\s+e\s+depois\s+|\s+depois\s+|\s+ent[aã]o\s*)", t)
+        parts = []
+
+        for part in raw_parts:
+            p = re.sub(r"\s{2,}", " ", str(part or "").strip(" .,:;-"))
+            p = p.strip()
+            if not p:
+                continue
+            if len(p) < 12:
+                continue
+            parts.append(p)
+
+        return parts[:6]
+    except Exception:
+        return []
+
+def _build_user_operational_seed(user_text: str) -> str:
+    """
+    Constrói um trilho operacional mínimo a partir do relato do usuário.
+    Não inventa fatos novos; só reorganiza o que o usuário já descreveu.
+    """
+    try:
+        clauses = _split_user_operational_clauses(user_text)
+        if not clauses:
+            return ""
+
+        if len(clauses) == 1:
+            one = str(clauses[0] or "").strip()
+            return one if len(one) >= 24 else ""
+
+        cleaned = []
+        seen = set()
+        for clause in clauses:
+            c = re.sub(r"\s{2,}", " ", str(clause or "").strip(" ."))
+            if not c:
+                continue
+            key = c.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(c)
+
+        if len(cleaned) < 2:
+            one = cleaned[0] if cleaned else ""
+            return one if len(one) >= 24 else ""
+
+        return " → ".join(cleaned[:5]).strip(" .")
+    except Exception:
+        return ""
+
