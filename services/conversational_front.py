@@ -10827,13 +10827,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         except Exception:
                             pass
 
-                        out["replyText"] = _front_trim_to_complete_sentence(
+                        out["replyText"] = _front_finalize_reply_surface(
                             _reply_probe,
-                            820,
+                            has_name=bool(has_name),
+                            max_chars=820,
+                            ensure_punctuation=False,
                         )
-                        out["spokenText"] = _front_trim_to_complete_sentence(
+
+                        out["spokenText"] = _front_finalize_reply_surface(
                             _spoken_probe or out["replyText"],
-                            820,
+                            has_name=bool(has_name),
+                            max_chars=820,
+                            ensure_punctuation=False,
                         )
 
                     # -------------------------------------------------
