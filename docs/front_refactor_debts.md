@@ -170,3 +170,31 @@ Decisão:
 - não fazer rollback
 - não corrigir comportamento nesta fase
 - seguir refatoração conservadora
+
+## 2026-05-25 — Validação pós-move operational seed helpers para front_utils
+
+Após mover `_split_user_operational_clauses` e `_build_user_operational_seed` para `front_utils.py`, o build e o deploy subiram corretamente.
+
+Validação estrutural:
+- Cloud Build SUCCESS
+- Cloud Run deploy OK
+- revisão em produção com 100% do tráfego
+- cold start OK
+- blueprints OK
+- sem ImportError
+- sem exception
+- sem JSON_FAIL_SAFE
+- accepted=True
+- reply_empty=False
+- sent_ok=True
+- source=front_structured_python_assembly
+
+Observação:
+- as respostas continuam ruins, longas e repetitivas
+- isso não parece causado por esta refatoração
+- o padrão observado é o mesmo já conhecido: kbUsed=false, kbContractId="", kbDocPath="", kbMissReason="kb_partial_or_missing", sem segmento consolidado e fallback global PACK_A_AGENDA
+
+Decisão:
+- não fazer rollback
+- não corrigir comportamento nesta fase
+- seguir refatoração conservadora
