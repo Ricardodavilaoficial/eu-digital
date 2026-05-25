@@ -5008,6 +5008,85 @@ def _front_pick_rich_free_mode_base(
 
 
 
+
+
+def _apply_identity_clarify_guard(
+    *,
+    reply_text: str,
+    clarify_q: str,
+    question: str,
+    kb_context: dict | None,
+    next_step: str,
+    has_name: bool,
+    effective_segment: str,
+    segment_for_prompt: str,
+    segment_hint: str,
+    limit: int = 820,
+) -> tuple[str, str, str, str]:
+    """
+    Aplica guarda de identidade preservando pergunta já existente no fluxo.
+
+    Não cria frases.
+    Não altera política.
+    Apenas encapsula orçamento + append de clarify.
+    """
+
+    try:
+        identity_question = str(
+            clarify_q
+            or question
+            or (
+                (kb_context or {}).get("discovery_question_hint")
+                if isinstance(kb_context, dict)
+                else ""
+            )
+            or ""
+        ).strip()
+
+        missing_identity = bool(
+            not bool(has_name)
+            or not bool(effective_segment or segment_for_prompt or segment_hint)
+        )
+
+        if (
+            str(next_step or "").strip().upper() != "SEND_LINK"
+            and missing_identity
+            and identity_question
+            and _front_normalize_identity_text(identity_question)
+            not in _front_normalize_identity_text(reply_text)
+        ):
+            sep = "\n\n"
+
+            base_limit = max(
+                320,
+                limit - len(identity_question) - len(sep),
+            )
+
+            base_reply = _front_trim_to_complete_sentence(
+                reply_text,
+                base_limit,
+            )
+
+            final_reply = f"{base_reply}{sep}{identity_question}".strip()
+
+            return (
+                final_reply,
+                final_reply,
+                "clarify",
+                "yes",
+            )
+
+    except Exception:
+        pass
+
+    return (
+        reply_text,
+        reply_text,
+        "",
+        "",
+    )
+
+
 def _ensure_discovery_identity_request(
     *,
     reply_text: str,
@@ -10697,43 +10776,30 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         # Não cria frase pronta no código.
                         # -------------------------------------------------
                         try:
-                            _identity_question = str(
-                                clarify_q
-                                or question
-                                or (
-                                    (kb_context or {}).get("discovery_question_hint")
-                                    if isinstance(kb_context, dict)
-                                    else ""
-                                )
-                                or ""
-                            ).strip()
-
-                            _missing_identity = bool(
-                                not bool(has_name)
-                                or not bool(effective_segment or segment_for_prompt or segment_hint)
+                            (
+                                _safe_preserved_reply,
+                                _safe_preserved_spoken,
+                                _name_use_guard,
+                                _needs_clarify_guard,
+                            ) = _apply_identity_clarify_guard(
+                                reply_text=_safe_preserved_reply,
+                                clarify_q=clarify_q,
+                                question=question,
+                                kb_context=kb_context,
+                                next_step=next_step,
+                                has_name=has_name,
+                                effective_segment=effective_segment,
+                                segment_for_prompt=segment_for_prompt,
+                                segment_hint=segment_hint,
+                                limit=820,
                             )
 
-                            if (
-                                str(next_step or "").strip().upper() != "SEND_LINK"
-                                and _missing_identity
-                                and _identity_question
-                                and _front_normalize_identity_text(_identity_question)
-                                not in _front_normalize_identity_text(_safe_preserved_reply)
-                            ):
-                                _limit = 820
-                                _sep = "\n\n"
-                                _base_limit = max(
-                                    320,
-                                    _limit - len(_identity_question) - len(_sep),
-                                )
-                                _base_reply = _front_trim_to_complete_sentence(
-                                    _safe_preserved_reply,
-                                    _base_limit,
-                                )
-                                _safe_preserved_reply = f"{_base_reply}{_sep}{_identity_question}".strip()
-                                _safe_preserved_spoken = _safe_preserved_reply
-                                name_use = "clarify"
-                                needs_clarify = "yes"
+                            if _name_use_guard:
+                                name_use = _name_use_guard
+
+                            if _needs_clarify_guard:
+                                needs_clarify = _needs_clarify_guard
+
                         except Exception:
                             pass
 
