@@ -52,6 +52,7 @@ import openai  # compat SDK antigo
 # Utilitários puros extraídos (Fase 1A).
 # Mantém os mesmos nomes internos usados pelo conversational_front.py.
 from services.front_utils import (
+    _truncate,
     extract_json_object_field as _extract_json_object_field,
     extract_json_string_field as _extract_json_string_field,
     has_question as _has_question,
@@ -5495,11 +5496,6 @@ Regras:
 FREE_MODE_APPEND_PROMPT = ""
 
 
-def _truncate(s: str, max_chars: int) -> str:
-    s = (s or "").strip()
-    if not s:
-        return ""
-    return s[:max_chars].rstrip()
 
 def _compact_kb_snapshot(s: str) -> str:
     """Reduz tokens sem perder conteúdo: remove excesso de whitespace."""

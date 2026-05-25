@@ -184,4 +184,9 @@ def looks_like_technical_output(text: str) -> bool:
         return False
     except Exception:
         return False
-
+def _truncate(s: str, max_chars: int) -> str:
+    try:
+        return str(s or "")[: max(0, int(max_chars or 0))]
+    except Exception:
+        return str(s or "")
+        
