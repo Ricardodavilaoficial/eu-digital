@@ -198,3 +198,40 @@ Decisão:
 - não fazer rollback
 - não corrigir comportamento nesta fase
 - seguir refatoração conservadora
+
+## 2026-05-25 — Validação pós-move `_platform_apply_slots` para `front_kb.py`
+
+Após mover `_platform_apply_slots` de `conversational_front.py` para `front_kb.py`, o build, deploy e teste real no WhatsApp foram concluídos.
+
+Validação estrutural:
+- Cloud Build SUCCESS
+- Cloud Run deploy OK
+- revisão em produção com 100% do tráfego
+- cold start OK
+- blueprints OK
+- sem ImportError
+- sem exception
+- sem JSON_FAIL_SAFE
+- reply_empty=False
+- sent_ok=True
+- WhatsApp entregou
+
+Sinais positivos:
+- `kbUsed=true`
+- `kbContractId="clínico geral"`
+- `kbDocPath="clínico geral"`
+- `segment`, `segment_hint` e `leadSegmentRaw` foram salvos na memória do lead
+
+Dívidas comportamentais observadas, não causadas por esta refatoração:
+- intent caiu como `OTHER`
+- `accepted=False`
+- `hydrated_from_docs=False`
+- faltou `example_or_scene`
+- resposta curta demais e focada em pedir nome
+- duplicação: “Poderia me informar seu nome...” + “Me diga seu nome.”
+
+Decisão:
+- não fazer rollback
+- não corrigir comportamento nesta fase
+- seguir refatoração conservadora
+
