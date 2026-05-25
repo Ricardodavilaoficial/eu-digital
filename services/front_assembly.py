@@ -612,3 +612,33 @@ def _drop_abstract_closing(text: str) -> str:
     except Exception:
         return str(text or "").strip()
 
+
+def _front_finalize_reply_surface(
+    text: str,
+    *,
+    has_name: bool = True,
+    max_chars: int | None = None,
+    ensure_punctuation: bool = True,
+) -> str:
+    """
+    Orquestra limpeza final de superfície para uma resposta ao usuário.
+
+    Não decide intenção.
+    Não acessa KB.
+    Não chama LLM.
+    Não altera prompt.
+    Apenas centraliza saneamento textual já existente.
+    """
+    try:
+        out = _sanitize_user_facing_reply(text)
+        out = _front_remove_unsafe_nominal_opening(out, has_name=has_name)
+
+        if max_chars and max_chars > 0:
+            out = _front_trim_to_complete_sentence(out, int(max_chars))
+
+        if ensure_punctuation and out and out[-1] not in ".!?":
+            out = out.rstrip() + "."
+
+        return out
+    except Exception:
+        return str(text or "").strip()

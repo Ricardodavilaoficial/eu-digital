@@ -113,6 +113,7 @@ from services.front_assembly import (
     _compose_operational_reply,
     _derive_ritual_from_scene,
     _front_first_text,
+    _front_finalize_reply_surface,
     _front_remove_unsafe_nominal_opening,
     _front_sanitize_lead_name_candidate,
     _heal_algorithmic_micro_scene,
@@ -10784,21 +10785,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         except Exception:
                             pass
 
-                        out["replyText"] = _front_trim_to_complete_sentence(
+                        out["replyText"] = _front_finalize_reply_surface(
                             _safe_preserved_reply,
-                            820,
+                            has_name=bool(has_name),
+                            max_chars=820,
                         )
-                        out["spokenText"] = _front_trim_to_complete_sentence(
+
+                        out["spokenText"] = _front_finalize_reply_surface(
                             _safe_preserved_spoken or out["replyText"],
-                            820,
+                            has_name=bool(has_name),
+                            max_chars=820,
                         )
-
-                        # Garante término com pontuação.
-                        if out["replyText"] and out["replyText"][-1] not in ".!?":
-                            out["replyText"] = out["replyText"].rstrip() + "."
-
-                        if out["spokenText"] and out["spokenText"][-1] not in ".!?":
-                            out["spokenText"] = out["spokenText"].rstrip() + "."
                     else:
                         if _reply_probe.startswith("{") or _reply_probe.startswith("```"):
                             _reply_probe = _unwrap_front_json_envelope(_reply_probe) or _reply_probe
