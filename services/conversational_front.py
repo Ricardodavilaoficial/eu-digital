@@ -51,7 +51,12 @@ import openai  # compat SDK antigo
 
 # Utilitários puros extraídos (Fase 1A).
 # Mantém os mesmos nomes internos usados pelo conversational_front.py.
-from services.front_kb import _compose_pack_runtime_compact_reply, _compose_pack_runtime_short_reply, _try_parse_kb_json
+from services.front_kb import (
+    _compose_pack_runtime_compact_reply,
+    _compose_pack_runtime_short_reply,
+    _platform_apply_slots,
+    _try_parse_kb_json,
+)
 from services.front_utils import (
     _front_fmt_brl_from_cents,
     _truncate,
@@ -1498,42 +1503,6 @@ def _kb_get_pack_runtime_short(kb_snapshot: str, pack_id: str) -> dict:
         return {}
 
 
-
-def _platform_apply_slots(text: str, pack: Dict[str, Any], tokens: Dict[str, Any]) -> str:
-    """
-    Aplica slots vindos do próprio platform_kb.
-    Não decide segmento, não cria frase e não contém conteúdo comercial próprio.
-    Apenas troca {{campo}} pelos valores/defaults cadastrados no banco.
-    """
-    try:
-        out = str(text or "").strip()
-        if not out:
-            return ""
-
-        values: Dict[str, str] = {}
-
-        segment_slots = (pack or {}).get("segment_slots") or {}
-        if isinstance(segment_slots, dict):
-            for key, spec in segment_slots.items():
-                if isinstance(spec, dict):
-                    default_value = str(spec.get("default") or "").strip()
-                    if default_value:
-                        values[str(key)] = default_value
-
-        if isinstance(tokens, dict):
-            for key, value in tokens.items():
-                if isinstance(value, (str, int, float)):
-                    v = str(value or "").strip()
-                    if v:
-                        values[str(key)] = v
-
-        for key, value in values.items():
-            out = out.replace("{{" + str(key) + "}}", str(value))
-
-        out = re.sub(r"\s{2,}", " ", out).strip()
-        return out
-    except Exception:
-        return str(text or "").strip()
 
 def _kb_get_micro_scene(kb_snapshot: str, pack_id: str) -> str:
     """Pull runtime_short.micro_scene for a given pack from kb_snapshot."""

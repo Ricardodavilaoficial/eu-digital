@@ -117,3 +117,40 @@ def _compose_pack_runtime_compact_reply(material: dict) -> str:
     except Exception:
         return ""
 
+
+def _platform_apply_slots(text: str, pack: Dict[str, Any], tokens: Dict[str, Any]) -> str:
+    """
+    Aplica slots vindos do próprio platform_kb.
+    Não decide segmento, não cria frase e não contém conteúdo comercial próprio.
+    Apenas troca {{campo}} pelos valores/defaults cadastrados no banco.
+    """
+    try:
+        out = str(text or "").strip()
+        if not out:
+            return ""
+
+        values: Dict[str, str] = {}
+
+        segment_slots = (pack or {}).get("segment_slots") or {}
+        if isinstance(segment_slots, dict):
+            for key, spec in segment_slots.items():
+                if isinstance(spec, dict):
+                    default_value = str(spec.get("default") or "").strip()
+                    if default_value:
+                        values[str(key)] = default_value
+
+        if isinstance(tokens, dict):
+            for key, value in tokens.items():
+                if isinstance(value, (str, int, float)):
+                    v = str(value or "").strip()
+                    if v:
+                        values[str(key)] = v
+
+        for key, value in values.items():
+            out = out.replace("{{" + str(key) + "}}", str(value))
+
+        out = re.sub(r"\s{2,}", " ", out).strip()
+        return out
+    except Exception:
+        return str(text or "").strip()
+
