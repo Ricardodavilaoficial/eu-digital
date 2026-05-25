@@ -113,3 +113,24 @@ Mas antes disso, rodar auditoria específica sobre:
 - `_platform_pack_material`
 - `_platform_kb_resolve_runtime`
 - `_prepare_kb_snapshot_buffers`
+
+## 2026-05-25 — Decisão pós-auditoria de `_platform_pack_material`
+
+Após auditar `_platform_pack_material`, ficou claro que ela é candidata semântica natural para o domínio KB/runtime, mas ainda não deve ser movida.
+
+Motivo:
+- `_platform_pack_material` depende de `_platform_get_map`;
+- `_platform_get_map` é chamada por vários pontos do runtime e depende de `_find_kb_map_anywhere`;
+- `_find_kb_map_anywhere` pertence ao núcleo de lookup profundo;
+- mover esse conjunto agora puxaria dependências de alto risco e poderia causar regressão silenciosa em segmentação, fallback e resolução de KB.
+
+Decisão:
+- manter `_platform_pack_material` no `conversational_front.py` por enquanto;
+- manter `_platform_get_map` no `conversational_front.py`;
+- manter `_find_kb_map_anywhere` congelada;
+- não mover lookup profundo nesta fase.
+
+Estado seguro atual:
+- `_platform_apply_slots` já foi movida para `front_kb.py`;
+- o próximo passo não deve ser mover `_platform_pack_material`;
+- antes disso, precisamos mapear melhor o núcleo lookup/KB ou escolher outro cluster de menor acoplamento.
