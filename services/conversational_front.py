@@ -68,6 +68,9 @@ from services.front_utils import (
 # Guards e heurísticas extraídos (Fase 2A).
 # Mantém os mesmos nomes internos usados pelo conversational_front.py.
 from services.front_guards import (
+    _front_has_identity_request_tail,
+    _front_identity_request_is_valid,
+    _reply_mentions_name_request,
     _audit_operational_reply,
     _has_operational_shape,
     _is_live_operational_reply,
@@ -4942,65 +4945,7 @@ def _contract_allows_scene_runtime(contract: Dict[str, Any] | None) -> bool:
         return False
 
 
-def _reply_mentions_name_request(text: str) -> bool:
-    try:
-        t = str(text or "").strip().lower()
-        if not t:
-            return False
-        return bool(
-            re.search(r"\b(nome|teu nome|seu nome|como tu te chama|como você se chama)\b", t)
-        )
-    except Exception:
-        return False
 
-
-def _front_identity_request_is_valid(text: str) -> bool:
-    """
-    Valida se uma pergunta/solicitação é realmente de identidade.
-    Não valida profissão, segmento específico ou palavras de negócio.
-    Apenas exige que o texto peça nome de forma estrutural.
-    """
-    try:
-        return _reply_mentions_name_request(text)
-    except Exception:
-        return False
-
-
-
-
-def _front_has_identity_request_tail(text: str, identity_question: str = "") -> bool:
-    """
-    Verifica se o texto já termina com uma solicitação de identidade.
-
-    Importante:
-    - não basta o texto mencionar "nome" dentro de uma explicação técnica;
-    - "o robô pergunta o nome..." não é pedido de nome ao lead;
-    - a validação precisa olhar a cauda do texto, onde ficam pedidos reais.
-
-    Não usa lista de segmentos/profissões.
-    Não altera prompt.
-    Não chama modelo.
-    """
-    try:
-        s = str(text or "").strip()
-        if not s:
-            return False
-
-        tail = s[-180:].strip()
-        norm_tail = _front_normalize_identity_text(tail)
-
-        q = str(identity_question or "").strip()
-        if q:
-            norm_q = _front_normalize_identity_text(q)
-            # Quando já temos a pergunta de identidade calculada, só aceitamos
-            # como "pedido já presente" se a cauda terminar exatamente nela.
-            # Isso evita confundir explicações como "o robô pergunta o nome"
-            # com um pedido real de nome ao lead.
-            return bool(norm_q and norm_tail.endswith(norm_q))
-
-        return _front_identity_request_is_valid(tail)
-    except Exception:
-        return False
 
 
 def _front_build_identity_request(*, has_name: bool, has_segment: bool) -> str:
