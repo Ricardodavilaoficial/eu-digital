@@ -98,6 +98,8 @@ from services.front_policies import (
 # Assembly e formatação extraídos (Fase 4A).
 # Mantém os mesmos nomes internos usados pelo conversational_front.py.
 from services.front_assembly import (
+    _drop_abstract_closing,
+    _drop_explanatory_opening,
     _compose_operational_reply,
     _derive_ritual_from_scene,
     _front_first_text,
@@ -4463,36 +4465,7 @@ Reescreva mantendo a operação concreta, usando a base apenas para reforçar fi
 
     except Exception:
         return ""
-def _drop_explanatory_opening(text: str) -> str:
-    """
-    Remove a abertura genérica se ela vier com cara de explicação.
-    Mantém o restante intacto.
-    """
-    try:
-        sentences = _split_sentences_pt(text)
-        if not sentences:
-            return str(text or "").strip()
-        if _looks_explanatory_sentence(sentences[0]):
-            return " ".join(sentences[1:]).strip()
-        return str(text or "").strip()
-    except Exception:
-        return str(text or "").strip()
 
-
-def _drop_abstract_closing(text: str) -> str:
-    """
-    Remove fechamento abstrato quando ele não traz consequência concreta.
-    """
-    try:
-        sentences = _split_sentences_pt(text)
-        if len(sentences) < 2:
-            return str(text or "").strip()
-        last = sentences[-1]
-        if _looks_explanatory_sentence(last):
-            return " ".join(sentences[:-1]).strip()
-        return str(text or "").strip()
-    except Exception:
-        return str(text or "").strip()
 
 def _generate_consequence_with_model(contract: Dict[str, Any] | None = None) -> str:
     """
