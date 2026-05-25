@@ -100,3 +100,34 @@ Decisão:
 - não fazer rollback
 - não corrigir comportamento nesta fase
 - seguir refatoração conservadora
+
+## 2026-05-25 — Validação pós-move builders de runtime pack para front_kb
+
+Após mover `_compose_pack_runtime_short_reply` e `_compose_pack_runtime_compact_reply` para `front_kb.py`, o deploy subiu corretamente e a nova revisão recebeu 100% do tráfego.
+
+Validação estrutural:
+- Cloud Run revision `mei-robo-inst2-00297-xj4` com 100% do tráfego
+- cold start OK
+- imports OK
+- blueprints OK
+- sem ImportError
+- sem exception
+- sem JSON_FAIL_SAFE
+- accepted=True
+- reply_empty=False
+- sent_ok=True
+
+Dívidas comportamentais observadas, não causadas pela refatoração:
+- resposta de agenda ainda longa/genérica/repetitiva
+- kbUsed=false
+- kbContractId=""
+- kbDocPath=""
+- kbMissReason="kb_partial_or_missing"
+- chars ~816/819
+- fallback global PACK_A_AGENDA
+- mensagem 2 também saiu longa, mas seguindo o mesmo fluxo estrutural pré-existente
+
+Decisão:
+- não fazer rollback
+- não corrigir comportamento nesta fase
+- seguir refatoração conservadora
