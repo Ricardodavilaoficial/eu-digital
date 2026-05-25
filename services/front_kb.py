@@ -19,3 +19,15 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict
+
+
+def _try_parse_kb_json(kb_snapshot: str) -> Dict[str, Any] | None:
+    try:
+        raw = str(kb_snapshot or "").strip()
+        if raw and (raw.startswith("{") or raw.startswith("[")):
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+    except Exception:
+        return None
+    return None

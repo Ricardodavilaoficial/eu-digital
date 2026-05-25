@@ -51,6 +51,7 @@ import openai  # compat SDK antigo
 
 # Utilitários puros extraídos (Fase 1A).
 # Mantém os mesmos nomes internos usados pelo conversational_front.py.
+from services.front_kb import _try_parse_kb_json
 from services.front_utils import (
     _truncate,
     extract_json_object_field as _extract_json_object_field,
@@ -5683,16 +5684,6 @@ def _prepare_kb_snapshot_buffers(kb_snapshot: str) -> tuple[str, str, bool]:
 
 
 
-def _try_parse_kb_json(kb_snapshot: str) -> Dict[str, Any] | None:
-    try:
-        raw = str(kb_snapshot or "").strip()
-        if raw and (raw.startswith("{") or raw.startswith("[")):
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                return parsed
-    except Exception:
-        return None
-    return None
 
 
 
