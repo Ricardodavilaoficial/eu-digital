@@ -12191,13 +12191,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
 
             if _is_technical_direct:
-                reply_text = _front_trim_to_complete_sentence(
+                reply_text = _front_finalize_reply_surface(
                     reply_text,
-                    780,
+                    has_name=bool(has_name),
+                    max_chars=780,
+                    ensure_punctuation=False,
                 )
-                spoken_text = _front_trim_to_complete_sentence(
+
+                spoken_text = _front_finalize_reply_surface(
                     spoken_text or reply_text,
-                    780,
+                    has_name=bool(has_name),
+                    max_chars=780,
+                    ensure_punctuation=False,
                 )
 
                 try:
