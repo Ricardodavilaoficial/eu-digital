@@ -131,3 +131,42 @@ Decisão:
 - não fazer rollback
 - não corrigir comportamento nesta fase
 - seguir refatoração conservadora
+
+## 2026-05-25 — Validação pós-move guards de pedido de identidade para front_guards
+
+Após mover `_reply_mentions_name_request`, `_front_identity_request_is_valid` e `_front_has_identity_request_tail` para `front_guards.py`, o deploy subiu corretamente e o WhatsApp respondeu.
+
+Validação estrutural:
+- Cloud Build SUCCESS
+- Cloud Run deploy OK
+- revisão em produção com 100% do tráfego
+- cold start OK
+- imports OK
+- blueprints OK
+- sem ImportError
+- sem exception
+- sem JSON_FAIL_SAFE
+- accepted=True
+- reply_empty=False
+- sent_ok=True
+- source=front_structured_python_assembly
+
+Observação do teste:
+- o histórico do lead José não foi apagado antes do teste, então a avaliação comportamental ficou menos limpa
+- mesmo assim, a validação estrutural foi suficiente
+
+Dívidas comportamentais observadas, não causadas pela refatoração:
+- resposta de agenda continua longa/genérica/repetitiva
+- kbUsed=false
+- kbContractId=""
+- kbDocPath=""
+- kbMissReason="kb_partial_or_missing"
+- has_name=True
+- has_segment=False
+- fallback global PACK_A_AGENDA
+- chars ~811/812
+
+Decisão:
+- não fazer rollback
+- não corrigir comportamento nesta fase
+- seguir refatoração conservadora
