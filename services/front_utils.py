@@ -189,4 +189,14 @@ def _truncate(s: str, max_chars: int) -> str:
         return str(s or "")[: max(0, int(max_chars or 0))]
     except Exception:
         return str(s or "")
-        
+
+
+def _front_fmt_brl_from_cents(cents: Any) -> str:
+    try:
+        c = int(cents)
+        if c <= 0:
+            return ""
+        return f"R$ {c // 100},{c % 100:02d}"
+    except Exception:
+        return ""
+

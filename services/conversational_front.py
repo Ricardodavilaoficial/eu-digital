@@ -53,6 +53,7 @@ import openai  # compat SDK antigo
 # Mantém os mesmos nomes internos usados pelo conversational_front.py.
 from services.front_kb import _try_parse_kb_json
 from services.front_utils import (
+    _front_fmt_brl_from_cents,
     _truncate,
     extract_json_object_field as _extract_json_object_field,
     extract_json_string_field as _extract_json_string_field,
@@ -642,15 +643,6 @@ def _front_fs_client():
     except Exception:
         return None
 
-
-def _front_fmt_brl_from_cents(cents: Any) -> str:
-    try:
-        c = int(cents)
-        if c <= 0:
-            return ""
-        return f"R$ {c // 100},{c % 100:02d}"
-    except Exception:
-        return ""
 
 
 def _front_get_platform_pricing() -> Dict[str, Any]:
