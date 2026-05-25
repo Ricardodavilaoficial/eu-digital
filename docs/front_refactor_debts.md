@@ -77,3 +77,26 @@ Decisão:
 - não fazer rollback
 - não corrigir comportamento nesta fase
 - seguir refatoração conservadora
+
+## 2026-05-25 — Validação pós-move limpeza textual para front_assembly
+
+Após mover `_drop_explanatory_opening` e `_drop_abstract_closing` para `front_assembly.py`, o deploy subiu corretamente e o WhatsApp respondeu.
+
+Validação estrutural:
+- Cloud Run cold start OK
+- imports OK
+- sem exception
+- sem JSON_FAIL_SAFE
+- accepted=True
+- reply_empty=False
+- sent_ok=True
+
+Dívidas comportamentais observadas, não causadas pela refatoração:
+- resposta inicial de agenda ainda longa/genérica com kbUsed=false e fallback global PACK_A_AGENDA
+- segunda resposta respondeu o local dos agendamentos de forma curta, mas ainda anexou "Me diga seu segmento." de forma deslocada
+- has_name=True, has_segment=False, missing_identity=True, identity_question=True, FREE_MODE_FINAL_GUARD ativo
+
+Decisão:
+- não fazer rollback
+- não corrigir comportamento nesta fase
+- seguir refatoração conservadora
