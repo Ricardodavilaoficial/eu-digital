@@ -5070,6 +5070,77 @@ def _sync_spoken_after_technical_rescue(
         return str(reply_text or spoken_text or "").strip()
 
 
+def _apply_final_reply_size_policy(
+    *,
+    reply_text: str,
+    spoken_text: str,
+    reply_size_policy: dict | None,
+    reply_source: str,
+    response_mode: str,
+    topic: str,
+    operational_contract: dict | None,
+):
+    """
+    Encapsula o bloco final de preservação de tamanho e aplicação
+    da política de superfície.
+
+    Regras:
+    - não altera intenção;
+    - não altera response_mode;
+    - não altera KB;
+    - não altera micro_scene_allowed;
+    - não cria conteúdo novo;
+    - apenas preserva política DIRECT técnica e sincroniza superfície.
+    """
+    try:
+        reply_text, reply_size_policy = (
+            _preserve_technical_direct_reply_size(
+                reply_text,
+                reply_size_policy,
+                reply_source=reply_source,
+                response_mode=response_mode,
+                topic=topic,
+                operational_contract=operational_contract,
+            )
+        )
+
+        spoken_text, spoken_size_policy = (
+            _preserve_technical_direct_reply_size(
+                spoken_text,
+                reply_size_policy,
+                reply_source=reply_source,
+                response_mode=response_mode,
+                topic=topic,
+                operational_contract=operational_contract,
+            )
+        )
+
+        reply_text = _apply_reply_size_policy(
+            reply_text,
+            reply_size_policy,
+        )
+
+        spoken_text = _apply_reply_size_policy(
+            spoken_text,
+            spoken_size_policy,
+        )
+
+        return (
+            reply_text,
+            spoken_text,
+            reply_size_policy,
+            spoken_size_policy,
+        )
+
+    except Exception:
+        return (
+            str(reply_text or "").strip(),
+            str(spoken_text or reply_text or "").strip(),
+            reply_size_policy,
+            reply_size_policy,
+        )
+
+
 def _apply_non_empty_reply_guard(
     *,
     reply_text: str,
@@ -12156,35 +12227,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
         if not hydrated_contract:
-            reply_text, reply_size_policy = (
-                _preserve_technical_direct_reply_size(
-                    reply_text,
-                    reply_size_policy,
-                    reply_source=reply_source,
-                    response_mode=response_mode,
-                    topic=topic,
-                    operational_contract=operational_contract,
-                )
-            )
-
-            spoken_text, spoken_size_policy = (
-                _preserve_technical_direct_reply_size(
-                    spoken_text,
-                    reply_size_policy,
-                    reply_source=reply_source,
-                    response_mode=response_mode,
-                    topic=topic,
-                    operational_contract=operational_contract,
-                )
-            )
-
-            reply_text = _apply_reply_size_policy(
+            (
                 reply_text,
-                reply_size_policy,
-            )
-            spoken_text = _apply_reply_size_policy(
                 spoken_text,
+                reply_size_policy,
                 spoken_size_policy,
+            ) = _apply_final_reply_size_policy(
+                reply_text=reply_text,
+                spoken_text=spoken_text,
+                reply_size_policy=reply_size_policy,
+                reply_source=reply_source,
+                response_mode=response_mode,
+                topic=topic,
+                operational_contract=operational_contract,
             )
 
         # Regra de produto: perguntas foram abolidas, salvo exceções controladas.
