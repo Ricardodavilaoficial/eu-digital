@@ -12160,12 +12160,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
         # 🧠 restaura melhor versão se degradou no meio do fluxo
-        try:
-            if (_final_candidate 
-                and (not reply_text or len(reply_text.strip()) < 40)):
-                reply_text = _final_candidate
-        except Exception:
-            pass
+        reply_text = _restore_final_candidate_if_degraded(
+            reply_text=reply_text,
+            final_candidate=_final_candidate,
+        )
 
         # ----------------------------------------------------------
         # CONTROLE LIMPO VIA response_mode
