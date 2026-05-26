@@ -569,3 +569,69 @@ Fortíssimo indicativo de futura transformação em:
 - FrontFinalPipelineInput
 - FrontFinalPipelineResult
 - front_final_pipeline.py
+
+---
+
+# Esboço de contrato futuro — FINAL PIPELINE
+
+## Objetivo
+
+Preparar futura extração para `front_final_pipeline.py` sem criar função com dezenas de parâmetros soltos.
+
+## Grupo 1 — FinalSurfaceState
+
+Campos:
+- reply_text
+- spoken_text
+- reply_source
+- name_use
+- debug_info
+
+## Grupo 2 — FinalDecisionContext
+
+Campos:
+- response_mode
+- next_step
+- topic
+- confidence
+- question_type
+- ai_turns
+- msg_type
+- ia_accepted
+- free_mode
+
+## Grupo 3 — FinalOperationalContext
+
+Campos:
+- operational_contract
+- base_operational_contract
+- has_real_operational_context
+- operational_reference
+- reference_example
+- effective_segment
+- operational_family
+
+## Grupo 4 — FinalLeadContext
+
+Campos:
+- user_text
+- state_summary
+- name_hint
+- has_name
+- is_lead
+- segment_hint
+
+## Grupo 5 — FinalKbContext
+
+Campos:
+- kb_context
+- kb_snapshot
+- kb_anchor_strong
+- decider
+- understanding
+
+## Conclusão
+
+A futura extração do FINAL PIPELINE não deve receber dezenas de parâmetros diretos.
+
+Deve receber objetos/contextos agrupados para preservar legibilidade, reduzir acoplamento e permitir testes isolados.
