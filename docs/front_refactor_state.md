@@ -370,3 +370,41 @@ Status:
 - estruturalmente mais maduro;
 - fronteiras claras;
 - forte candidato futuro para `front_final_pipeline.py`.
+
+---
+
+# Auditoria de dependências — FINAL PIPELINE
+
+Faixa auditada:
+- 12003–12130
+
+## Dependências fortes identificadas
+
+- response_mode
+- reply_text
+- spoken_text
+- reply_source
+
+## Dependências moderadas
+
+- operational_contract
+- base_operational_contract
+
+## Dependências fracas
+
+- has_real_operational_context
+- micro_scene_allowed
+
+## Conclusão arquitetural
+
+O FINAL PIPELINE demonstrou baixo acoplamento estrutural comparado ao runtime orchestration.
+
+O domínio parece majoritariamente:
+- pós-processamento;
+- payload shaping;
+- sanitize;
+- fallback replacement;
+- sync de superfície.
+
+Fortíssimo candidato futuro para:
+`front_final_pipeline.py`
