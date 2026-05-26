@@ -154,3 +154,67 @@ Manter como zona delimitada dentro do `conversational_front.py` até:
 - mapear duplicações;
 - entender dependências;
 - validar com deploy controlado.
+
+---
+
+# Classificação inicial de risco — 2026-05-26
+
+## Runtime material selection
+Risco: médio.
+
+Pode ser extraível depois, mas ainda depende de:
+- `selected_pack_id`
+- `_platform_pack_material`
+- `has_real_operational_context`
+- `operational_contract`
+- `runtime_*`
+
+Decisão:
+não extrair agora.
+
+## Response mode arbitration
+Risco: médio/alto.
+
+Parece ser o centro soberano atual de decisão estrutural.
+Qualquer alteração pode mudar DIRECT/SCENE/DISCOVERY/CLOSING.
+
+Decisão:
+congelado para extração por enquanto.
+
+## Discovery bypass
+Risco: médio.
+
+É pequeno, mas altera DISCOVERY para SCENE quando há contrato operacional.
+Pode ser helper futuro, mas só após testes.
+
+Decisão:
+mapear mais antes.
+
+## Micro scene gating
+Risco: alto.
+
+Controla `micro_scene_allowed` e pode reabrir tutorialização indevida.
+
+Decisão:
+não extrair agora.
+
+## Direct scene / wrapper shaping
+Risco: médio.
+
+Pode ser isolado futuramente, mas depende de:
+- `has_structured_scene`
+- `global_pack_fallback`
+- `runtime_compact_reply`
+- `question_type`
+
+Decisão:
+aguardar.
+
+## Late KB reinforcement
+Risco: alto.
+
+Muito acoplado a platform_kb, fallback compacto e limpeza do contrato.
+
+Decisão:
+congelado.
+
