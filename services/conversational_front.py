@@ -11751,37 +11751,31 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     spoken_text = clarify_q
             reply_source = "front_clarify"
 
-        # Fail-safe: nunca devolver reply vazio (evita saída "muda" em produção)
-        if not reply_text or len(str(reply_text).strip()) < 40:
-            try:
-                if operational_contract or base_operational_contract:
-                    if not operational_reference:
-                        operational_reference = ""
-                    forced = _build_kb_show_reply(
-                        kb_context=kb_context if isinstance(kb_context, dict) else {},
-                        operational_reference="",
-                        reference_example=reference_example,
-                        effective_segment=effective_segment,
-                        operational_family=operational_family,
-                        contract=operational_contract or base_operational_contract,
-                    )
-                    if forced and len(forced.strip()) >= 40:
-                        reply_text = forced
-                    else:
-                        raise ValueError("forced_empty")
-                else:
-                    raise ValueError("no_contract")
-            except Exception:
-                # só cai no fallback genérico se REALMENTE não tiver nada
-                pass
-
-        if not reply_text or len(str(reply_text).strip()) < 40:
-            reply_text = question or "Me conta um pouco melhor o teu cenário."
-            topic = "OTHER"
-            confidence = "low"
-            next_step = "NONE"
-            should_end = False
-            name_use = "clarify"
+        (
+            reply_text,
+            spoken_text,
+            topic,
+            confidence,
+            next_step,
+            should_end,
+            name_use,
+        ) = _apply_non_empty_reply_guard(
+            reply_text=reply_text,
+            spoken_text=spoken_text,
+            operational_contract=operational_contract,
+            base_operational_contract=base_operational_contract,
+            operational_reference=operational_reference,
+            kb_context=kb_context,
+            reference_example=reference_example,
+            effective_segment=effective_segment,
+            operational_family=operational_family,
+            question=question,
+            topic=topic,
+            confidence=confidence,
+            next_step=next_step,
+            should_end=should_end,
+            name_use=name_use,
+        )
 
         # ✅ Produto: SEND_LINK = venda fechada (link-only, sem pergunta)
         try:
