@@ -1,148 +1,308 @@
 # RESPONSE MODE MAP
 
-Objetivo:
-mapear os usos espalhados de response_mode no conversational_front.py.
+## Objetivo
 
-Ainda NÃO é documento de refatoração.
-É apenas auditoria estrutural.
+Mapear a governança de `response_mode` dentro do:
 
----
+`services/conversational_front.py`
 
-# ZONA CENTRAL (pipeline delimitado)
-
-## 12168+
-
-Pipeline final já delimitado:
-- DIRECT
-- DISCOVERY
-- SCENE
-- CLOSING
-
-Responsável por:
-- acabamento estrutural
-- spoken sync
-- discovery identity guard
+Este documento descreve:
+- modos possíveis;
+- ownership do modo;
+- pontos de risco;
+- zonas SAFE;
+- zonas SOVEREIGN;
+- decisões já consolidadas.
 
 ---
 
-# Usos espalhados a investigar
+# Modos reconhecidos
 
 ## DIRECT
 
-- 8792
-- 8818
-- 9101
-- 9559
-- 9872
-- 10302
-- 10416
-- 12174
+Resposta direta.
+
+Usado quando:
+- a intenção está clara;
+- há contexto suficiente;
+- não há necessidade de descoberta;
+- não há cena operacional validada.
+
+Classificação:
+`SAFE / DEFAULT`
+
+---
 
 ## DISCOVERY
 
-- 1658
-- 10527
-- 10535
-- 12178
-- 12200
-- 12253
+Resposta de descoberta.
+
+Usado quando:
+- falta nome;
+- falta segmento;
+- falta clareza de intenção;
+- há necessidade de proteger integridade de identidade.
+
+Classificação:
+`SOVEREIGN`
+
+---
 
 ## SCENE
 
-- 1956
-- 8893
-- 8898
-- 8982
-- 9041
-- 9059
-- 9168
-- 9709
-- 9891
-- 10042
-- 12192
+Resposta com demonstração operacional.
+
+Usado quando:
+- há contrato operacional demonstrável;
+- há material runtime confiável;
+- `micro_scene_allowed` permite;
+- a cena não nasce de fallback genérico contaminado.
+
+Classificação:
+`HIGH RISK SOVEREIGN`
+
+---
 
 ## CLOSING
 
-- 9529
-- 12196
+Resposta de fechamento.
+
+Usado quando:
+- há intenção de conversão;
+- há próxima ação comercial;
+- fluxo deve avançar sem fricção.
+
+Classificação:
+`SOVEREIGN / COMMERCIAL`
 
 ---
 
-# Próximo objetivo
+# Governança do response_mode
 
-Classificar cada uso como:
+## Responsabilidades
 
-- PRE-DECISION
-- RUNTIME
-- SURFACE SHAPING
-- FINAL PIPELINE
-- LEGACY
-- DUPLICATE
+A governança de modo controla:
+- formato da resposta;
+- permissões de cena;
+- discovery enforcement;
+- bypasses;
+- fallback de modo;
+- promoção ou degradação estrutural.
 
-# Atualização — RESPONSE MODE GOVERNANCE
+---
 
-## RESPONSE MODE INFERENCE
-Helper:
+# RESPONSE MODE GOVERNANCE
+
+## Funções relacionadas
+
 - `_infer_response_mode_from_signals(...)`
-
-Responsabilidade:
-- inferência estrutural inicial;
-- sem KB;
-- sem recovery;
-- sem reconstruction.
-
----
-
-## RESPONSE MODE ARBITRATION
-Helper:
 - `_apply_response_mode_arbitration(...)`
-
-Responsabilidade:
-- promover/rebaixar modos;
-- arbitrar conflitos estruturais;
-- sincronizar `micro_scene_allowed`.
+- `_apply_discovery_to_scene_bypass(...)`
+- `_apply_current_turn_topic_reset(...)`
 
 ---
 
-## STRUCTURAL MODE BYPASS
-Helper:
+## Classificação
+
+`SOVEREIGN`
+
+Motivo:
+alterar `response_mode` altera diretamente:
+- comportamento comercial;
+- estrutura da resposta;
+- uso de discovery;
+- possibilidade de cena;
+- terminal runtime.
+
+---
+
+# SAFE RESPONSE SURFACE
+
+## Função já extraída
+
+- `_apply_response_mode_surface(...)`
+
+Novo módulo:
+- `services/front_surface.py`
+
+## Responsabilidade
+
+Apenas:
+- acabamento superficial;
+- trim;
+- lstrip;
+- normalização de superfície;
+- sync básico de `reply_text` / `spoken_text`.
+
+## O que NÃO faz
+
+Não:
+- decide modo;
+- altera `response_mode`;
+- executa discovery;
+- executa scene governance;
+- acessa KB;
+- executa recovery;
+- altera micro_scene_allowed.
+
+## Classificação
+
+`PURE SAFE FINAL PIPELINE`
+
+---
+
+# DISCOVERY GOVERNANCE
+
+DISCOVERY não é apenas uma pergunta.
+
+DISCOVERY protege:
+- identidade;
+- clareza;
+- segmento;
+- intenção;
+- integridade de continuidade.
+
+## Funções relacionadas
+
+- `_apply_discovery_mode_identity_guard(...)`
+- `_apply_identity_clarify_guard(...)`
+- `_front_identity_request_is_valid(...)`
+- `_front_build_identity_request(...)`
+
+## Classificação
+
+`SOVEREIGN`
+
+---
+
+# SCENE GOVERNANCE
+
+SCENE depende de:
+- contrato operacional;
+- material runtime;
+- contexto real;
+- gating;
+- ausência de contaminação por fallback genérico.
+
+## Gates principais
+
+- `micro_scene_allowed`
+- `allow_scene_runtime`
+
+## Riscos
+
+- PACK_A bleed;
+- tutorialização indevida;
+- scene resurrection;
+- falso contexto operacional;
+- fallback fantasma.
+
+## Classificação
+
+`HIGH RISK SOVEREIGN`
+
+---
+
+# Response mode arbitration
+
+A arbitragem de modo decide quando:
+- DIRECT permanece DIRECT;
+- DISCOVERY é imposto;
+- DISCOVERY pode virar SCENE;
+- SCENE deve cair para DIRECT;
+- CLOSING deve ser preservado.
+
+## Regra de segurança
+
+Não mover arbitragem enquanto:
+- discovery governance não estiver isolada;
+- scene governance não estiver estabilizada;
+- recovery runtime ainda puder reabrir conteúdo.
+
+---
+
+# Discovery to Scene Bypass
+
+## Helper
+
 - `_apply_discovery_to_scene_bypass(...)`
 
-Responsabilidade:
-- promover DISCOVERY → SCENE;
-- bypass estrutural baseado em contrato operacional hidratado.
+## Responsabilidade
 
-Importante:
-- NÃO é inferência comum;
-- NÃO é arbitration comum;
-- atua como bypass soberano.
+Permitir promoção:
+`DISCOVERY → SCENE`
+
+somente quando já existe contrato operacional demonstrável.
+
+## Classificação
+
+`SOVEREIGN ORCHESTRATION`
+
+Não é PURE SAFE.
 
 ---
 
-## LATE SOVEREIGN TERMINALS
+# Zonas congeladas
 
-Trechos:
-- 9524
-- 9678
-- 9862
-- 9910
+## PROIBIDO MOVER AGORA
 
-Responsabilidade:
-- sobrescritas tardias soberanas de `response_mode`.
+- response arbitration;
+- discovery identity guard;
+- discovery terminals;
+- `micro_scene_allowed`;
+- `allow_scene_runtime`;
+- scene promotion;
+- scene degradation;
+- runtime recovery ligado a modo.
 
-Importante:
-esses pontos possuem prioridade superior ao inference inicial.
+---
 
-# Relação entre RESPONSE MODE e DISCOVERY
+# Estado atual
 
-DISCOVERY possui soberania superior em cenários de identidade incompleta.
+Já foi extraído com segurança:
 
-Late discovery enforcement pode sobrescrever:
-- DIRECT
-- SCENE
+- `_apply_response_mode_surface(...)`
 
-quando:
-- falta nome;
-- falta segmento;
-- discovery_resolved == False.
+Ainda ficam no core:
 
+- inferência;
+- arbitragem;
+- discovery enforcement;
+- scene governance;
+- terminal decisions.
+
+---
+
+# Decisão consolidada
+
+Apenas a superfície de modo é SAFE.
+
+A decisão de modo continua SOVEREIGN.
+
+Portanto:
+- `front_surface.py` pode conter normalização superficial;
+- `front_response_mode.py` ainda NÃO deve nascer;
+- response arbitration deve permanecer no core até nova auditoria.
+
+---
+
+# Conclusão
+
+`response_mode` é uma das chaves centrais da soberania runtime.
+
+A modularização futura deve separar:
+
+## SAFE
+- acabamento superficial por modo.
+
+## SOVEREIGN
+- inferência;
+- arbitragem;
+- discovery;
+- scene;
+- terminals;
+- recovery ligado a modo.
+
+A regra atual é:
+
+`SUPERFÍCIE PODE SAIR. DECISÃO FICA.`
