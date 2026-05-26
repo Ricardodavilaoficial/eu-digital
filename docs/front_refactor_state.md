@@ -408,3 +408,79 @@ O domínio parece majoritariamente:
 
 Fortíssimo candidato futuro para:
 `front_final_pipeline.py`
+
+---
+
+# Subdomínios internos observados — FINAL PIPELINE
+
+## 1. Scene upgrade / humanization
+Faixa:
+- 12123–12142
+
+Responsabilidade:
+- upgrade operacional;
+- humanização;
+- evitar payload estrutural cru.
+
+---
+
+## 2. Name discovery post-pass
+Faixa:
+- 12146–12155
+
+Responsabilidade:
+- garantir descoberta de nome no turno 0.
+
+---
+
+## 3. Reply size preservation + policy
+Faixa:
+- 12158–12188
+
+Responsabilidade:
+- preservar densidade técnica;
+- aplicar size policy;
+- spoken sync.
+
+---
+
+## 4. Question policy enforcement
+Faixa:
+- 12190–12232
+
+Responsabilidade:
+- bloquear perguntas fora da política.
+
+---
+
+## 5. Final guardrails
+Faixa:
+- 12236–12295
+
+Responsabilidade:
+- anti-invenção;
+- sanitize;
+- spoken sync;
+- rescue técnico;
+- final polish.
+
+---
+
+## 6. Final empty guard
+Faixa:
+- 12298+
+
+Responsabilidade:
+- impedir saída vazia;
+- fallback final.
+
+---
+
+## Conclusão arquitetural
+
+O FINAL PIPELINE demonstrou:
+- forte separação interna de responsabilidades;
+- baixa dependência externa;
+- alta modularizabilidade futura.
+
+É atualmente o macrodomínio mais próximo de virar módulo real.
