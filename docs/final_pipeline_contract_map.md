@@ -562,3 +562,108 @@ Antes de mexer no FINAL GUARD, será necessário auditar separadamente:
 - relação com PACK_A_AGENDA;
 - relação com `micro_scene_allowed`.
 
+---
+
+# Auditoria profunda — Operational Reconstruction Engine
+
+## Descoberta arquitetural crítica
+
+Durante a auditoria profunda do FINAL GUARD e dos mecanismos de recuperação operacional, foi identificado que o front possui um núcleo soberano separado do SAFE FINAL PIPELINE.
+
+Esse núcleo foi classificado como:
+
+`OPERATIONAL RECONSTRUCTION ENGINE`
+
+---
+
+# Camadas arquiteturais reais identificadas
+
+## 1. SAFE FINAL PIPELINE
+
+Responsabilidade:
+- sanitize;
+- size policy;
+- surface polish;
+- spoken sync;
+- response surface normalization;
+- preservação superficial.
+
+Características:
+- sem mutação soberana;
+- sem reconstrução operacional;
+- sem geração estrutural;
+- modularização segura.
+
+Helpers já identificados:
+- `_apply_final_reply_size_policy(...)`
+- `_apply_final_surface_polish(...)`
+- `_apply_response_mode_surface(...)`
+- `_restore_final_candidate_if_degraded(...)`
+
+---
+
+## 2. OPERATIONAL SURFACE ENHANCEMENT
+
+Responsabilidade:
+- reescrever superfície operacional já válida;
+- melhorar fluidez;
+- melhorar legibilidade;
+- gerar consequência final curta.
+
+Características:
+- usa IA;
+- mas não reconstrói runtime;
+- não muta contract;
+- não altera response_mode;
+- não altera micro_scene_allowed;
+- risco médio/baixo.
+
+Helpers identificados:
+- `_upgrade_operational_reply_with_model(...)`
+- `_generate_consequence_with_model(...)`
+- `_build_contract_consequence(...)`
+
+---
+
+## 3. OPERATIONAL RECONSTRUCTION ENGINE
+
+Responsabilidade:
+- reconstrução operacional soberana;
+- regeneração de microcena;
+- fallback operacional;
+- recovery de runtime;
+- mutação de contrato operacional;
+- controle de scene runtime.
+
+Características:
+- altamente sensível;
+- altamente acoplado;
+- muta estado soberano;
+- altera response_mode;
+- altera topic;
+- altera intent;
+- altera micro_scene_allowed;
+- pode resetar runtime operacional.
+
+Helper central identificado:
+- `_generate_micro_scene_with_model(...)`
+
+---
+
+# Descoberta crítica — mutações soberanas
+
+Foi identificado que `_generate_micro_scene_with_model(...)`:
+
+- altera `topic`;
+- altera `intent`;
+- altera `response_mode`;
+- altera `micro_scene_allowed`;
+- altera `global_pack_fallback`;
+- remove campos runtime do `operational_contract`.
+
+Trecho crítico identificado:
+
+```python
+operational_contract["micro_scene_allowed"] = False
+operational_contract["global_pack_fallback"] = False
+
