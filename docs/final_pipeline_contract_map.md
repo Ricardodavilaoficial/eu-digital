@@ -667,3 +667,60 @@ Trecho crítico identificado:
 operational_contract["micro_scene_allowed"] = False
 operational_contract["global_pack_fallback"] = False
 
+---
+
+# Descoberta arquitetural — Runtime Recovery Infrastructure
+
+## Conclusão crítica
+
+Foi identificado que o front atual possui uma infraestrutura transversal de recuperação runtime.
+
+Essa infraestrutura NÃO pertence:
+- ao SAFE FINAL PIPELINE;
+- ao assembly;
+- ao response surface;
+- ao sanitize pipeline.
+
+Ela forma um domínio arquitetural separado.
+
+Classificação:
+
+`RUNTIME RECOVERY INFRASTRUCTURE`
+
+---
+
+# Núcleo central identificado
+
+Helper central:
+
+`_build_kb_anchor_reply(...)`
+
+Classificação:
+- Runtime Recovery Entry Point.
+
+---
+
+# Responsabilidade real
+
+O helper `_build_kb_anchor_reply(...)` atua como:
+
+- fallback operacional transversal;
+- recovery runtime;
+- reanimação operacional;
+- reconstrução de superfície;
+- restaurador de cena operacional.
+
+---
+
+# Descoberta crítica
+
+O sistema atual segue implicitamente a seguinte lógica:
+
+```text
+Se o pipeline degrada →
+    chama _build_kb_anchor_reply →
+        que pode:
+            gerar microcena;
+            reconstruir runtime;
+            restaurar superfície operacional;
+            reanimar fluxo.
