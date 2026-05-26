@@ -837,3 +837,91 @@ Região aproximada:
 - após aplicação da política de tamanho;
 - bloco que começa em:
   `# Regra de produto: perguntas foram abolidas, salvo exceções controladas.`
+
+---
+
+# Atualização — Final surface polish pipeline
+
+Commit:
+- `13ea39a` — refactor: encapsula final surface polish pipeline
+
+## Resultado
+
+Foi criado helper local:
+
+`_apply_final_surface_polish(...)`
+
+Responsabilidade:
+- sanitize final;
+- guardrails superficiais;
+- wrap de superfície;
+- spoken/reply sync;
+- rescue técnico;
+- cleanup final da superfície.
+
+## Domínio delimitado
+
+Novo subdomínio identificado dentro do SAFE FINAL PIPELINE:
+
+`Final surface polish pipeline`
+
+## O que este helper NÃO faz
+
+Não:
+- decide intenção;
+- altera response_mode;
+- controla DISCOVERY;
+- controla identity flow;
+- controla question policy;
+- monta KB;
+- gera microcena;
+- altera micro_scene_allowed.
+
+## Dependências encapsuladas
+
+- `_try_parse_kb_json(...)`
+- `_sanitize_unverified_time_claims(...)`
+- `apply_sales_guardrails(...)`
+- `wrap_show_response(...)`
+- `_sanitize_user_facing_reply(...)`
+- `_looks_like_technical_output(...)`
+- `_build_contract_consequence(...)`
+- `_sync_spoken_after_technical_rescue(...)`
+
+## Decisão arquitetural
+
+Este helper pertence ao domínio:
+
+`SAFE FINAL PIPELINE`
+
+e NÃO ao domínio:
+
+`SOVEREIGN FINAL DECISION`
+
+## Segurança
+
+O patch preserva:
+- response_mode;
+- DISCOVERY;
+- identity guard;
+- FINAL GUARD;
+- micro_scene_allowed;
+- build_kb_show_reply;
+- política comercial;
+- runtime orchestration.
+
+## Impacto arquitetural
+
+O FINAL PIPELINE agora possui dois micro-pipelines soberanos claramente delimitados:
+
+1. `Final reply size preservation pipeline`
+2. `Final surface polish pipeline`
+
+Isso reduz:
+- ruído inline;
+- acoplamento superficial;
+- risco de mini-monólito futuro.
+
+E aproxima a futura extração controlada de:
+`front_final_pipeline.py`
+
