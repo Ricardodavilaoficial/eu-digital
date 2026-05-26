@@ -244,3 +244,36 @@ Responsabilidade:
 Manter helper local por enquanto.
 Não mover para módulo ainda.
 
+---
+
+# Atualização — Runtime scene material extraído
+
+Commits:
+- 2ed9322 — adiciona helper de runtime scene material
+- 71d9e8c — usa helper no runtime scene material
+
+## Resultado
+
+A seleção do melhor material operacional em runtime foi encapsulada em:
+
+`_pick_runtime_scene_material(...)`
+
+Responsabilidade:
+- escolher o melhor texto entre:
+  - `direct_scene`
+  - `runtime_long_text`
+  - `runtime_short_reply`
+  - `runtime_compact_reply`
+  - `micro_scene`
+
+Importante:
+- o helper NÃO muta `operational_contract`;
+- NÃO altera `response_mode`;
+- NÃO chama modelo;
+- NÃO consulta KB;
+- apenas preserva a prioridade de seleção já existente.
+
+## Decisão
+
+Manter helper local por enquanto.
+A mutação do contrato operacional continua congelada dentro do bloco principal.
