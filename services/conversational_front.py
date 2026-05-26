@@ -5179,6 +5179,48 @@ def _restore_final_candidate_if_degraded(
     return str(reply_text or "").strip()
 
 
+def _pick_runtime_scene_material(
+    *,
+    runtime_material,
+    has_real_operational_context: bool,
+    response_mode: str,
+) -> str:
+    """
+    Escolhe o melhor material operacional de runtime sem mutar contrato.
+
+    Não chama modelo.
+    Não altera response_mode.
+    Não altera operational_contract.
+    Apenas preserva a prioridade de seleção já existente.
+    """
+    try:
+        material = runtime_material if isinstance(runtime_material, dict) else {}
+
+        if has_real_operational_context:
+            return (
+                str(material.get("direct_scene") or "").strip()
+                or str(material.get("runtime_long_text") or "").strip()
+                or str(material.get("runtime_short_reply") or "").strip()
+                or str(material.get("micro_scene") or "").strip()
+            )
+
+        if str(response_mode or "").strip().upper() == "DIRECT":
+            return (
+                str(material.get("runtime_long_text") or "").strip()
+                or str(material.get("runtime_short_reply") or "").strip()
+                or str(material.get("direct_scene") or "").strip()
+                or str(material.get("runtime_compact_reply") or "").strip()
+                or str(material.get("micro_scene") or "").strip()
+            )
+
+        return (
+            str(material.get("runtime_compact_reply") or "").strip()
+            or str(material.get("micro_scene") or "").strip()
+        )
+    except Exception:
+        return ""
+
+
 def _apply_discovery_to_scene_bypass(
     *,
     response_mode: str,
