@@ -526,3 +526,46 @@ Antes de criar `front_final_pipeline.py`, é necessário:
 - mapear mutações de reply_text, spoken_text e reply_source;
 - decidir se helpers locais permanecem locais ou sobem para módulos existentes.
 
+---
+
+# Auditoria de mutações — FINAL PIPELINE
+
+Faixa auditada:
+- 12003–12320
+
+## Saídas principais mutadas
+
+- reply_text
+- spoken_text
+- reply_source
+
+## Saídas secundárias mutadas
+
+- name_use
+- operational_reference
+- debug_info
+
+## Estados transitórios internos
+
+Variáveis iniciadas com `_` parecem transitórias e provavelmente não precisariam atravessar o contrato futuro do módulo.
+
+Exemplos:
+- _contract_for_direct
+- _valid_real_scene
+- _valid_compact_fallback
+- _should_run_late_payload
+- _raw_scene_exit
+- _humanized_exit
+- _kb_obj
+
+## Conclusão arquitetural
+
+O FINAL PIPELINE já demonstra:
+- mutação centralizada;
+- ciclo de vida consistente;
+- padrão natural de input/output.
+
+Fortíssimo indicativo de futura transformação em:
+- FrontFinalPipelineInput
+- FrontFinalPipelineResult
+- front_final_pipeline.py
