@@ -5271,6 +5271,40 @@ def _apply_discovery_to_scene_bypass(
     return response_mode, needs_clarify, clarify_q
 
 
+def _apply_current_turn_topic_reset(
+    *,
+    current_turn_topic_reset: bool,
+    response_mode: str,
+    micro_scene_allowed: bool,
+    operational_contract: Dict[str, Any] | None = None,
+) -> tuple[str, bool]:
+    """
+    Encapsula reset estrutural de tópico.
+
+    Não altera política.
+    Não chama IA.
+    Não consulta KB.
+    Apenas sincroniza estado estrutural seguro.
+    """
+
+    try:
+        if current_turn_topic_reset:
+            response_mode = "DIRECT"
+            micro_scene_allowed = False
+
+            if isinstance(operational_contract, dict):
+                operational_contract["topic"] = "OTHER"
+                operational_contract["response_mode"] = "DIRECT"
+                operational_contract["has_practical_scene"] = False
+                operational_contract["micro_scene_allowed"] = False
+                operational_contract["global_pack_fallback"] = False
+
+        return response_mode, micro_scene_allowed
+
+    except Exception:
+        return response_mode, micro_scene_allowed
+
+
 def _apply_identity_clarify_guard(
     *,
     reply_text: str,
@@ -8926,15 +8960,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
-        if current_turn_topic_reset:
-            response_mode = "DIRECT"
-            micro_scene_allowed = False
-            if isinstance(operational_contract, dict):
-                operational_contract["topic"] = "OTHER"
-                operational_contract["response_mode"] = "DIRECT"
-                operational_contract["has_practical_scene"] = False
-                operational_contract["micro_scene_allowed"] = False
-                operational_contract["global_pack_fallback"] = False
+        (
+            response_mode,
+            micro_scene_allowed,
+        ) = _apply_current_turn_topic_reset(
+            current_turn_topic_reset=current_turn_topic_reset,
+            response_mode=response_mode,
+            micro_scene_allowed=micro_scene_allowed,
+            operational_contract=operational_contract,
+        )
 
         global_pack_scene_ready = False
         try:
