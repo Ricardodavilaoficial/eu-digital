@@ -2,30 +2,55 @@
 
 ## Objetivo
 
-Definir o protocolo oficial de extrações da refatoração segura do `conversational_front.py`.
+Definir o protocolo oficial da refatoração segura do:
+
+`services/conversational_front.py`
+
+Este documento governa:
+- extraction waves;
+- critérios de segurança;
+- rollback;
+- compile chain;
+- soberania arquitetural;
+- boundaries permitidos.
 
 ---
 
-# PRINCÍPIOS
+# Regra máxima da refatoração segura
+
+Primeiro:
+mapear soberania.
+
+Depois:
+extrair.
+
+Nunca o contrário.
+
+---
+
+# Princípios obrigatórios
 
 ## 1. A arquitetura soberana vem antes da modularização
 
-Nenhuma extração pode:
-- alterar ordem soberana;
+Nenhuma extraction wave pode:
+- alterar runtime governance;
 - alterar terminals;
 - alterar recovery;
-- alterar bypasses;
 - alterar discovery governance;
-- alterar response governance.
+- alterar response governance;
+- alterar orchestration order.
 
 ---
 
 ## 2. Pequenas waves
 
-Cada extraction wave deve mover:
+Cada wave deve mover:
 - no máximo 1–3 helpers.
 
-Nunca grandes blocos.
+Nunca:
+- blocos grandes;
+- múltiplos domínios;
+- refactors massivos.
 
 ---
 
@@ -36,127 +61,241 @@ Extraction-ready atual:
 - `_apply_response_mode_surface(...)`
 - `_restore_final_candidate_if_degraded(...)`
 
----
-
-## 4. Proibido extrair
-
-Domínios proibidos nesta fase:
-
-- RUNTIME RECOVERY INFRASTRUCTURE
-- OPERATIONAL RECONSTRUCTION ENGINE
-- DISCOVERY GOVERNANCE
-- RESPONSE MODE GOVERNANCE
-- TERMINAL GOVERNANCE
-- KB RUNTIME
+Status:
+- extraídos;
+- compile limpo;
+- boundaries preservados.
 
 ---
 
-## 5. Toda extração exige
+## 4. Proibido extrair nesta fase
 
-### Antes
+Domínios congelados:
+
+- Runtime Recovery Infrastructure
+- Operational Reconstruction Engine
+- Discovery Governance
+- Response Mode Governance
+- Terminal Governance
+- KB Runtime Governance
+
+---
+
+## 5. Nunca misturar
+
+Uma wave nunca pode combinar:
+- refatoração estrutural;
+- bugfix;
+- alteração comportamental;
+- ajuste de prompt;
+- ajuste de KB;
+- mudança comercial.
+
+---
+
+# Critérios oficiais de EXTRACTION READY
+
+Um helper só pode ser classificado como:
+`EXTRACTION READY`
+
+quando:
+
+- não chama IA;
+- não consulta KB runtime;
+- não altera response_mode;
+- não altera micro_scene_allowed;
+- não executa recovery;
+- não executa reconstruction;
+- não depende de terminals;
+- não possui mutações soberanas;
+- possui boundaries estáveis;
+- possui callsites claros.
+
+---
+
+# Processo obrigatório da extraction wave
+
+## Antes da wave
+
+Obrigatório:
 - auditoria de dependências;
 - auditoria de soberania;
 - auditoria de terminals;
 - atualização documental.
 
-### Durante
-- compile incremental;
-- compile reverso;
-- imports explícitos;
-- commit isolado.
+---
 
-### Depois
+## Durante a wave
+
+Obrigatório:
+- compile incremental;
+- imports explícitos;
+- commit isolado;
+- preservação dos callsites;
+- boundaries documentados.
+
+Nunca:
+- mover helpers por proximidade;
+- misturar múltiplos domínios;
+- alterar fluxo runtime.
+
+---
+
+## Depois da wave
+
+Obrigatório:
+- compile final;
 - validação runtime;
 - push imediato;
 - documentação da wave.
 
 ---
 
-## 6. Rollback obrigatório
+# Rollback obrigatório
 
-Toda wave deve possuir:
+Toda extraction wave deve possuir:
 - commit isolado;
 - rollback simples;
-- boundaries documentados.
+- boundaries registrados;
+- callsites rastreáveis.
 
 ---
 
-## 7. Extração nunca pode misturar
+# Ordem oficial das waves
 
-Nunca combinar:
-- refactor estrutural;
-- correção comportamental;
-- ajustes de prompt;
-- ajustes de KB.
+## FIRST SAFE EXTRACTION WAVE
+Domínio:
+`PURE SAFE FINAL PIPELINE`
 
----
+Resultado:
+- validada;
+- concluída;
+- compile limpo.
 
-## 8. Ordem oficial das futuras waves
-
-### FIRST SAFE EXTRACTION WAVE
-- PURE SAFE FINAL PIPELINE helpers
-
-### SECOND SAFE EXTRACTION WAVE
-- guards puros
-- validators puros
-
-### THIRD SAFE EXTRACTION WAVE
-- surface helpers híbridos
-(apenas após nova auditoria)
-
----
-
-## 9. Critérios de EXTRACTION READY
-
-Um helper só pode ser classificado como EXTRACTION READY quando:
-
-- não chama IA;
-- não consulta KB;
-- não altera response_mode;
-- não altera micro_scene_allowed;
-- não executa recovery;
-- não depende de terminals;
-- não executa reconstruction;
-- não possui mutações soberanas;
-- possui callsites claros;
-- possui boundaries estáveis.
-
----
-
-## 10. Regra máxima da refatoração segura
-
-Primeiro:
-mapear soberania.
-
-Depois:
-extrair.
-
-Nunca o contrário.
-
-# Atualização — FIRST SAFE EXTRACTION WAVE executada
-
-Foi criado:
-
-- `services/front_surface.py`
-
-Helpers extraídos:
-
+Extrações:
 - `_apply_response_mode_surface(...)`
 - `_restore_final_candidate_if_degraded(...)`
 
-Status:
-- compile limpo;
-- callsites preservados;
-- sem alteração comportamental intencional;
-- boundary classificado como PURE SAFE FINAL PIPELINE.
+Novo módulo:
+- `services/front_surface.py`
 
-# Protocolo validado
+---
+
+## SECOND SAFE EXTRACTION WAVE
+Objetivo:
+- guards puros;
+- validators puros.
+
+Status:
+- ainda não iniciada.
+
+---
+
+## THIRD SAFE EXTRACTION WAVE
+Objetivo:
+- surface helpers híbridos.
+
+Pré-requisito:
+- nova auditoria de soberania.
+
+---
+
+# PURE SAFE vs SOVEREIGN
+
+## PURE SAFE
+
+Pode:
+- sanitize;
+- sync;
+- normalize;
+- polish;
+- preservar superfície.
+
+Não pode:
+- recovery;
+- orchestration;
+- governance;
+- reconstruction;
+- runtime mutation.
+
+---
+
+## SOVEREIGN
+
+Inclui:
+- discovery governance;
+- response arbitration;
+- runtime recovery;
+- reconstruction;
+- terminals;
+- scene governance.
+
+Nunca mover cedo.
+
+---
+
+# Compile chain obrigatória
+
+Sempre executar:
+
+```cmd
+python -m py_compile services\conversational_front.py
+```
+
+E, quando necessário:
+
+```cmd
+python -m py_compile services\front_surface.py
+python -m py_compile services\front_kb.py
+python -m py_compile services\front_policies.py
+python -m py_compile services\front_assembly.py
+python -m py_compile services\front_guards.py
+```
+
+---
+
+# Regras operacionais CMD
+
+Sempre:
+- `git add` específico;
+- commit pequeno;
+- push imediato;
+- rollback simples.
+
+Nunca:
+- `git add .`
+- múltiplas waves juntas;
+- múltiplas extrações sem compile.
+
+---
+
+# Protocolo validado empiricamente
 
 A FIRST SAFE EXTRACTION WAVE confirmou que:
 
-- extrações pequenas funcionam;
-- compile incremental foi suficiente;
-- boundaries soberanos permaneceram preservados;
-- imports assimétricos temporários são viáveis;
+- micro-extrações funcionam;
+- compile incremental é suficiente;
+- boundaries soberanos podem ser preservados;
+- imports assimétricos temporários são aceitáveis;
 - documentação simultânea reduz risco arquitetural.
 
+---
+
+# Estado atual da refatoração
+
+Fase atual:
+
+`MONOLITH CORE ISOLATION PHASE`
+
+O monólito restante concentra:
+- runtime governance;
+- orchestration;
+- recovery;
+- reconstruction;
+- sovereign terminals.
+
+A estratégia correta continua sendo:
+- estabilizar boundaries;
+- consolidar documentação;
+- reduzir risco;
+- preservar soberania antes da modularização física.
