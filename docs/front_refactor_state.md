@@ -779,3 +779,61 @@ Continuar sem corrigir bugs comportamentais durante esta fase estrutural.
 As dívidas comportamentais seguem registradas em:
 - `docs/front_refactor_debts.md`
 
+---
+
+# Atualização — Final reply size preservation pipeline
+
+Commit:
+- `3853d6d` — refactor: encapsula politica final de tamanho da resposta
+
+## Resultado
+
+Foi criado helper local:
+
+`_apply_final_reply_size_policy(...)`
+
+Responsabilidade:
+- preservar política especial de resposta técnica DIRECT;
+- aplicar `_preserve_technical_direct_reply_size(...)`;
+- aplicar `_apply_reply_size_policy(...)`;
+- sincronizar `reply_text` e `spoken_text`;
+- devolver também `reply_size_policy` e `spoken_size_policy`.
+
+## Domínio delimitado
+
+Novo subdomínio identificado dentro do FINAL PIPELINE:
+
+`Final reply size preservation pipeline`
+
+## Decisão
+
+Manter helper local por enquanto.
+
+Ainda NÃO mover para `front_final_pipeline.py`.
+
+Motivo:
+- o FINAL PIPELINE ainda está em fase de revelação arquitetural;
+- o contrato futuro já foi mapeado, mas ainda não deve ser implementado;
+- a extração para módulo só deve acontecer quando mais subdomínios estiverem estabilizados.
+
+## Segurança
+
+Este patch não altera:
+- prompts;
+- response_mode;
+- micro_scene_allowed;
+- JSON_FAIL_SAFE;
+- PACK_A_AGENDA;
+- KB runtime;
+- late KB reinforcement.
+
+## Próximo alvo provável
+
+Auditar e, se seguro, encapsular localmente o subdomínio:
+
+`Question policy enforcement`
+
+Região aproximada:
+- após aplicação da política de tamanho;
+- bloco que começa em:
+  `# Regra de produto: perguntas foram abolidas, salvo exceções controladas.`
