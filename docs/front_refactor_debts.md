@@ -235,3 +235,57 @@ Decisão:
 - não corrigir comportamento nesta fase
 - seguir refatoração conservadora
 
+# Pendências comportamentais detectadas durante a refatoração segura
+
+Data: 2026-05-26
+
+## Contexto
+
+Durante a mini auditoria pós-deploy da refatoração estrutural do conversational_front.py, o sistema respondeu no WhatsApp sem quebrar operacionalmente, mas revelou bugs comportamentais já compatíveis com dívidas antigas do front.
+
+Esses pontos NÃO devem ser corrigidos agora, para não interromper a fase de refatoração segura.
+
+## Bugs anotados para correção futura
+
+### 1. PACK_A_AGENDA tutorializando respostas
+
+Quando não há doc real hidratado (`hydrated_from_docs=False`) e o sistema usa `global_pack_fallback=True`, o fallback de agenda ainda produz resposta longa e tutorializada.
+
+Sintomas:
+- resposta explica o fluxo inteiro de agendamento;
+- pergunta direta vira explicação ampla;
+- microcena aparece mesmo sem doc segmentado real.
+
+### 2. Duplicação de material operacional
+
+Em alguns casos, o mesmo conteúdo aparece repetido porque `runtime_short_reply`, `direct_scene`, `operational_reference` e `pack_micro_scene` carregam variações do mesmo PACK_A_AGENDA.
+
+Sintoma:
+- resposta repete a mesma ideia duas vezes;
+- texto fica longo e redundante.
+
+### 3. JSON_FAIL_SAFE gerando fallback ruim
+
+Quando o modelo falha ao devolver JSON válido, o fluxo cai em `front_free_mode_fallback`.
+
+Sintomas:
+- `JSON_FAIL_SAFE`;
+- resposta curta demais;
+- baixa densidade operacional;
+- saída como: `Ho. Me diga seu nome.`
+
+### 4. Saída inválida: "Ho. Me diga seu nome."
+
+Foi detectada uma resposta final com cumprimento deformado:
+`Ho. Me diga seu nome.`
+
+Provável origem:
+- fallback textual pós-JSON_FAIL_SAFE;
+- limpeza/finalização de superfície recebendo texto já ruim;
+- não parece causado diretamente pela refatoração atual.
+
+## Decisão
+
+Não corrigir estes bugs agora.
+
+Continuar a refatoração estrutural segura primeiro, para depois corrigir esses pontos com menor risco de regressão.
