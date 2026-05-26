@@ -1155,3 +1155,21 @@ Classificação:
 - domínio soberano de recovery;
 - NÃO pertence ao SAFE FINAL PIPELINE.
 
+# Atualização — Consequence generation boundary
+
+Foi confirmado que:
+
+- `_generate_consequence_with_model(...)`
+- `_build_contract_consequence(...)`
+
+não pertencem ao SAFE FINAL PIPELINE.
+
+Esses helpers:
+- usam IA;
+- geram consequência contextual curta;
+- atuam como enhancement operacional leve;
+- podem funcionar como fallback superficial quando a saída degrada para conteúdo excessivamente técnico.
+
+Classificação:
+`OPERATIONAL SURFACE ENHANCEMENT`
+

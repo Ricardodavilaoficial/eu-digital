@@ -382,3 +382,39 @@ Motivo:
 - reinjeta KB;
 - reativa reconstruction/runtime.
 
+# Atualização — Operational Surface Enhancement confirmado
+
+## Cluster confirmado
+
+Helpers:
+- `_generate_consequence_with_model(...)`
+- `_build_contract_consequence(...)`
+- `_upgrade_operational_reply_with_model(...)`
+
+## Responsabilidade real
+
+Esses helpers:
+- melhoram superfície operacional;
+- geram consequência contextual;
+- refinam saída operacional;
+- usam IA de forma localizada.
+
+## O que NÃO fazem
+
+Não:
+- reconstruem runtime;
+- alteram response_mode;
+- alteram micro_scene_allowed;
+- executam recovery transversal;
+- geram microcena soberana.
+
+## Classificação oficial
+
+Domínio:
+`OPERATIONAL SURFACE ENHANCEMENT`
+
+E NÃO:
+- SAFE FINAL PIPELINE
+nem
+- OPERATIONAL RECONSTRUCTION ENGINE.
+
