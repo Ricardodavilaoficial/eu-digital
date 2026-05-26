@@ -289,3 +289,22 @@ Provável origem:
 Não corrigir estes bugs agora.
 
 Continuar a refatoração estrutural segura primeiro, para depois corrigir esses pontos com menor risco de regressão.
+
+# Dívida técnica — front_surface.py
+
+`services/front_surface.py` foi criado na FIRST SAFE EXTRACTION WAVE.
+
+Estado atual:
+- módulo pequeno;
+- boundary limpo;
+- helpers puros;
+- compile limpo.
+
+Dívida conhecida:
+- ainda importa `_normalize_response_mode` de `services.conversational_front`.
+
+Decisão:
+- aceitável temporariamente;
+- não corrigir agora;
+- futura auditoria deve decidir se `_normalize_response_mode` vai para `front_utils.py`, `front_surface.py` ou módulo próprio de response mode.
+
