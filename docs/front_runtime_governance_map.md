@@ -1,365 +1,299 @@
 # FRONT RUNTIME GOVERNANCE MAP
 
+Data: 2026-05-26
+
 ## Objetivo
 
-Mapear a governança soberana do runtime do:
+Registrar as soberanias runtime descobertas no `conversational_front.py`.
 
-`services/conversational_front.py`
-
-Este documento NÃO descreve:
-- modularização física;
-- extraction protocol;
-- boundaries futuros.
-
-Ele descreve:
-- ownership runtime;
-- soberania;
-- orchestration;
-- recovery;
-- terminals;
-- arbitration;
-- governança estrutural real.
+Este documento orienta futuras refatorações seguras e impede extrações por proximidade de linha.
 
 ---
 
-# Descoberta central
+# 1. Descoberta central
 
-O `conversational_front.py` NÃO funciona como pipeline linear.
+O `conversational_front.py` não possui um único pipeline.
 
-O runtime opera como:
+Ele possui múltiplas governanças runtime concorrentes:
 
-`FEDERAÇÃO DE PIPELINES SOBERANOS`
-
-Com:
-- múltiplos ownership layers;
-- múltiplos terminals;
-- múltiplos recovery paths;
-- arbitration distribuída;
-- governança concorrente.
+- response_mode governance;
+- DISCOVERY governance;
+- SCENE governance;
+- runtime recovery infrastructure;
+- terminal payload governance;
+- JSON anti-corruption governance.
 
 ---
 
-# Macrogovernanças identificadas
+# 2. Response Mode Governance
 
-## 1. RESPONSE MODE GOVERNANCE
+`response_mode` é o state machine principal do front.
 
-Responsável por:
-- DIRECT;
-- DISCOVERY;
-- SCENE;
-- CLOSING;
-- arbitration;
-- structural bypass;
-- promotion/degradation de modo.
+Ele é:
+- inferido;
+- promovido;
+- degradado;
+- normalizado;
+- forçado;
+- reescrito.
 
-### Runtime controlado
-- response_mode
-- scene promotion
-- discovery bypass
-- direct fallback
+Pontos observados:
+- DIRECT → SCENE;
+- SCENE → DIRECT;
+- DISCOVERY → SCENE;
+- CLOSING → DIRECT;
+- force DISCOVERY.
 
-### Classificação
-`SOVEREIGN`
-
----
-
-## 2. DISCOVERY GOVERNANCE
-
-Responsável por:
-- identity enforcement;
-- clarify flow;
-- discovery integrity;
-- discovery stabilization;
-- discovery terminals.
-
-### Runtime controlado
-- identity flow
-- clarify necessity
-- discovery enforcement
-- lead identity integrity
-
-### Classificação
-`SOVEREIGN`
+Decisão:
+não mover ainda para módulo físico.
 
 ---
 
-## 3. SCENE GOVERNANCE
+# 3. Discovery Governance
 
-Responsável por:
-- micro_scene_allowed;
-- allow_scene_runtime;
-- grounded operational progression;
-- runtime scene activation.
+DISCOVERY é um sistema soberano, não apenas um modo.
 
-### Gates principais
-- `micro_scene_allowed`
-- `allow_scene_runtime`
+Inclui:
+- DISCOVERY prompt;
+- early terminal;
+- discovery guarantee;
+- identity guard;
+- terminal enforcement.
 
-### Classificação
-`HIGH RISK SOVEREIGN`
-
----
-
-## 4. RUNTIME RECOVERY GOVERNANCE
-
-Responsável por:
-- runtime resurrection;
-- fallback recovery;
-- KB reinjection;
-- operational reconstruction;
-- late runtime salvage.
-
-### Runtime controlado
-- degraded outputs
-- fallback rebuilding
-- recovery injection
-- runtime resurrection
-
-### Classificação
-`HIGH RISK SOVEREIGN`
+Decisão:
+não misturar DISCOVERY com SAFE FINAL PIPELINE.
 
 ---
 
-## 5. TERMINAL GOVERNANCE
+# 4. Scene Governance
 
-Responsável por:
-- early returns;
-- guarded terminals;
-- official terminal;
-- runtime bypasses.
+SCENE é controlado por:
 
-### Classificação
-`SOVEREIGN`
+- `micro_scene_allowed`;
+- `allow_scene_runtime`;
+- `operational_contract`;
+- `base_operational_contract`.
 
----
+`micro_scene_allowed` é gate soberano.
 
-# Ownership layers identificados
+Ele pode:
+- nascer;
+- ser resetado;
+- ser reativado;
+- ser copiado entre contratos;
+- bloquear ou ressuscitar SCENE.
 
-## CONTENT OWNERSHIP
-
-Quem cria/substitui conteúdo:
-- structured assembly;
-- KB builders;
-- scene generators;
-- operational fallbacks.
+Decisão:
+não extrair SCENE governance até mapear todos os callsites.
 
 ---
 
-## SURFACE OWNERSHIP
+# 5. Runtime Recovery Infrastructure
 
-Quem altera forma:
-- sanitize;
-- wrappers;
-- polish;
-- sync;
-- normalization.
+Recovery não é fallback simples.
 
----
+Ele inclui:
+- `_build_kb_show_reply`;
+- `_build_kb_anchor_reply`;
+- `_restore_final_candidate_if_degraded`;
+- fallback final;
+- failsafe payload;
+- technical output guard;
+- late KB injection.
 
-## PAYLOAD OWNERSHIP
+Trecho mais crítico:
+- 12424–12545
 
-Quem controla payload final:
-- payload builders;
-- unwrap;
-- sanitize final;
-- terminal protection.
-
----
-
-# Runtime orchestration
-
-## Responsabilidades
-
-- runtime material selection;
-- response arbitration;
-- scene activation;
-- orchestration state sync;
-- topic reset;
-- response normalization.
+Decisão:
+congelar.
 
 ---
 
-## Helpers identificados
+# 6. Terminal Payload Governance
 
-- `_apply_response_mode_arbitration(...)`
-- `_apply_discovery_to_scene_bypass(...)`
-- `_apply_current_turn_topic_reset(...)`
-- `_pick_runtime_scene_material(...)`
+O payload final é reconstruído tardiamente.
 
----
+Elementos:
+- `out = {...}`;
+- `_sanitize_front_result_payload`;
+- `_unwrap_front_json_envelope`;
+- terminal blindagem;
+- `return result`.
 
-## Classificação
+Trecho:
+- 12768–12935
 
-`SOVEREIGN ORCHESTRATION`
-
----
-
-# Runtime recovery infrastructure
-
-## Responsabilidades
-
-- late KB reinjection;
-- candidate resurrection;
-- scene/runtime recovery;
-- fallback rebuilding;
-- recovery after degradation.
+Decisão:
+não extrair antes de definir contrato de terminal output.
 
 ---
 
-## Helpers associados
+# 7. Multi-terminal architecture
 
-- `_build_kb_show_reply(...)`
-- `_build_kb_anchor_reply(...)`
-- `_build_last_resort_operational_reply(...)`
-
----
-
-## Risco
-
-Muito alto.
-
-Pode explicar:
-- fallback fantasma;
-- PACK_A bleed;
-- runtime contamination;
-- scene resurrection bugs.
-
----
-
-# Terminais reais identificados
+Foram identificados três terminais:
 
 ## Early Discovery Terminal
-
-Responsável por:
-- DISCOVERY early return.
-
-### Classificação
-`SOVEREIGN TERMINAL`
-
----
+Bypass do final pipeline.
 
 ## Direct Scene Early Terminal
+Bypass soberano de alto risco.
 
-Responsável por:
-- retorno antecipado de SCENE;
-- bypass do final pipeline oficial.
+## Official Final Pipeline
+Terminal verdadeiro com `return result`.
 
-### Classificação
-`HIGH RISK TERMINAL`
-
----
-
-## Official Final Pipeline Terminal
-
-Responsável por:
-- sanitize;
-- payload rebuild;
-- final unwrap;
-- final recovery;
-- terminal payload protection.
-
-### Classificação
-`MASTER TERMINAL`
+Decisão:
+qualquer modularização futura precisa preservar os três caminhos ou convergi-los conscientemente.
 
 ---
 
-# FINAL PIPELINE
+# 8. Regra de ouro
 
-## Responsabilidades
+Não mover helpers por proximidade.
 
+Mover apenas quando:
+- domínio estiver claro;
+- side-effects forem conhecidos;
+- ownership for explícito;
+- recovery triggers estiverem mapeados;
+- contrato de entrada/saída estiver definido.
+
+# Atualização — Response mode sovereignty
+
+Foi confirmado que `response_mode` é governança distribuída.
+
+O runtime possui:
+- inference layer;
+- arbitration layer;
+- structural bypass layer;
+- late sovereign terminals.
+
+O estado final de `response_mode` depende da ordem soberana dessas camadas.
+
+# Atualização — DISCOVERY GOVERNANCE
+
+## Discovery NÃO é geração de pergunta
+
+Foi confirmado que o domínio DISCOVERY atua como:
+
+`identity integrity governance`
+
+e não apenas como mecanismo de perguntas.
+
+## Camadas identificadas
+
+### DISCOVERY STATE ENFORCEMENT
+- `_apply_discovery_mode_identity_guard(...)`
+
+Responsabilidade:
+- preservar estado clarify;
+- preservar obrigatoriedade de identidade.
+
+---
+
+### DISCOVERY STABILIZATION
+- `_apply_identity_clarify_guard(...)`
+
+Responsabilidade:
+- preservar pergunta já existente;
+- estabilizar append;
+- controlar orçamento estrutural.
+
+Importante:
+- opera em múltiplos passes no mesmo ramo runtime.
+
+---
+
+### DISCOVERY VALIDATION
+- `_front_identity_request_is_valid(...)`
+- `services/front_guards.py`
+
+Responsabilidade:
+- validar perguntas de identidade;
+- impedir discovery inválido.
+
+---
+
+### LAST RESORT IDENTITY GENERATION
+- `_front_build_identity_request(...)`
+
+Responsabilidade:
+- gerar pergunta mínima apenas quando nenhuma pergunta válida existir.
+
+# Atualização — TERMINAL GOVERNANCE
+
+## DIRECT SCENE EARLY TERMINAL
+
+Trecho:
+- 9974
+
+Responsabilidade:
+- early return operacional;
+- bypass do pack_engine;
+- bypass de reconstruction tardia.
+
+Importante:
+o terminal pode ser atravessado quando:
+- `response_mode == "SCENE"`
+- `hydrated_from_docs == True`
+
+Nesse cenário:
+`_continue_after_direct_scene = True`
+
+O runtime continua vivo para enriquecimento posterior.
+
+---
+
+## FREE_MODE_FINAL_GUARD TERMINAL
+
+Trecho:
+- 12016
+
+Responsabilidade:
 - sanitize final;
-- surface normalization;
-- final polish;
-- spoken/reply sync;
-- payload shaping;
-- unwrap final;
-- terminal cleanup.
+- discovery enforcement;
+- punctuation normalization;
+- humanization;
+- JSON_FAIL_SAFE stabilization.
 
 ---
 
-## Estado arquitetural
+## MASTER FINAL TERMINAL
 
-É o domínio mais:
-- delimitado;
-- modularizável;
-- previsível.
+Trecho:
+- 12811+
 
-Principal candidato futuro para:
-`front_final_pipeline.py`
+Responsabilidade:
+- terminal oficial consolidado;
+- telemetria;
+- aiMeta;
+- tokenUsage;
+- replySizePolicy;
+- decider propagation.
 
----
+# Observação arquitetural importante
 
-# SAFE vs SOVEREIGN
+O runtime soberano já está parcialmente separado do núcleo determinístico.
 
-## PURE SAFE
+`front_assembly.py`
+atua fora da GOVERNANCE HIERARCHY principal.
 
-Pode:
-- normalize;
-- polish;
-- sanitize;
-- sync;
-- preservar superfície.
+# Observação arquitetural consolidada
 
-Não pode:
-- recovery;
-- orchestration;
-- governance;
-- reconstruction.
+Grande parte do núcleo determinístico já foi separada do runtime soberano.
 
----
-
-## SOVEREIGN
-
-Controla:
-- runtime;
-- arbitration;
-- discovery;
-- recovery;
-- terminals;
-- scene governance.
-
-Nunca mover cedo.
-
----
-
-# Zonas congeladas
-
-## PROIBIDO MOVER AGORA
-
-- `JSON_FAIL_SAFE`
-- `PACK_A_AGENDA`
-- `micro_scene_allowed`
-- late KB recovery
-- reconstruction flows
-- terminal governance
-- runtime resurrection
-
----
-
-# Estado atual da refatoração
-
-Fase atual:
-
-`MONOLITH CORE ISOLATION PHASE`
-
-O núcleo restante concentra:
-- governance;
-- orchestration;
-- recovery;
-- reconstruction;
+O monólito restante atua majoritariamente como:
+- governance runtime;
+- orchestration runtime;
+- recovery runtime;
 - sovereign terminals.
 
----
+# Observação consolidada
 
-# Decisão arquitetural consolidada
+`front_kb.py`
+atua fora da GOVERNANCE HIERARCHY.
 
-A prioridade correta NÃO é:
-- acelerar modularização;
-- reduzir linhas rapidamente.
+O módulo participa apenas da:
+- materialização;
+- composição;
+- estabilização de runtime KB.
 
-A prioridade correta é:
-- preservar soberania;
-- estabilizar governanças;
-- separar ownerships;
-- consolidar boundaries;
-- reduzir risco runtime antes da divisão física do core.

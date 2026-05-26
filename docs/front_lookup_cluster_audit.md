@@ -1,333 +1,115 @@
-# FRONT LOOKUP CLUSTER AUDIT
+# Front Lookup Cluster Audit
 
-## Objetivo
+## _best_doc_match
 
-Auditar os clusters de lookup do:
+### Calls
+- _score_query_against_doc
+- isinstance
+- str
 
-`services/conversational_front.py`
-
-Este documento descreve:
-- lookup helpers;
-- scoring helpers;
-- boundaries de lookup;
-- riscos de contaminação;
-- relação entre lookup e soberania runtime.
-
----
-
-# Descoberta central
-
-Lookup NÃO é:
-- orchestration;
-- governance;
-- response arbitration;
-- recovery;
-- runtime authority.
-
-Lookup é:
-
-`MECANISMO DE LOCALIZAÇÃO E MATCH`
+### Called By
+- _infer_segment_from_docs
+- _infer_segment_from_text
+- _kb_lookup_operational_docs
 
 ---
 
-# Lookup clusters identificados
+## _best_lookup_key_match
 
-## 1. Lookup normalization cluster
+### Calls
+- _lookup_token_overlap_score
+- str
 
-Responsável por:
-- normalização;
-- limpeza textual;
-- tokenização;
-- preparação de comparação.
-
----
-
-## Helpers associados
-
-- `_normalize_lookup_key(...)`
-- `_tokenize_lookup_text(...)`
+### Called By
+- _infer_segment_from_docs
+- _kb_lookup_operational_docs
 
 ---
 
-## Classificação
+## _collect_doc_texts
 
-`PURE SAFE`
+### Calls
+- _iter_doc_text_fragments
+- isinstance
+- set
+- str
 
----
-
-# 2. Lookup scoring cluster
-
-Responsável por:
-- overlap scoring;
-- ranking;
-- similaridade;
-- comparação estrutural.
+### Called By
+- _score_query_against_doc
 
 ---
 
-## Helpers associados
+## _iter_doc_text_fragments
 
-- `_lookup_token_overlap_score(...)`
-- `_best_doc_match(...)`
+### Calls
+- _iter_doc_text_fragments
+- isinstance
+- str
 
----
-
-## Classificação
-
-`SAFE`
-
----
-
-# 3. Lookup retrieval cluster
-
-Responsável por:
-- localizar maps;
-- encontrar material;
-- recuperar documentos;
-- estruturar match.
+### Called By
+- _collect_doc_texts
+- _iter_doc_text_fragments
 
 ---
 
-## Helpers associados
+## _lookup_token_overlap_score
 
-- `_find_kb_map_anywhere(...)`
+### Calls
+- _base
+- _normalize_lookup_key
+- _tokenize_lookup_text
+- len
+- max
+- set
+- str
 
----
-
-## Classificação
-
-`SAFE / KB MATERIALIZATION`
-
----
-
-# Lookup NÃO governa runtime
-
-## Lookup NÃO decide
-
-- response_mode;
-- discovery;
-- scene eligibility;
-- runtime continuity;
-- orchestration flow;
-- recovery.
+### Called By
+- _best_lookup_key_match
+- _score_query_against_doc
 
 ---
 
-## Lookup apenas fornece
+## _normalize_lookup_key
 
-- localização;
-- scoring;
-- ranking;
-- candidate matching.
+### Calls
+- str
 
----
-
-# Lookup NÃO valida SCENE
-
-## Regra consolidada
-
-Lookup encontrar material:
-NÃO significa:
-- grounded operational context;
-- runtime legitimacy;
-- valid scene activation.
+### Called By
+- _front_build_continuity_reply_from_platform_kb
+- _infer_segment_from_text
+- _keyword_doc_match
+- _lookup_token_overlap_score
+- _platform_kb_resolve_runtime
+- _platform_segment_profile_from_kb
+- _platform_topic_from_kb_rules
+- _tokenize_lookup_text
+- handle
 
 ---
 
-## Portanto
+## _score_query_against_doc
 
-Lookup:
-NUNCA deve ativar SCENE sozinho.
+### Calls
+- _collect_doc_texts
+- _lookup_token_overlap_score
+- isinstance
+- max
+- str
 
----
-
-# Lookup vs recovery
-
-## Descoberta crítica
-
-Recovery reutilizando lookup é:
-`HIGH RISK`
-
----
-
-## Motivo
-
-Recovery:
-- pode reinterpretar match;
-- pode promover fallback;
-- pode ressuscitar runtime;
-- pode transformar match em authority.
+### Called By
+- _best_doc_match
+- _doc_identity_is_compatible_with_current_text
 
 ---
 
-# Lookup contamination
+## _tokenize_lookup_text
 
-## Ocorre quando
+### Calls
+- _normalize_lookup_key
+- len
 
-- lookup começa a arbitrar;
-- scoring ganha autoridade;
-- matching redefine runtime;
-- retrieval altera orchestration.
-
----
-
-# SAFE vs HIGH RISK
-
-## SAFE lookup
-
-Pode:
-- normalize;
-- tokenize;
-- score;
-- rank;
-- localizar material.
+### Called By
+- _infer_segment_from_text
+- _lookup_token_overlap_score
 
 ---
-
-## HIGH RISK lookup usage
-
-Perigoso quando:
-- recovery usa lookup;
-- orchestration delega decisão;
-- scene gating depende de scoring;
-- matching vira runtime authority.
-
----
-
-# Lookup boundaries corretos
-
-## Lookup layer
-
-Responsável apenas por:
-- localizar;
-- comparar;
-- ranquear;
-- devolver candidatos.
-
----
-
-## Runtime sovereign layer
-
-Responsável por:
-- decidir;
-- arbitrar;
-- ativar;
-- validar;
-- recuperar.
-
----
-
-# Acoplamentos aceitáveis
-
-## Lookup → KB materialization
-
-Saudável:
-lookup ajudando:
-- runtime material selection;
-- candidate retrieval;
-- compact material assembly.
-
----
-
-## Lookup → Utility layer
-
-Saudável:
-- normalize;
-- tokenize;
-- compare;
-- sanitize textual.
-
----
-
-# Acoplamentos perigosos
-
-## Lookup → Recovery
-
-Risco:
-match virar:
-- resurrection source;
-- fallback authority;
-- scene pseudo-validation.
-
----
-
-## Lookup → Scene governance
-
-Risco:
-similaridade textual virar:
-- operational legitimacy;
-- progression validation.
-
----
-
-## Lookup → Arbitration
-
-Risco:
-matching passar a decidir:
-- DIRECT;
-- SCENE;
-- DISCOVERY.
-
----
-
-# Estado atual
-
-Os clusters lookup já demonstram:
-- baixo leakage soberano;
-- bom isolamento;
-- alta chance de modularização segura futura.
-
-Principalmente:
-- normalization cluster;
-- scoring cluster.
-
----
-
-# Possível boundary futuro
-
-## `front_lookup.py`
-
-Poderia futuramente conter:
-- normalize;
-- tokenize;
-- overlap scoring;
-- candidate retrieval.
-
----
-
-## NÃO deveria conter
-
-- runtime arbitration;
-- recovery;
-- scene validation;
-- orchestration;
-- governance.
-
----
-
-# Decisão consolidada
-
-Lookup deve permanecer:
-
-`CAMADA DE MATCH`
-
-E NÃO:
-- camada de decisão;
-- camada de recovery;
-- camada de orchestration;
-- camada de legitimidade runtime.
-
----
-
-# Conclusão
-
-A auditoria confirmou:
-
-`LOOKUP LOCALIZA. RUNTIME SOBERANO DECIDE.`
-
-Grande parte do risco estrutural aparece quando:
-- scoring;
-- retrieval;
-- matching;
-
-passam a ser tratados como autoridade soberana de runtime.

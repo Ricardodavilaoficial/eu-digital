@@ -1,394 +1,113 @@
-# FRONT FUNCTION CANDIDATES AUDIT
-
-## Objetivo
-
-Auditar candidatos de extração dentro do:
-
-`services/conversational_front.py`
-
-Este documento classifica helpers por:
-- risco;
-- soberania;
-- estabilidade;
-- acoplamento;
-- readiness arquitetural.
-
----
-
-# Descoberta central
-
-Nem todo helper pequeno é:
-`SAFE`
-
-E nem todo helper grande é:
-`HIGH RISK`
-
-O fator decisivo é:
-`SOBERANIA RUNTIME`
-
----
-
-# Critérios oficiais de classificação
-
-## EXTRACTION READY
-
-Helper:
-- determinístico;
-- sem recovery;
-- sem orchestration;
-- sem runtime mutation;
-- sem discovery governance;
-- sem terminal control;
-- sem response arbitration.
-
----
-
-## SEMI-SAFE
-
-Helper:
-- parcialmente superficial;
-- toca contexto operacional;
-- pode depender de material runtime;
-- mas ainda não governa runtime.
-
----
-
-## SOVEREIGN
-
-Helper:
-- altera fluxo;
-- arbitra modo;
-- executa discovery;
-- controla scene;
-- altera continuidade runtime.
-
----
-
-## HIGH RISK SOVEREIGN
-
-Helper:
-- executa recovery;
-- executa resurrection;
-- controla terminals;
-- reconstrói operação;
-- altera runtime tardiamente.
-
----
-
-# EXTRACTION READY
-
-## `_apply_response_mode_surface(...)`
-
-Status:
-- extraído;
-- estável;
-- compile limpo.
-
-Novo módulo:
-- `services/front_surface.py`
-
-Classificação:
-`PURE SAFE FINAL PIPELINE`
-
----
-
-## `_restore_final_candidate_if_degraded(...)`
-
-Status:
-- extraído;
-- estável;
-- compile limpo.
-
-Classificação:
-`PURE SAFE FINAL PIPELINE`
-
----
-
-# SEMI-SAFE CANDIDATES
-
-## `_apply_final_reply_size_policy(...)`
-
-Pode:
-- truncar;
-- sanitizar;
-- reorganizar superfície.
-
-Risco:
-- ainda toca densidade operacional;
-- ainda encosta em material runtime.
-
-Classificação:
-`SEMI-SAFE`
-
----
-
-## `_apply_final_surface_polish(...)`
-
-Pode:
-- normalize;
-- polish;
-- limpar superfície.
-
-Risco:
-- ainda pode tocar enrichment operacional.
-
-Classificação:
-`SEMI-SAFE`
-
----
-
-## `_upgrade_operational_reply_with_model(...)`
-
-Responsabilidade:
-- enhancement operacional.
-
-Risco:
-- depende de contexto;
-- pode alterar densidade runtime;
-- usa geração indireta.
-
-Classificação:
-`SEMI-SAFE / HIGH CONTEXT`
-
----
-
-# SOVEREIGN CANDIDATES
-
-## `_apply_response_mode_arbitration(...)`
-
-Controla:
-- DIRECT;
-- DISCOVERY;
-- SCENE;
-- degradation;
-- promotion.
-
-Classificação:
-`SOVEREIGN`
-
----
-
-## `_apply_discovery_to_scene_bypass(...)`
-
-Controla:
-- DISCOVERY → SCENE.
-
-Classificação:
-`SOVEREIGN ORCHESTRATION`
-
----
-
-## `_apply_current_turn_topic_reset(...)`
-
-Controla:
-- runtime continuity;
-- topic contamination.
-
-Classificação:
-`SOVEREIGN`
-
----
-
-## `_pick_runtime_scene_material(...)`
-
-Controla:
-- material selection;
-- operational trajectory.
-
-Classificação:
-`SOVEREIGN ORCHESTRATION`
-
----
-
-# HIGH RISK SOVEREIGN
-
-## `_build_kb_show_reply(...)`
-
-Executa:
-- runtime recovery;
-- fallback rebuilding;
-- resurrection.
-
-Classificação:
-`HIGH RISK`
-
----
-
-## `_build_kb_anchor_reply(...)`
-
-Executa:
-- operational recovery;
-- runtime salvage.
-
-Classificação:
-`HIGH RISK`
-
----
-
-## `_build_last_resort_operational_reply(...)`
-
-Executa:
-- terminal recovery;
-- late runtime reconstruction.
-
-Classificação:
-`HIGH RISK`
-
----
-
-# Reconstruction candidates
-
-## `_generate_micro_scene_with_model(...)`
-
-Executa:
-- scene generation;
-- progression construction.
-
-Classificação:
-`HIGH RISK SOVEREIGN`
-
----
-
-## `_compose_grounded_scene_with_progression(...)`
-
-Executa:
-- grounded operational flow;
-- runtime progression.
-
-Classificação:
-`HIGH RISK SOVEREIGN`
-
----
-
-# Discovery governance candidates
-
-## `_apply_discovery_mode_identity_guard(...)`
-
-Executa:
-- identity enforcement;
-- discovery protection.
-
-Classificação:
-`SOVEREIGN`
-
----
-
-## `_apply_identity_clarify_guard(...)`
-
-Executa:
-- clarify governance;
-- discovery stabilization.
-
-Classificação:
-`SOVEREIGN`
-
----
-
-# Helpers que NÃO devem sair agora
-
-## Recovery helpers
-
-Motivo:
-- resurrection;
-- orchestration leakage;
-- fallback contamination.
-
----
-
-## Terminal helpers
-
-Motivo:
-- bypasses;
-- return ownership;
-- payload protection.
-
----
-
-## Arbitration helpers
-
-Motivo:
-- response_mode sovereignty;
-- runtime trajectory.
-
----
-
-# Critérios futuros para extração
-
-Antes de mover qualquer helper:
-- mapear callsites;
-- mapear mutações;
-- mapear terminals;
-- validar ownership;
-- validar recovery impact.
-
----
-
-# SAFE vs HIGH RISK
-
-## SAFE
-
-Pode:
-- sanitize;
-- normalize;
-- sync;
-- polish;
-- preservar superfície.
-
----
-
-## HIGH RISK
-
-Pode:
-- alterar runtime;
-- reabrir recovery;
-- promover SCENE;
-- alterar continuidade;
-- reconstruir operação.
-
----
-
-# Estado atual
-
-A refatoração já validou:
-- extrações PURE SAFE;
-- boundaries saudáveis;
-- compile incremental seguro.
-
-Mas:
-- orchestration;
-- recovery;
-- discovery;
-- reconstruction;
-
-ainda permanecem soberanos.
-
----
-
-# Decisão consolidada
-
-A prioridade correta NÃO é:
-- aumentar quantidade de módulos;
-- mover muitos helpers.
-
-A prioridade correta é:
-- mover apenas helpers realmente SAFE;
-- impedir leakage soberano;
-- preservar runtime integrity.
-
----
-
-# Conclusão
-
-O critério correto de extração é:
-
-`SOBERANIA > TAMANHO`
-
-Helpers pequenos ainda podem ser:
-- perigosos;
-- soberanos;
-- destrutivos arquiteturalmente.
-
-Enquanto helpers maiores podem continuar seguros se:
-- determinísticos;
-- superficiais;
-- semanticamente estáveis.
+# Front Function Candidates Audit
+
+Critério: candidatas pequenas, sem chamada direta por handle, sem global/nonlocal, e sem nomes perigosos.
+
+## _resolve_tone_hint
+- lines: 31
+- called_by: _generate_style_intro_with_model
+- calls: get, isinstance, str, strip
+
+## _front_fmt_brl_from_cents
+- lines: 8
+- called_by: _front_build_price_facts_block, _front_repair_price_reply
+- calls: int
+
+## _tokenize_lookup_text
+- lines: 16
+- called_by: _infer_segment_from_text, _lookup_token_overlap_score
+- calls: _normalize_lookup_key, findall, len, replace
+
+## _lookup_token_overlap_score
+- lines: 38
+- called_by: _best_lookup_key_match, _score_query_against_doc
+- calls: _base, _normalize_lookup_key, _tokenize_lookup_text, endswith, intersection, len, max, replace, set, str, strip
+
+## _best_lookup_key_match
+- lines: 21
+- called_by: _infer_segment_from_docs, _kb_lookup_operational_docs
+- calls: _lookup_token_overlap_score, str, strip
+
+## _iter_doc_text_fragments
+- lines: 34
+- called_by: _collect_doc_texts, _iter_doc_text_fragments
+- calls: _iter_doc_text_fragments, isinstance, items, lower, str, strip
+
+## _collect_doc_texts
+- lines: 18
+- called_by: _score_query_against_doc
+- calls: _iter_doc_text_fragments, add, append, isinstance, lower, set, str, strip, sub
+
+## _score_query_against_doc
+- lines: 30
+- called_by: _best_doc_match, _doc_identity_is_compatible_with_current_text
+- calls: _collect_doc_texts, _lookup_token_overlap_score, append, get, isinstance, max, str, strip
+
+## _best_doc_match
+- lines: 25
+- called_by: _infer_segment_from_docs, _infer_segment_from_text, _kb_lookup_operational_docs
+- calls: _score_query_against_doc, isinstance, items, str, strip
+
+## _keyword_doc_match
+- lines: 38
+- called_by: _infer_segment_from_docs, _infer_segment_from_text
+- calls: _normalize_lookup_key, escape, get, isinstance, items, len, replace, search, str, strip, sub
+
+## _family_to_pack_id
+- lines: 13
+- called_by: none
+- calls: lower, str, strip
+
+## _stable_variant_index
+- lines: 11
+- called_by: none
+- calls: ord, str, strip
+
+## _split_user_operational_clauses
+- lines: 30
+- called_by: _build_user_operational_seed
+- calls: append, len, replace, split, str, strip, sub
+
+## _build_user_operational_seed
+- lines: 33
+- called_by: none
+- calls: _split_user_operational_clauses, add, append, join, len, lower, set, str, strip, sub
+
+## build_dynamic_context_frame
+- lines: 16
+- called_by: none
+- calls: none
+
+## _clean_scene_text
+- lines: 12
+- called_by: none
+- calls: rstrip, str, strip, sub
+
+## _drop_explanatory_opening
+- lines: 14
+- called_by: _generate_micro_scene_with_model, _upgrade_operational_reply_with_model
+- calls: _looks_explanatory_sentence, _split_sentences_pt, join, str, strip
+
+## _drop_abstract_closing
+- lines: 14
+- called_by: _generate_micro_scene_with_model, _upgrade_operational_reply_with_model
+- calls: _looks_explanatory_sentence, _split_sentences_pt, join, len, str, strip
+
+## _upgrade_weak_question
+- lines: 3
+- called_by: none
+- calls: str, strip
+
+## _segment_reference_example
+- lines: 27
+- called_by: _segment_micro_flow
+- calls: get, isinstance, lower, str, strip, upper
+
+## _pack_practical_add
+- lines: 3
+- called_by: _segment_micro_flow
+- calls: none
+
+## _segment_micro_flow
+- lines: 12
+- called_by: none
+- calls: _pack_practical_add, _segment_reference_example, rstrip, strip

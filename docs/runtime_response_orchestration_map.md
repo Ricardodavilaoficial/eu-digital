@@ -2,341 +2,370 @@
 
 ## Objetivo
 
-Mapear a orchestration runtime do:
+Mapear o bloco de orquestração estrutural do `conversational_front.py`.
 
-`services/conversational_front.py`
-
-Este documento descreve:
-- coordenação de fluxo;
-- arbitration;
-- material selection;
-- response progression;
-- runtime sync;
-- scene activation;
-- orchestration ownership.
-
-Não descreve:
-- extraction protocol;
-- modularização física;
-- discovery governance completa;
-- terminal governance completa.
+Este documento NÃO é para correção comportamental.
+É para preparar futura extração segura.
 
 ---
 
-# Descoberta central
+# Zona principal
 
-A runtime orchestration NÃO é:
-- apenas response_mode;
-- apenas pipeline;
-- apenas fallback.
+Arquivo:
+- services/conversational_front.py
 
-Ela funciona como:
+Região atual aproximada:
+- 8775–9185+
 
-`CAMADA SOBERANA DE COORDENAÇÃO`
+Nome arquitetural:
+- RUNTIME RESPONSE ORCHESTRATION
 
-entre:
-- discovery;
-- scene;
-- KB runtime;
-- final pipeline;
-- operational progression;
-- runtime recovery.
-
----
-
-# Responsabilidades principais
-
-## Runtime material selection
-
-Selecionar:
-- melhor material operacional;
-- runtime_short;
-- runtime_long;
-- micro_scene;
-- compact fallback;
-- operational references.
+Responsabilidade:
+- selecionar material operacional em runtime;
+- arbitrar `response_mode`;
+- controlar `micro_scene_allowed`;
+- aplicar bypass estrutural de DISCOVERY;
+- reforçar material tardio do `platform_kb`;
+- preparar `operational_contract` antes do `FINAL PIPELINE`.
 
 ---
 
-## Response arbitration
+# Subdomínios identificados
 
-Decidir:
-- DIRECT;
-- DISCOVERY;
-- SCENE;
-- CLOSING;
-- promotion;
-- degradation;
-- bypasses.
+## 1. Runtime material selection
 
----
+Responsável por escolher o melhor material do pack:
+- `direct_scene`
+- `runtime_long_text`
+- `runtime_short_reply`
+- `runtime_compact_reply`
+- `micro_scene`
 
-## Scene activation
-
-Controlar:
-- scene eligibility;
-- grounded operational context;
-- runtime scene activation;
-- discovery → scene transition.
+Observação:
+- quando `has_real_operational_context=True`, permite material mais rico;
+- quando `has_real_operational_context=False`, tenta preservar material compacto e evitar proceduralismo pesado.
 
 ---
 
-## Orchestration state sync
+## 2. Response mode arbitration
 
-Sincronizar:
-- topic;
-- operational state;
-- response_mode;
-- progression state;
-- runtime continuity.
+Responsável por rebaixar/elevar modo:
 
----
+- `SEND_LINK` → `CLOSING`
+- `global_pack_scene_ready` → `SCENE`
+- `needs_clarify/clarify_q` → `DISCOVERY`
+- pergunta `punctual/continuity` → força `DIRECT`
+- temas institucionais/preço/social/voz → evitam `SCENE`
 
-# Helpers principais
-
-## `_pick_runtime_scene_material(...)`
-
-Responsável por:
-- seleção do melhor material operacional runtime;
-- escolha contextual;
-- evitar mutação indevida de contrato.
-
-Classificação:
-`SOVEREIGN ORCHESTRATION`
+Observação:
+esta região parece ser o centro soberano atual de decisão estrutural.
 
 ---
 
-## `_apply_discovery_to_scene_bypass(...)`
+## 3. Discovery bypass
 
-Responsável por:
-- permitir:
-  `DISCOVERY → SCENE`
-- apenas quando há contrato operacional demonstrável.
+Responsável por permitir que contrato operacional real prevaleça sobre `DISCOVERY` quando já existe base demonstrativa suficiente.
 
-Classificação:
-`SOVEREIGN ORCHESTRATION`
-
----
-
-## `_apply_response_mode_arbitration(...)`
-
-Responsável por:
-- arbitration estrutural;
-- promotion/degradation;
-- fallback de modo.
-
-Classificação:
-`SOVEREIGN`
+Sinais:
+- `has_real_operational_context`
+- contrato com referência prática
+- sem `SEND_LINK`
+- sem `needs_clarify`
+- sem `clarify_q`
 
 ---
 
-## `_apply_current_turn_topic_reset(...)`
+## 4. Micro scene gating
 
-Responsável por:
-- reset estrutural de tópico;
-- evitar contaminação de continuidade.
+Responsável por calcular `micro_scene_allowed`.
 
-Classificação:
-`SOVEREIGN ORCHESTRATION`
+Sinais:
+- `response_mode == "SCENE"`
+- `segment_for_prompt`
+- `kb_anchor_strong`
+- `global_pack_scene_ready`
+- contrato hidratado com base operacional
 
----
-
-# Runtime orchestration flow
-
-## 1. Material inspection
-
-O runtime avalia:
-- operational contract;
-- runtime material;
-- KB hydration;
-- scene viability.
+Também força `micro_scene_allowed=False` para:
+- `DIRECT`
+- `DISCOVERY`
+- `CLOSING`
 
 ---
 
-## 2. Arbitration
+## 5. Direct scene / wrapper shaping
 
-Decide:
-- qual modo prevalece;
-- se DISCOVERY deve permanecer;
-- se SCENE pode emergir;
-- se DIRECT deve ser preservado.
+Responsável por permitir wrapper humano em fallback DIRECT compacto.
 
----
-
-## 3. Runtime synchronization
-
-Atualiza:
-- estado contextual;
-- continuidade;
-- progression state;
-- operational coherence.
+Importante:
+não reabre SCENE procedural.
+Apenas permite camada humana sobre material compacto.
 
 ---
 
-## 4. Final handoff
+## 6. Late KB reinforcement
 
-Entrega para:
-- FINAL PIPELINE;
-- terminal governance;
-- final polish.
+Responsável por reforçar material do `platform_kb` antes do retorno direto.
 
----
+Funções:
+- busca `_platform_pack_material`
+- escolhe `_best_scene`
+- limpa campos pesados quando não há contexto real
+- preserva núcleo compacto humanizável
+- sincroniza flags em `operational_contract`
 
-# Scene orchestration
-
-## Requisitos para SCENE
-
-SCENE só pode emergir quando:
-- existe contexto operacional real;
-- há material runtime válido;
-- `micro_scene_allowed` permite;
-- não há fallback contaminado;
-- a promoção é estruturalmente segura.
-
----
-
-## Gates principais
-
-- `micro_scene_allowed`
-- `allow_scene_runtime`
-
----
-
-## Riscos
-
-- tutorialização;
-- falso contexto operacional;
-- scene resurrection;
-- runtime contamination;
-- PACK_A bleed.
-
----
-
-# Runtime continuity
-
-## Objetivo
-
-Evitar:
-- drift contextual;
-- continuidade falsa;
-- mistura de tópicos;
-- persistência indevida de scene;
-- herança incorreta de discovery.
-
----
-
-## Controle associado
-
-- topic reset;
-- response arbitration;
-- orchestration sync;
-- runtime progression control.
-
----
-
-# Relação com FINAL PIPELINE
-
-## Runtime orchestration NÃO é final pipeline
-
-A orchestration:
-- decide;
-- coordena;
-- arbitra;
-- promove;
-- degrada;
-- sincroniza.
-
-O FINAL PIPELINE:
-- sanitize;
-- polish;
-- normalize;
-- sync;
-- unwrap;
-- finaliza superfície.
-
----
-
-# SAFE vs SOVEREIGN
-
-## SAFE
-
-Pode:
-- normalize;
-- sanitize;
-- polish;
-- sync.
-
----
-
-## SOVEREIGN ORCHESTRATION
-
-Controla:
-- arbitration;
-- promotion;
-- degradation;
-- runtime continuity;
-- scene activation;
-- operational progression.
-
-Nunca mover cedo.
+Risco:
+alto. Não extrair sem testes e leitura completa.
 
 ---
 
 # Zonas congeladas
 
-## PROIBIDO MOVER AGORA
+Não mexer ainda:
 
-- arbitration runtime;
-- scene activation;
-- `micro_scene_allowed`;
-- runtime progression;
-- discovery → scene bypass;
-- orchestration recovery;
-- runtime resurrection.
-
----
-
-# Estado atual
-
-A orchestration:
-- já está parcialmente delimitada;
-- possui helpers locais claros;
-- já demonstra macrodomínio consistente.
-
-Porém:
-- ainda depende fortemente do core;
-- ainda toca governanças soberanas;
-- ainda encosta em recovery runtime.
+- lógica de `global_pack_scene_ready`
+- cálculo de `micro_scene_allowed`
+- late KB reinforcement
+- limpeza de campos em `operational_contract`
+- decisão `DIRECT ↔ SCENE`
+- fallback compacto
+- JSON_FAIL_SAFE próximo ao bloco
 
 ---
 
-# Decisão consolidada
+# Próximo trabalho
 
-A runtime orchestration deve permanecer no core nesta fase.
+Classificar cada subdomínio como:
 
-Antes de qualquer extração:
-- consolidar boundaries;
-- estabilizar governance;
-- reduzir recovery implícito;
-- finalizar mapeamento de ownership runtime.
+- EXTRAÍVEL AGORA
+- EXTRAÍVEL DEPOIS
+- CONGELADO
+- LEGADO
+- DUPLICADO
+- CRÍTICO
 
 ---
 
-# Conclusão
+# Decisão atual
 
-A runtime orchestration é:
+Ainda não extrair para módulo.
 
-`CAMADA SOBERANA DE COORDENAÇÃO DO FRONT`
+Manter como zona delimitada dentro do `conversational_front.py` até:
+- mapear duplicações;
+- entender dependências;
+- validar com deploy controlado.
 
-Ela:
-- conecta governanças;
-- coordena runtime;
-- arbitra modos;
-- ativa cenas;
-- protege continuidade operacional.
+---
 
-A modularização prematura desta camada teria alto risco de:
-- regressão estrutural;
-- runtime contamination;
-- resurrection bugs;
-- perda de integridade operacional.
+# Classificação inicial de risco — 2026-05-26
+
+## Runtime material selection
+Risco: médio.
+
+Pode ser extraível depois, mas ainda depende de:
+- `selected_pack_id`
+- `_platform_pack_material`
+- `has_real_operational_context`
+- `operational_contract`
+- `runtime_*`
+
+Decisão:
+não extrair agora.
+
+## Response mode arbitration
+Risco: médio/alto.
+
+Parece ser o centro soberano atual de decisão estrutural.
+Qualquer alteração pode mudar DIRECT/SCENE/DISCOVERY/CLOSING.
+
+Decisão:
+congelado para extração por enquanto.
+
+## Discovery bypass
+Risco: médio.
+
+É pequeno, mas altera DISCOVERY para SCENE quando há contrato operacional.
+Pode ser helper futuro, mas só após testes.
+
+Decisão:
+mapear mais antes.
+
+## Micro scene gating
+Risco: alto.
+
+Controla `micro_scene_allowed` e pode reabrir tutorialização indevida.
+
+Decisão:
+não extrair agora.
+
+## Direct scene / wrapper shaping
+Risco: médio.
+
+Pode ser isolado futuramente, mas depende de:
+- `has_structured_scene`
+- `global_pack_fallback`
+- `runtime_compact_reply`
+- `question_type`
+
+Decisão:
+aguardar.
+
+## Late KB reinforcement
+Risco: alto.
+
+Muito acoplado a platform_kb, fallback compacto e limpeza do contrato.
+
+Decisão:
+congelado.
+
+---
+
+# Atualização — Discovery bypass extraído
+
+Commits:
+- 4aefeed — adiciona helper de discovery scene bypass
+- 98f4e7e — aplica helper no discovery scene bypass
+
+## Resultado
+
+O subdomínio “Discovery bypass” foi encapsulado em helper local:
+
+`_apply_discovery_to_scene_bypass(...)`
+
+Responsabilidade:
+- promover `DISCOVERY` para `SCENE` quando já existe contrato operacional demonstrável;
+- limpar `needs_clarify`;
+- limpar `clarify_q`;
+- marcar `micro_scene_allowed=True`;
+- atualizar `response_mode` no contrato.
+
+## Decisão
+
+Manter helper local por enquanto.
+Não mover para módulo ainda.
+
+---
+
+# Atualização — Runtime scene material extraído
+
+Commits:
+- 2ed9322 — adiciona helper de runtime scene material
+- 71d9e8c — usa helper no runtime scene material
+
+## Resultado
+
+A seleção do melhor material operacional em runtime foi encapsulada em:
+
+`_pick_runtime_scene_material(...)`
+
+Responsabilidade:
+- escolher o melhor texto entre:
+  - `direct_scene`
+  - `runtime_long_text`
+  - `runtime_short_reply`
+  - `runtime_compact_reply`
+  - `micro_scene`
+
+Importante:
+- o helper NÃO muta `operational_contract`;
+- NÃO altera `response_mode`;
+- NÃO chama modelo;
+- NÃO consulta KB;
+- apenas preserva a prioridade de seleção já existente.
+
+## Decisão
+
+Manter helper local por enquanto.
+A mutação do contrato operacional continua congelada dentro do bloco principal.
+
+---
+
+# Atualização — Current turn topic reset extraído
+
+Commit:
+- eb398f4 — refactor: encapsula reset de topico no front
+
+## Resultado
+
+O reset estrutural de tópico foi encapsulado em helper local:
+
+`_apply_current_turn_topic_reset(...)`
+
+Responsabilidade:
+- quando `current_turn_topic_reset=True`, força `response_mode="DIRECT"`;
+- desliga `micro_scene_allowed`;
+- marca `topic="OTHER"` no contrato;
+- limpa `has_practical_scene`;
+- limpa `global_pack_fallback`.
+
+## Decisão
+
+Manter helper local por enquanto.
+
+Não mover para módulo ainda.
+
+## Observação
+
+O próximo bloco candidato seria `global_pack_scene_ready`, mas ele permanece congelado porque encosta diretamente em:
+- fallback global;
+- promoção para `SCENE`;
+- bug conhecido do PACK_A_AGENDA tutorializando respostas.
+
+---
+
+# Atualização — Response mode arbitration extraído
+
+Commit:
+- 7c80c4c — refactor: encapsula arbitragem de response mode
+
+## Resultado
+
+A arbitragem estrutural de `response_mode` foi encapsulada em helper local:
+
+`_apply_response_mode_arbitration(...)`
+
+Responsabilidade:
+- força `CLOSING` quando `nextStep=SEND_LINK`;
+- promove `SCENE` quando `global_pack_scene_ready=True`;
+- força `DISCOVERY` quando há `needs_clarify` ou `clarify_q`;
+- rebaixa `SCENE` para `DIRECT` em perguntas pontuais/de continuidade;
+- rebaixa `SCENE` para `DIRECT` em tópicos institucionais como preço, trial, ativação, definição, social e voz.
+
+## Decisão
+
+Manter helper local por enquanto.
+
+Não mover para módulo ainda.
+
+## Observação
+
+Este helper começa a formar, junto com:
+- `_apply_current_turn_topic_reset(...)`
+- `_apply_discovery_to_scene_bypass(...)`
+
+um futuro domínio natural de `front_response_mode.py`.
+
+Ainda não criar esse módulo agora.
+
+---
+
+# Decisão — Micro scene gate mantido congelado
+
+## Bloco
+
+`GATE SOBERANO DE MICROCENA / KB OPERACIONAL`
+
+## Decisão
+
+Não extrair agora.
+
+## Motivo
+
+Apesar de pequeno, o bloco controla `micro_scene_allowed`, sincroniza `response_mode` no `operational_contract` e no `base_operational_contract`, e encosta diretamente nos bugs comportamentais congelados envolvendo SCENE indevida, fallback global e tutorialização do PACK_A_AGENDA.
+
+## Status
+
+Classificação:
+- CRÍTICO
+- EXTRAÍVEL DEPOIS
+- CONGELADO AGORA
