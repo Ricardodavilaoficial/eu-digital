@@ -635,3 +635,147 @@ Campos:
 A futura extração do FINAL PIPELINE não deve receber dezenas de parâmetros diretos.
 
 Deve receber objetos/contextos agrupados para preservar legibilidade, reduzir acoplamento e permitir testes isolados.
+
+---
+
+# Consolidação — Fase de mapeamento arquitetural concluída
+
+## Status atual
+
+A refatoração segura do `services/conversational_front.py` avançou de uma fase de micro-extrações para uma fase de engenharia arquitetural consciente.
+
+O arquivo ainda é grande, mas deixou de ser uma massa amorfa. Agora existem macrodomínios, subdomínios, helpers locais, zonas congeladas e contratos futuros mapeados.
+
+## Principais conquistas
+
+### 1. Runtime response orchestration delimitada
+
+A região de runtime orchestration foi identificada como macrodomínio responsável por:
+- seleção de material runtime;
+- arbitragem de `response_mode`;
+- reset estrutural de tópico;
+- bypass de discovery;
+- controle de `micro_scene_allowed`;
+- preparação do contrato operacional antes do pipeline final.
+
+Helpers locais já consolidados:
+- `_pick_runtime_scene_material(...)`
+- `_apply_current_turn_topic_reset(...)`
+- `_apply_response_mode_arbitration(...)`
+- `_apply_discovery_to_scene_bypass(...)`
+
+### 2. Zonas perigosas congeladas
+
+Foram classificadas como congeladas por enquanto:
+- `micro_scene_allowed gate`;
+- `late KB reinforcement`;
+- `JSON_FAIL_SAFE`;
+- fluxo sensível do `PACK_A_AGENDA`;
+- mutações profundas do `operational_contract`.
+
+Decisão:
+não mexer nessas zonas até haver contrato melhor e testes mais seguros.
+
+### 3. FINAL PIPELINE identificado como macrodomínio modularizável
+
+A região `12003+` foi reconhecida como macrodomínio de pós-processamento final.
+
+Responsabilidades:
+- sanitize final;
+- payload replacement;
+- direct scene payload;
+- compact fallback;
+- scene upgrade;
+- human wrapper;
+- spoken/reply sync;
+- final polish;
+- final guard.
+
+Conclusão:
+o `FINAL PIPELINE` é hoje o candidato mais forte para futura extração em `front_final_pipeline.py`.
+
+### 4. Dependências do FINAL PIPELINE auditadas
+
+Dependências fortes:
+- `reply_text`
+- `spoken_text`
+- `reply_source`
+- `response_mode`
+
+Dependências moderadas:
+- `operational_contract`
+- `base_operational_contract`
+
+Dependências contextuais:
+- `kb_context`
+- `kb_snapshot`
+- `debug_info`
+- `understanding`
+- `decider`
+- `user_text`
+- `state_summary`
+
+### 5. Mutação do FINAL PIPELINE auditada
+
+Saídas principais:
+- `reply_text`
+- `spoken_text`
+- `reply_source`
+
+Saídas secundárias:
+- `name_use`
+- `operational_reference`
+- `debug_info`
+
+Conclusão:
+o pipeline já demonstra padrão natural de input/output.
+
+### 6. Esboço de contrato futuro criado
+
+Foi desenhado o agrupamento futuro:
+
+- `FinalSurfaceState`
+- `FinalDecisionContext`
+- `FinalOperationalContext`
+- `FinalLeadContext`
+- `FinalKbContext`
+
+Objetivo:
+evitar futura função com dezenas de parâmetros soltos.
+
+## Commits-chave desta fase
+
+- `eb398f4` — encapsula reset de topico no front
+- `25539ba` — registra reset de topico na runtime orchestration
+- `7c80c4c` — encapsula arbitragem de response mode
+- `53b6b63` — registra arbitragem de response mode
+- `98e9564` — congela micro scene gate
+- `c661f49` — registra macrodominios do front
+- `9140625` — registra dependencias do final pipeline
+- `4ec0fc6` — registra subdominios do final pipeline
+- `fd9d292` — audita dependencias funcionais do final pipeline
+- `f512d54` — registra mutacoes do final pipeline
+- `cb5345c` — esboca contrato futuro do final pipeline
+
+## Decisão estratégica
+
+A próxima grande fase deve ser:
+
+Preparação da primeira modularização real, provavelmente começando pelo `FINAL PIPELINE`.
+
+Ainda NÃO criar `front_final_pipeline.py` imediatamente.
+
+Antes disso:
+- mapear leitura implícita restante;
+- revisar helpers locais usados pelo final pipeline;
+- decidir quais helpers sobem para módulos existentes;
+- desenhar contrato mínimo de entrada/saída;
+- só então fazer extração incremental.
+
+## Regra preservada
+
+Continuar sem corrigir bugs comportamentais durante esta fase estrutural.
+
+As dívidas comportamentais seguem registradas em:
+- `docs/front_refactor_debts.md`
+
