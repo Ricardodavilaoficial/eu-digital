@@ -1173,3 +1173,16 @@ Esses helpers:
 Classificação:
 `OPERATIONAL SURFACE ENHANCEMENT`
 
+# Atualização — Discovery sovereignty
+
+Foi confirmado que:
+DISCOVERY atua como governança soberana de integridade de identidade.
+
+Não é apenas geração de pergunta.
+
+Também foi confirmado que:
+`services/front_guards.py`
+já contém extraction boundaries estáveis usados pela DISCOVERY GOVERNANCE.
+
+
+

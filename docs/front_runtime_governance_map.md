@@ -168,3 +168,54 @@ O runtime possui:
 - late sovereign terminals.
 
 O estado final de `response_mode` depende da ordem soberana dessas camadas.
+
+# Atualização — DISCOVERY GOVERNANCE
+
+## Discovery NÃO é geração de pergunta
+
+Foi confirmado que o domínio DISCOVERY atua como:
+
+`identity integrity governance`
+
+e não apenas como mecanismo de perguntas.
+
+## Camadas identificadas
+
+### DISCOVERY STATE ENFORCEMENT
+- `_apply_discovery_mode_identity_guard(...)`
+
+Responsabilidade:
+- preservar estado clarify;
+- preservar obrigatoriedade de identidade.
+
+---
+
+### DISCOVERY STABILIZATION
+- `_apply_identity_clarify_guard(...)`
+
+Responsabilidade:
+- preservar pergunta já existente;
+- estabilizar append;
+- controlar orçamento estrutural.
+
+Importante:
+- opera em múltiplos passes no mesmo ramo runtime.
+
+---
+
+### DISCOVERY VALIDATION
+- `_front_identity_request_is_valid(...)`
+- `services/front_guards.py`
+
+Responsabilidade:
+- validar perguntas de identidade;
+- impedir discovery inválido.
+
+---
+
+### LAST RESORT IDENTITY GENERATION
+- `_front_build_identity_request(...)`
+
+Responsabilidade:
+- gerar pergunta mínima apenas quando nenhuma pergunta válida existir.
+

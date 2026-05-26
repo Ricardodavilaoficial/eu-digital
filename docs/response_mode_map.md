@@ -132,3 +132,17 @@ Responsabilidade:
 
 Importante:
 esses pontos possuem prioridade superior ao inference inicial.
+
+# Relação entre RESPONSE MODE e DISCOVERY
+
+DISCOVERY possui soberania superior em cenários de identidade incompleta.
+
+Late discovery enforcement pode sobrescrever:
+- DIRECT
+- SCENE
+
+quando:
+- falta nome;
+- falta segmento;
+- discovery_resolved == False.
+

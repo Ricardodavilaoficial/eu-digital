@@ -436,3 +436,19 @@ nem
   - 9862
   - 9910
 
+# Atualização — DISCOVERY GOVERNANCE
+
+## DISCOVERY STATE ENFORCEMENT
+- `_apply_discovery_mode_identity_guard(...)`
+
+## DISCOVERY STABILIZATION
+- `_apply_identity_clarify_guard(...)`
+
+## DISCOVERY VALIDATION
+- `_front_identity_request_is_valid(...)`
+- boundary já extraído:
+  - `services/front_guards.py`
+
+## LAST RESORT IDENTITY GENERATION
+- `_front_build_identity_request(...)`
+
