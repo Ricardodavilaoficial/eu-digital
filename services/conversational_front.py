@@ -5070,6 +5070,84 @@ def _sync_spoken_after_technical_rescue(
         return str(reply_text or spoken_text or "").strip()
 
 
+def _apply_final_surface_polish(
+    *,
+    reply_text: str,
+    spoken_text: str,
+    topic: str,
+    confidence: str,
+    user_text: str,
+    kb_context: dict | None,
+    kb_snapshot: str,
+    free_mode: bool,
+    apply_sales_guardrails,
+    operational_contract: dict | None,
+    base_operational_contract: dict | None,
+):
+    """
+    Encapsula o polimento final seguro da superfície.
+
+    Regras:
+    - não decide intenção;
+    - não altera response_mode;
+    - não altera micro_scene_allowed;
+    - não monta KB;
+    - não gera microcena;
+    - apenas aplica sanitize, guardrails de superfície e sync spoken/reply.
+    """
+    try:
+        try:
+            _kb_obj = _try_parse_kb_json(kb_snapshot)
+
+            reply_text = _sanitize_unverified_time_claims(reply_text, _kb_obj, kb_snapshot)
+            spoken_text = _sanitize_unverified_time_claims(spoken_text, _kb_obj, kb_snapshot)
+        except Exception:
+            pass
+
+        try:
+            if (not free_mode) and apply_sales_guardrails is not None:
+                gr = apply_sales_guardrails(
+                    reply_text=reply_text,
+                    spoken_text=spoken_text,
+                    topic=topic,
+                    confidence=confidence,
+                    user_text=user_text,
+                    kb_context=kb_context if isinstance(kb_context, dict) else {},
+                )
+                if isinstance(gr, dict):
+                    reply_text = str(gr.get("reply_text") or reply_text or "").strip()
+                    spoken_text = str(gr.get("spoken_text") or spoken_text or "").strip()
+        except Exception:
+            pass
+
+        try:
+            reply_text = wrap_show_response(reply_text)
+        except Exception:
+            pass
+
+        reply_text = _sanitize_user_facing_reply(reply_text)
+        spoken_text = _sanitize_user_facing_reply(spoken_text or reply_text)
+
+        if _looks_like_technical_output(reply_text):
+            reply_text = _build_contract_consequence(
+                operational_contract if isinstance(operational_contract, dict) else
+                (base_operational_contract if isinstance(base_operational_contract, dict) else {})
+            )
+
+        spoken_text = _sync_spoken_after_technical_rescue(
+            reply_text=reply_text,
+            spoken_text=spoken_text,
+        )
+
+        return reply_text, spoken_text
+
+    except Exception:
+        return (
+            str(reply_text or "").strip(),
+            str(spoken_text or reply_text or "").strip(),
+        )
+
+
 def _apply_final_reply_size_policy(
     *,
     reply_text: str,
@@ -12288,65 +12366,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
 
 
-        # ----------------------------------------------------------
-        # Guardrails mínimos (robustos, sem virar "frase pronta")
-        # - bloquear prazos/tempos inventados
-        # - não recriar pergunta/CTA por fora da IA
-        # ----------------------------------------------------------
-        try:
-            _kb_obj = _try_parse_kb_json(kb_snapshot)
-
-            reply_text = _sanitize_unverified_time_claims(reply_text, _kb_obj, kb_snapshot)
-            spoken_text = _sanitize_unverified_time_claims(spoken_text, _kb_obj, kb_snapshot)
-        except Exception:
-            pass
-
-        try:
-            # não remontar a resposta aqui; a IA já recebeu a cena do KB no prompt
-            pass
-        except Exception:
-            pass
-
-        # Guardrails finais (anti-invenção), fora do free_mode.
         # =========================================================
-        # FINAL POLISH — GUARDRAILS / WRAP / SANITIZE / SPOKEN SYNC
+        # FINAL SURFACE POLISH — SANITIZE / GUARDRAILS / SPOKEN SYNC
         # =========================================================
-        try:
-            if (not free_mode) and apply_sales_guardrails is not None:
-                gr = apply_sales_guardrails(
-                    reply_text=reply_text,
-                    spoken_text=spoken_text,
-                    topic=topic,
-                    confidence=confidence,
-                    user_text=user_text,
-                    kb_context=kb_context if isinstance(kb_context, dict) else {},
-                )
-                guardrail_reply_before = reply_text
-                guardrail_spoken_before = spoken_text
-                if isinstance(gr, dict):
-                    reply_text = str(gr.get("reply_text") or reply_text or "").strip()
-                    spoken_text = str(gr.get("spoken_text") or spoken_text or "").strip()
-        except Exception:
-            pass
-
-
-
-        try:
-            reply_text = wrap_show_response(reply_text)
-        except Exception:
-            pass
-
-        reply_text = _sanitize_user_facing_reply(reply_text)
-        spoken_text = _sanitize_user_facing_reply(spoken_text or reply_text)
-
-        if _looks_like_technical_output(reply_text):
-            reply_text = _build_contract_consequence(
-                operational_contract if 'operational_contract' in locals() else
-                (base_operational_contract if 'base_operational_contract' in locals() else {})
-            )
-        spoken_text = _sync_spoken_after_technical_rescue(
+        reply_text, spoken_text = _apply_final_surface_polish(
             reply_text=reply_text,
             spoken_text=spoken_text,
+            topic=topic,
+            confidence=confidence,
+            user_text=user_text,
+            kb_context=kb_context if isinstance(kb_context, dict) else {},
+            kb_snapshot=kb_snapshot,
+            free_mode=free_mode,
+            apply_sales_guardrails=apply_sales_guardrails,
+            operational_contract=operational_contract if 'operational_contract' in locals() else {},
+            base_operational_contract=base_operational_contract if 'base_operational_contract' in locals() else {},
         )
 
 
