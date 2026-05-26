@@ -239,3 +239,110 @@ O objetivo agora é usar este mapa como referência para:
 - preservar domínios soberanos;
 - preparar modularização com segurança.
 
+# Atualização — Boundaries após auditoria de ownership/runtime
+
+## Nova regra de fronteira
+
+Nenhum módulo futuro deve misturar:
+
+- SAFE FINAL PIPELINE
+com
+- RUNTIME RECOVERY INFRASTRUCTURE
+ou
+- OPERATIONAL RECONSTRUCTION ENGINE.
+
+## SAFE FINAL PIPELINE
+
+Pode conter apenas operações de superfície previsíveis:
+
+- size policy;
+- sanitize;
+- polish;
+- spoken/reply sync;
+- response surface normalization;
+- unwrap superficial;
+- preservação de candidato final, se não reabrir KB nem reconstruction.
+
+Não deve conter:
+
+- `_build_kb_show_reply`
+- `_build_kb_anchor_reply`
+- `_generate_micro_scene_with_model`
+- `_front_build_structured_assembly_reply`
+- `allow_scene_runtime`
+- recovery baseado em `micro_scene_allowed`
+- discovery enforcement
+- response_mode arbitration.
+
+## RUNTIME RECOVERY INFRASTRUCTURE
+
+Domínio confirmado.
+
+Inclui:
+- late KB show injection;
+- KB anchor fallback;
+- candidate resurrection;
+- failsafe fallback;
+- scene runtime recovery;
+- payload recovery.
+
+Trechos críticos:
+- 12424–12545
+- 12512–12545
+- 12842–12870
+- 12917–12931
+
+Classificação:
+- muito alto risco.
+
+Não extrair cedo.
+
+## RESPONSE MODE GOVERNANCE
+
+Domínio confirmado.
+
+Inclui:
+- promoção DIRECT → SCENE;
+- degradação SCENE → DIRECT;
+- força DISCOVERY;
+- normalização transversal;
+- bypass discovery → scene.
+
+Classificação:
+- médio/alto risco.
+
+## SCENE GOVERNANCE
+
+Domínio confirmado.
+
+Gate principal:
+- `micro_scene_allowed`
+
+Runtime secundário:
+- `allow_scene_runtime`
+
+Classificação:
+- alto risco.
+
+## DISCOVERY GOVERNANCE
+
+Domínio confirmado.
+
+Inclui:
+- discovery prompt;
+- discovery early terminal;
+- discovery guarantee antes de direct return;
+- discovery identity guard;
+- DISCOVERY terminal.
+
+Classificação:
+- alto risco.
+
+## Terminal ownership
+
+O `handle()` possui três terminais reais:
+- Early Discovery Terminal;
+- Direct Scene Early Terminal;
+- Official Final Pipeline.
+
+Qualquer extração futura precisa preservar essa diferença.

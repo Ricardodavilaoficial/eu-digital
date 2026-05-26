@@ -1005,3 +1005,101 @@ E NÃO:
 - identity;
 - question policy;
 - final KB force/recovery.
+
+# Atualização — Auditoria de soberania runtime e pseudo-finais
+
+Data: 2026-05-26
+
+## Descoberta central
+
+O `conversational_front.py` não é um pipeline linear. Ele funciona como uma federação de pipelines soberanos concorrentes.
+
+Foram identificados:
+
+- múltiplos terminais;
+- múltiplos ownership layers de `reply_text`;
+- runtime recovery infrastructure;
+- response_mode governance distribuída;
+- DISCOVERY governance;
+- SCENE governance;
+- terminal payload governors;
+- anti-corruption governance para envelope JSON.
+
+## Terminais identificados
+
+### Early Discovery Terminal
+Trecho aproximado:
+- 10049+
+
+Responsabilidade:
+- retornar DISCOVERY cedo;
+- bypassar o final pipeline oficial.
+
+Classificação:
+- terminal soberano controlado.
+
+### Direct Scene Early Terminal
+Trecho aproximado:
+- 9969–10010
+
+Responsabilidade:
+- retornar `front_direct_scene` cedo quando `_continue_after_direct_scene` é falso;
+- bypassar final surface polish, final guard e terminal payload governors.
+
+Classificação:
+- early terminal soberano de alto risco.
+
+### Official Final Pipeline
+Trecho aproximado:
+- 12400–12935
+
+Responsabilidade:
+- final surface polish;
+- final recovery;
+- response mode surface;
+- structured assembly tardio;
+- humanization;
+- payload rebuild;
+- failsafe;
+- unwrap final;
+- sanitize terminal;
+- `return result`.
+
+Classificação:
+- terminal oficial verdadeiro.
+
+## Ownership layers identificados
+
+### Content ownership
+Quem decide ou substitui conteúdo:
+- `_build_kb_show_reply`
+- `_build_kb_anchor_reply`
+- `_generate_micro_scene_with_model`
+- `_front_build_structured_assembly_reply`
+- fallbacks e recoveries.
+
+### Surface ownership
+Quem altera forma:
+- `_apply_final_surface_polish`
+- `_apply_response_mode_surface`
+- `_front_finalize_reply_surface`
+- `_front_remove_unsafe_nominal_opening`
+- `_humanize_reply_with_lead_context`
+
+### Payload ownership
+Quem controla o objeto final:
+- `out = {...}`
+- `_sanitize_front_result_payload`
+- `_unwrap_front_json_envelope`
+- final payload blindagem.
+
+## Decisão
+
+Não iniciar extração física ainda.
+
+Antes:
+- documentar boundaries;
+- congelar domínios soberanos;
+- preservar SAFE FINAL PIPELINE separado de recovery/reconstruction;
+- evitar mover helpers por proximidade de linha.
+
