@@ -2,607 +2,361 @@
 
 ## Objetivo
 
-Mapear futuras fronteiras físicas de módulos do `conversational_front.py`.
+Mapear futuras fronteiras físicas do `services/conversational_front.py`.
 
-Este documento NÃO autoriza extração imediata.
-Ele serve para orientar uma modularização futura, segura e baseada na arquitetura real descoberta.
+Este documento NÃO autoriza extrações imediatas.
+
+Seu objetivo é:
+- preservar boundaries corretos;
+- evitar mini-monólitos;
+- impedir mistura de soberanias;
+- orientar modularização futura segura.
 
 ---
 
-# Regra central
+# Regra arquitetural central
 
-A modularização futura deve separar domínios por responsabilidade real, não por proximidade de linhas.
+As futuras extrações devem separar:
+- responsabilidade real;
+- soberania runtime;
+- ownership de estado;
+- governance;
+- recovery;
+- surface.
+
+Nunca modularizar por proximidade de linhas.
 
 ---
 
 # 1. front_final_pipeline.py
 
 ## Domínio
+`SAFE FINAL PIPELINE`
 
-SAFE FINAL PIPELINE
+## Responsabilidades
+- sanitize final;
+- response surface normalization;
+- spoken/reply sync;
+- final polish;
+- size policy;
+- payload shaping superficial;
+- preservação de melhor candidato final.
 
 ## Pode conter futuramente
-
 - `_apply_final_reply_size_policy(...)`
 - `_apply_final_surface_polish(...)`
 - `_apply_response_mode_surface(...)`
 - `_restore_final_candidate_if_degraded(...)`
 
-## Responsabilidades
+## NÃO deve conter
+- runtime recovery;
+- KB reinjection;
+- reconstruction;
+- discovery governance;
+- response arbitration;
+- micro_scene generation;
+- terminals soberanos.
 
-- sanitize final;
-- size policy;
-- surface polish;
-- spoken/reply sync;
-- response surface normalization;
-- preservação de melhor candidato final.
-
-## Não deve conter
-
-- `_build_kb_anchor_reply(...)`
-- `_build_kb_show_reply(...)`
-- `_generate_micro_scene_with_model(...)`
-- `_build_last_resort_operational_reply(...)`
-- `_should_allow_question(...)`
-- `_apply_discovery_mode_identity_guard(...)`
+## Classificação
+`SAFE`
 
 ---
 
 # 2. front_surface_enhancement.py
 
 ## Domínio
+`OPERATIONAL SURFACE ENHANCEMENT`
 
-OPERATIONAL SURFACE ENHANCEMENT
+## Responsabilidades
+- refino operacional localizado;
+- consequence generation;
+- enhancement superficial;
+- melhoria contextual da resposta.
 
 ## Pode conter futuramente
-
 - `_upgrade_operational_reply_with_model(...)`
 - `_generate_consequence_with_model(...)`
 - `_build_contract_consequence(...)`
 
-## Responsabilidades
+## NÃO deve conter
+- reconstruction;
+- recovery transversal;
+- response governance;
+- runtime mutation.
 
-- melhorar superfície operacional já existente;
-- reescrever texto operacional sem mutar runtime;
-- gerar consequência curta e controlada.
+## Classificação
+`SEMI-SAFE`
+
+---
+
+# 3. front_response_mode.py
+
+## Domínio
+`RESPONSE MODE GOVERNANCE`
+
+## Responsabilidades
+- DIRECT / DISCOVERY / SCENE / CLOSING;
+- arbitration;
+- structural bypass;
+- mode normalization;
+- topic reset;
+- scene promotion.
+
+## Pode conter futuramente
+- `_apply_current_turn_topic_reset(...)`
+- `_apply_response_mode_arbitration(...)`
+- `_apply_discovery_to_scene_bypass(...)`
+- `_infer_response_mode_from_signals(...)`
 
 ## Risco
+Altera comportamento estrutural e comercial.
 
-Médio.
-
-Motivo:
-usa IA, mas não deve mutar contract, response_mode ou micro_scene_allowed.
+## Classificação
+`SOVEREIGN`
 
 ---
 
-# 3. front_operational_reconstruction.py
+# 4. front_sovereign_decision.py
 
 ## Domínio
-
-OPERATIONAL RECONSTRUCTION ENGINE
-
-## Pode conter futuramente
-
-- `_generate_micro_scene_with_model(...)`
-- `_compose_grounded_scene_with_progression(...)`
-- `_select_structured_scene_steps(...)`
-- validadores de progressão operacional ligados a reconstrução.
+`DISCOVERY / IDENTITY GOVERNANCE`
 
 ## Responsabilidades
+- identity enforcement;
+- clarify governance;
+- question authorization;
+- discovery stabilization;
+- discovery integrity.
 
-- gerar microcena;
-- reconstruir progressão operacional;
-- validar densidade operacional;
-- recompor cena runtime.
+## Pode conter futuramente
+- `_should_allow_question(...)`
+- `_apply_discovery_mode_identity_guard(...)`
+- `_apply_identity_clarify_guard(...)`
 
-## Atenção
+## NÃO deve misturar com
+- final polish;
+- runtime recovery;
+- KB runtime;
+- reconstruction.
 
-Este módulo NÃO deve nascer cedo.
-
-Antes de extraí-lo:
-- separar geração de mutação;
-- separar validação de fallback;
-- remover efeitos colaterais implícitos;
-- mapear todos os callsites.
+## Classificação
+`SOVEREIGN`
 
 ---
 
-# 4. front_runtime_recovery.py
+# 5. front_runtime_recovery.py
 
 ## Domínio
+`RUNTIME RECOVERY INFRASTRUCTURE`
 
-RUNTIME RECOVERY INFRASTRUCTURE
+## Responsabilidades
+- runtime resurrection;
+- fallback recovery;
+- scene recovery;
+- late KB reinjection;
+- operational reconstruction tardia.
 
 ## Pode conter futuramente
-
 - `_build_kb_anchor_reply(...)`
 - `_build_kb_show_reply(...)`
 - `_build_last_resort_operational_reply(...)`
 
-## Responsabilidades
-
-- fallback operacional;
-- recovery transversal;
-- reconstrução após degradação;
-- reanimação operacional;
-- fallback final baseado em KB/runtime.
-
 ## Risco
-
 Muito alto.
 
-Motivo:
-é transversal, possui múltiplos callsites e pode explicar bugs históricos de scene resurrection, PACK_A bleed e fallback fantasma.
+Pode explicar:
+- scene resurrection bugs;
+- PACK_A bleed;
+- fallback fantasma;
+- runtime contamination.
+
+## Classificação
+`HIGH RISK SOVEREIGN`
 
 ---
 
-# 5. front_sovereign_decision.py
+# 6. front_operational_reconstruction.py
 
 ## Domínio
-
-SOVEREIGN FINAL DECISION
-
-## Pode conter futuramente
-
-- `_should_allow_question(...)`
-- `_apply_discovery_mode_identity_guard(...)`
-- futuras políticas de identity/discovery/clarify.
+`OPERATIONAL RECONSTRUCTION ENGINE`
 
 ## Responsabilidades
-
-- política de perguntas;
-- autorização de discovery;
-- identity guard;
-- clarify guard;
-- decisões soberanas finais.
-
-## Não deve ser misturado com
-
-- final surface polish;
-- sanitize;
-- runtime recovery;
-- reconstruction engine.
-
----
-
-# 6. front_response_mode.py
-
-## Domínio
-
-RESPONSE MODE ORCHESTRATION
+- micro_scene generation;
+- operational progression;
+- grounded operational flow;
+- scene rebuilding;
+- progression validation.
 
 ## Pode conter futuramente
+- `_generate_micro_scene_with_model(...)`
+- `_compose_grounded_scene_with_progression(...)`
+- `_select_structured_scene_steps(...)`
 
-- `_apply_current_turn_topic_reset(...)`
-- `_apply_response_mode_arbitration(...)`
-- `_apply_discovery_to_scene_bypass(...)`
-- `_normalize_response_mode(...)`
-- `_infer_response_mode_from_signals(...)`
-
-## Responsabilidades
-
-- arbitragem DIRECT / DISCOVERY / SCENE / CLOSING;
-- reset estrutural de tópico;
-- bypass discovery → scene;
-- regras estruturais de modo.
-
-## Risco
-
-Médio/alto.
-
-Motivo:
-altera forma da resposta e pode impactar comportamento comercial.
-
----
-
-# Ordem futura recomendada de extração
-
-## Fase 1 — Baixo risco
-
-- `front_final_pipeline.py`
-- apenas SAFE FINAL PIPELINE.
-
-## Fase 2 — Médio risco
-
-- `front_surface_enhancement.py`
-- apenas IA polish sem mutação runtime.
-
-## Fase 3 — Médio/alto risco
-
-- `front_response_mode.py`
-- somente após mais testes.
-
-## Fase 4 — Alto risco
-
-- `front_sovereign_decision.py`
-- somente após estabilizar identity/discovery.
-
-## Fase 5 — Muito alto risco
-
-- `front_runtime_recovery.py`
-- somente após mapear todos os recovery triggers.
-
-## Fase 6 — Muito alto risco
-
-- `front_operational_reconstruction.py`
-- somente após separar geração, validação, fallback e mutação.
-
----
-
-# Decisão atual
-
-Nenhum novo módulo deve ser criado imediatamente.
-
-O objetivo agora é usar este mapa como referência para:
-- evitar extrações erradas;
-- impedir mini-monólitos novos;
-- preservar domínios soberanos;
-- preparar modularização com segurança.
-
-# Atualização — Boundaries após auditoria de ownership/runtime
-
-## Nova regra de fronteira
-
-Nenhum módulo futuro deve misturar:
-
-- SAFE FINAL PIPELINE
-com
-- RUNTIME RECOVERY INFRASTRUCTURE
-ou
-- OPERATIONAL RECONSTRUCTION ENGINE.
-
-## SAFE FINAL PIPELINE
-
-Pode conter apenas operações de superfície previsíveis:
-
-- size policy;
-- sanitize;
-- polish;
-- spoken/reply sync;
-- response surface normalization;
-- unwrap superficial;
-- preservação de candidato final, se não reabrir KB nem reconstruction.
-
-Não deve conter:
-
-- `_build_kb_show_reply`
-- `_build_kb_anchor_reply`
-- `_generate_micro_scene_with_model`
-- `_front_build_structured_assembly_reply`
-- `allow_scene_runtime`
-- recovery baseado em `micro_scene_allowed`
-- discovery enforcement
-- response_mode arbitration.
-
-## RUNTIME RECOVERY INFRASTRUCTURE
-
-Domínio confirmado.
-
-Inclui:
-- late KB show injection;
-- KB anchor fallback;
-- candidate resurrection;
-- failsafe fallback;
-- scene runtime recovery;
-- payload recovery.
-
-Trechos críticos:
-- 12424–12545
-- 12512–12545
-- 12842–12870
-- 12917–12931
-
-Classificação:
-- muito alto risco.
-
+## Regra crítica
 Não extrair cedo.
 
+Antes:
+- separar geração;
+- separar validação;
+- separar mutação;
+- mapear todos os callsites.
+
+## Classificação
+`HIGH RISK SOVEREIGN`
+
+---
+
+# Governanças soberanas identificadas
+
 ## RESPONSE MODE GOVERNANCE
+Controla:
+- DIRECT;
+- DISCOVERY;
+- SCENE;
+- CLOSING;
+- bypasses;
+- arbitration.
 
-Domínio confirmado.
-
-Inclui:
-- promoção DIRECT → SCENE;
-- degradação SCENE → DIRECT;
-- força DISCOVERY;
-- normalização transversal;
-- bypass discovery → scene.
-
-Classificação:
-- médio/alto risco.
-
-## SCENE GOVERNANCE
-
-Domínio confirmado.
-
-Gate principal:
-- `micro_scene_allowed`
-
-Runtime secundário:
-- `allow_scene_runtime`
-
-Classificação:
-- alto risco.
+---
 
 ## DISCOVERY GOVERNANCE
+Controla:
+- identity;
+- clarify;
+- discovery stabilization;
+- discovery terminals.
 
-Domínio confirmado.
+---
 
-Inclui:
-- discovery prompt;
-- discovery early terminal;
-- discovery guarantee antes de direct return;
-- discovery identity guard;
-- DISCOVERY terminal.
+## SCENE GOVERNANCE
+Controla:
+- `micro_scene_allowed`
+- `allow_scene_runtime`
 
-Classificação:
-- alto risco.
+---
 
-## Terminal ownership
+## TERMINAL GOVERNANCE
+Controla:
+- early terminals;
+- guarded terminals;
+- official final terminal;
+- runtime bypasses.
 
-O `handle()` possui três terminais reais:
-- Early Discovery Terminal;
-- Direct Scene Early Terminal;
-- Official Final Pipeline.
+---
 
-Qualquer extração futura precisa preservar essa diferença.
+# Terminais reais do runtime
 
-# Atualização — PURE SAFE FINAL PIPELINE
+## Early Discovery Terminal
+DISCOVERY early return.
 
-## PURE SAFE FINAL PIPELINE confirmado
+---
 
-Helpers:
-- `_apply_response_mode_surface(...)`
-- `_restore_final_candidate_if_degraded(...)`
+## Direct Scene Early Terminal
+SCENE return antecipado.
 
-Esses helpers são atualmente os candidatos mais seguros para futura extração inicial.
+---
 
-## SAFE/SURFACE HYBRID
+## Official Final Pipeline Terminal
+Terminal final oficial.
 
-Helpers:
-- `_apply_final_reply_size_policy(...)`
-- `_apply_final_surface_polish(...)`
+---
 
-Esses helpers permanecem fora da primeira extração por ainda encostarem em:
-- KB snapshot;
-- contract consequence generation;
-- technical rescue;
-- operational surface enhancement.
+# Ordem futura recomendada
 
-## Runtime Recovery Infrastructure confirmado
-
-Trecho:
-- 12423–12460
-
-Esse trecho NÃO deve entrar em:
+## FASE 1 — SAFE
 - `front_final_pipeline.py`
 
-Motivo:
-- reabre recovery;
-- reinjeta KB;
-- reativa reconstruction/runtime.
+---
 
-# Atualização — Operational Surface Enhancement confirmado
+## FASE 2 — SEMI-SAFE
+- `front_surface_enhancement.py`
 
-## Cluster confirmado
+---
 
-Helpers:
-- `_generate_consequence_with_model(...)`
-- `_build_contract_consequence(...)`
-- `_upgrade_operational_reply_with_model(...)`
+## FASE 3 — SOVEREIGN MODERADO
+- `front_response_mode.py`
 
-## Responsabilidade real
+---
 
-Esses helpers:
-- melhoram superfície operacional;
-- geram consequência contextual;
-- refinam saída operacional;
-- usam IA de forma localizada.
+## FASE 4 — SOVEREIGN
+- `front_sovereign_decision.py`
 
-## O que NÃO fazem
+---
 
-Não:
-- reconstruem runtime;
-- alteram response_mode;
-- alteram micro_scene_allowed;
-- executam recovery transversal;
-- geram microcena soberana.
+## FASE 5 — HIGH RISK SOVEREIGN
+- `front_runtime_recovery.py`
 
-## Classificação oficial
+---
 
-Domínio:
-`OPERATIONAL SURFACE ENHANCEMENT`
+## FASE 6 — HIGH RISK RECONSTRUCTION
+- `front_operational_reconstruction.py`
 
-E NÃO:
-- SAFE FINAL PIPELINE
-nem
-- OPERATIONAL RECONSTRUCTION ENGINE.
+---
 
-# Atualização — RESPONSE MODE GOVERNANCE
+# PURE SAFE EXTRACTION READY
 
-## RESPONSE MODE INFERENCE
-- `_infer_response_mode_from_signals(...)`
-
-## RESPONSE MODE ARBITRATION
-- `_apply_response_mode_arbitration(...)`
-
-## STRUCTURAL MODE BYPASS
-- `_apply_discovery_to_scene_bypass(...)`
-
-## LATE SOVEREIGN TERMINALS
-- runtime overwrites tardios:
-  - 9524
-  - 9678
-  - 9862
-  - 9910
-
-# Atualização — DISCOVERY GOVERNANCE
-
-## DISCOVERY STATE ENFORCEMENT
-- `_apply_discovery_mode_identity_guard(...)`
-
-## DISCOVERY STABILIZATION
-- `_apply_identity_clarify_guard(...)`
-
-## DISCOVERY VALIDATION
-- `_front_identity_request_is_valid(...)`
-- boundary já extraído:
-  - `services/front_guards.py`
-
-## LAST RESORT IDENTITY GENERATION
-- `_front_build_identity_request(...)`
-
-# Atualização — TERMINAL GOVERNANCE
-
-## DIRECT SCENE EARLY TERMINAL
-- trecho 9974
-
-## FREE_MODE_FINAL_GUARD TERMINAL
-- trecho 12016
-
-## MASTER FINAL TERMINAL
-- trecho 12811+
-
-## JSON_FAIL_SAFE GOVERNANCE
-- trecho 10895+
-
-# Atualização — PURE SAFE EXTRACTION READY
-
-## Extraction-ready boundaries
-
-### `_apply_response_mode_surface(...)`
-Boundary:
-- PURE SAFE FINAL PIPELINE
-
-### `_restore_final_candidate_if_degraded(...)`
-Boundary:
-- PURE SAFE FINAL PIPELINE
-
-## Observação importante
-
-Esses helpers representam os primeiros extraction candidates empiricamente validados da refatoração segura.
-
-# Atualização — FIRST SAFE EXTRACTION WAVE executada
-
-Foi criado:
-
-- `services/front_surface.py`
-
-Helpers extraídos:
+Boundaries já empiricamente validados:
 
 - `_apply_response_mode_surface(...)`
 - `_restore_final_candidate_if_degraded(...)`
 
 Status:
+- extraídos;
 - compile limpo;
-- callsites preservados;
-- sem alteração comportamental intencional;
-- boundary classificado como PURE SAFE FINAL PIPELINE.
+- boundaries preservados.
 
-# Atualização — DETERMINISTIC HUMANIZATION ENGINE
+Novo módulo:
+- `services/front_surface.py`
 
-## Boundary confirmado
-Módulo:
-- `services/front_assembly.py`
+---
 
-## Responsabilidade
+# Boundaries já estabilizados
 
-O módulo atua como:
-`DETERMINISTIC HUMANIZATION ENGINE`
+## `services/front_utils.py`
+`PURE UTILITY ENGINE`
 
-Responsável por:
-- humanização determinística;
-- estabilização de microcena;
-- limpeza estrutural;
-- montagem operacional;
-- normalização textual;
-- composição de fluxo operacional.
+---
 
-## Regras confirmadas
+## `services/front_guards.py`
+`GUARD / VALIDATION ENGINE`
 
-- não chama LLM;
-- não acessa Firestore;
-- não altera prompts;
-- não executa recovery;
-- não altera response_mode;
-- não executa governance soberana.
+---
 
-## Dependências
-
-Somente:
-- `front_utils.py`
-- `front_guards.py`
-
-# Atualização — POLICY ORCHESTRATION ENGINE
-
-## Boundary confirmado
-Módulo:
-- `services/front_policies.py`
-
-## Responsabilidade
-
-O módulo atua como:
+## `services/front_policies.py`
 `POLICY ORCHESTRATION ENGINE`
 
-Responsável por:
-- resolução de budgets;
-- size policy;
-- truncamento;
-- políticas de formatação;
-- adaptação por áudio/texto;
-- adaptação por response_mode;
-- adaptação por discovery/closing.
+---
 
-## Regras confirmadas
+## `services/front_assembly.py`
+`DETERMINISTIC HUMANIZATION ENGINE`
 
-- não chama LLM;
-- não acessa Firestore;
-- não executa recovery;
-- não executa reconstruction;
-- não executa terminals soberanos.
+---
 
-## Observação importante
+## `services/front_surface.py`
+`PURE SAFE FINAL PIPELINE ENGINE`
 
-Apesar de saudável, o módulo possui:
-- awareness parcial de runtime;
-- awareness parcial de governance;
-- awareness de response_mode e next_step.
+---
 
-Portanto:
-não é PURE ENGINE.
-
-# Atualização — PURE KB ENGINE
-
-## Boundary confirmado
-Módulo:
-- `services/front_kb.py`
-
-## Responsabilidade
-
-O módulo atua como:
+## `services/front_kb.py`
 `KB RUNTIME MATERIALIZATION ENGINE`
 
-Responsável por:
-- parsing de kb_snapshot;
-- composição de material runtime;
-- montagem compacta de fallback;
-- aplicação de slots;
-- serialização de material KB.
+---
 
-## Regras confirmadas
+# Decisão estratégica consolidada
 
-- não chama LLM;
-- não acessa Firestore;
-- não executa governance;
-- não executa recovery;
-- não executa orchestration;
-- não decide segmento;
-- não executa terminals.
+O monólito restante concentra principalmente:
+- governance;
+- orchestration;
+- recovery;
+- reconstruction;
+- runtime arbitration;
+- terminals soberanos.
 
-## Dependências
+A prioridade correta NÃO é acelerar modularização.
 
-Apenas:
-- json
-- re
-- typing
-
+A prioridade correta é:
+- preservar soberania;
+- consolidar boundaries;
+- evitar mistura de domínios;
+- estabilizar contratos;
+- reduzir risco arquitetural antes da redução física do core.
