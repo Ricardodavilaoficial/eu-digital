@@ -1,0 +1,241 @@
+# FRONT MODULE BOUNDARIES MAP
+
+## Objetivo
+
+Mapear futuras fronteiras físicas de módulos do `conversational_front.py`.
+
+Este documento NÃO autoriza extração imediata.
+Ele serve para orientar uma modularização futura, segura e baseada na arquitetura real descoberta.
+
+---
+
+# Regra central
+
+A modularização futura deve separar domínios por responsabilidade real, não por proximidade de linhas.
+
+---
+
+# 1. front_final_pipeline.py
+
+## Domínio
+
+SAFE FINAL PIPELINE
+
+## Pode conter futuramente
+
+- `_apply_final_reply_size_policy(...)`
+- `_apply_final_surface_polish(...)`
+- `_apply_response_mode_surface(...)`
+- `_restore_final_candidate_if_degraded(...)`
+
+## Responsabilidades
+
+- sanitize final;
+- size policy;
+- surface polish;
+- spoken/reply sync;
+- response surface normalization;
+- preservação de melhor candidato final.
+
+## Não deve conter
+
+- `_build_kb_anchor_reply(...)`
+- `_build_kb_show_reply(...)`
+- `_generate_micro_scene_with_model(...)`
+- `_build_last_resort_operational_reply(...)`
+- `_should_allow_question(...)`
+- `_apply_discovery_mode_identity_guard(...)`
+
+---
+
+# 2. front_surface_enhancement.py
+
+## Domínio
+
+OPERATIONAL SURFACE ENHANCEMENT
+
+## Pode conter futuramente
+
+- `_upgrade_operational_reply_with_model(...)`
+- `_generate_consequence_with_model(...)`
+- `_build_contract_consequence(...)`
+
+## Responsabilidades
+
+- melhorar superfície operacional já existente;
+- reescrever texto operacional sem mutar runtime;
+- gerar consequência curta e controlada.
+
+## Risco
+
+Médio.
+
+Motivo:
+usa IA, mas não deve mutar contract, response_mode ou micro_scene_allowed.
+
+---
+
+# 3. front_operational_reconstruction.py
+
+## Domínio
+
+OPERATIONAL RECONSTRUCTION ENGINE
+
+## Pode conter futuramente
+
+- `_generate_micro_scene_with_model(...)`
+- `_compose_grounded_scene_with_progression(...)`
+- `_select_structured_scene_steps(...)`
+- validadores de progressão operacional ligados a reconstrução.
+
+## Responsabilidades
+
+- gerar microcena;
+- reconstruir progressão operacional;
+- validar densidade operacional;
+- recompor cena runtime.
+
+## Atenção
+
+Este módulo NÃO deve nascer cedo.
+
+Antes de extraí-lo:
+- separar geração de mutação;
+- separar validação de fallback;
+- remover efeitos colaterais implícitos;
+- mapear todos os callsites.
+
+---
+
+# 4. front_runtime_recovery.py
+
+## Domínio
+
+RUNTIME RECOVERY INFRASTRUCTURE
+
+## Pode conter futuramente
+
+- `_build_kb_anchor_reply(...)`
+- `_build_kb_show_reply(...)`
+- `_build_last_resort_operational_reply(...)`
+
+## Responsabilidades
+
+- fallback operacional;
+- recovery transversal;
+- reconstrução após degradação;
+- reanimação operacional;
+- fallback final baseado em KB/runtime.
+
+## Risco
+
+Muito alto.
+
+Motivo:
+é transversal, possui múltiplos callsites e pode explicar bugs históricos de scene resurrection, PACK_A bleed e fallback fantasma.
+
+---
+
+# 5. front_sovereign_decision.py
+
+## Domínio
+
+SOVEREIGN FINAL DECISION
+
+## Pode conter futuramente
+
+- `_should_allow_question(...)`
+- `_apply_discovery_mode_identity_guard(...)`
+- futuras políticas de identity/discovery/clarify.
+
+## Responsabilidades
+
+- política de perguntas;
+- autorização de discovery;
+- identity guard;
+- clarify guard;
+- decisões soberanas finais.
+
+## Não deve ser misturado com
+
+- final surface polish;
+- sanitize;
+- runtime recovery;
+- reconstruction engine.
+
+---
+
+# 6. front_response_mode.py
+
+## Domínio
+
+RESPONSE MODE ORCHESTRATION
+
+## Pode conter futuramente
+
+- `_apply_current_turn_topic_reset(...)`
+- `_apply_response_mode_arbitration(...)`
+- `_apply_discovery_to_scene_bypass(...)`
+- `_normalize_response_mode(...)`
+- `_infer_response_mode_from_signals(...)`
+
+## Responsabilidades
+
+- arbitragem DIRECT / DISCOVERY / SCENE / CLOSING;
+- reset estrutural de tópico;
+- bypass discovery → scene;
+- regras estruturais de modo.
+
+## Risco
+
+Médio/alto.
+
+Motivo:
+altera forma da resposta e pode impactar comportamento comercial.
+
+---
+
+# Ordem futura recomendada de extração
+
+## Fase 1 — Baixo risco
+
+- `front_final_pipeline.py`
+- apenas SAFE FINAL PIPELINE.
+
+## Fase 2 — Médio risco
+
+- `front_surface_enhancement.py`
+- apenas IA polish sem mutação runtime.
+
+## Fase 3 — Médio/alto risco
+
+- `front_response_mode.py`
+- somente após mais testes.
+
+## Fase 4 — Alto risco
+
+- `front_sovereign_decision.py`
+- somente após estabilizar identity/discovery.
+
+## Fase 5 — Muito alto risco
+
+- `front_runtime_recovery.py`
+- somente após mapear todos os recovery triggers.
+
+## Fase 6 — Muito alto risco
+
+- `front_operational_reconstruction.py`
+- somente após separar geração, validação, fallback e mutação.
+
+---
+
+# Decisão atual
+
+Nenhum novo módulo deve ser criado imediatamente.
+
+O objetivo agora é usar este mapa como referência para:
+- evitar extrações erradas;
+- impedir mini-monólitos novos;
+- preservar domínios soberanos;
+- preparar modularização com segurança.
+
