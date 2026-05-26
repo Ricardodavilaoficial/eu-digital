@@ -156,3 +156,15 @@ Mover apenas quando:
 - ownership for explícito;
 - recovery triggers estiverem mapeados;
 - contrato de entrada/saída estiver definido.
+
+# Atualização — Response mode sovereignty
+
+Foi confirmado que `response_mode` é governança distribuída.
+
+O runtime possui:
+- inference layer;
+- arbitration layer;
+- structural bypass layer;
+- late sovereign terminals.
+
+O estado final de `response_mode` depende da ordem soberana dessas camadas.

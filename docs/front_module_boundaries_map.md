@@ -418,3 +418,21 @@ E NÃO:
 nem
 - OPERATIONAL RECONSTRUCTION ENGINE.
 
+# Atualização — RESPONSE MODE GOVERNANCE
+
+## RESPONSE MODE INFERENCE
+- `_infer_response_mode_from_signals(...)`
+
+## RESPONSE MODE ARBITRATION
+- `_apply_response_mode_arbitration(...)`
+
+## STRUCTURAL MODE BYPASS
+- `_apply_discovery_to_scene_bypass(...)`
+
+## LATE SOVEREIGN TERMINALS
+- runtime overwrites tardios:
+  - 9524
+  - 9678
+  - 9862
+  - 9910
+

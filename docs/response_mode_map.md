@@ -78,3 +78,57 @@ Classificar cada uso como:
 - FINAL PIPELINE
 - LEGACY
 - DUPLICATE
+
+# Atualização — RESPONSE MODE GOVERNANCE
+
+## RESPONSE MODE INFERENCE
+Helper:
+- `_infer_response_mode_from_signals(...)`
+
+Responsabilidade:
+- inferência estrutural inicial;
+- sem KB;
+- sem recovery;
+- sem reconstruction.
+
+---
+
+## RESPONSE MODE ARBITRATION
+Helper:
+- `_apply_response_mode_arbitration(...)`
+
+Responsabilidade:
+- promover/rebaixar modos;
+- arbitrar conflitos estruturais;
+- sincronizar `micro_scene_allowed`.
+
+---
+
+## STRUCTURAL MODE BYPASS
+Helper:
+- `_apply_discovery_to_scene_bypass(...)`
+
+Responsabilidade:
+- promover DISCOVERY → SCENE;
+- bypass estrutural baseado em contrato operacional hidratado.
+
+Importante:
+- NÃO é inferência comum;
+- NÃO é arbitration comum;
+- atua como bypass soberano.
+
+---
+
+## LATE SOVEREIGN TERMINALS
+
+Trechos:
+- 9524
+- 9678
+- 9862
+- 9910
+
+Responsabilidade:
+- sobrescritas tardias soberanas de `response_mode`.
+
+Importante:
+esses pontos possuem prioridade superior ao inference inicial.
