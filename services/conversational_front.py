@@ -5012,6 +5012,39 @@ def _front_pick_rich_free_mode_base(
 
 
 
+
+
+def _apply_discovery_mode_identity_guard(
+    *,
+    reply_text: str,
+    has_name: bool,
+    segment_discovery_resolved: bool,
+    needs_clarify: str,
+    name_use: str,
+) -> tuple[str, str]:
+    """
+    Aplica o ajuste estrutural de DISCOVERY quando falta nome ou segmento.
+
+    Não cria pergunta.
+    Não altera resposta.
+    Não chama modelo.
+    Apenas preserva a marcação de clarify já existente no fluxo.
+    """
+    try:
+        missing_name = not bool(has_name)
+        missing_segment = not bool(segment_discovery_resolved)
+
+        if missing_name or missing_segment:
+            if not _has_question(reply_text):
+                needs_clarify = "yes"
+
+            name_use = "clarify"
+
+        return needs_clarify, name_use
+    except Exception:
+        return needs_clarify, name_use
+
+
 def _sync_spoken_after_technical_rescue(
     *,
     reply_text: str,
