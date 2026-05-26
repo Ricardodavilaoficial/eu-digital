@@ -8970,36 +8970,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         # ---------------------------------------------------------------
         # Bypass estrutural de DISCOVERY com contrato operacional hidratado
-        #
-        # Quando o pipeline já entregou contrato operacional suficiente para
-        # demonstração prática, o modo demonstrativo passa a prevalecer sobre
-        # DISCOVERY. O critério usa apenas sinais estruturais já calculados.
         # ---------------------------------------------------------------
-        try:
-            _contract_for_mode = operational_contract if isinstance(operational_contract, dict) else {}
-            _contract_has_reference = bool(
-                _contract_for_mode.get("has_reference_example")
-                or _contract_for_mode.get("has_practical_scene")
-                or str(_contract_for_mode.get("reference_example") or "").strip()
-                or str(_contract_for_mode.get("operational_reference") or "").strip()
-                or list(_contract_for_mode.get("operational_ritual") or [])
-            )
-            _contract_ready_for_scene = bool(
-                str(response_mode or "").strip().upper() == "DISCOVERY"
-                and str(next_step or "").strip().upper() != "SEND_LINK"
-                and str(needs_clarify or "").strip().lower() != "yes"
-                and not str(clarify_q or "").strip()
-                and has_real_operational_context
-                and _contract_has_reference
-            )
-            if _contract_ready_for_scene:
-                response_mode = "SCENE"
-                needs_clarify = "no"
-                clarify_q = ""
-                _contract_for_mode["micro_scene_allowed"] = True
-                _contract_for_mode["response_mode"] = "SCENE"
-        except Exception:
-            pass
+        (
+            response_mode,
+            needs_clarify,
+            clarify_q,
+        ) = _apply_discovery_to_scene_bypass(
+            response_mode=response_mode,
+            next_step=next_step,
+            needs_clarify=needs_clarify,
+            clarify_q=clarify_q,
+            has_real_operational_context=has_real_operational_context,
+            operational_contract=operational_contract,
+        )
 
         try:
             reply_size_policy = _resolve_reply_size_policy(
