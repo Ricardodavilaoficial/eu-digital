@@ -12063,14 +12063,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
             elif response_mode == "DISCOVERY":
-                missing_name = not bool(has_name)
-                missing_segment = not bool(segment_discovery_resolved)
-
-                if missing_name or missing_segment:
-                    if not _has_question(reply_text):
-                        needs_clarify = "yes"
-
-                    name_use = "clarify"
+                (
+                    needs_clarify,
+                    name_use,
+                ) = _apply_discovery_mode_identity_guard(
+                    reply_text=reply_text,
+                    has_name=has_name,
+                    segment_discovery_resolved=segment_discovery_resolved,
+                    needs_clarify=needs_clarify,
+                    name_use=name_use,
+                )
 
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
@@ -12083,14 +12085,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 spoken_text = str(spoken_text or reply_text or "").strip()
 
             if response_mode == "DISCOVERY":
-                missing_name = not bool(has_name)
-                missing_segment = not bool(segment_discovery_resolved)
-
-                if missing_name or missing_segment:
-                    if not _has_question(reply_text):
-                        needs_clarify = "yes"
-
-                    name_use = "clarify"
+                (
+                    needs_clarify,
+                    name_use,
+                ) = _apply_discovery_mode_identity_guard(
+                    reply_text=reply_text,
+                    has_name=has_name,
+                    segment_discovery_resolved=segment_discovery_resolved,
+                    needs_clarify=needs_clarify,
+                    name_use=name_use,
+                )
         except Exception:
             pass
 
