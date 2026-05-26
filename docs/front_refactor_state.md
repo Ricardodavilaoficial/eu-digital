@@ -925,3 +925,83 @@ Isso reduz:
 E aproxima a futura extração controlada de:
 `front_final_pipeline.py`
 
+---
+
+# Atualização — Response mode surface pipeline
+
+Commit:
+- `fef2437` — refactor: encapsula superficie por response mode
+
+## Resultado
+
+Foi criado helper local:
+
+`_apply_response_mode_surface(...)`
+
+Responsabilidade:
+- acabamento superficial por response_mode;
+- trim/lstrip;
+- sincronização básica de superfície;
+- spoken/reply normalization.
+
+## Domínio delimitado
+
+Novo subdomínio identificado:
+
+`Response mode surface pipeline`
+
+## O que este helper NÃO faz
+
+Não:
+- decide intenção;
+- altera response_mode;
+- controla DISCOVERY;
+- controla identity flow;
+- controla clarify flow;
+- altera política comercial;
+- monta KB;
+- gera microcena;
+- altera micro_scene_allowed.
+
+## Separação arquitetural descoberta
+
+Dentro do RESPONSE MODE CONTROL PIPELINE existem agora dois domínios diferentes:
+
+### SAFE RESPONSE SURFACE
+Modularizável:
+- trim;
+- lstrip;
+- spoken sync;
+- normalize surface.
+
+### DISCOVERY SOVEREIGN CONTROL
+Ainda congelado:
+- `_apply_discovery_mode_identity_guard(...)`
+- `needs_clarify`
+- `name_use`
+- `segment_discovery_resolved`
+
+## Impacto arquitetural
+
+O SAFE FINAL PIPELINE agora possui três micro-pipelines explícitos:
+
+1. `Final reply size preservation pipeline`
+2. `Final surface polish pipeline`
+3. `Response mode surface pipeline`
+
+## Decisão
+
+DISCOVERY continua fora da modularização inicial.
+
+A futura extração para:
+`front_final_pipeline.py`
+
+deve continuar contendo apenas:
+- SAFE FINAL PIPELINE;
+- SAFE RESPONSE SURFACE.
+
+E NÃO:
+- DISCOVERY;
+- identity;
+- question policy;
+- final KB force/recovery.
