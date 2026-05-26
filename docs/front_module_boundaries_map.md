@@ -571,3 +571,38 @@ Apesar de saudável, o módulo possui:
 Portanto:
 não é PURE ENGINE.
 
+# Atualização — PURE KB ENGINE
+
+## Boundary confirmado
+Módulo:
+- `services/front_kb.py`
+
+## Responsabilidade
+
+O módulo atua como:
+`KB RUNTIME MATERIALIZATION ENGINE`
+
+Responsável por:
+- parsing de kb_snapshot;
+- composição de material runtime;
+- montagem compacta de fallback;
+- aplicação de slots;
+- serialização de material KB.
+
+## Regras confirmadas
+
+- não chama LLM;
+- não acessa Firestore;
+- não executa governance;
+- não executa recovery;
+- não executa orchestration;
+- não decide segmento;
+- não executa terminals.
+
+## Dependências
+
+Apenas:
+- json
+- re
+- typing
+

@@ -105,3 +105,19 @@ Próxima fase:
 O monólito restante encontra-se progressivamente isolado como:
 `RUNTIME SOVEREIGN CORE`
 
+# Estado da modularização
+
+## Boundaries saudáveis confirmados
+
+- `front_utils.py`
+- `front_guards.py`
+- `front_policies.py`
+- `front_assembly.py`
+- `front_surface.py`
+- `front_kb.py`
+
+## Situação atual
+
+O núcleo restante do monólito encontra-se progressivamente isolado como:
+`RUNTIME SOVEREIGN CORE`
+

@@ -287,3 +287,13 @@ O monólito restante atua majoritariamente como:
 - recovery runtime;
 - sovereign terminals.
 
+# Observação consolidada
+
+`front_kb.py`
+atua fora da GOVERNANCE HIERARCHY.
+
+O módulo participa apenas da:
+- materialização;
+- composição;
+- estabilização de runtime KB.
+
