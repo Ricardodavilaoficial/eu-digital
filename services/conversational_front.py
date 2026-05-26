@@ -5070,6 +5070,42 @@ def _sync_spoken_after_technical_rescue(
         return str(reply_text or spoken_text or "").strip()
 
 
+def _apply_response_mode_surface(
+    *,
+    response_mode: str,
+    reply_text: str,
+    spoken_text: str,
+) -> tuple[str, str]:
+    """
+    Aplica apenas acabamento superficial por response_mode.
+
+    Regras:
+    - não decide intenção;
+    - não altera response_mode;
+    - não toca DISCOVERY identity guard;
+    - não toca KB;
+    - não toca micro_scene_allowed;
+    - não gera conteúdo;
+    - apenas normaliza espaços e sincroniza spoken/reply.
+    """
+    try:
+        mode = _normalize_response_mode(response_mode) or "DIRECT"
+
+        if mode == "SCENE":
+            reply_text = str(reply_text or "").lstrip()
+            spoken_text = str(spoken_text or reply_text or "").lstrip()
+        else:
+            reply_text = str(reply_text or "").strip()
+            spoken_text = str(spoken_text or reply_text or "").strip()
+
+        return reply_text, spoken_text
+    except Exception:
+        return (
+            str(reply_text or "").strip(),
+            str(spoken_text or reply_text or "").strip(),
+        )
+
+
 def _apply_final_surface_polish(
     *,
     reply_text: str,
@@ -12453,31 +12489,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         try:
             response_mode = _normalize_response_mode(response_mode) or "DIRECT"
 
-            if response_mode == "DIRECT":
-                reply_text = str(reply_text or "").strip()
-                spoken_text = str(spoken_text or reply_text or "").strip()
-
-            elif response_mode == "DISCOVERY":
-                (
-                    needs_clarify,
-                    name_use,
-                ) = _apply_discovery_mode_identity_guard(
-                    reply_text=reply_text,
-                    has_name=has_name,
-                    segment_discovery_resolved=segment_discovery_resolved,
-                    needs_clarify=needs_clarify,
-                    name_use=name_use,
-                )
-
-                spoken_text = str(spoken_text or reply_text or "").strip()
-
-            elif response_mode == "SCENE":
-                reply_text = str(reply_text or "").lstrip()
-                spoken_text = str(spoken_text or reply_text or "").lstrip()
-
-            elif response_mode == "CLOSING":
-                reply_text = str(reply_text or "").strip()
-                spoken_text = str(spoken_text or reply_text or "").strip()
+            reply_text, spoken_text = _apply_response_mode_surface(
+                response_mode=response_mode,
+                reply_text=reply_text,
+                spoken_text=spoken_text,
+            )
 
             if response_mode == "DISCOVERY":
                 (
