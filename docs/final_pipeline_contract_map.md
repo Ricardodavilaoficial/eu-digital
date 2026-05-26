@@ -443,3 +443,122 @@ Essa separação reduz drasticamente o risco de:
 - quebrar política comercial;
 - quebrar fluxo de identidade;
 - transformar o novo módulo em mini-monólito comportamental.
+
+---
+
+# Auditoria — FINAL GUARD
+
+## Região auditada
+
+Arquivo:
+- `services/conversational_front.py`
+
+Região aproximada:
+- `12423–12529`
+
+## Conclusão
+
+O FINAL GUARD não é um domínio único e simples.
+
+Ele se divide em pelo menos três subdomínios:
+
+---
+
+## 1. Empty output recovery
+
+Responsabilidade:
+- impedir resposta vazia;
+- impedir resposta curta demais;
+- tentar reconstrução operacional.
+
+Risco:
+- alto.
+
+Motivo:
+- toca `micro_scene_allowed`;
+- lê `operational_contract`;
+- lê `base_operational_contract`;
+- depende de contexto KB;
+- pode alterar completamente a superfície final.
+
+Decisão:
+- congelado.
+
+---
+
+## 2. KB show / anchor recovery
+
+Responsabilidade:
+- reconstruir resposta via:
+  - `_build_kb_show_reply(...)`;
+  - `_build_kb_anchor_reply(...)`.
+
+Risco:
+- muito alto.
+
+Motivo:
+- pode recriar cena operacional;
+- pode reintroduzir fallback global;
+- pode mascarar falhas anteriores do pipeline;
+- encosta nos bugs conhecidos de PACK_A_AGENDA/tutorialização.
+
+Decisão:
+- congelado.
+
+---
+
+## 3. Final candidate restoration
+
+Helper:
+- `_restore_final_candidate_if_degraded(...)`
+
+Responsabilidade:
+- restaurar `_final_candidate` quando `reply_text` degradou para vazio ou curto.
+
+Características:
+- não chama modelo;
+- não toca KB;
+- não altera política;
+- não decide response_mode;
+- não mexe em identity/discovery;
+- apenas preserva melhor versão já produzida.
+
+Risco:
+- baixo.
+
+Decisão:
+- pertence ao SAFE FINAL PIPELINE;
+- já está encapsulado;
+- não precisa patch agora.
+
+---
+
+## Decisão arquitetural
+
+Não extrair FINAL GUARD nesta fase.
+
+A futura extração para `front_final_pipeline.py` pode considerar apenas:
+- final candidate restoration;
+- surface polish;
+- size policy;
+- response surface.
+
+Mas deve excluir por enquanto:
+- empty output recovery;
+- KB show recovery;
+- KB anchor recovery;
+- qualquer reconstrução operacional baseada em `micro_scene_allowed`.
+
+---
+
+## Próximo trabalho futuro
+
+Antes de mexer no FINAL GUARD, será necessário auditar separadamente:
+
+- `_build_kb_show_reply(...)`;
+- `_build_kb_anchor_reply(...)`;
+- `allow_scene_runtime`;
+- `kb_show_reply_seed`;
+- relação com PACK_A_AGENDA;
+- relação com `micro_scene_allowed`.
+
