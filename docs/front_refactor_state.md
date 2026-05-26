@@ -1228,3 +1228,27 @@ Status:
 - sem alteração comportamental intencional;
 - boundary classificado como PURE SAFE FINAL PIPELINE.
 
+# STABILIZATION CHECKPOINT — FIRST SAFE EXTRACTION WAVE
+
+Status:
+- concluída;
+- compilada;
+- validada;
+- documentada.
+
+Extrações realizadas:
+- `_apply_response_mode_surface(...)`
+- `_restore_final_candidate_if_degraded(...)`
+
+Novo módulo:
+- `services/front_surface.py`
+
+Resultado:
+- compile chain íntegra;
+- runtime governance preservada;
+- sem violação de soberania conhecida;
+- sem circular dependency detectada.
+
+Conclusão:
+o protocolo de refatoração segura foi validado empiricamente.
+
