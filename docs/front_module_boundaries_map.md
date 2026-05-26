@@ -482,3 +482,20 @@ Boundary:
 
 Esses helpers representam os primeiros extraction candidates empiricamente validados da refatoração segura.
 
+# Atualização — FIRST SAFE EXTRACTION WAVE executada
+
+Foi criado:
+
+- `services/front_surface.py`
+
+Helpers extraídos:
+
+- `_apply_response_mode_surface(...)`
+- `_restore_final_candidate_if_degraded(...)`
+
+Status:
+- compile limpo;
+- callsites preservados;
+- sem alteração comportamental intencional;
+- boundary classificado como PURE SAFE FINAL PIPELINE.
+
