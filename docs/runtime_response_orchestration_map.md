@@ -310,3 +310,39 @@ O próximo bloco candidato seria `global_pack_scene_ready`, mas ele permanece co
 - fallback global;
 - promoção para `SCENE`;
 - bug conhecido do PACK_A_AGENDA tutorializando respostas.
+
+---
+
+# Atualização — Response mode arbitration extraído
+
+Commit:
+- 7c80c4c — refactor: encapsula arbitragem de response mode
+
+## Resultado
+
+A arbitragem estrutural de `response_mode` foi encapsulada em helper local:
+
+`_apply_response_mode_arbitration(...)`
+
+Responsabilidade:
+- força `CLOSING` quando `nextStep=SEND_LINK`;
+- promove `SCENE` quando `global_pack_scene_ready=True`;
+- força `DISCOVERY` quando há `needs_clarify` ou `clarify_q`;
+- rebaixa `SCENE` para `DIRECT` em perguntas pontuais/de continuidade;
+- rebaixa `SCENE` para `DIRECT` em tópicos institucionais como preço, trial, ativação, definição, social e voz.
+
+## Decisão
+
+Manter helper local por enquanto.
+
+Não mover para módulo ainda.
+
+## Observação
+
+Este helper começa a formar, junto com:
+- `_apply_current_turn_topic_reset(...)`
+- `_apply_discovery_to_scene_bypass(...)`
+
+um futuro domínio natural de `front_response_mode.py`.
+
+Ainda não criar esse módulo agora.
