@@ -270,3 +270,10 @@ Responsabilidade:
 - replySizePolicy;
 - decider propagation.
 
+# Observação arquitetural importante
+
+O runtime soberano já está parcialmente separado do núcleo determinístico.
+
+`front_assembly.py`
+atua fora da GOVERNANCE HIERARCHY principal.
+

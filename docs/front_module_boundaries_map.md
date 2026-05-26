@@ -499,3 +499,37 @@ Status:
 - sem alteração comportamental intencional;
 - boundary classificado como PURE SAFE FINAL PIPELINE.
 
+# Atualização — DETERMINISTIC HUMANIZATION ENGINE
+
+## Boundary confirmado
+Módulo:
+- `services/front_assembly.py`
+
+## Responsabilidade
+
+O módulo atua como:
+`DETERMINISTIC HUMANIZATION ENGINE`
+
+Responsável por:
+- humanização determinística;
+- estabilização de microcena;
+- limpeza estrutural;
+- montagem operacional;
+- normalização textual;
+- composição de fluxo operacional.
+
+## Regras confirmadas
+
+- não chama LLM;
+- não acessa Firestore;
+- não altera prompts;
+- não executa recovery;
+- não altera response_mode;
+- não executa governance soberana.
+
+## Dependências
+
+Somente:
+- `front_utils.py`
+- `front_guards.py`
+
