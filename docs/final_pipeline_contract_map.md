@@ -356,3 +356,90 @@ A próxima ação de código ainda NÃO é criar `front_final_pipeline.py`.
 
 A próxima ação de código deve ser apenas encapsular localmente um subdomínio pequeno do FINAL PIPELINE, preservando comportamento.
 
+---
+
+# Descoberta arquitetural — SAFE FINAL PIPELINE vs SOVEREIGN FINAL DECISION
+
+## Observação
+
+Durante a auditoria do bloco de `Question policy enforcement`, foi identificado que o FINAL PIPELINE possui dois tipos muito diferentes de responsabilidade.
+
+---
+
+## 1. SAFE FINAL PIPELINE
+
+Responsabilidades:
+- sanitize;
+- size policy;
+- spoken/reply sync;
+- wrappers;
+- humanização superficial;
+- empty guard;
+- final polish;
+- payload shaping.
+
+Características:
+- baixo risco comportamental;
+- não decide intenção;
+- não altera response_mode;
+- não controla discovery;
+- não altera política comercial;
+- altamente modularizável.
+
+Exemplos já delimitados:
+- `_apply_final_reply_size_policy(...)`
+- `_apply_reply_size_policy(...)`
+- `_preserve_technical_direct_reply_size(...)`
+- wrappers de sanitize/humanização.
+
+---
+
+## 2. SOVEREIGN FINAL DECISION
+
+Responsabilidades:
+- policy de perguntas;
+- discovery permission;
+- clarify permission;
+- identity permission;
+- decisão sobre remoção de perguntas;
+- controle final de comportamento conversacional.
+
+Características:
+- alto risco;
+- altera experiência do lead;
+- altera comportamento comercial;
+- encosta em DISCOVERY;
+- encosta em identity flow;
+- encosta em ambiguity handling;
+- não deve ser modularizado cedo.
+
+Exemplo principal:
+- `_should_allow_question(...)`
+
+---
+
+## Decisão arquitetural
+
+A futura extração para `front_final_pipeline.py` deve inicialmente conter apenas o domínio:
+
+`SAFE FINAL PIPELINE`
+
+A camada:
+`SOVEREIGN FINAL DECISION`
+
+deve permanecer temporariamente dentro do `conversational_front.py` até:
+- maior estabilização arquitetural;
+- isolamento futuro de identity/discovery/clarify policies;
+- separação mais clara de decisões soberanas.
+
+---
+
+## Impacto estratégico
+
+Essa separação reduz drasticamente o risco de:
+
+- mover comportamento soberano cedo demais;
+- quebrar DISCOVERY;
+- quebrar política comercial;
+- quebrar fluxo de identidade;
+- transformar o novo módulo em mini-monólito comportamental.
