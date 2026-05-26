@@ -12165,9 +12165,26 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             final_candidate=_final_candidate,
         )
 
-        # ----------------------------------------------------------
-        # CONTROLE LIMPO VIA response_mode
-        # ----------------------------------------------------------
+        # =========================================================
+        # RESPONSE MODE CONTROL PIPELINE
+        # =========================================================
+        # Responsável por:
+        # - acabamento estrutural por modo
+        # - sincronização final de superfície
+        # - DISCOVERY identity guard
+        #
+        # NÃO deve:
+        # - decidir intenção
+        # - montar KB
+        # - gerar microcena
+        # - alterar política
+        #
+        # response_mode:
+        # - DIRECT
+        # - DISCOVERY
+        # - SCENE
+        # - CLOSING
+        # =========================================================
         try:
             response_mode = _normalize_response_mode(response_mode) or "DIRECT"
 
