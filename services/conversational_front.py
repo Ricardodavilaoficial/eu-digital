@@ -10015,11 +10015,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     (base_operational_contract if 'base_operational_contract' in locals() else {})
                 )
 
-            if _looks_like_technical_output(spoken_text):
-                spoken_text = reply_text
-
-            if not spoken_text:
-                spoken_text = reply_text
+            spoken_text = _sync_spoken_after_technical_rescue(
+                reply_text=reply_text,
+                spoken_text=spoken_text,
+            )
 
 
             # 🔒 GUARDA FINAL — impedir saída vazia ou fallback burro
