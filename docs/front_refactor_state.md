@@ -484,3 +484,45 @@ O FINAL PIPELINE demonstrou:
 - alta modularizabilidade futura.
 
 É atualmente o macrodomínio mais próximo de virar módulo real.
+
+---
+
+# Auditoria funcional — FINAL PIPELINE
+
+Faixa auditada:
+- 12003–12320
+
+## Dependências externas já modularizadas
+
+### front_policies
+- _apply_reply_size_policy
+- _preserve_technical_direct_reply_size
+
+### front_assembly
+- _build_direct_scene_payload
+- _humanize_scene_flow
+- _looks_like_structural_scene_payload
+- _sanitize_user_facing_reply
+- wrap_show_response
+
+### front_kb
+- _try_parse_kb_json
+
+## Dependências ainda locais no conversational_front.py
+
+- _sanitize_unverified_time_claims
+- _should_allow_question
+- _sync_spoken_after_technical_rescue
+- _build_kb_show_reply
+- _upgrade_operational_reply_with_model
+- _build_contract_consequence
+
+## Conclusão
+
+O FINAL PIPELINE é modularizável, mas ainda não deve ser movido inteiro.
+
+Antes de criar `front_final_pipeline.py`, é necessário:
+- definir contrato de entrada/saída;
+- mapear mutações de reply_text, spoken_text e reply_source;
+- decidir se helpers locais permanecem locais ou sobem para módulos existentes.
+
