@@ -277,3 +277,13 @@ O runtime soberano já está parcialmente separado do núcleo determinístico.
 `front_assembly.py`
 atua fora da GOVERNANCE HIERARCHY principal.
 
+# Observação arquitetural consolidada
+
+Grande parte do núcleo determinístico já foi separada do runtime soberano.
+
+O monólito restante atua majoritariamente como:
+- governance runtime;
+- orchestration runtime;
+- recovery runtime;
+- sovereign terminals.
+

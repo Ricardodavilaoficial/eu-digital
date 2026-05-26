@@ -533,3 +533,41 @@ Somente:
 - `front_utils.py`
 - `front_guards.py`
 
+# Atualização — POLICY ORCHESTRATION ENGINE
+
+## Boundary confirmado
+Módulo:
+- `services/front_policies.py`
+
+## Responsabilidade
+
+O módulo atua como:
+`POLICY ORCHESTRATION ENGINE`
+
+Responsável por:
+- resolução de budgets;
+- size policy;
+- truncamento;
+- políticas de formatação;
+- adaptação por áudio/texto;
+- adaptação por response_mode;
+- adaptação por discovery/closing.
+
+## Regras confirmadas
+
+- não chama LLM;
+- não acessa Firestore;
+- não executa recovery;
+- não executa reconstruction;
+- não executa terminals soberanos.
+
+## Observação importante
+
+Apesar de saudável, o módulo possui:
+- awareness parcial de runtime;
+- awareness parcial de governance;
+- awareness de response_mode e next_step.
+
+Portanto:
+não é PURE ENGINE.
+

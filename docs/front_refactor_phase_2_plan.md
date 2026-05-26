@@ -90,3 +90,18 @@ Próxima fase:
 - auditoria contínua;
 - preparação futura da SECOND SAFE EXTRACTION WAVE.
 
+# Estado atual da refatoração
+
+## Boundaries já consolidados
+
+- `front_utils.py`
+- `front_guards.py`
+- `front_policies.py`
+- `front_assembly.py`
+- `front_surface.py`
+
+## Estado atual do conversational_front.py
+
+O monólito restante encontra-se progressivamente isolado como:
+`RUNTIME SOVEREIGN CORE`
+

@@ -1262,3 +1262,24 @@ Nenhum leakage soberano relevante foi identificado na auditoria inicial.
 O módulo representa:
 `DETERMINISTIC HUMANIZATION ENGINE`
 
+# Atualização — Núcleo soberano restante isolado
+
+Após auditoria dos módulos:
+- front_utils.py
+- front_guards.py
+- front_policies.py
+- front_assembly.py
+- front_surface.py
+
+foi confirmado que o monólito restante concentra principalmente:
+
+- runtime governance;
+- recovery;
+- reconstruction;
+- arbitration;
+- terminals soberanos;
+- orchestration.
+
+A refatoração segura entrou oficialmente na:
+`MONOLITH CORE ISOLATION PHASE`
+
