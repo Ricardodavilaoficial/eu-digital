@@ -5070,6 +5070,90 @@ def _sync_spoken_after_technical_rescue(
         return str(reply_text or spoken_text or "").strip()
 
 
+def _apply_non_empty_reply_guard(
+    *,
+    reply_text: str,
+    spoken_text: str,
+    operational_contract,
+    base_operational_contract,
+    operational_reference: str,
+    kb_context,
+    reference_example,
+    effective_segment: str,
+    operational_family: str,
+    question: str,
+    topic: str,
+    confidence: str,
+    next_step: str,
+    should_end: bool,
+    name_use: str,
+):
+    """
+    Aplica fail-safe estrutural intermediário para evitar reply vazio.
+
+    Não chama modelo.
+    Não altera intenção.
+    Não altera política.
+    Apenas encapsula o rescue estrutural já existente.
+    """
+
+    try:
+        if not reply_text or len(str(reply_text).strip()) < 40:
+            try:
+                if operational_contract or base_operational_contract:
+                    if not operational_reference:
+                        operational_reference = ""
+
+                    forced = _build_kb_show_reply(
+                        kb_context=kb_context if isinstance(kb_context, dict) else {},
+                        operational_reference="",
+                        reference_example=reference_example,
+                        effective_segment=effective_segment,
+                        operational_family=operational_family,
+                        contract=operational_contract or base_operational_contract,
+                    )
+
+                    if forced and len(forced.strip()) >= 40:
+                        reply_text = forced
+                    else:
+                        raise ValueError("forced_empty")
+                else:
+                    raise ValueError("no_contract")
+
+            except Exception:
+                # só cai no fallback genérico se REALMENTE não tiver nada
+                pass
+
+        if not reply_text or len(str(reply_text).strip()) < 40:
+            reply_text = question or "Me conta um pouco melhor o teu cenário."
+            topic = "OTHER"
+            confidence = "low"
+            next_step = "NONE"
+            should_end = False
+            name_use = "clarify"
+
+        return (
+            reply_text,
+            spoken_text,
+            topic,
+            confidence,
+            next_step,
+            should_end,
+            name_use,
+        )
+
+    except Exception:
+        return (
+            reply_text,
+            spoken_text,
+            topic,
+            confidence,
+            next_step,
+            should_end,
+            name_use,
+        )
+
+
 def _apply_identity_clarify_guard(
     *,
     reply_text: str,
