@@ -203,3 +203,63 @@ Decisão:
 - manter dentro de conversational_front.py por enquanto;
 - usar como zona arquitetural mapeada;
 - futura extração só depois de mapear os usos anteriores de response_mode espalhados no arquivo.
+
+---
+
+# Atualização — 2026-05-26 (Runtime Orchestration)
+
+## Runtime orchestration iniciou extrações reais
+
+### _apply_discovery_to_scene_bypass
+Commits:
+- 4aefeed
+- 98f4e7e
+
+Responsabilidade:
+- promover DISCOVERY → SCENE quando já existe contrato operacional demonstrável.
+
+Status:
+- helper local consolidado.
+
+---
+
+### _pick_runtime_scene_material
+Commits:
+- 2ed9322
+- 71d9e8c
+
+Responsabilidade:
+- selecionar melhor material operacional em runtime sem mutar contrato.
+
+Status:
+- helper local consolidado.
+
+---
+
+# Estado arquitetural atualizado
+
+O conversational_front.py agora possui separação visível entre:
+
+- Runtime response orchestration
+- Response mode control pipeline
+- Final pipeline
+- Final polish
+- Final guard
+- Rescue helpers
+- Runtime material selection
+
+---
+
+# Estratégia atual
+
+Continuar:
+- helpers pequenos;
+- extrações locais;
+- delimitação arquitetural;
+- documentação persistida.
+
+Evitar:
+- módulos novos grandes;
+- mudanças comportamentais;
+- refactors massivos.
+
