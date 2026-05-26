@@ -218,3 +218,29 @@ Muito acoplado a platform_kb, fallback compacto e limpeza do contrato.
 Decisão:
 congelado.
 
+---
+
+# Atualização — Discovery bypass extraído
+
+Commits:
+- 4aefeed — adiciona helper de discovery scene bypass
+- 98f4e7e — aplica helper no discovery scene bypass
+
+## Resultado
+
+O subdomínio “Discovery bypass” foi encapsulado em helper local:
+
+`_apply_discovery_to_scene_bypass(...)`
+
+Responsabilidade:
+- promover `DISCOVERY` para `SCENE` quando já existe contrato operacional demonstrável;
+- limpar `needs_clarify`;
+- limpar `clarify_q`;
+- marcar `micro_scene_allowed=True`;
+- atualizar `response_mode` no contrato.
+
+## Decisão
+
+Manter helper local por enquanto.
+Não mover para módulo ainda.
+
