@@ -43,3 +43,32 @@ Antes de extrair, criar front_kb.py com funções copiadas apenas quando:
 ## Próximo passo
 Mapear dependências de _compact_kb_snapshot e _prepare_kb_snapshot_buffers antes de qualquer alteração.
 
+# Atualização — FIRST SAFE EXTRACTION WAVE
+
+## Extraction-ready helpers confirmados
+
+### PURE SAFE HELPERS
+- `_apply_response_mode_surface(...)`
+- `_restore_final_candidate_if_degraded(...)`
+
+## Características
+
+Esses helpers:
+- não chamam IA;
+- não consultam KB;
+- não executam recovery;
+- não alteram response_mode;
+- não alteram micro_scene_allowed;
+- não possuem mutações soberanas;
+- não dependem de runtime reconstruction.
+
+## Status
+
+Classificação:
+`EXTRACTION READY`
+
+## Estratégia futura
+
+Esses helpers serão candidatos da:
+`FIRST SAFE EXTRACTION WAVE`
+

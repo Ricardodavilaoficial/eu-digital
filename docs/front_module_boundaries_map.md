@@ -466,3 +466,19 @@ nem
 ## JSON_FAIL_SAFE GOVERNANCE
 - trecho 10895+
 
+# Atualização — PURE SAFE EXTRACTION READY
+
+## Extraction-ready boundaries
+
+### `_apply_response_mode_surface(...)`
+Boundary:
+- PURE SAFE FINAL PIPELINE
+
+### `_restore_final_candidate_if_degraded(...)`
+Boundary:
+- PURE SAFE FINAL PIPELINE
+
+## Observação importante
+
+Esses helpers representam os primeiros extraction candidates empiricamente validados da refatoração segura.
+

@@ -1195,4 +1195,20 @@ Foi confirmado que o runtime possui:
 O helper `_continue_after_direct_scene`
 foi identificado como pivot estrutural de continuidade runtime.
 
+# Atualização — Primeiros extraction candidates reais
+
+Foi confirmada a primeira SAFE EXTRACTION WAVE do projeto.
+
+Helpers classificados como:
+`EXTRACTION READY`
+
+- `_apply_response_mode_surface(...)`
+- `_restore_final_candidate_if_degraded(...)`
+
+Esses helpers possuem:
+- baixo acoplamento;
+- baixa soberania;
+- baixo risco runtime;
+- boundaries estáveis.
+
 
