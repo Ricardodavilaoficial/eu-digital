@@ -11799,7 +11799,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
-        # daqui para baixo: pós-processamento do front
+        # =========================================================
+        # FINAL PIPELINE — POST-PROCESSAMENTO DO FRONT
+        # =========================================================
+        # Daqui para baixo o front prepara a superfície final da resposta.
+        # Não deve decidir intenção, segmento, prompt ou KB.
+        # A ordem dos blocos abaixo é sensível e deve ser preservada.
+        # =========================================================
+
         front_reply_before_post = reply_text
         front_spoken_before_post = spoken_text
 
@@ -12045,6 +12052,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
         # Guardrails finais (anti-invenção), fora do free_mode.
+        # =========================================================
+        # FINAL POLISH — GUARDRAILS / WRAP / SANITIZE / SPOKEN SYNC
+        # =========================================================
         try:
             if (not free_mode) and apply_sales_guardrails is not None:
                 gr = apply_sales_guardrails(
@@ -12084,7 +12094,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         )
 
 
-        # 🔒 GUARDA FINAL — impedir saída vazia ou fallback burro
+        # =========================================================
+        # FINAL GUARD — impedir saída vazia ou fallback burro
+        # =========================================================
         try:
             _rt = str(reply_text or "").strip()
             allow_final_kb_show = bool(
