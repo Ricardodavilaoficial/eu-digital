@@ -263,3 +263,67 @@ Evitar:
 - mudanças comportamentais;
 - refactors massivos.
 
+---
+
+# Atualização — Classificação dos helpers locais
+
+## Helpers locais atuais
+
+### _apply_discovery_mode_identity_guard
+Domínio:
+- guard
+- identity
+- discovery
+
+Status:
+- manter local por enquanto.
+
+### _sync_spoken_after_technical_rescue
+Domínio:
+- rescue
+- surface
+- spoken sync
+
+Status:
+- manter local por enquanto.
+
+### _apply_non_empty_reply_guard
+Domínio:
+- final guard
+- anti-empty
+
+Status:
+- manter local por enquanto.
+
+### _pick_runtime_scene_material
+Domínio:
+- runtime orchestration
+- material selection
+
+Status:
+- manter local por enquanto.
+
+### _apply_discovery_to_scene_bypass
+Domínio:
+- runtime orchestration
+- response mode arbitration
+
+Status:
+- manter local por enquanto.
+
+### _apply_identity_clarify_guard
+Domínio:
+- guard
+- identity
+- clarify
+
+Status:
+- manter local por enquanto.
+
+## Decisão
+
+Nenhum helper local deve ser movido para módulo agora.
+
+Motivo:
+eles ainda dependem fortemente do contexto do `handle()` e servem como etapa intermediária de estabilização estrutural.
+
