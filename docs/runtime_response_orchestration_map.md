@@ -277,3 +277,36 @@ Importante:
 
 Manter helper local por enquanto.
 A mutação do contrato operacional continua congelada dentro do bloco principal.
+
+---
+
+# Atualização — Current turn topic reset extraído
+
+Commit:
+- eb398f4 — refactor: encapsula reset de topico no front
+
+## Resultado
+
+O reset estrutural de tópico foi encapsulado em helper local:
+
+`_apply_current_turn_topic_reset(...)`
+
+Responsabilidade:
+- quando `current_turn_topic_reset=True`, força `response_mode="DIRECT"`;
+- desliga `micro_scene_allowed`;
+- marca `topic="OTHER"` no contrato;
+- limpa `has_practical_scene`;
+- limpa `global_pack_fallback`.
+
+## Decisão
+
+Manter helper local por enquanto.
+
+Não mover para módulo ainda.
+
+## Observação
+
+O próximo bloco candidato seria `global_pack_scene_ready`, mas ele permanece congelado porque encosta diretamente em:
+- fallback global;
+- promoção para `SCENE`;
+- bug conhecido do PACK_A_AGENDA tutorializando respostas.
