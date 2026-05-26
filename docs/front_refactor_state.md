@@ -1103,3 +1103,55 @@ Antes:
 - preservar SAFE FINAL PIPELINE separado de recovery/reconstruction;
 - evitar mover helpers por proximidade de linha.
 
+# Atualização — Auditoria SAFE FINAL PIPELINE
+
+## Resultado da auditoria prática
+
+Foi confirmado que os helpers locais possuem níveis diferentes de soberania arquitetural.
+
+### PURE SAFE FINAL PIPELINE
+
+Helpers:
+- `_apply_response_mode_surface(...)`
+- `_restore_final_candidate_if_degraded(...)`
+
+Características:
+- não tocam KB;
+- não alteram response_mode;
+- não geram conteúdo;
+- não alteram micro_scene_allowed;
+- não executam recovery runtime.
+
+### SAFE/SURFACE HYBRID
+
+Helpers:
+- `_apply_final_reply_size_policy(...)`
+- `_apply_final_surface_polish(...)`
+
+Características:
+- permanecem relativamente seguros;
+- porém já encostam em:
+  - KB parsing;
+  - contract consequence generation;
+  - technical rescue;
+  - operational surface enhancement.
+
+Decisão:
+- ainda NÃO mover para módulo;
+- manter locais;
+- evitar classificá-los como PURE SAFE.
+
+### Runtime Recovery Infrastructure confirmado
+
+Região:
+- 12423–12460
+
+Responsabilidade:
+- late KB reinjection;
+- final operational recovery;
+- scene/runtime resurrection via `_build_kb_show_reply(...)`.
+
+Classificação:
+- domínio soberano de recovery;
+- NÃO pertence ao SAFE FINAL PIPELINE.
+

@@ -346,3 +346,39 @@ O `handle()` possui três terminais reais:
 - Official Final Pipeline.
 
 Qualquer extração futura precisa preservar essa diferença.
+
+# Atualização — PURE SAFE FINAL PIPELINE
+
+## PURE SAFE FINAL PIPELINE confirmado
+
+Helpers:
+- `_apply_response_mode_surface(...)`
+- `_restore_final_candidate_if_degraded(...)`
+
+Esses helpers são atualmente os candidatos mais seguros para futura extração inicial.
+
+## SAFE/SURFACE HYBRID
+
+Helpers:
+- `_apply_final_reply_size_policy(...)`
+- `_apply_final_surface_polish(...)`
+
+Esses helpers permanecem fora da primeira extração por ainda encostarem em:
+- KB snapshot;
+- contract consequence generation;
+- technical rescue;
+- operational surface enhancement.
+
+## Runtime Recovery Infrastructure confirmado
+
+Trecho:
+- 12423–12460
+
+Esse trecho NÃO deve entrar em:
+- `front_final_pipeline.py`
+
+Motivo:
+- reabre recovery;
+- reinjeta KB;
+- reativa reconstruction/runtime.
+

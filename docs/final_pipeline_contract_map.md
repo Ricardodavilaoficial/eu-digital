@@ -724,3 +724,35 @@ Se o pipeline degrada →
             reconstruir runtime;
             restaurar superfície operacional;
             reanimar fluxo.
+
+# Atualização — Boundary refinement
+
+## PURE SAFE FINAL PIPELINE
+
+Helpers confirmados:
+- `_apply_response_mode_surface(...)`
+- `_restore_final_candidate_if_degraded(...)`
+
+Esses helpers:
+- não tocam KB;
+- não executam reconstruction;
+- não executam recovery runtime;
+- não chamam IA;
+- não alteram governança soberana.
+
+## SAFE/SURFACE HYBRID
+
+Helpers:
+- `_apply_final_reply_size_policy(...)`
+- `_apply_final_surface_polish(...)`
+
+Apesar de seguros estruturalmente, ainda:
+- parseiam KB snapshot;
+- executam technical rescue;
+- utilizam contract consequence generation;
+- encostam em operational surface enhancement.
+
+Decisão:
+- manter locais;
+- não extrair ainda.
+
