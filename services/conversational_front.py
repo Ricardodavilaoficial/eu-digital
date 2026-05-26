@@ -8890,27 +8890,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
                     selected_pack_id,
                 )
-                if has_real_operational_context:
-                    _scene = (
-                        str(_runtime_material.get("direct_scene") or "").strip()
-                        or str(_runtime_material.get("runtime_long_text") or "").strip()
-                        or str(_runtime_material.get("runtime_short_reply") or "").strip()
-                        or str(_runtime_material.get("micro_scene") or "").strip()
-                    )
-                else:
-                    if response_mode == "DIRECT":
-                        _scene = (
-                            str(_runtime_material.get("runtime_long_text") or "").strip()
-                            or str(_runtime_material.get("runtime_short_reply") or "").strip()
-                            or str(_runtime_material.get("direct_scene") or "").strip()
-                            or str(_runtime_material.get("runtime_compact_reply") or "").strip()
-                            or str(_runtime_material.get("micro_scene") or "").strip()
-                        )
-                    else:
-                        _scene = (
-                            str(_runtime_material.get("runtime_compact_reply") or "").strip()
-                            or str(_runtime_material.get("micro_scene") or "").strip()
-                        )
+                _scene = _pick_runtime_scene_material(
+                    runtime_material=_runtime_material,
+                    has_real_operational_context=has_real_operational_context,
+                    response_mode=response_mode,
+                )
 
                 if _scene:
                     operational_contract["direct_scene"] = _scene
