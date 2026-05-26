@@ -346,3 +346,26 @@ Este helper começa a formar, junto com:
 um futuro domínio natural de `front_response_mode.py`.
 
 Ainda não criar esse módulo agora.
+
+---
+
+# Decisão — Micro scene gate mantido congelado
+
+## Bloco
+
+`GATE SOBERANO DE MICROCENA / KB OPERACIONAL`
+
+## Decisão
+
+Não extrair agora.
+
+## Motivo
+
+Apesar de pequeno, o bloco controla `micro_scene_allowed`, sincroniza `response_mode` no `operational_contract` e no `base_operational_contract`, e encosta diretamente nos bugs comportamentais congelados envolvendo SCENE indevida, fallback global e tutorialização do PACK_A_AGENDA.
+
+## Status
+
+Classificação:
+- CRÍTICO
+- EXTRAÍVEL DEPOIS
+- CONGELADO AGORA
