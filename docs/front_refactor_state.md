@@ -327,3 +327,46 @@ Nenhum helper local deve ser movido para módulo agora.
 Motivo:
 eles ainda dependem fortemente do contexto do `handle()` e servem como etapa intermediária de estabilização estrutural.
 
+---
+
+# Estado arquitetural observado — macrodomínios emergentes
+
+## Runtime orchestration
+
+Faixa aproximada:
+- 8900–9185
+
+Responsabilidades:
+- runtime material selection;
+- response_mode arbitration;
+- discovery bypass;
+- scene promotion;
+- micro_scene gating;
+- orchestration state sync.
+
+Status:
+- parcialmente modularizado;
+- helpers locais já extraídos;
+- ainda congelado para divisão real.
+
+---
+
+## Final pipeline
+
+Faixa aproximada:
+- 12003+
+
+Responsabilidades:
+- sanitize final;
+- payload replacement;
+- direct scene payload;
+- compact fallback;
+- scene upgrade;
+- human wrapper;
+- spoken/reply sync;
+- post-processing final.
+
+Status:
+- estruturalmente mais maduro;
+- fronteiras claras;
+- forte candidato futuro para `front_final_pipeline.py`.
