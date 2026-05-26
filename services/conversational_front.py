@@ -5305,6 +5305,72 @@ def _apply_current_turn_topic_reset(
         return response_mode, micro_scene_allowed
 
 
+def _apply_response_mode_arbitration(
+    *,
+    response_mode: str,
+    next_step: str,
+    global_pack_scene_ready: bool,
+    question_type: str,
+    needs_clarify: str,
+    clarify_q: str,
+    topic: str,
+    operational_contract: Dict[str, Any] | None = None,
+) -> tuple[str, str, str]:
+    """
+    Encapsula arbitragem estrutural do response_mode.
+
+    Não chama IA.
+    Não consulta KB.
+    Não gera resposta.
+    Apenas arbitra o modo estrutural final.
+    """
+
+    try:
+        if str(next_step or "").strip().upper() == "SEND_LINK":
+            response_mode = "CLOSING"
+
+        elif (
+            global_pack_scene_ready
+            and str(question_type or "").strip().lower()
+            not in ("punctual", "continuity")
+        ):
+            response_mode = "SCENE"
+            needs_clarify = "no"
+            clarify_q = ""
+
+            if isinstance(operational_contract, dict):
+                operational_contract["micro_scene_allowed"] = True
+
+        elif (
+            str(needs_clarify or "").strip().lower() == "yes"
+            or str(clarify_q or "").strip()
+        ):
+            response_mode = "DISCOVERY"
+
+        elif str(question_type or "").strip().lower() in ("punctual", "continuity"):
+            if response_mode == "SCENE":
+                response_mode = "DIRECT"
+
+            if isinstance(operational_contract, dict):
+                operational_contract["response_mode"] = "DIRECT"
+
+        elif str(topic or "").strip().upper() in (
+            "PRECO",
+            "TRIAL",
+            "ATIVAR",
+            "WHAT_IS",
+            "SOCIAL",
+            "VOZ",
+        ):
+            if response_mode == "SCENE":
+                response_mode = "DIRECT"
+
+        return response_mode, needs_clarify, clarify_q
+
+    except Exception:
+        return response_mode, needs_clarify, clarify_q
+
+
 def _apply_identity_clarify_guard(
     *,
     reply_text: str,
@@ -9009,24 +9075,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # o código pode rebaixar/elevar o modo quando sinais estruturais
         # fortes contradizem o JSON do modelo.
         # ---------------------------------------------------------
-        if str(next_step or "").strip().upper() == "SEND_LINK":
-            response_mode = "CLOSING"
-        elif global_pack_scene_ready and str(question_type or "").strip().lower() not in ("punctual", "continuity"):
-            response_mode = "SCENE"
-            needs_clarify = "no"
-            clarify_q = ""
-            if isinstance(operational_contract, dict):
-                operational_contract["micro_scene_allowed"] = True
-        elif str(needs_clarify or "").strip().lower() == "yes" or str(clarify_q or "").strip():
-            response_mode = "DISCOVERY"
-        elif str(question_type or "").strip().lower() in ("punctual", "continuity"):
-            if response_mode == "SCENE":
-                response_mode = "DIRECT"
-            if isinstance(operational_contract, dict):
-                operational_contract["response_mode"] = "DIRECT"
-        elif str(topic or "").strip().upper() in ("PRECO", "TRIAL", "ATIVAR", "WHAT_IS", "SOCIAL", "VOZ"):
-            if response_mode == "SCENE":
-                response_mode = "DIRECT"
+        (
+            response_mode,
+            needs_clarify,
+            clarify_q,
+        ) = _apply_response_mode_arbitration(
+            response_mode=response_mode,
+            next_step=next_step,
+            global_pack_scene_ready=global_pack_scene_ready,
+            question_type=question_type,
+            needs_clarify=needs_clarify,
+            clarify_q=clarify_q,
+            topic=topic,
+            operational_contract=operational_contract,
+        )
 
         # ---------------------------------------------------------------
         # Bypass estrutural de DISCOVERY com contrato operacional hidratado
