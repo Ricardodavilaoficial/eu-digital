@@ -452,3 +452,17 @@ nem
 ## LAST RESORT IDENTITY GENERATION
 - `_front_build_identity_request(...)`
 
+# Atualização — TERMINAL GOVERNANCE
+
+## DIRECT SCENE EARLY TERMINAL
+- trecho 9974
+
+## FREE_MODE_FINAL_GUARD TERMINAL
+- trecho 12016
+
+## MASTER FINAL TERMINAL
+- trecho 12811+
+
+## JSON_FAIL_SAFE GOVERNANCE
+- trecho 10895+
+

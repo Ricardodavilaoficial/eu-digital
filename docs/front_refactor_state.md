@@ -1184,5 +1184,15 @@ Também foi confirmado que:
 `services/front_guards.py`
 já contém extraction boundaries estáveis usados pela DISCOVERY GOVERNANCE.
 
+# Atualização — Terminal sovereignty
+
+Foi confirmado que o runtime possui:
+- early terminals;
+- guarded terminals;
+- sovereign terminals;
+- terminal bypass via hydrated SCENE.
+
+O helper `_continue_after_direct_scene`
+foi identificado como pivot estrutural de continuidade runtime.
 
 

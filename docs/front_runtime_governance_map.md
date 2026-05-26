@@ -219,3 +219,54 @@ Responsabilidade:
 Responsabilidade:
 - gerar pergunta mínima apenas quando nenhuma pergunta válida existir.
 
+# Atualização — TERMINAL GOVERNANCE
+
+## DIRECT SCENE EARLY TERMINAL
+
+Trecho:
+- 9974
+
+Responsabilidade:
+- early return operacional;
+- bypass do pack_engine;
+- bypass de reconstruction tardia.
+
+Importante:
+o terminal pode ser atravessado quando:
+- `response_mode == "SCENE"`
+- `hydrated_from_docs == True`
+
+Nesse cenário:
+`_continue_after_direct_scene = True`
+
+O runtime continua vivo para enriquecimento posterior.
+
+---
+
+## FREE_MODE_FINAL_GUARD TERMINAL
+
+Trecho:
+- 12016
+
+Responsabilidade:
+- sanitize final;
+- discovery enforcement;
+- punctuation normalization;
+- humanization;
+- JSON_FAIL_SAFE stabilization.
+
+---
+
+## MASTER FINAL TERMINAL
+
+Trecho:
+- 12811+
+
+Responsabilidade:
+- terminal oficial consolidado;
+- telemetria;
+- aiMeta;
+- tokenUsage;
+- replySizePolicy;
+- decider propagation.
+
