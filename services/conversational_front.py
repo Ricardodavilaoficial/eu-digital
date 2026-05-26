@@ -5179,6 +5179,56 @@ def _restore_final_candidate_if_degraded(
     return str(reply_text or "").strip()
 
 
+def _apply_discovery_to_scene_bypass(
+    *,
+    response_mode: str,
+    next_step: str,
+    needs_clarify: str,
+    clarify_q: str,
+    has_real_operational_context: bool,
+    operational_contract,
+) -> tuple[str, str, str]:
+    """
+    Promove DISCOVERY para SCENE quando já há contrato operacional demonstrável.
+
+    Não chama modelo.
+    Não decide intenção.
+    Não consulta KB.
+    Apenas aplica o bypass estrutural já existente.
+    """
+    try:
+        contract_for_mode = operational_contract if isinstance(operational_contract, dict) else {}
+
+        contract_has_reference = bool(
+            contract_for_mode.get("has_reference_example")
+            or contract_for_mode.get("has_practical_scene")
+            or str(contract_for_mode.get("reference_example") or "").strip()
+            or str(contract_for_mode.get("operational_reference") or "").strip()
+            or list(contract_for_mode.get("operational_ritual") or [])
+        )
+
+        contract_ready_for_scene = bool(
+            str(response_mode or "").strip().upper() == "DISCOVERY"
+            and str(next_step or "").strip().upper() != "SEND_LINK"
+            and str(needs_clarify or "").strip().lower() != "yes"
+            and not str(clarify_q or "").strip()
+            and has_real_operational_context
+            and contract_has_reference
+        )
+
+        if contract_ready_for_scene:
+            response_mode = "SCENE"
+            needs_clarify = "no"
+            clarify_q = ""
+            contract_for_mode["micro_scene_allowed"] = True
+            contract_for_mode["response_mode"] = "SCENE"
+
+    except Exception:
+        pass
+
+    return response_mode, needs_clarify, clarify_q
+
+
 def _apply_identity_clarify_guard(
     *,
     reply_text: str,
