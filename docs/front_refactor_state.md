@@ -176,3 +176,30 @@ Status:
 - refatoração incremental segura em andamento
 - sem regressão estrutural aparente
 - comportamento ainda possui dívidas registradas separadamente
+
+---
+
+# Atualização — 2026-05-26
+
+## Commits recentes
+
+- 23e0312 — aplica helper no restore final candidate
+- 8f79189 — registra estado estrutural da refatoração front
+- c772ba0 — delimita pipeline de response mode
+
+## Nova zona delimitada
+
+### RESPONSE MODE CONTROL PIPELINE
+
+Responsável por acabamento estrutural por modo:
+- DIRECT
+- DISCOVERY
+- SCENE
+- CLOSING
+
+Ainda NÃO extraído para módulo.
+
+Decisão:
+- manter dentro de conversational_front.py por enquanto;
+- usar como zona arquitetural mapeada;
+- futura extração só depois de mapear os usos anteriores de response_mode espalhados no arquivo.
