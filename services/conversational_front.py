@@ -5154,6 +5154,31 @@ def _apply_non_empty_reply_guard(
         )
 
 
+def _restore_final_candidate_if_degraded(
+    *,
+    reply_text: str,
+    final_candidate: str,
+) -> str:
+    """
+    Restaura candidato final quando a resposta degradou para vazia/curta.
+
+    Não chama modelo.
+    Não altera política.
+    Não toca KB.
+    Apenas preserva a melhor versão já produzida pelo fluxo.
+    """
+    try:
+        if (
+            final_candidate
+            and (not reply_text or len(str(reply_text or "").strip()) < 40)
+        ):
+            return str(final_candidate or "").strip()
+    except Exception:
+        pass
+
+    return str(reply_text or "").strip()
+
+
 def _apply_identity_clarify_guard(
     *,
     reply_text: str,
