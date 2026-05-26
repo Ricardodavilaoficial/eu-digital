@@ -8772,7 +8772,24 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             operational_contract["micro_scene_allowed"] = False
             operational_contract["response_mode"] = "DIRECT"
 
-        # 🔒 Reforça o melhor material operacional do pack selecionado.
+        # =========================================================
+        # RUNTIME RESPONSE ORCHESTRATION
+        # =========================================================
+        # Responsável por:
+        # - selecionar material operacional em runtime;
+        # - arbitrar DIRECT / DISCOVERY / SCENE / CLOSING;
+        # - controlar micro_scene_allowed;
+        # - reforçar material tardio do platform_kb;
+        # - preparar contrato antes do pipeline final.
+        #
+        # NÃO deve:
+        # - gerar texto final sozinho;
+        # - aplicar polish final;
+        # - substituir o FINAL PIPELINE.
+        # =========================================================
+
+        # Runtime material selection:
+        # reforça o melhor material operacional do pack selecionado.
         # Mantém a microcena curta apenas como fallback final.
         try:
             if selected_pack_id:
@@ -8877,8 +8894,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 question_type=question_type,
             )
 
-        # Hierarquia de risco: o código pode rebaixar/elevar o modo quando
-        # sinais estruturais fortes contradizem o JSON do modelo.
+        # ---------------------------------------------------------
+        # Response mode arbitration:
+        # o código pode rebaixar/elevar o modo quando sinais estruturais
+        # fortes contradizem o JSON do modelo.
+        # ---------------------------------------------------------
         if str(next_step or "").strip().upper() == "SEND_LINK":
             response_mode = "CLOSING"
         elif global_pack_scene_ready and str(question_type or "").strip().lower() not in ("punctual", "continuity"):
@@ -9063,8 +9083,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if not isinstance(operational_contract, dict) or not operational_contract:
             operational_contract = base_operational_contract if 'base_operational_contract' in locals() else {}
 
-        # 🔒 GARANTIA TARDIA DO PLATFORM_KB
-        # Ponto crítico: antes do retorno direto, garante que o contrato use
+        # ---------------------------------------------------------
+        # Late KB reinforcement:
+        # antes do retorno direto, garante que o contrato use
         # o melhor material já cadastrado no platform_kb, em vez da microcena curta.
         # Não cria conteúdo, não detecta profissão por palavra local e não mexe em prompt.
         try:
