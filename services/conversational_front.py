@@ -598,7 +598,8 @@ def _front_build_structured_assembly_reply(
                 and current_clean
                 and core
                 and q_type != "broad"
-                and len(current_clean) < 420
+                and len(current_clean) < 260
+                and len(core) > (len(current_clean) * 2)
                 and current_clean not in core
                 and core not in current_clean
             ):
