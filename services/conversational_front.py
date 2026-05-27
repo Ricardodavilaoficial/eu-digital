@@ -9757,6 +9757,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             clarify_q = ""
             should_ask_segment = "no"
 
+            if response_mode == "DISCOVERY":
+                response_mode = "DIRECT"
+
         
         # ----------------------------------------------------------
         # ✅ "TOM DO LINK": o link é uma AÇÃO (fechar) — não uma palavra.
@@ -11390,12 +11393,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                         _should_force_continuity = (
                             _qt in ("continuity", "punctual")
-                            or (
-                                _qt != "broad"
-                                and ai_turns == 0
-                                and _reply_len >= 260
-                                and _has_process_facts
-                            )
+                            and _reply_len < 420
                         )
 
                         if _should_force_continuity:
