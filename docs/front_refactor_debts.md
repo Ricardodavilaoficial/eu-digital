@@ -325,3 +325,21 @@ Motivo:
 - lê `kb_snapshot_raw`;
 - pertence a sanitize híbrido com KB/SLA.
 
+## 2026-05-27 — Correção estrutural: separação entre identidade humana e contexto de segmento
+
+Commit aplicado:
+- 424a692
+
+Contexto:
+Durante auditoria do FREE_MODE_FINAL_GUARD, foi identificado que o pipeline de continuidade tratava ausência de segmento como ausência de identidade humana.
+
+Trecho anterior:
+
+```python
+_missing_identity = bool(
+    not bool(_continuity_has_identity)
+    or not bool(_continuity_has_segment)
+)
+
+
+
