@@ -383,3 +383,20 @@ A estratégia correta é:
 - continuar micro-extrações seguras;
 - consolidar documentação operacional;
 - reduzir risco arquitetural antes da redução física do core.
+
+# SECOND SAFE EXTRACTION WAVE
+
+Helper extraído:
+- `_sync_spoken_after_technical_rescue(...)`
+
+Destino:
+- `services/front_surface.py`
+
+Boundary:
+- PURE SAFE FINAL PIPELINE
+
+Status:
+- compile limpo;
+- callsites preservados;
+- sem alteração comportamental intencional.
+

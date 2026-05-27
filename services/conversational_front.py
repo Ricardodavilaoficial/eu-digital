@@ -5052,31 +5052,6 @@ def _apply_discovery_mode_identity_guard(
         return needs_clarify, name_use
 
 
-def _sync_spoken_after_technical_rescue(
-    *,
-    reply_text: str,
-    spoken_text: str,
-) -> str:
-    """
-    Sincroniza spokenText após rescue técnico.
-
-    Não cria conteúdo.
-    Não altera política.
-    Não chama modelo.
-    Apenas impede que spokenText técnico/vazio sobreviva quando replyText já foi resgatado.
-    """
-    try:
-        if _looks_like_technical_output(spoken_text):
-            return str(reply_text or "").strip()
-
-        if not str(spoken_text or "").strip():
-            return str(reply_text or "").strip()
-
-        return str(spoken_text or "").strip()
-    except Exception:
-        return str(reply_text or spoken_text or "").strip()
-
-
 def _apply_final_surface_polish(
     *,
     reply_text: str,

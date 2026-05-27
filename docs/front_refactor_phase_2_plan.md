@@ -121,3 +121,19 @@ O monólito restante encontra-se progressivamente isolado como:
 O núcleo restante do monólito encontra-se progressivamente isolado como:
 `RUNTIME SOVEREIGN CORE`
 
+# SECOND SAFE EXTRACTION WAVE
+
+Helper extraído:
+- `_sync_spoken_after_technical_rescue(...)`
+
+Destino:
+- `services/front_surface.py`
+
+Boundary:
+- PURE SAFE FINAL PIPELINE
+
+Status:
+- compile limpo;
+- callsites preservados;
+- sem alteração comportamental intencional.
+

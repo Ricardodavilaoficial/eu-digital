@@ -1,4 +1,5 @@
 from services.conversational_front import _normalize_response_mode
+from services.front_utils import looks_like_technical_output as _looks_like_technical_output
 
 
 def _apply_response_mode_surface(
@@ -61,3 +62,27 @@ def _restore_final_candidate_if_degraded(
 
     return str(reply_text or "").strip()
 
+
+def _sync_spoken_after_technical_rescue(
+    *,
+    reply_text: str,
+    spoken_text: str,
+) -> str:
+    """
+    Sincroniza spokenText após rescue técnico.
+
+    Não cria conteúdo.
+    Não altera política.
+    Não chama modelo.
+    Apenas impede que spokenText técnico/vazio sobreviva quando replyText já foi resgatado.
+    """
+    try:
+        if _looks_like_technical_output(spoken_text):
+            return str(reply_text or "").strip()
+
+        if not str(spoken_text or "").strip():
+            return str(reply_text or "").strip()
+
+        return str(spoken_text or "").strip()
+    except Exception:
+        return str(reply_text or spoken_text or "").strip()
