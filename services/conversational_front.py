@@ -10822,9 +10822,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             # --- GARANTIA DE DISCOVERY ANTES DO EARLY RETURN ---
             if response_mode == "DISCOVERY":
                 missing_name = not bool(has_name)
-                missing_segment = not bool(segment_discovery_resolved)
 
-                if missing_name or missing_segment:
+                if missing_name:
                     if not _has_question(reply_text):
                         needs_clarify = "yes"
 
@@ -12498,9 +12497,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # ----------------------------------------------------------
         if response_mode == "DISCOVERY":
             missing_name = not bool(has_name)
-            missing_segment = not bool(segment_discovery_resolved)
 
-            if missing_name or missing_segment:
+            if missing_name:
                 if not _has_question(reply_text):
                     needs_clarify = "yes"
 
