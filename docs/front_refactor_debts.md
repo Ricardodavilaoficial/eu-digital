@@ -308,3 +308,20 @@ Decisão:
 - não corrigir agora;
 - futura auditoria deve decidir se `_normalize_response_mode` vai para `front_utils.py`, `front_surface.py` ou módulo próprio de response mode.
 
+# STOP REFACTORING POINT
+
+Após a extração de `_sync_spoken_after_technical_rescue(...)` para `services/front_surface.py`, a refatoração estrutural deve pausar.
+
+Motivo:
+- próximas funções candidatas começam a encostar em KB/SLA, recovery, governance ou runtime;
+- o núcleo restante do `conversational_front.py` já representa majoritariamente RUNTIME SOVEREIGN CORE;
+- a prioridade agora passa a ser correção de bugs com boundaries preservados.
+
+Função avaliada e NÃO movida:
+- `_sanitize_unverified_time_claims(...)`
+
+Motivo:
+- depende de `_kb_get_process_sla_text(...)`;
+- lê `kb_snapshot_raw`;
+- pertence a sanitize híbrido com KB/SLA.
+
