@@ -11609,9 +11609,35 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     question_type=question_type,
                 )
 
+                # -------------------------------------------------------
+                # Separação estrutural:
+                #
+                # Identidade humana do lead e contexto operacional de
+                # segmento possuem impactos diferentes no pipeline.
+                #
+                # Nome ausente:
+                # - exige clarification;
+                # - impede continuidade segura;
+                # - impede persistência confiável.
+                #
+                # Segmento ausente:
+                # - reduz enriquecimento operacional;
+                # - reduz microcena/contexto;
+                # - mas NÃO invalida identidade já resolvida.
+                #
+                # Mantém:
+                # - discovery progressivo;
+                # - IA soberana;
+                # - continuidade incremental;
+                # - proteção contra vocativo inseguro.
+                # -------------------------------------------------------
+
                 _missing_identity = bool(
                     not bool(_continuity_has_identity)
-                    or not bool(_continuity_has_segment)
+                )
+
+                _missing_segment_context = bool(
+                    not bool(_continuity_has_segment)
                 )
 
                 _has_segment_for_identity = bool(
