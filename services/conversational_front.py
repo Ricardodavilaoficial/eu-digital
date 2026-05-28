@@ -582,16 +582,6 @@ def _front_build_structured_assembly_reply(
 
         source = _front_structured_doc_content(real_kb_docs)
 
-        try:
-            logging.info(
-                "[FRONT_DOC_SOURCE_AUDIT] source_type=%s has_rich_scene=%s lead_segment=%s",
-                str((source or {}).get("contentSourceType") or "").strip(),
-                bool((source or {}).get("hasRichScene")),
-                str(lead_segment_raw or "").strip(),
-            )
-        except Exception:
-            pass
-
         if not source:
             source = _front_platform_pack_content(
                 kb_snapshot_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
@@ -8528,50 +8518,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 pass
 
-            # ----------------------------------------------------------
-            # PÓS-HIDRATAÇÃO SOBERANA
-            # Depois que o modelo entrega lead_segment/segment_hint,
-            # reexecuta enrichment operacional com o segmento já estabilizado.
-            # Não remove guards anteriores.
-            # Não afrouxa saneamento estrutural.
-            # Apenas promove o entendimento soberano para o runtime operacional.
-            # ----------------------------------------------------------
-            try:
-                _post_sovereign_effective_segment = (
-                    str(inferred_lead_segment_raw or "").strip()
-                    or str(inferred_lead_segment or "").strip()
-                    or str(segment_hint or "").strip()
-                    or str(effective_segment or "").strip()
-                )
-
-                if _post_sovereign_effective_segment:
-                    _post_sovereign_docs = _kb_lookup_operational_docs(
-                        kb_snapshot=kb_snapshot,
-                        effective_segment=_post_sovereign_effective_segment,
-                        kb_context=kb_context if isinstance(kb_context, dict) else {},
-                    )
-
-                    if isinstance(_post_sovereign_docs, dict) and (
-                        _post_sovereign_docs.get("subsegment_doc")
-                        or _post_sovereign_docs.get("segment_doc")
-                        or _post_sovereign_docs.get("archetype_doc")
-                    ):
-                        effective_segment = _post_sovereign_effective_segment
-
-                        real_kb_docs = _post_sovereign_docs
-
-                        kb_context = _merge_real_kb_operational_context(
-                            kb_context=kb_context if isinstance(kb_context, dict) else {},
-                            docs=real_kb_docs,
-                        )
-
-                        logging.info(
-                            "[POST_SOVEREIGN_REHYDRATE] effective_segment=%s hydrated=True",
-                            effective_segment,
-                        )
-            except Exception:
-                pass
-
             # Nome do turno atual:
             # o lead pode informar o nome em qualquer ordem da conversa.
             # Se o nome foi dito neste turno e passou pela sanitização
@@ -9046,33 +8992,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ).strip()
 
                 if str(user_text or "").strip():
-                    _identity_validation_text_parts = [
-                        str(user_text or "").strip(),
-                        str(effective_segment or "").strip(),
-                        str(inferred_lead_segment_raw or "").strip(),
-                        str(inferred_lead_segment or "").strip(),
-                        str(segment_hint or "").strip(),
-                    ]
-
-                    _identity_validation_text = " ".join(
-                        [p for p in _identity_validation_text_parts if p]
-                    ).strip()
-
-                    try:
-                        logging.info(
-                            "[IDENTITY_PROMOTION_TRACE] selected_key=%s validation_text=%s effective_segment=%s inferred_raw=%s inferred_segment=%s segment_hint=%s",
-                            _selected_key,
-                            _identity_validation_text,
-                            str(effective_segment or "").strip(),
-                            str(inferred_lead_segment_raw or "").strip(),
-                            str(inferred_lead_segment or "").strip(),
-                            str(segment_hint or "").strip(),
-                        )
-                    except Exception:
-                        pass
-
                     _docs_segment_ok = _doc_identity_is_compatible_with_current_text(
-                        user_text=_identity_validation_text,
+                        user_text=user_text,
                         doc=_selected_doc,
                         doc_key=_selected_key,
                         min_score=2,

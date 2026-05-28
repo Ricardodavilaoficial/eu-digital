@@ -1331,9 +1331,7 @@ def _fetch_front_kb_sources(topic_hint: str = "") -> Dict[str, Any]:
             for doc in db.collection("kb_segments_v1").stream():
                 segs[doc.id] = doc.to_dict() or {}
             out["segments"] = segs
-            logging.info("[WA_BOT][KB_FETCH_SEGMENTS] count=%s sample=%s", len(segs), list(segs.keys())[:5])
         except Exception:
-            logging.exception("[WA_BOT][KB_FETCH_SEGMENTS][ERROR]")
             out["segments"] = {}
 
         try:
@@ -1341,9 +1339,7 @@ def _fetch_front_kb_sources(topic_hint: str = "") -> Dict[str, Any]:
             for doc in db.collection("kb_subsegments_v1").stream():
                 subs[doc.id] = doc.to_dict() or {}
             out["subsegments"] = subs
-            logging.info("[WA_BOT][KB_FETCH_SUBSEGMENTS] count=%s sample=%s", len(subs), list(subs.keys())[:5])
         except Exception:
-            logging.exception("[WA_BOT][KB_FETCH_SUBSEGMENTS][ERROR]")
             out["subsegments"] = {}
 
         try:
@@ -1351,9 +1347,7 @@ def _fetch_front_kb_sources(topic_hint: str = "") -> Dict[str, Any]:
             for doc in db.collection("kb_archetypes_v1").stream():
                 archs[doc.id] = doc.to_dict() or {}
             out["archetypes"] = archs
-            logging.info("[WA_BOT][KB_FETCH_ARCHETYPES] count=%s sample=%s", len(archs), list(archs.keys())[:5])
         except Exception:
-            logging.exception("[WA_BOT][KB_FETCH_ARCHETYPES][ERROR]")
             out["archetypes"] = {}
     except Exception:
         # sem Firestore? snapshot vazio (front ainda funciona, só fica mais “simpático”)
@@ -1799,17 +1793,32 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
         if _size(work) <= limit:
             return work
 
-        # 4) se ainda exceder, sacrifica primeiro personalização legada
-        # de segmento, preservando a base operacional moderna.
+        # 4) se ainda exceder, remove primeiro documentos operacionais
+        # segmentados. Eles são úteis quando há match confiável, mas não
+        # podem ter prioridade sobre o fallback neutro da platform_kb.
         #
-        # Princípio arquitetural:
-        # - kb_segments_v1 / kb_subsegments_v1 / kb_archetypes_v1 são a
-        #   fonte moderna para hidratar contrato operacional real;
-        # - value_packs_v1 é fallback global, não deve sobreviver antes
-        #   dos documentos que permitem sair do fallback;
-        # - não escolhe segmento no código;
-        # - não usa palavras-chave;
-        # - não altera prompt.
+        # Princípio:
+        # - sem palavras-chave;
+        # - sem prompt;
+        # - sem escolher "o segmento menos pior";
+        # - preserva value_packs_v1 para responder utilmente quando o
+        #   segmento específico ainda não estiver estruturado.
+        if work.get("kb_archetypes_v1"):
+            work["kb_archetypes_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        if work.get("kb_segments_v1"):
+            work["kb_segments_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        if work.get("kb_subsegments_v1"):
+            work["kb_subsegments_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        # 5) se ainda exceder, perde personalização segmentada, mas mantém pack global.
         ap = dict(work.get("answer_playbook_v1") or {})
         if ap.get("segment_value_map_v1"):
             ap["segment_value_map_v1"] = {}
@@ -1817,8 +1826,7 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
             if _size(work) <= limit:
                 return work
 
-        # 5) antes de sacrificar documentos operacionais modernos,
-        # reduz agressivamente campos longos dos packs globais.
+        # 6) antes de sacrificar fatos operacionais curtos, reduz agressivamente
         # campos longos dos packs globais.
         #
         # Princípio arquitetural:
@@ -1866,23 +1874,6 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
         # 7) último recurso comercial: remove packs somente se nem o fallback global couber.
         if work.get("value_packs_v1"):
             work["value_packs_v1"] = {}
-            if _size(work) <= limit:
-                return work
-
-        # 8) somente agora, como último recurso estrutural, remove documentos
-        # operacionais modernos. Esse caminho deve ser raro e visível nos logs.
-        if work.get("kb_archetypes_v1"):
-            work["kb_archetypes_v1"] = {}
-            if _size(work) <= limit:
-                return work
-
-        if work.get("kb_segments_v1"):
-            work["kb_segments_v1"] = {}
-            if _size(work) <= limit:
-                return work
-
-        if work.get("kb_subsegments_v1"):
-            work["kb_subsegments_v1"] = {}
             if _size(work) <= limit:
                 return work
 
@@ -2144,19 +2135,6 @@ def _build_front_kb_snapshot(topic: str) -> str:
         compact_archetypes = {}
 
 
-    try:
-        logging.info(
-            "[WA_BOT][KB_COMPACT_COUNTS] segments=%s subsegments=%s archetypes=%s compact_segments=%s compact_subsegments=%s compact_archetypes=%s",
-            len(segments or {}),
-            len(subsegments or {}),
-            len(archetypes or {}),
-            len(compact_segments or {}),
-            len(compact_subsegments or {}),
-            len(compact_archetypes or {}),
-        )
-    except Exception:
-        pass
-
     # ✅ packs_v1: snapshot em JSON compacto (para render determinístico no front)
     try:
         pb = (kb.get("answer_playbook_v1") or {}) if isinstance(kb, dict) else {}
@@ -2184,26 +2162,6 @@ def _build_front_kb_snapshot(topic: str) -> str:
                     }
             except Exception:
                 pricing_compact = {}
-            try:
-                _kb_budget_raw_chars = len(json.dumps(kb, ensure_ascii=False))
-                _raw_ap = (kb.get("answer_playbook_v1") or {}) if isinstance(kb, dict) else {}
-                logging.info(
-                    "[WA_BOT][KB_BUDGET_RAW] raw_chars=%s has_value_packs=%s has_segment_value_map=%s has_segments=%s has_subsegments=%s has_archetypes=%s n_value_packs=%s n_segment_value_map=%s n_segments=%s n_subsegments=%s n_archetypes=%s",
-                    _kb_budget_raw_chars,
-                    bool((kb or {}).get("value_packs_v1")) if isinstance(kb, dict) else False,
-                    bool((_raw_ap or {}).get("segment_value_map_v1")) if isinstance(_raw_ap, dict) else False,
-                    bool((kb or {}).get("kb_segments_v1")) if isinstance(kb, dict) else False,
-                    bool((kb or {}).get("kb_subsegments_v1")) if isinstance(kb, dict) else False,
-                    bool((kb or {}).get("kb_archetypes_v1")) if isinstance(kb, dict) else False,
-                    len((kb or {}).get("value_packs_v1") or {}) if isinstance(kb, dict) else 0,
-                    len((_raw_ap or {}).get("segment_value_map_v1") or {}) if isinstance(_raw_ap, dict) else 0,
-                    len((kb or {}).get("kb_segments_v1") or {}) if isinstance(kb, dict) else 0,
-                    len((kb or {}).get("kb_subsegments_v1") or {}) if isinstance(kb, dict) else 0,
-                    len((kb or {}).get("kb_archetypes_v1") or {}) if isinstance(kb, dict) else 0,
-                )
-            except Exception:
-                pass
-
             payload = {
                 "answer_playbook_v1": {
                     "runtime_selector_v1": pb.get("runtime_selector_v1") if isinstance(pb, dict) else {},
