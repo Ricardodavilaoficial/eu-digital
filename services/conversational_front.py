@@ -8528,6 +8528,50 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 pass
 
+            # ----------------------------------------------------------
+            # PÓS-HIDRATAÇÃO SOBERANA
+            # Depois que o modelo entrega lead_segment/segment_hint,
+            # reexecuta enrichment operacional com o segmento já estabilizado.
+            # Não remove guards anteriores.
+            # Não afrouxa saneamento estrutural.
+            # Apenas promove o entendimento soberano para o runtime operacional.
+            # ----------------------------------------------------------
+            try:
+                _post_sovereign_effective_segment = (
+                    str(inferred_lead_segment_raw or "").strip()
+                    or str(inferred_lead_segment or "").strip()
+                    or str(segment_hint or "").strip()
+                    or str(effective_segment or "").strip()
+                )
+
+                if _post_sovereign_effective_segment:
+                    _post_sovereign_docs = _kb_lookup_operational_docs(
+                        kb_snapshot=kb_snapshot,
+                        effective_segment=_post_sovereign_effective_segment,
+                        kb_context=kb_context if isinstance(kb_context, dict) else {},
+                    )
+
+                    if isinstance(_post_sovereign_docs, dict) and (
+                        _post_sovereign_docs.get("subsegment_doc")
+                        or _post_sovereign_docs.get("segment_doc")
+                        or _post_sovereign_docs.get("archetype_doc")
+                    ):
+                        effective_segment = _post_sovereign_effective_segment
+
+                        real_kb_docs = _post_sovereign_docs
+
+                        kb_context = _merge_real_kb_operational_context(
+                            kb_context=kb_context if isinstance(kb_context, dict) else {},
+                            docs=real_kb_docs,
+                        )
+
+                        logging.info(
+                            "[POST_SOVEREIGN_REHYDRATE] effective_segment=%s hydrated=True",
+                            effective_segment,
+                        )
+            except Exception:
+                pass
+
             # Nome do turno atual:
             # o lead pode informar o nome em qualquer ordem da conversa.
             # Se o nome foi dito neste turno e passou pela sanitização
