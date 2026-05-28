@@ -9002,8 +9002,33 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ).strip()
 
                 if str(user_text or "").strip():
+                    _identity_validation_text_parts = [
+                        str(user_text or "").strip(),
+                        str(effective_segment or "").strip(),
+                        str(inferred_lead_segment_raw or "").strip(),
+                        str(inferred_lead_segment or "").strip(),
+                        str(segment_hint or "").strip(),
+                    ]
+
+                    _identity_validation_text = " ".join(
+                        [p for p in _identity_validation_text_parts if p]
+                    ).strip()
+
+                    try:
+                        logging.info(
+                            "[IDENTITY_PROMOTION_TRACE] selected_key=%s validation_text=%s effective_segment=%s inferred_raw=%s inferred_segment=%s segment_hint=%s",
+                            _selected_key,
+                            _identity_validation_text,
+                            str(effective_segment or "").strip(),
+                            str(inferred_lead_segment_raw or "").strip(),
+                            str(inferred_lead_segment or "").strip(),
+                            str(segment_hint or "").strip(),
+                        )
+                    except Exception:
+                        pass
+
                     _docs_segment_ok = _doc_identity_is_compatible_with_current_text(
-                        user_text=user_text,
+                        user_text=_identity_validation_text,
                         doc=_selected_doc,
                         doc_key=_selected_key,
                         min_score=2,
