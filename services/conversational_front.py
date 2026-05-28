@@ -458,6 +458,7 @@ def _front_platform_pack_content(
 
         conversational_scene = _front_first_text(
             material.get("micro_scene_conversational"),
+            material.get("micro_scene"),
         )
 
         if mode == "SCENE":
