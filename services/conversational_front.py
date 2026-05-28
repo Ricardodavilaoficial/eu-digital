@@ -12201,6 +12201,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     _contract_for_direct.get("runtime_compact_reply")
                     or _contract_for_direct.get("runtime_short_reply")
                 )
+                and len(str(reply_text or "").strip()) < 260
             )
 
             if (
