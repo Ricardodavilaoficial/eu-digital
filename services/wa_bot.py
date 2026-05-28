@@ -1331,7 +1331,9 @@ def _fetch_front_kb_sources(topic_hint: str = "") -> Dict[str, Any]:
             for doc in db.collection("kb_segments_v1").stream():
                 segs[doc.id] = doc.to_dict() or {}
             out["segments"] = segs
+            logging.info("[WA_BOT][KB_FETCH_SEGMENTS] count=%s sample=%s", len(segs), list(segs.keys())[:5])
         except Exception:
+            logging.exception("[WA_BOT][KB_FETCH_SEGMENTS][ERROR]")
             out["segments"] = {}
 
         try:
@@ -1339,7 +1341,9 @@ def _fetch_front_kb_sources(topic_hint: str = "") -> Dict[str, Any]:
             for doc in db.collection("kb_subsegments_v1").stream():
                 subs[doc.id] = doc.to_dict() or {}
             out["subsegments"] = subs
+            logging.info("[WA_BOT][KB_FETCH_SUBSEGMENTS] count=%s sample=%s", len(subs), list(subs.keys())[:5])
         except Exception:
+            logging.exception("[WA_BOT][KB_FETCH_SUBSEGMENTS][ERROR]")
             out["subsegments"] = {}
 
         try:
@@ -1347,7 +1351,9 @@ def _fetch_front_kb_sources(topic_hint: str = "") -> Dict[str, Any]:
             for doc in db.collection("kb_archetypes_v1").stream():
                 archs[doc.id] = doc.to_dict() or {}
             out["archetypes"] = archs
+            logging.info("[WA_BOT][KB_FETCH_ARCHETYPES] count=%s sample=%s", len(archs), list(archs.keys())[:5])
         except Exception:
+            logging.exception("[WA_BOT][KB_FETCH_ARCHETYPES][ERROR]")
             out["archetypes"] = {}
     except Exception:
         # sem Firestore? snapshot vazio (front ainda funciona, só fica mais “simpático”)
@@ -2137,6 +2143,19 @@ def _build_front_kb_snapshot(topic: str) -> str:
     except Exception:
         compact_archetypes = {}
 
+
+    try:
+        logging.info(
+            "[WA_BOT][KB_COMPACT_COUNTS] segments=%s subsegments=%s archetypes=%s compact_segments=%s compact_subsegments=%s compact_archetypes=%s",
+            len(segments or {}),
+            len(subsegments or {}),
+            len(archetypes or {}),
+            len(compact_segments or {}),
+            len(compact_subsegments or {}),
+            len(compact_archetypes or {}),
+        )
+    except Exception:
+        pass
 
     # ✅ packs_v1: snapshot em JSON compacto (para render determinístico no front)
     try:
