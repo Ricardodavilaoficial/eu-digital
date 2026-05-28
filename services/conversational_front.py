@@ -482,7 +482,7 @@ def _front_platform_pack_content(
             )
 
         pieces = []
-        if value_one_liner:
+        if value_one_liner and not conversational_scene:
             pieces.append(value_one_liner)
         if bridge_line and not conversational_scene:
             pieces.append(bridge_line)
