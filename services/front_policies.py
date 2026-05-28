@@ -100,10 +100,16 @@ def _preserve_technical_direct_reply_size(
         mode = str(response_mode or "").strip().upper()
         canonical_topic = str(topic or "").strip().upper()
 
-        is_platform_runtime = bool(
+        is_real_platform_runtime = bool(
             contract.get("hydrated_from_platform_kb")
-            or contract.get("global_pack_fallback")
+            or contract.get("hydrated_from_docs")
         )
+        is_global_pack_fallback = bool(contract.get("global_pack_fallback"))
+
+        if is_global_pack_fallback and not is_real_platform_runtime:
+            return text, policy
+
+        is_platform_runtime = bool(is_real_platform_runtime)
 
         is_technical_direct = bool(
             source == "front_structured_python_assembly"
