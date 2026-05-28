@@ -2162,6 +2162,26 @@ def _build_front_kb_snapshot(topic: str) -> str:
                     }
             except Exception:
                 pricing_compact = {}
+            try:
+                _kb_budget_raw_chars = len(json.dumps(kb, ensure_ascii=False))
+                _raw_ap = (kb.get("answer_playbook_v1") or {}) if isinstance(kb, dict) else {}
+                logging.info(
+                    "[WA_BOT][KB_BUDGET_RAW] raw_chars=%s has_value_packs=%s has_segment_value_map=%s has_segments=%s has_subsegments=%s has_archetypes=%s n_value_packs=%s n_segment_value_map=%s n_segments=%s n_subsegments=%s n_archetypes=%s",
+                    _kb_budget_raw_chars,
+                    bool((kb or {}).get("value_packs_v1")) if isinstance(kb, dict) else False,
+                    bool((_raw_ap or {}).get("segment_value_map_v1")) if isinstance(_raw_ap, dict) else False,
+                    bool((kb or {}).get("kb_segments_v1")) if isinstance(kb, dict) else False,
+                    bool((kb or {}).get("kb_subsegments_v1")) if isinstance(kb, dict) else False,
+                    bool((kb or {}).get("kb_archetypes_v1")) if isinstance(kb, dict) else False,
+                    len((kb or {}).get("value_packs_v1") or {}) if isinstance(kb, dict) else 0,
+                    len((_raw_ap or {}).get("segment_value_map_v1") or {}) if isinstance(_raw_ap, dict) else 0,
+                    len((kb or {}).get("kb_segments_v1") or {}) if isinstance(kb, dict) else 0,
+                    len((kb or {}).get("kb_subsegments_v1") or {}) if isinstance(kb, dict) else 0,
+                    len((kb or {}).get("kb_archetypes_v1") or {}) if isinstance(kb, dict) else 0,
+                )
+            except Exception:
+                pass
+
             payload = {
                 "answer_playbook_v1": {
                     "runtime_selector_v1": pb.get("runtime_selector_v1") if isinstance(pb, dict) else {},
