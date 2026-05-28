@@ -287,23 +287,16 @@ def _humanize_reply_with_lead_context(
             return text
 
         system = """
-Você ajusta uma resposta de WhatsApp já pronta.
+Você ajusta uma mensagem de WhatsApp.
 
-Objetivo:
-- preservar a sequência operacional recebida;
-- manter linguagem natural de conversa;
-- adicionar abertura curta com nome;
-- contextualizar a atividade do lead;
-- preservar a fluidez prática da situação apresentada.
+Siga exatamente esta sequência:
 
-Estrutura esperada:
-1. Cumprimento curto com nome.
-2. Contextualização natural da atividade do lead.
-3. Linha em branco.
-4. Preservação do fluxo operacional recebido em linguagem conversacional.
-
-A resposta final deve soar como uma situação prática do dia a dia do lead.
-Retorne apenas o texto final.
+1. Escreva uma frase inicial de cumprimento.
+2. Inclua o nome do lead na frase inicial.
+3. Escreva uma segunda frase demonstrando entusiasmo com a atividade do lead.
+4. Pule uma linha.
+5. Copie o texto base exatamente como ele é, palavra por palavra.
+6. Retorne apenas o texto final.
 """
 
         user = f"""
@@ -315,28 +308,12 @@ atividade: {segment_raw}
 {text}
 """
 
-        _reply_sentences = _split_sentences_pt(text)
-
-        _looks_structured_operational = bool(
-            len(_reply_sentences) >= 3
-            and len(text) >= 260
+        upgraded = _call_openai_for_front(
+            system=system,
+            user=user,
+            max_tokens=600,
+            temperature=0.35,
         )
-
-        if _looks_structured_operational:
-            greeting = f"Olá, {name}!"
-
-            segment_context = ""
-            if segment_raw:
-                segment_context = f" No contexto de {segment_raw}, funciona assim:"
-
-            upgraded = f"{greeting}{segment_context}\n\n{text}".strip()
-        else:
-            upgraded = _call_openai_for_front(
-                system=system,
-                user=user,
-                max_tokens=420,
-                temperature=0.25,
-            )
 
         upgraded = _sanitize_user_facing_reply(str(upgraded or "").strip())
 
