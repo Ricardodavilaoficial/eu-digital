@@ -42,6 +42,10 @@ def _compose_pack_runtime_short_reply(material: dict) -> str:
         bridge = str(material.get("bridge_line") or "").strip()
         scene = str(material.get("micro_scene_conversational") or material.get("micro_scene") or "").strip()
         parts = []
+        if value:
+            parts.append(value.rstrip(".!?") + ".")
+        if bridge:
+            parts.append(bridge.rstrip(":") + ":")
         if scene:
             parts.append(scene.rstrip(".!?") + ".")
         return " ".join(parts).strip()
