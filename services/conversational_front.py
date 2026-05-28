@@ -622,6 +622,20 @@ def _front_build_structured_assembly_reply(
         except Exception:
             pass
 
+        try:
+            logging.info(
+                "[STRUCTURED_ASSEMBLY_CORE_PROBE] mode=%s q_type=%s selected_pack_id=%s source_type=%s current_len=%s core_len=%s core_head=%s",
+                mode,
+                q_type,
+                str(selected_pack_id or "").strip().upper(),
+                str((source or {}).get("contentSourceType") or "").strip(),
+                len(str(current_reply or "")),
+                len(str(core or "")),
+                str(core or "").replace("\n", " ")[:220],
+            )
+        except Exception:
+            pass
+
         assembled = _humanize_reply_with_lead_context(
             reply=core,
             lead_name=lead_name,
@@ -629,6 +643,18 @@ def _front_build_structured_assembly_reply(
         )
         assembled = _unwrap_front_json_envelope(assembled) or assembled
         assembled = _sanitize_user_facing_reply(str(assembled or "").strip())
+
+        try:
+            logging.info(
+                "[STRUCTURED_ASSEMBLY_ASSEMBLED_PROBE] mode=%s q_type=%s selected_pack_id=%s assembled_len=%s assembled_head=%s",
+                mode,
+                q_type,
+                str(selected_pack_id or "").strip().upper(),
+                len(str(assembled or "")),
+                str(assembled or "").replace("\n", " ")[:220],
+            )
+        except Exception:
+            pass
 
         # Se a camada de humanização voltar menor/truncada, preserva o core
         # estruturado já vindo da KB. Não cria frase, não usa palavra-chave e
