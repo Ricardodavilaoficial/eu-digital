@@ -8821,7 +8821,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 _platform_runtime_operational_allowed = bool(
                     operational_contract.get("hydrated_from_docs")
-                    or str(operational_contract.get("segment") or "").strip()
                     or str(operational_contract.get("archetype_id") or "").strip()
                 )
 
