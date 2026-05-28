@@ -10820,34 +10820,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
                 if structured_assembly_result and structured_assembly_result.get("replyText"):
-                    _current_reply_before_assembly = str(reply_text or "").strip()
-                    _current_source_before_assembly = str(reply_source or "").strip()
-                    _preserve_soberana_reply = bool(
-                        response_mode == "DIRECT"
-                        and len(_current_reply_before_assembly) >= 120
-                        and _current_source_before_assembly in (
-                            "front_ia_soberana",
-                            "front_operational_upgrade",
-                        )
-                        and not _looks_like_technical_output(_current_reply_before_assembly)
-                    )
-
-                    if _preserve_soberana_reply:
-                        structured_assembly_result = {}
-                        try:
-                            logging.info(
-                                "[STRUCTURED_ASSEMBLY_AUTHORITY_SKIP] source=%s len=%s reason=soberana_direct_reply",
-                                _current_source_before_assembly,
-                                len(_current_reply_before_assembly),
-                            )
-                        except Exception:
-                            pass
-                    else:
-                        reply_text = str(structured_assembly_result.get("replyText") or "").strip()
-                        spoken_text = str(structured_assembly_result.get("spokenText") or reply_text).strip()
-                        reply_source = "front_structured_python_assembly"
-                        accepted = True
-                        ia_accepted = True
+                    reply_text = str(structured_assembly_result.get("replyText") or "").strip()
+                    spoken_text = str(structured_assembly_result.get("spokenText") or reply_text).strip()
+                    reply_source = "front_structured_python_assembly"
+                    accepted = True
+                    ia_accepted = True
             except Exception:
                 structured_assembly_result = {}
 
