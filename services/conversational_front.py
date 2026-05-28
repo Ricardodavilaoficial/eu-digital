@@ -582,6 +582,16 @@ def _front_build_structured_assembly_reply(
 
         source = _front_structured_doc_content(real_kb_docs)
 
+        try:
+            logging.info(
+                "[FRONT_DOC_SOURCE_AUDIT] source_type=%s has_rich_scene=%s lead_segment=%s",
+                str((source or {}).get("contentSourceType") or "").strip(),
+                bool((source or {}).get("hasRichScene")),
+                str(lead_segment_raw or "").strip(),
+            )
+        except Exception:
+            pass
+
         if not source:
             source = _front_platform_pack_content(
                 kb_snapshot_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
