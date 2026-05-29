@@ -10822,11 +10822,22 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
                 if structured_assembly_result and structured_assembly_result.get("replyText"):
+                    _reply_source_before_structured_assembly = str(reply_source or "").strip()
                     reply_text = str(structured_assembly_result.get("replyText") or "").strip()
                     spoken_text = str(structured_assembly_result.get("spokenText") or reply_text).strip()
                     reply_source = "front_structured_python_assembly"
                     accepted = True
                     ia_accepted = True
+                    try:
+                        logging.info(
+                            "[STRUCTURED_ASSEMBLY_OWNERSHIP] phase=free_mode previous_source=%s final_source=%s mode=%s question_type=%s",
+                            _reply_source_before_structured_assembly,
+                            str(reply_source or "").strip(),
+                            str(response_mode or "").strip().upper(),
+                            str(question_type or "").strip().lower(),
+                        )
+                    except Exception:
+                        pass
             except Exception:
                 structured_assembly_result = {}
 
@@ -12587,9 +12598,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
 
             if structured_assembly_result and structured_assembly_result.get("replyText"):
+                _reply_source_before_structured_assembly = str(reply_source or "").strip()
                 reply_text = str(structured_assembly_result.get("replyText") or "").strip()
                 spoken_text = str(structured_assembly_result.get("spokenText") or reply_text).strip()
                 reply_source = "front_structured_python_assembly"
+                try:
+                    logging.info(
+                        "[STRUCTURED_ASSEMBLY_OWNERSHIP] phase=common_path previous_source=%s final_source=%s mode=%s question_type=%s",
+                        _reply_source_before_structured_assembly,
+                        str(reply_source or "").strip(),
+                        str(response_mode or "").strip().upper(),
+                        str(question_type or "").strip().lower(),
+                    )
+                except Exception:
+                    pass
         except Exception:
             structured_assembly_result = {}
 
