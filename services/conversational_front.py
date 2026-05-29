@@ -6568,6 +6568,8 @@ def _front_build_continuity_reply_from_platform_kb(
     """
     try:
         base = " ".join(str(current_reply or "").strip().split())
+        q_type = str(question_type or "broad").strip().lower()
+        is_continuity = q_type in ("punctual", "continuity")
         if not base:
             return ""
 
@@ -11602,38 +11604,43 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     or inferred_lead_segment
                 )
 
+                _continuity_question_type = str(question_type or "").strip().lower()
+                _apply_final_continuity = _continuity_question_type in ("punctual", "continuity")
+                _continuity_reply_built = False
+
                 _free_reply_before_continuity = str(_free_reply or "").strip()
-                _free_reply = _front_build_continuity_reply_from_platform_kb(
-                    current_reply=_free_reply,
-                    kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
-                    topic=_continuity_topic,
-                    pack_id=_continuity_pack_id,
-                    user_name=_continuity_safe_name,
-                    ai_turns=int(ai_turns or 0),
-                    has_identity=_continuity_has_identity,
-                    has_segment=_continuity_has_segment,
-                    next_step=next_step,
-                    question_type=question_type,
-                )
 
-                _continuity_reply_built = bool(
-                    str(_free_reply or "").strip()
-                    and str(_free_reply or "").strip() != _free_reply_before_continuity
-                )
+                if _apply_final_continuity:
+                    _free_reply = _front_build_continuity_reply_from_platform_kb(
+                        current_reply=_free_reply,
+                        kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                        topic=_continuity_topic,
+                        pack_id=_continuity_pack_id,
+                        user_name=_continuity_safe_name,
+                        ai_turns=int(ai_turns or 0),
+                        has_identity=_continuity_has_identity,
+                        has_segment=_continuity_has_segment,
+                        next_step=next_step,
+                        question_type=question_type,
+                    )
 
-                _free_spoken = _front_build_continuity_reply_from_platform_kb(
-                    current_reply=_free_spoken or _free_reply,
-                    kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
-                    topic=_continuity_topic,
-                    pack_id=_continuity_pack_id,
-                    user_name=_continuity_safe_name,
-                    ai_turns=int(ai_turns or 0),
-                    has_identity=_continuity_has_identity,
-                    has_segment=_continuity_has_segment,
-                    next_step=next_step,
-                    question_type=question_type,
-                )
+                    _continuity_reply_built = bool(
+                        str(_free_reply or "").strip()
+                        and str(_free_reply or "").strip() != _free_reply_before_continuity
+                    )
 
+                    _free_spoken = _front_build_continuity_reply_from_platform_kb(
+                        current_reply=_free_spoken or _free_reply,
+                        kb_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                        topic=_continuity_topic,
+                        pack_id=_continuity_pack_id,
+                        user_name=_continuity_safe_name,
+                        ai_turns=int(ai_turns or 0),
+                        has_identity=_continuity_has_identity,
+                        has_segment=_continuity_has_segment,
+                        next_step=next_step,
+                        question_type=question_type,
+                    )
                 # -------------------------------------------------------
                 # Separação estrutural:
                 #
@@ -11941,18 +11948,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         except Exception:
                             pass
 
-                    if (
-                        not _missing_identity
-                        and int(ai_turns or 0) > 0
-                        and str(out.get("question_type") or "").strip().lower() == "broad"
-                    ):
-                        out["question_type"] = "continuity"
-                        try:
-                            _u = out.get("understanding")
-                            if isinstance(_u, dict):
-                                _u["question_type"] = "continuity"
-                        except Exception:
-                            pass
+                    # question_type preservado conforme decisão anterior do pipeline.
                 except Exception:
                     pass
 
