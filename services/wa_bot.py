@@ -2202,7 +2202,7 @@ def _build_front_kb_snapshot(topic: str) -> str:
 
                 _ap_log = (payload or {}).get("answer_playbook_v1") or {}
                 logging.info(
-                    "[WA_BOT][KB_SNAPSHOT] topic=%s chars=%s limit=%s valid_json=%s has_value_packs=%s has_segment_value_map=%s has_segments=%s has_subsegments=%s has_archetypes=%s n_value_packs=%s n_segments=%s n_subsegments=%s n_archetypes=%s",
+                    "[WA_BOT][KB_SNAPSHOT][SOURCE_PROBE_BUILD_3DC26CB] topic=%s chars=%s limit=%s valid_json=%s has_value_packs=%s has_segment_value_map=%s has_segments=%s has_subsegments=%s has_archetypes=%s n_value_packs=%s n_segments=%s n_subsegments=%s n_archetypes=%s",
                     str(topic or "").strip().upper(),
                     len(s or ""),
                     snapshot_limit,
