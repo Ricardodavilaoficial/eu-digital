@@ -1331,24 +1331,30 @@ def _fetch_front_kb_sources(topic_hint: str = "") -> Dict[str, Any]:
             for doc in db.collection("kb_segments_v1").stream():
                 segs[doc.id] = doc.to_dict() or {}
             out["segments"] = segs
-        except Exception:
+            logging.info("[WA_BOT][KB_SOURCE_PROBE] collection=kb_segments_v1 count=%s sample=%s", len(segs), list(segs.keys())[:5])
+        except Exception as e:
             out["segments"] = {}
+            logging.warning("[WA_BOT][KB_SOURCE_PROBE] collection=kb_segments_v1 error=%s", str(e)[:180])
 
         try:
             subs = {}
             for doc in db.collection("kb_subsegments_v1").stream():
                 subs[doc.id] = doc.to_dict() or {}
             out["subsegments"] = subs
-        except Exception:
+            logging.info("[WA_BOT][KB_SOURCE_PROBE] collection=kb_subsegments_v1 count=%s sample=%s", len(subs), list(subs.keys())[:5])
+        except Exception as e:
             out["subsegments"] = {}
+            logging.warning("[WA_BOT][KB_SOURCE_PROBE] collection=kb_subsegments_v1 error=%s", str(e)[:180])
 
         try:
             archs = {}
             for doc in db.collection("kb_archetypes_v1").stream():
                 archs[doc.id] = doc.to_dict() or {}
             out["archetypes"] = archs
-        except Exception:
+            logging.info("[WA_BOT][KB_SOURCE_PROBE] collection=kb_archetypes_v1 count=%s sample=%s", len(archs), list(archs.keys())[:5])
+        except Exception as e:
             out["archetypes"] = {}
+            logging.warning("[WA_BOT][KB_SOURCE_PROBE] collection=kb_archetypes_v1 error=%s", str(e)[:180])
     except Exception:
         # sem Firestore? snapshot vazio (front ainda funciona, só fica mais “simpático”)
         pass
