@@ -9163,6 +9163,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        micro_scene_allowed = bool(
+            (operational_contract or {}).get("micro_scene_allowed")
+        )
+
         (
             response_mode,
             micro_scene_allowed,
