@@ -9043,6 +9043,33 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         has_real_operational_context = False
         try:
+            _op_gate_doc_key = str((operational_contract if isinstance(operational_contract, dict) else {}).get("segment") or "")
+            _op_gate_identity_score = 0
+            try:
+                if isinstance(operational_contract, dict):
+                    _op_gate_identity_doc = {
+                        "id": operational_contract.get("id"),
+                        "name": operational_contract.get("name"),
+                        "title": operational_contract.get("title"),
+                        "label": operational_contract.get("label"),
+                        "keywords": operational_contract.get("keywords"),
+                        "one_liner": operational_contract.get("one_liner"),
+                        "segment": operational_contract.get("segment"),
+                        "segment_id": operational_contract.get("segment_id"),
+                        "subsegment": operational_contract.get("subsegment"),
+                        "subsegment_id": operational_contract.get("subsegment_id"),
+                        "archetype_id": operational_contract.get("archetype_id"),
+                        "service_noun": operational_contract.get("service_noun"),
+                        "customer_noun": operational_contract.get("customer_noun"),
+                    }
+                    _op_gate_identity_score = _score_query_against_doc(
+                        str(user_text or ""),
+                        _op_gate_identity_doc,
+                        _op_gate_doc_key,
+                    )
+            except Exception:
+                _op_gate_identity_score = -1
+
             # ==========================================================
             # GATE ESTRUTURAL OPERACIONAL
             #
@@ -9080,6 +9107,24 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     min_score=2,
                 )
             )
+            try:
+                logging.info(
+                    "[OPERATIONAL_CONTEXT_GATE] hydrated=%s segment=%s archetype=%s doc_key=%s identity_score=%s min_score=2 compatible=%s has_micro_scene_conversational=%s has_micro_scene=%s has_direct_scene=%s has_runtime_short=%s has_operational_reference=%s has_real=%s",
+                    bool((operational_contract if isinstance(operational_contract, dict) else {}).get("hydrated_from_docs")),
+                    str((operational_contract if isinstance(operational_contract, dict) else {}).get("segment") or ""),
+                    str((operational_contract if isinstance(operational_contract, dict) else {}).get("archetype_id") or ""),
+                    _op_gate_doc_key,
+                    _op_gate_identity_score,
+                    bool(_op_gate_identity_score >= 2),
+                    bool(str((operational_contract if isinstance(operational_contract, dict) else {}).get("micro_scene_conversational") or "").strip()),
+                    bool(str((operational_contract if isinstance(operational_contract, dict) else {}).get("micro_scene") or "").strip()),
+                    bool(str((operational_contract if isinstance(operational_contract, dict) else {}).get("direct_scene") or "").strip()),
+                    bool(str((operational_contract if isinstance(operational_contract, dict) else {}).get("runtime_short_reply") or "").strip()),
+                    bool(str((operational_contract if isinstance(operational_contract, dict) else {}).get("operational_reference") or "").strip()),
+                    bool(has_real_operational_context),
+                )
+            except Exception:
+                pass
         except Exception:
             has_real_operational_context = False
 
