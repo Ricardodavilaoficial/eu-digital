@@ -9163,6 +9163,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         or str(operational_contract.get("direct_scene") or "").strip()
                         or str(operational_contract.get("runtime_short_reply") or "").strip()
                         or str(operational_contract.get("pack_micro_scene") or "").strip()
+                        or str(operational_contract.get("micro_scene") or "").strip()
+                        or str(operational_contract.get("micro_scene_conversational") or "").strip()
                     )
                 )
                 try:
