@@ -2190,7 +2190,32 @@ def _build_front_kb_snapshot(topic: str) -> str:
             # para a arquitetura do front baseada no banco novo
             if not payload.get("kb_subsegments_v1") and compact_subsegments:
                 payload["kb_subsegments_v1"] = compact_subsegments
+
+            logging.info(
+                "[WA_BOT][KB_SNAPSHOT][BEFORE_PRUNE] src_segments=%s src_subsegments=%s src_archetypes=%s compact_segments=%s compact_subsegments=%s compact_archetypes=%s payload_segments=%s payload_subsegments=%s payload_archetypes=%s",
+                len(segments or {}),
+                len(subsegments or {}),
+                len(archetypes or {}),
+                len(compact_segments or {}),
+                len(compact_subsegments or {}),
+                len(compact_archetypes or {}),
+                len((payload or {}).get("kb_segments_v1") or {}),
+                len((payload or {}).get("kb_subsegments_v1") or {}),
+                len((payload or {}).get("kb_archetypes_v1") or {}),
+            )
+
             payload = _prune_front_kb_payload(payload, snapshot_limit)
+
+            logging.info(
+                "[WA_BOT][KB_SNAPSHOT][AFTER_PRUNE] payload_segments=%s payload_subsegments=%s payload_archetypes=%s payload_value_packs=%s payload_chars=%s limit=%s",
+                len((payload or {}).get("kb_segments_v1") or {}),
+                len((payload or {}).get("kb_subsegments_v1") or {}),
+                len((payload or {}).get("kb_archetypes_v1") or {}),
+                len((payload or {}).get("value_packs_v1") or {}),
+                len(_json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":"))),
+                snapshot_limit,
+            )
+
             s = _safe_json_dumps_with_limit(payload, snapshot_limit)
             try:
                 parsed_ok = False
