@@ -97,6 +97,7 @@ from services.front_guards import (
 from services.front_surface import (
     _apply_response_mode_surface,
     _restore_final_candidate_if_degraded,
+    _sync_spoken_after_technical_rescue,
 )
 
 # Políticas de tamanho e formatação extraídas (Fase 3A).
