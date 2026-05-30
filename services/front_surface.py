@@ -1,4 +1,10 @@
-from services.conversational_front import _normalize_response_mode
+def _normalize_response_mode(value):
+    mode = str(value or "").strip().upper()
+    if mode in ("DIRECT", "SCENE", "DISCOVERY", "CLOSING"):
+        return mode
+    return "DIRECT"
+
+
 from services.front_utils import looks_like_technical_output as _looks_like_technical_output
 
 
