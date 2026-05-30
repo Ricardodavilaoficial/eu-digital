@@ -1799,32 +1799,14 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
         if _size(work) <= limit:
             return work
 
-        # 4) se ainda exceder, remove primeiro documentos operacionais
-        # segmentados. Eles são úteis quando há match confiável, mas não
-        # podem ter prioridade sobre o fallback neutro da platform_kb.
+        # 4) prioridade arquitetural:
+        # antes de sacrificar docs operacionais segmentados, preserva
+        # kb_segments/kb_subsegments/kb_archetypes e tenta reduzir packs globais.
         #
-        # Princípio:
-        # - sem palavras-chave;
-        # - sem prompt;
-        # - sem escolher "o segmento menos pior";
-        # - preserva value_packs_v1 para responder utilmente quando o
-        #   segmento específico ainda não estiver estruturado.
-        if work.get("kb_archetypes_v1"):
-            work["kb_archetypes_v1"] = {}
-            if _size(work) <= limit:
-                return work
-
-        if work.get("kb_segments_v1"):
-            work["kb_segments_v1"] = {}
-            if _size(work) <= limit:
-                return work
-
-        if work.get("kb_subsegments_v1"):
-            work["kb_subsegments_v1"] = {}
-            if _size(work) <= limit:
-                return work
-
-        # 5) se ainda exceder, perde personalização segmentada, mas mantém pack global.
+        # Motivo:
+        # - docs segmentados permitem o front reconhecer "loja de óculos";
+        # - sem eles, o front cai em fallback global e mistura conteúdo genérico;
+        # - não cria regra comercial, apenas preserva a fonte operacional.
         ap = dict(work.get("answer_playbook_v1") or {})
         if ap.get("segment_value_map_v1"):
             ap["segment_value_map_v1"] = {}
@@ -1877,7 +1859,24 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
         except Exception:
             pass
 
-        # 7) último recurso comercial: remove packs somente se nem o fallback global couber.
+        # 7) último recurso antes de remover packs globais:
+        # só agora sacrifica docs operacionais segmentados.
+        if work.get("kb_archetypes_v1"):
+            work["kb_archetypes_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        if work.get("kb_segments_v1"):
+            work["kb_segments_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        if work.get("kb_subsegments_v1"):
+            work["kb_subsegments_v1"] = {}
+            if _size(work) <= limit:
+                return work
+
+        # 8) último recurso comercial: remove packs somente se nem assim couber.
         if work.get("value_packs_v1"):
             work["value_packs_v1"] = {}
             if _size(work) <= limit:
