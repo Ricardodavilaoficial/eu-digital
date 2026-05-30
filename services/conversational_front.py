@@ -8838,6 +8838,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         )
 
         try:
+            if isinstance(operational_contract, dict):
+                logging.info(
+                    "[PRACTICAL_SCENE_TRACE] stage=after_build value=%s hydrated=%s segment=%s has_micro_scene=%s has_micro_scene_conversational=%s has_pack_micro_scene=%s has_operational_reference=%s",
+                    bool(operational_contract.get("has_practical_scene")),
+                    bool(operational_contract.get("hydrated_from_docs")),
+                    str(operational_contract.get("segment") or ""),
+                    bool(str(operational_contract.get("micro_scene") or "").strip()),
+                    bool(str(operational_contract.get("micro_scene_conversational") or "").strip()),
+                    bool(str(operational_contract.get("pack_micro_scene") or "").strip()),
+                    bool(str(operational_contract.get("operational_reference") or "").strip()),
+                )
+        except Exception:
+            pass
+
+        try:
             if platform_kb_mode and isinstance(operational_contract, dict):
                 if (
                     canonical_topic
@@ -8875,6 +8890,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     if _platform_runtime_operational_allowed and micro_scene:
                         operational_contract["pack_micro_scene"] = micro_scene
                         operational_contract["has_practical_scene"] = True
+                    try:
+                        logging.info(
+                            "[PRACTICAL_SCENE_TRACE] stage=after_platform_runtime value=%s allowed=%s has_micro_scene_var=%s has_pack_micro_scene=%s has_operational_reference=%s",
+                            bool(operational_contract.get("has_practical_scene")),
+                            bool(_platform_runtime_operational_allowed),
+                            bool(str(micro_scene or "").strip()),
+                            bool(str(operational_contract.get("pack_micro_scene") or "").strip()),
+                            bool(str(operational_contract.get("operational_reference") or "").strip()),
+                        )
+                    except Exception:
+                        pass
                     if platform_runtime.get("material_source"):
                         operational_contract["material_source"] = platform_runtime["material_source"]
 
@@ -9139,6 +9165,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         or str(operational_contract.get("pack_micro_scene") or "").strip()
                     )
                 )
+                try:
+                    logging.info(
+                        "[PRACTICAL_SCENE_TRACE] stage=after_9133 value=%s has_real=%s has_operational_reference=%s has_direct_scene=%s has_runtime_short=%s has_pack_micro_scene=%s has_micro_scene=%s",
+                        bool(operational_contract.get("has_practical_scene")),
+                        bool(has_real_operational_context),
+                        bool(str(operational_contract.get("operational_reference") or "").strip()),
+                        bool(str(operational_contract.get("direct_scene") or "").strip()),
+                        bool(str(operational_contract.get("runtime_short_reply") or "").strip()),
+                        bool(str(operational_contract.get("pack_micro_scene") or "").strip()),
+                        bool(str(operational_contract.get("micro_scene") or "").strip()),
+                    )
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -9206,6 +9245,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             operational_contract["runtime_short_reply"] = _runtime_material["runtime_compact_reply"]
 
                     operational_contract["has_practical_scene"] = bool(has_real_operational_context)
+                    try:
+                        logging.info(
+                            "[PRACTICAL_SCENE_TRACE] stage=after_9208 value=%s has_real=%s has_scene=%s has_pack_micro_scene=%s has_operational_reference=%s",
+                            bool(operational_contract.get("has_practical_scene")),
+                            bool(has_real_operational_context),
+                            bool(str(_scene or "").strip()),
+                            bool(str(operational_contract.get("pack_micro_scene") or "").strip()),
+                            bool(str(operational_contract.get("operational_reference") or "").strip()),
+                        )
+                    except Exception:
+                        pass
         except Exception:
             pass
 
