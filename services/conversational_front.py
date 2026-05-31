@@ -1297,6 +1297,7 @@ def _clear_incompatible_kb_context_for_current_text(
     kb_snapshot: str,
     user_text: str,
     kb_context: Dict[str, Any],
+    segment_hint: str = "",
 ) -> Dict[str, Any]:
     """
     Remove ancoragem segmentada incompatível com o texto atual.
@@ -1324,6 +1325,26 @@ def _clear_incompatible_kb_context_for_current_text(
 
         if not sub_hint:
             return ctx
+
+        # Continuidade: se o resolver trouxe o mesmo subsegmento já persistido
+        # no lead, não limpar apenas porque o texto atual é genérico.
+        # Ex.: "Onde vejo este atendimento depois?" deve herdar o segmento
+        # anterior, não reabrir disputa por similaridade textual.
+        try:
+            persisted_hint = _normalize_lookup_key(segment_hint)
+            resolved_hint = _normalize_lookup_key(sub_hint)
+            if (
+                persisted_hint
+                and resolved_hint
+                and (
+                    persisted_hint == resolved_hint
+                    or persisted_hint in resolved_hint
+                    or resolved_hint in persisted_hint
+                )
+            ):
+                return ctx
+        except Exception:
+            pass
 
         raw = str(kb_snapshot or "").strip()
         if not raw or not (raw.startswith("{") or raw.startswith("[")):
@@ -7310,6 +7331,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 kb_snapshot=kb_snapshot,
                 user_text=user_text,
                 kb_context=kb_context if isinstance(kb_context, dict) else {},
+                segment_hint=segment_hint,
             )
 
             # ----------------------------------------------------------
