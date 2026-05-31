@@ -9364,6 +9364,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             # - runtime consultivo
             # - fluidez do GPT 4.0 mini
             # ==========================================================
+            _contract_matches_persisted_segment_for_gate = False
+            try:
+                _gate_contract_segment = str(operational_contract.get("segment") or "").strip()
+                _gate_persisted_segment = str(segment_hint or sticky_segment_hint or "").strip()
+                if (
+                    _gate_contract_segment
+                    and _gate_persisted_segment
+                    and _normalize_lookup_key(_gate_contract_segment) == _normalize_lookup_key(_gate_persisted_segment)
+                ):
+                    _contract_matches_persisted_segment_for_gate = True
+            except Exception:
+                _contract_matches_persisted_segment_for_gate = False
+
             has_real_operational_context = bool(
                 isinstance(operational_contract, dict)
                 and bool(operational_contract.get("hydrated_from_docs"))
@@ -9371,11 +9384,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     str(operational_contract.get("segment") or "").strip()
                     or str(operational_contract.get("archetype_id") or "").strip()
                 )
-                and _doc_identity_is_compatible_with_current_text(
-                    user_text=user_text,
-                    doc=operational_contract,
-                    doc_key=str(operational_contract.get("segment") or ""),
-                    min_score=2,
+                and (
+                    _contract_matches_persisted_segment_for_gate
+                    or _doc_identity_is_compatible_with_current_text(
+                        user_text=user_text,
+                        doc=operational_contract,
+                        doc_key=str(operational_contract.get("segment") or ""),
+                        min_score=2,
+                    )
                 )
             )
             try:
