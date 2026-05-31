@@ -5426,6 +5426,20 @@ def _apply_current_turn_topic_reset(
 
     try:
         if current_turn_topic_reset:
+            try:
+                logging.info(
+                    "[TOPIC_RESET_TRACE] current_turn_topic_reset=%s practical_before=%s response_mode_before=%s micro_allowed_before=%s topic_before=%s segment=%s hydrated=%s",
+                    bool(current_turn_topic_reset),
+                    bool((operational_contract or {}).get("has_practical_scene")),
+                    str(response_mode or "").strip().upper(),
+                    bool(micro_scene_allowed),
+                    str((operational_contract or {}).get("topic") or ""),
+                    str((operational_contract or {}).get("segment") or ""),
+                    bool((operational_contract or {}).get("hydrated_from_docs")),
+                )
+            except Exception:
+                pass
+
             response_mode = "DIRECT"
             micro_scene_allowed = False
 
