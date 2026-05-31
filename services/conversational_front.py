@@ -7685,6 +7685,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         and kb_snapshot_obj
     )
 
+    try:
+        logging.info(
+            "[HYDRATION_TRACE] "
+            "segment_docs_hydrated=%s "
+            "platform_kb_mode=%s "
+            "effective_segment=%s "
+            "real_sub=%s real_seg=%s real_arch=%s",
+            bool(segment_docs_hydrated),
+            bool(platform_kb_mode),
+            str(effective_segment or ""),
+            bool(isinstance(real_kb_docs, dict) and real_kb_docs.get("subsegment_doc")),
+            bool(isinstance(real_kb_docs, dict) and real_kb_docs.get("segment_doc")),
+            bool(isinstance(real_kb_docs, dict) and real_kb_docs.get("archetype_doc")),
+        )
+    except Exception:
+        pass
+
     if platform_kb_mode:
         # Se não há documento segmentado hidratado, o segmento não deve bloquear o platform_kb.
         segment_for_prompt = ""
