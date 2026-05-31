@@ -9155,12 +9155,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and str(operational_contract.get("segment") or "").strip()
                 and str(user_text or "").strip()
             ):
-                _contract_segment_ok = _doc_identity_is_compatible_with_current_text(
-                    user_text=user_text,
-                    doc=operational_contract,
-                    doc_key=str(operational_contract.get("segment") or ""),
-                    min_score=2,
-                )
+                _contract_segment = str(operational_contract.get("segment") or "").strip()
+                _persisted_segment = str(segment_hint or sticky_segment_hint or "").strip()
+
+                if (
+                    _persisted_segment
+                    and _normalize_lookup_key(_contract_segment) == _normalize_lookup_key(_persisted_segment)
+                ):
+                    _contract_segment_ok = True
+                else:
+                    _contract_segment_ok = _doc_identity_is_compatible_with_current_text(
+                        user_text=user_text,
+                        doc=operational_contract,
+                        doc_key=_contract_segment,
+                        min_score=2,
+                    )
 
             if not _contract_segment_ok:
                 operational_contract = {}
