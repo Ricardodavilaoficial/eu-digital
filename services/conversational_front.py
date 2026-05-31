@@ -5426,10 +5426,21 @@ def _apply_current_turn_topic_reset(
 
     try:
         if current_turn_topic_reset:
+            _has_real_contract = bool(
+                isinstance(operational_contract, dict)
+                and operational_contract.get("hydrated_from_docs")
+                and operational_contract.get("has_practical_scene")
+                and (
+                    str(operational_contract.get("segment") or "").strip()
+                    or str(operational_contract.get("archetype_id") or "").strip()
+                )
+            )
+
             try:
                 logging.info(
-                    "[TOPIC_RESET_TRACE] current_turn_topic_reset=%s practical_before=%s response_mode_before=%s micro_allowed_before=%s topic_before=%s segment=%s hydrated=%s",
+                    "[TOPIC_RESET_TRACE] current_turn_topic_reset=%s preserve_real_contract=%s practical_before=%s response_mode_before=%s micro_allowed_before=%s topic_before=%s segment=%s hydrated=%s",
                     bool(current_turn_topic_reset),
+                    bool(_has_real_contract),
                     bool((operational_contract or {}).get("has_practical_scene")),
                     str(response_mode or "").strip().upper(),
                     bool(micro_scene_allowed),
@@ -5440,15 +5451,24 @@ def _apply_current_turn_topic_reset(
             except Exception:
                 pass
 
-            response_mode = "DIRECT"
-            micro_scene_allowed = False
+            if _has_real_contract:
+                response_mode = "SCENE"
+                micro_scene_allowed = True
 
-            if isinstance(operational_contract, dict):
-                operational_contract["topic"] = "OTHER"
-                operational_contract["response_mode"] = "DIRECT"
-                operational_contract["has_practical_scene"] = False
-                operational_contract["micro_scene_allowed"] = False
-                operational_contract["global_pack_fallback"] = False
+                if isinstance(operational_contract, dict):
+                    operational_contract["response_mode"] = "SCENE"
+                    operational_contract["micro_scene_allowed"] = True
+                    operational_contract["global_pack_fallback"] = False
+            else:
+                response_mode = "DIRECT"
+                micro_scene_allowed = False
+
+                if isinstance(operational_contract, dict):
+                    operational_contract["topic"] = "OTHER"
+                    operational_contract["response_mode"] = "DIRECT"
+                    operational_contract["has_practical_scene"] = False
+                    operational_contract["micro_scene_allowed"] = False
+                    operational_contract["global_pack_fallback"] = False
 
         return response_mode, micro_scene_allowed
 
