@@ -9392,6 +9392,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 and contract_has_operational_base
             )
 
+            try:
+                logging.info(
+                    "[SCENE_CONTRACT_TRACE] response_mode=%s has_real=%s practical=%s hydrated=%s contract_base=%s kb_anchor=%s global_pack=%s segment=%s",
+                    str(response_mode or "").strip().upper(),
+                    bool(has_real_operational_context),
+                    bool((operational_contract or {}).get("has_practical_scene")),
+                    bool((operational_contract or {}).get("hydrated_from_docs")),
+                    bool(contract_has_operational_base),
+                    bool(kb_anchor_strong),
+                    bool(global_pack_scene_ready),
+                    str(segment_for_prompt or "").strip(),
+                )
+            except Exception:
+                pass
+
             if (
                 response_mode == "SCENE"
                 and (
