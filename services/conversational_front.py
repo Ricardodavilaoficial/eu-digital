@@ -7770,6 +7770,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     )
 
     try:
+        logging.info(
+            "[DISCOVERY_TRACE] "
+            "operational_family=%s "
+            "operational_reference=%s "
+            "reference_example=%s "
+            "effective_segment=%s "
+            "discovery_resolved=%s",
+            str(operational_family or ""),
+            bool(str(operational_reference or "").strip()),
+            bool(str(reference_example or "").strip()),
+            str(effective_segment or ""),
+            bool(discovery_resolved),
+        )
+    except Exception:
+        pass
+
+    try:
         if (
             not str((kb_context or {}).get("discovery_question_hint") or "").strip()
             and not operational_reference
