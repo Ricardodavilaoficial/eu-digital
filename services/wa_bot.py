@@ -2840,11 +2840,21 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
                             front_reply_is_valid = bool(
                                 current_reply
-                                and current_source == "front_structured_python_assembly"
+                                and current_source in (
+                                    "front_structured_python_assembly",
+                                    "front_ia_soberana",
+                                )
                                 and isinstance(contract, dict)
                                 and (
                                     contract.get("hydrated_from_platform_kb")
+                                    or contract.get("hydrated_from_docs")
+                                    or contract.get("kbRequiredOk")
+                                    or contract.get("kb_required_ok")
                                     or contract.get("global_pack_fallback")
+                                    or (
+                                        str(contract.get("response_mode") or "").strip().upper() == "SCENE"
+                                        and bool(contract.get("has_practical_scene"))
+                                    )
                                 )
                             )
 
