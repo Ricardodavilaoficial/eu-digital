@@ -7490,6 +7490,24 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             kb_context=kb_context if isinstance(kb_context, dict) else {},
             docs=real_kb_docs,
         )
+
+        try:
+            logging.info(
+                "[SEGMENT_TRACE] "
+                "segment_hint=%s "
+                "inferred_segment_for_kb=%s "
+                "effective_segment=%s "
+                "sticky_segment_hint=%s "
+                "segment_context_cleared=%s",
+                str(segment_hint or ""),
+                str(inferred_segment_for_kb or ""),
+                str(effective_segment or ""),
+                str(sticky_segment_hint or ""),
+                bool(segment_context_cleared),
+            )
+        except Exception:
+            pass
+
         logging.info(
             "[CONVERSATIONAL_FRONT][KB_CTX_ENRICH] seg=%s archetype=%s segment_id=%s example=%s scene=%s family=%s",
             str(effective_segment or "").strip(),
