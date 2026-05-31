@@ -9964,6 +9964,25 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
 
             if identity_discovery_required:
+                try:
+                    logging.info(
+                        "[IDENTITY_DISCOVERY_REQUIRED] ai_turns=%s has_name=%s discovery_resolved=%s response_mode_before=%s hydrated=%s practical=%s segment=%s",
+                        ai_turns,
+                        has_name,
+                        discovery_resolved,
+                        str(response_mode or "").strip().upper(),
+                        bool((operational_contract or {}).get("hydrated_from_docs")),
+                        bool((operational_contract or {}).get("has_practical_scene")),
+                        str(
+                            effective_segment
+                            or segment_for_prompt
+                            or segment_hint
+                            or ""
+                        ).strip(),
+                    )
+                except Exception:
+                    pass
+
                 response_mode = "DISCOVERY"
                 needs_clarify = "yes"
                 name_use = "clarify"
