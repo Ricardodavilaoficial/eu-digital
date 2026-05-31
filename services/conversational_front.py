@@ -9227,12 +9227,28 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ).strip()
 
                 if str(user_text or "").strip():
-                    _docs_segment_ok = _doc_identity_is_compatible_with_current_text(
-                        user_text=user_text,
-                        doc=_selected_doc,
-                        doc_key=_selected_key,
-                        min_score=2,
+                    _selected_key_norm = _normalize_lookup_key(_selected_key)
+                    _persisted_norm = _normalize_lookup_key(
+                        segment_hint or sticky_segment_hint or ""
                     )
+
+                    if (
+                        _persisted_norm
+                        and _selected_key_norm
+                        and (
+                            _persisted_norm == _selected_key_norm
+                            or _persisted_norm in _selected_key_norm
+                            or _selected_key_norm in _persisted_norm
+                        )
+                    ):
+                        _docs_segment_ok = True
+                    else:
+                        _docs_segment_ok = _doc_identity_is_compatible_with_current_text(
+                            user_text=user_text,
+                            doc=_selected_doc,
+                            doc_key=_selected_key,
+                            min_score=2,
+                        )
 
             if not _docs_segment_ok:
                 real_kb_docs = {
