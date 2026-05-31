@@ -9574,6 +9574,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         operational_contract["reference_example"] = _late_reference
                         operational_contract["has_reference_example"] = True
 
+                    try:
+                        logging.info(
+                            "[SCENE_GATE_TRACE] question_type=%s has_real=%s response_mode_before=%s practical=%s hydrated=%s segment=%s",
+                            str(question_type or "").strip().lower(),
+                            bool(has_real_operational_context),
+                            str(response_mode or "").strip().upper(),
+                            bool(operational_contract.get("has_practical_scene")),
+                            bool(operational_contract.get("hydrated_from_docs")),
+                            str(operational_contract.get("segment") or "").strip(),
+                        )
+                    except Exception:
+                        pass
+
                     if has_real_operational_context and str(question_type or "").strip().lower() not in ("punctual", "continuity"):
                         response_mode = "SCENE"
                         micro_scene_allowed = True
