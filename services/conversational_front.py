@@ -7073,6 +7073,42 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     except Exception:
         pass
 
+    def _front_current_turn_segment_override_is_explicit(candidate: str) -> bool:
+        """
+        Permite troca de segmento persistido apenas quando o turno atual traz
+        sinal explícito do novo segmento. Evita que uma pergunta curta de
+        continuidade seja reclassificada por similaridade genérica do KB.
+        """
+        try:
+            cand = _normalize_lookup_key(candidate)
+            current_seg = _normalize_lookup_key(segment_hint)
+            if not cand:
+                return False
+            if current_seg and (cand == current_seg or cand in current_seg or current_seg in cand):
+                return True
+
+            # Sinal estrutural pelo próprio nome/chave do segmento.
+            if _lookup_token_overlap_score(user_text, str(candidate or "").replace("__", " ")) >= 2:
+                return True
+
+            if not isinstance(kb_snapshot_obj, dict):
+                return False
+
+            for map_name in ("kb_subsegments_v1", "segment_value_map_v1", "kb_segments_v1"):
+                docs_map = _find_kb_map_anywhere(kb_snapshot_obj, map_name) or {}
+                if not isinstance(docs_map, dict) or not docs_map:
+                    continue
+
+                explicit_match = _keyword_doc_match(user_text, docs_map)
+                if explicit_match:
+                    m = _normalize_lookup_key(explicit_match)
+                    if m and (m == cand or m in cand or cand in m):
+                        return True
+
+            return False
+        except Exception:
+            return False
+
     # Nome confirmado:
     # has_name não pode ser recalculado a partir de inferência do LLM
     # no mesmo turno. Ele deve representar apenas dado já consolidado
@@ -7130,17 +7166,33 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             if _early_segment:
                 inferred_segment_for_kb = _early_segment
 
-                # Propaga imediatamente para o estado local
-                # consumido pelo resolver.
-                try:
-                    state_summary["segmentHint"] = _early_segment
-                except Exception:
-                    pass
+                if (
+                    segment_hint
+                    and _normalize_lookup_key(_early_segment) != _normalize_lookup_key(segment_hint)
+                    and not _front_current_turn_segment_override_is_explicit(_early_segment)
+                ):
+                    try:
+                        logging.info(
+                            "[SEGMENT_OVERRIDE_BLOCKED] stage=early inferred=%s preserved=%s",
+                            str(_early_segment or ""),
+                            str(segment_hint or ""),
+                        )
+                    except Exception:
+                        pass
+                    inferred_segment_for_kb = ""
 
-                try:
-                    state_summary["leadSegmentRaw"] = _early_segment
-                except Exception:
-                    pass
+                # Propaga imediatamente para o estado local
+                # consumido pelo resolver apenas quando a troca for explícita.
+                if inferred_segment_for_kb:
+                    try:
+                        state_summary["segmentHint"] = inferred_segment_for_kb
+                    except Exception:
+                        pass
+
+                    try:
+                        state_summary["leadSegmentRaw"] = inferred_segment_for_kb
+                    except Exception:
+                        pass
     except Exception:
         pass
 
@@ -7149,6 +7201,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             try:
                 if not inferred_segment_for_kb:
                     inferred_segment_for_kb = _infer_segment_from_text(user_text, kb_snapshot)
+                    if (
+                        segment_hint
+                        and inferred_segment_for_kb
+                        and _normalize_lookup_key(inferred_segment_for_kb) != _normalize_lookup_key(segment_hint)
+                        and not _front_current_turn_segment_override_is_explicit(inferred_segment_for_kb)
+                    ):
+                        try:
+                            logging.info(
+                                "[SEGMENT_OVERRIDE_BLOCKED] stage=resolver inferred=%s preserved=%s",
+                                str(inferred_segment_for_kb or ""),
+                                str(segment_hint or ""),
+                            )
+                        except Exception:
+                            pass
+                        inferred_segment_for_kb = ""
             except Exception:
                 inferred_segment_for_kb = ""
 
@@ -7265,6 +7332,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     inferred_segment_for_kb = (
                         _infer_segment_from_text(user_text, kb_snapshot) or ""
                     ).strip()
+                    if (
+                        segment_hint
+                        and inferred_segment_for_kb
+                        and _normalize_lookup_key(inferred_segment_for_kb) != _normalize_lookup_key(segment_hint)
+                        and not _front_current_turn_segment_override_is_explicit(inferred_segment_for_kb)
+                    ):
+                        try:
+                            logging.info(
+                                "[SEGMENT_OVERRIDE_BLOCKED] stage=short_circuit inferred=%s preserved=%s",
+                                str(inferred_segment_for_kb or ""),
+                                str(segment_hint or ""),
+                            )
+                        except Exception:
+                            pass
+                        inferred_segment_for_kb = ""
             except Exception:
                 pass
 
@@ -7366,6 +7448,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # O texto atual deve sempre ter chance de declarar/alterar o segmento.
         # Não usa palavras-chave novas; reaproveita a inferência semântica já existente.
         inferred_segment = _infer_segment_from_text(user_text, kb_snapshot)
+        if (
+            segment_hint
+            and inferred_segment
+            and _normalize_lookup_key(inferred_segment) != _normalize_lookup_key(segment_hint)
+            and not _front_current_turn_segment_override_is_explicit(inferred_segment)
+        ):
+            try:
+                logging.info(
+                    "[SEGMENT_OVERRIDE_BLOCKED] stage=effective inferred=%s preserved=%s",
+                    str(inferred_segment or ""),
+                    str(segment_hint or ""),
+                )
+            except Exception:
+                pass
+            inferred_segment = ""
     except Exception:
         inferred_segment = ""
 
@@ -7450,11 +7547,26 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
         if inferred_from_docs:
             inferred_from_docs = str(inferred_from_docs).strip()
+            if (
+                segment_hint
+                and inferred_from_docs
+                and _normalize_lookup_key(inferred_from_docs) != _normalize_lookup_key(segment_hint)
+                and not _front_current_turn_segment_override_is_explicit(inferred_from_docs)
+            ):
+                try:
+                    logging.info(
+                        "[SEGMENT_OVERRIDE_BLOCKED] stage=docs inferred=%s preserved=%s",
+                        str(inferred_from_docs or ""),
+                        str(segment_hint or ""),
+                    )
+                except Exception:
+                    pass
+                inferred_from_docs = ""
 
-            # sempre promove subsegmento sobre macro
-            if "__" in inferred_from_docs:
+            # sempre promove subsegmento sobre macro quando a troca for explícita.
+            if inferred_from_docs and "__" in inferred_from_docs:
                 effective_segment = inferred_from_docs
-            elif not effective_segment:
+            elif inferred_from_docs and not effective_segment:
                 effective_segment = inferred_from_docs
     except Exception:
         pass
