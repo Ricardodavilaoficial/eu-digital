@@ -2843,6 +2843,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 and current_source in (
                                     "front_structured_python_assembly",
                                     "front_ia_soberana",
+                                    "front",
                                 )
                                 and isinstance(contract, dict)
                                 and (
