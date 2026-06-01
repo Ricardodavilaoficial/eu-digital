@@ -5398,6 +5398,7 @@ def _apply_discovery_to_scene_bypass(
     clarify_q: str,
     has_real_operational_context: bool,
     operational_contract,
+    question_type: str = "broad",
 ) -> tuple[str, str, str]:
     """
     Promove DISCOVERY para SCENE quando já há contrato operacional demonstrável.
@@ -5418,8 +5419,11 @@ def _apply_discovery_to_scene_bypass(
             or list(contract_for_mode.get("operational_ritual") or [])
         )
 
+        q_type = str(question_type or "broad").strip().lower()
+
         contract_ready_for_scene = bool(
-            str(response_mode or "").strip().upper() == "DISCOVERY"
+            q_type not in ("punctual", "continuity")
+            and str(response_mode or "").strip().upper() == "DISCOVERY"
             and str(next_step or "").strip().upper() != "SEND_LINK"
             and str(needs_clarify or "").strip().lower() != "yes"
             and not str(clarify_q or "").strip()
@@ -9615,6 +9619,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             clarify_q=clarify_q,
             has_real_operational_context=has_real_operational_context,
             operational_contract=operational_contract,
+            question_type=question_type,
         )
 
         try:
