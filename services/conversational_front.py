@@ -6640,7 +6640,7 @@ def _front_build_continuity_reply_from_platform_kb(
     try:
         base = " ".join(str(current_reply or "").strip().split())
         q_type = str(question_type or "broad").strip().lower()
-        is_continuity = q_type in ("punctual", "continuity")
+        is_continuity = q_type == "continuity"
         if not base:
             return ""
 
