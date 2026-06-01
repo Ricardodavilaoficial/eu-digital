@@ -11059,8 +11059,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             # ---------------------------------------------------------
             _qt = str(question_type or "").strip().lower()
 
+            _has_scene_contract_for_continuity = bool(
+                isinstance(operational_contract, dict)
+                and str(operational_contract.get("response_mode") or "").strip().upper() == "SCENE"
+                and bool(operational_contract.get("hydrated_from_docs"))
+                and bool(operational_contract.get("has_practical_scene"))
+            )
+
             _should_force_continuity = (
                 _qt in ("continuity", "punctual")
+                and not _has_scene_contract_for_continuity
             )
 
             if _should_force_continuity:
