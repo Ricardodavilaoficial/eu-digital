@@ -605,6 +605,17 @@ def _front_build_structured_assembly_reply(
                 and current_clean not in core
                 and core not in current_clean
             ):
+                try:
+                    logging.info(
+                        "[STRUCTURED_CONCAT_TRIGGER] current_len=%s core_len=%s q_type=%s source_type=%s",
+                        len(str(current_clean or "")),
+                        len(str(core or "")),
+                        str(q_type or ""),
+                        str(source_type or ""),
+                    )
+                except Exception:
+                    pass
+
                 core = f"{current_clean}\n\n{core}".strip()
         except Exception:
             pass
