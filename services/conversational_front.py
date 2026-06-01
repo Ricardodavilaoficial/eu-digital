@@ -12045,7 +12045,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
                 _continuity_question_type = str(question_type or "").strip().lower()
-                _apply_final_continuity = _continuity_question_type in ("punctual", "continuity")
+
+                _has_scene_contract_for_final_continuity = bool(
+                    str(reply_source or "").strip() == "front_structured_python_assembly"
+                    or (
+                        isinstance(operational_contract, dict)
+                        and str(operational_contract.get("response_mode") or "").strip().upper() == "SCENE"
+                        and bool(operational_contract.get("hydrated_from_docs"))
+                        and bool(operational_contract.get("has_practical_scene"))
+                    )
+                )
+
+                _apply_final_continuity = (
+                    _continuity_question_type in ("punctual", "continuity")
+                    and not _has_scene_contract_for_final_continuity
+                )
                 _continuity_reply_built = False
 
                 _free_reply_before_continuity = str(_free_reply or "").strip()
