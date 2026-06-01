@@ -10236,6 +10236,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if response_mode == "DISCOVERY":
                 response_mode = "DIRECT"
+                try:
+                    if isinstance(operational_contract, dict):
+                        operational_contract["response_mode"] = response_mode
+                    if isinstance(base_operational_contract, dict):
+                        base_operational_contract["response_mode"] = response_mode
+                except Exception:
+                    pass
 
         
         # ----------------------------------------------------------
