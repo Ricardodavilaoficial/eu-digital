@@ -8628,6 +8628,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if question_type not in ("broad", "punctual", "continuity"):
             question_type = "broad"
 
+        try:
+            logging.info(
+                "[QUESTION_TYPE_TRACE] ai_turns=%s raw_data_qt=%s raw_understanding_qt=%s final_qt=%s response_mode=%s topic=%s user_text=%s",
+                ai_turns,
+                str(data.get("question_type") or ""),
+                str(understanding.get("question_type") or ""),
+                str(question_type or ""),
+                str(response_mode or ""),
+                str(topic or intent or ""),
+                str(user_text or "")[:160],
+            )
+        except Exception:
+            pass
+
         # ----------------------------------------------------------
         # Trava estrutural contra topic bleeding.
         #
