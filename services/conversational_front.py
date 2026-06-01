@@ -11143,7 +11143,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
 
             _should_force_continuity = (
-                _qt in ("continuity", "punctual")
+                _qt == "continuity"
                 and not _has_scene_contract_for_continuity
             )
 
@@ -11927,7 +11927,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         )
 
                         _should_force_continuity = (
-                            _qt in ("continuity", "punctual")
+                            _qt == "continuity"
                             and _reply_len < 420
                         )
 

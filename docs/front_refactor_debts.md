@@ -341,5 +341,334 @@ _missing_identity = bool(
     or not bool(_continuity_has_segment)
 )
 
+## 2026-05-30 — Correção estrutural do snapshot KB (subsegmentos sobrevivendo ao prune)
+
+### Contexto
+
+Durante investigação de regressão severa observada no WhatsApp, o front voltou a responder com conteúdo genérico de fallback:
+
+Exemplo observado:
+
+* "até 7 dias úteis para número virtual + configuração concluída"
+* conteúdo misturado com ótica
+* kbUsed=false
+* kbRequiredOk=false
+* source=front
+* intent=OTHER
+
+Inicialmente a suspeita era problema de entendimento, roteamento ou regressão do conversational_front.
+
+### Descoberta confirmada
+
+Foi instrumentado `_build_front_kb_snapshot()` com logs BEFORE_PRUNE e AFTER_PRUNE.
+
+Resultado:
+
+```text
+BEFORE_PRUNE
+payload_segments=3
+payload_subsegments=4
+payload_archetypes=4
+
+AFTER_PRUNE
+payload_segments=0
+payload_subsegments=0
+payload_archetypes=0
+payload_value_packs=4
+```
+
+Conclusão:
+
+Os documentos operacionais segmentados estavam sendo removidos pelo `_prune_front_kb_payload()`.
+
+O front continuava recebendo apenas:
+
+* value_packs_v1
+
+Mas perdia:
+
+* kb_segments_v1
+* kb_subsegments_v1
+* kb_archetypes_v1
+
+### Impacto
+
+Sem subsegmentos o runtime não conseguia localizar:
+
+```text
+comercio_varejista__loja_oculos
+```
+
+Então a IA era obrigada a trabalhar somente com packs globais.
+
+Isso explicava:
+
+* respostas genéricas;
+* mistura de conteúdos;
+* perda de microcena específica;
+* kbRequiredOk=false;
+* kbUsed=false.
+
+### Correção aplicada
+
+Mudança de prioridade dentro de `_prune_front_kb_payload()`.
+
+Antes:
+
+1. removia segments/subsegments/archetypes;
+2. preservava packs globais.
+
+Agora:
+
+1. reduz packs globais;
+2. tenta caber no limite;
+3. só remove docs segmentados como último recurso.
+
+### Resultado validado
+
+Logs posteriores:
+
+```text
+AFTER_PRUNE
+payload_subsegments=4
+```
+
+Lookup:
+
+```text
+found_sub=True
+segment_id=comercio_varejista
+archetype_id=comercio_consultivo_presencial
+```
+
+Telemetria:
+
+```text
+kbUsed=true
+kbRequiredOk=true
+kbDocPath=comercio_varejista__loja_oculos
+kbContractId=comercio_consultivo_presencial
+```
+
+### Estado atual
+
+A regressão estrutural foi removida.
+
+O front voltou a hidratar corretamente a KB segmentada.
+
+Problemas restantes passam a ser de governança e comportamento, não mais de snapshot KB.
+
+### Novas dívidas comportamentais registradas
+
+#### accepted=False com KB válida
+
+Mesmo com:
+
+```text
+kbRequiredOk=true
+kbUsed=true
+found_sub=true
+hydrated_from_docs=true
+```
+
+a decisão final continua registrando:
+
+```text
+accepted=False
+```
+
+Necessário investigar a lógica de aceitação.
+
+#### has_practical_scene=False inconsistente
+
+Logs mostram simultaneamente:
+
+```text
+scene=True
+micro_scene presente
+hydrated_from_docs=True
+```
+
+mas:
+
+```text
+has_practical_scene=False
+```
+
+Possível inconsistência de sincronização de contrato.
+
+#### response_mode degradado
+
+Resposta claramente de microcena operacional:
+
+```text
+577 chars
+micro_scene_conversational usada
+```
+
+mas telemetria final:
+
+```text
+mode=DIRECT
+topic=OTHER
+```
+
+Necessário investigar arbitragem final de response_mode.
+
+#### topic=OTHER excessivo
+
+Mesmo com segmento identificado e trilho operacional carregado:
+
+```text
+comercio_varejista__loja_oculos
+```
+
+o sistema continua classificando:
+
+```text
+topic=OTHER
+```
+
+Investigar se existe degradação tardia do topic.
+
+## BUG / DÍVIDA ARQUITETURAL — Desalinhamento `question_type` entre prompt e pipeline
+
+### Status
+
+Confirmado como inconsistência arquitetural relevante. Ainda exige patch comportamental com análise de risco.
+
+### Contexto
+
+O prompt atual orienta o GPT a devolver:
+
+`question_type = broad|punctual`
+
+com a semântica:
+
+* `broad`: explicação geral;
+* `punctual`: pergunta específica ou pergunta de continuidade.
+
+Porém o código do `services/conversational_front.py` evoluiu para trabalhar com três estados:
+
+* `broad`
+* `punctual`
+* `continuity`
+
+Em vários pontos o pipeline usa condições como:
+
+`question_type in ("punctual", "continuity")`
+
+### Evidência observada
+
+No teste real:
+
+Turno 1:
+`"Como o MEI Robô atende uma loja de óculos"`
+
+Resultado correto:
+
+* `question_type=broad`
+* `response_mode=SCENE`
+* `source=front_ia_soberana`
+* microcena correta para ótica.
+
+Turno 2:
+`"Sou José. Onde vejo este atendimento depois?"`
+
+Telemetria:
+
+* `raw_understanding_qt=punctual`
+* `final_qt=punctual`
+* `response_mode=DISCOVERY`
+* `source=front_continuity_facts`
+
+Ou seja: a IA classificou corretamente como `punctual`, mas o pipeline tratou `punctual` como elegível para continuidade factual.
+
+### Pontos de código relevantes
+
+Primeiro interceptador:
+
+```python
+_should_force_continuity = (
+    _qt in ("continuity", "punctual")
+    and not _has_scene_contract_for_continuity
+)
+```
+
+Quando dispara, substitui a resposta por `_front_build_continuity_reply_from_platform_kb()` e força:
+
+```python
+reply_source = "front_continuity_facts"
+accepted = True
+ia_accepted = True
+```
+
+Segundo interceptador:
+
+```python
+_should_force_continuity = (
+    _qt in ("continuity", "punctual")
+    and _reply_len < 420
+)
+```
+
+Quando dispara, também força:
+
+```python
+out["replySource"] = "front_continuity_facts"
+```
+
+### Diagnóstico
+
+O problema atual não parece ser falha de reconhecimento de nome. O código já possui lógica para usar nome informado no próprio turno:
+
+```python
+has_name = bool(confirmed_has_name or current_turn_lead_name)
+discovery_resolved = bool(has_name and has_segment_context)
+```
+
+O problema mais provável é de ownership/autoria:
+
+`punctual` deveria significar “pergunta específica”, mas em interceptadores tardios ele está sendo tratado como “continuidade factual forçada”.
+
+Isso cria risco de o código assumir autoria em perguntas objetivas, mesmo quando a IA soberana deveria responder usando a KB como apoio.
+
+### Risco arquitetural
+
+Se mantido, o robô pode:
+
+* responder perguntas pontuais com texto factual montado pelo código;
+* perder naturalidade;
+* reduzir a autoria da IA soberana;
+* confundir pergunta específica com continuidade;
+* gerar respostas corretas, porém menos inteligentes e menos comerciais;
+* afetar vários segmentos, pois o problema é estrutural e não específico de ótica.
+
+### Regra de cautela
+
+Não alterar prompt ainda.
+
+Antes de mudar o contrato do GPT para incluir `continuity`, é mais seguro investigar e corrigir o gate estrutural que trata `punctual` como continuidade factual.
+
+### Próximo alvo técnico
+
+Investigar e ajustar, com baixo risco, os gates:
+
+* região do primeiro `_should_force_continuity`;
+* região do segundo `_should_force_continuity`;
+
+para impedir que todo `punctual` seja tratado automaticamente como `front_continuity_facts`.
+
+A distinção desejada é:
+
+* `punctual`: pergunta específica, deve preservar autoria da IA sempre que houver resposta válida;
+* `continuity`: continuidade factual curta, pode usar facts como apoio;
+* fallback factual: só deve assumir autoria se a resposta da IA estiver vazia, técnica, inválida ou realmente degradada.
+
+### Princípio preservado
+
+A IA responde usando a KB.
+A KB não responde pelo robô.
+O código organiza, protege e entrega; não assume autoria salvo fallback real.
 
 
