@@ -6737,6 +6737,45 @@ def _front_build_continuity_reply_from_platform_kb(
                 _clean_fact(product_truth.get("core_rule") if isinstance(product_truth, dict) else ""),
                 _block_text("services_quote_scene"),
             ])
+
+            # Fallback factual para continuidade de SERVICOS:
+            # quando a platform_kb não traz services_practice/core_rule/services_quote_scene,
+            # evita cair no runtime_short comercial e usa material operacional já hidratado
+            # no próprio snapshot/segmento. Não usa palavra-chave do usuário, não chama IA
+            # e não altera prompt.
+            try:
+                kb_sub = _platform_get_map(kb_obj, "kb_subsegments_v1")
+                segment_candidates = []
+                if isinstance(kb_sub, dict):
+                    for _, doc in kb_sub.items():
+                        if isinstance(doc, dict):
+                            if str(doc.get("handoff_format") or "").strip() or doc.get("preferred_capabilities") or doc.get("operational_ritual"):
+                                segment_candidates.append(doc)
+
+                for doc in segment_candidates[:1]:
+                    handoff = doc.get("handoff_format") or []
+                    caps = doc.get("preferred_capabilities") or []
+                    ritual = doc.get("operational_ritual") or []
+
+                    if isinstance(handoff, list) and handoff:
+                        fallback_facts.append(
+                            "O atendimento fica registrado para a equipe continuar depois, com "
+                            + ", ".join(str(x).strip().lower() for x in handoff[:4] if str(x).strip())
+                            + "."
+                        )
+
+                    if isinstance(caps, list) and caps:
+                        fallback_facts.append(
+                            "Pelo histórico do atendimento, a equipe consegue retomar o interesse do cliente e dar sequência ao próximo passo."
+                        )
+
+                    if isinstance(ritual, list) and ritual:
+                        fallback_facts.append(
+                            "O robô organiza o interesse inicial, a dúvida principal e o encaminhamento necessário antes de passar para a equipe."
+                        )
+            except Exception:
+                pass
+
             fallback_facts.append(_pack_runtime_short())
         elif pack_u == "PACK_C_PEDIDOS":
             facts.extend([
