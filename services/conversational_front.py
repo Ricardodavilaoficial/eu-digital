@@ -403,7 +403,7 @@ def _front_structured_doc_content(docs: Dict[str, Any] | None) -> Dict[str, Any]
         pieces = []
         if scene:
             pieces.append(scene)
-        if one_liner and one_liner not in pieces:
+        elif one_liner:
             pieces.append(one_liner)
 
         core = "\n\n".join([p for p in pieces if p]).strip()
