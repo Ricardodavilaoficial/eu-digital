@@ -273,3 +273,95 @@ Adaptação
 Status:
 Necessita validação adicional.
 
+# TRAINING_DISCOVERIES_003
+
+## Atendimento como investigação
+
+Os materiais analisados apresentam o atendimento como processo de levantamento de informações.
+
+Padrões observados:
+
+- rotina;
+- necessidade;
+- expectativa;
+- histórico;
+- contexto.
+
+Observação:
+
+A recomendação aparece como consequência da investigação.
+
+---
+
+## Expectativa como variável relevante
+
+A adaptação e a expectativa do cliente aparecem repetidamente como temas de formação.
+
+Observação:
+
+O profissional parece ser treinado para alinhar expectativas antes de concluir recomendações.
+
+---
+
+## Descoberta em validação
+
+Possível sequência mental observada:
+
+Entender Cliente
+↓
+Entender Necessidade
+↓
+Entender Rotina
+↓
+Entender Histórico
+↓
+Definir Critérios
+↓
+Definir Solução
+↓
+Alinhar Expectativa
+↓
+Confirmar Entendimento
+
+Status:
+Necessita validação adicional.
+
+---
+
+## Descoberta complementar
+
+Os treinamentos observados parecem enfatizar:
+
+compreender antes de recomendar
+
+mais do que
+
+recomendar rapidamente.
+
+Observação:
+
+O foco recorrente não está apenas na solução visual.
+
+O foco está na compreensão do contexto que levará à solução visual.
+
+Status:
+Necessita validação adicional.
+
+---
+
+## Possível convergência
+
+As descobertas atuais apresentam compatibilidade com:
+
+- Information Gap Patterns;
+- Expert Reframing Patterns;
+- Trust Building Patterns;
+- Specialist vs Beginner Patterns.
+
+Hipótese:
+
+Pode existir uma sequência mental comum utilizada por especialistas durante o atendimento.
+
+Status:
+Em investigação.
+
