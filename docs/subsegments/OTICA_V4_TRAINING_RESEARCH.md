@@ -365,3 +365,81 @@ Pode existir uma sequência mental comum utilizada por especialistas durante o a
 Status:
 Em investigação.
 
+# TRAINING_DISCOVERIES_004
+
+## Qualidade da indicação
+
+Os materiais analisados sugerem que a qualidade da indicação é tratada como competência central.
+
+Observação:
+
+O foco não está apenas na venda.
+
+O foco está na adequação da recomendação ao contexto do cliente.
+
+---
+
+## Recomendação justificável
+
+Padrão observado:
+
+O profissional deve conseguir explicar os critérios utilizados na recomendação.
+
+Observação:
+
+A explicação dos critérios parece ser tão importante quanto a própria recomendação.
+
+---
+
+## Erros recorrentes observados
+
+- recomendar sem compreender a rotina;
+- recomendar sem compreender a necessidade;
+- recomendar sem compreender experiências anteriores;
+- focar apenas no produto;
+- focar apenas no preço.
+
+---
+
+## Possível objetivo oculto dos treinamentos
+
+Reduzir:
+
+- retrabalho;
+- trocas;
+- insatisfação;
+- problemas de adaptação.
+
+Observação:
+
+Os treinamentos parecem buscar decisões mais sustentáveis no longo prazo.
+
+---
+
+## Hipótese em validação
+
+Possível sequência observada:
+
+Entender Cliente
+↓
+Entender Necessidade
+↓
+Entender Rotina
+↓
+Entender Histórico
+↓
+Identificar Riscos
+↓
+Definir Critérios
+↓
+Indicar Solução
+↓
+Alinhar Expectativa
+↓
+Confirmar Entendimento
+↓
+Reduzir Retrabalho
+
+Status:
+Necessita validação adicional.
+
