@@ -600,3 +600,122 @@ Necessita validação adicional.
 
 Verificar se os principais problemas observados no pós-venda podem ser relacionados à ausência de critérios utilizados por profissionais experientes durante a fase de orientação.
 
+# TRAINING_VALIDATION_001
+
+## Objetivo
+
+Comparar as hipóteses identificadas durante a pesquisa de formação de consultores ópticos com problemas observados no mundo real.
+
+---
+
+## Resultado da Comparação
+
+Foi observada compatibilidade entre os padrões encontrados nos treinamentos e os problemas relatados em situações de pós-venda.
+
+Os problemas analisados apresentaram relação recorrente com:
+
+- expectativa não alinhada;
+- rotina insuficientemente investigada;
+- histórico insuficientemente compreendido;
+- adaptação inadequada;
+- critérios insuficientes para recomendação.
+
+---
+
+## Compatibilidade Observada
+
+Hipótese de treinamento:
+
+Entender Cliente
+↓
+Entender Necessidade
+↓
+Entender Rotina
+↓
+Entender Histórico
+↓
+Definir Critérios
+↓
+Definir Solução
+↓
+Alinhar Expectativa
+↓
+Confirmar Entendimento
+
+Observação:
+
+Os problemas encontrados parecem ocorrer com maior frequência quando etapas desse processo são ignoradas ou executadas de forma incompleta.
+
+---
+
+## Evidências Observadas
+
+Problema:
+Não adaptação
+
+Possíveis fatores recorrentes:
+
+- expectativa inadequada;
+- adaptação insuficientemente explicada;
+- histórico anterior não investigado.
+
+---
+
+Problema:
+Insatisfação
+
+Possíveis fatores recorrentes:
+
+- necessidade mal compreendida;
+- rotina insuficientemente investigada;
+- critérios inadequados.
+
+---
+
+Problema:
+Troca ou retrabalho
+
+Possíveis fatores recorrentes:
+
+- solução inadequada ao contexto;
+- expectativa incompatível;
+- investigação insuficiente.
+
+---
+
+## Descoberta Relevante
+
+Os materiais analisados sugerem que profissionais experientes não se diferenciam apenas pelo conhecimento técnico.
+
+A diferenciação parece ocorrer principalmente na capacidade de:
+
+- compreender o contexto;
+- identificar critérios;
+- reduzir riscos de recomendação inadequada;
+- alinhar expectativas;
+- reduzir retrabalho.
+
+---
+
+## Conclusão Provisória
+
+A hipótese construída durante a pesquisa apresenta forte compatibilidade com situações observadas de não adaptação, insatisfação e retrabalho.
+
+Status:
+
+Hipótese fortemente suportada.
+
+Necessita validação contínua em futuras pesquisas.
+
+---
+
+## Possível Aplicação Futura
+
+A sequência observada poderá futuramente contribuir para:
+
+- construção de novos subsegmentos;
+- modelagem de comportamento consultivo;
+- redução de recomendações inadequadas;
+- aumento de qualidade de atendimento;
+- aumento de robustez das respostas produzidas pelo MEI Robô.
+
