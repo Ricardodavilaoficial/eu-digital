@@ -210,3 +210,66 @@ Esta descoberta é compatível com os padrões já observados em:
 
 Status:
 Candidata forte para consolidação futura.
+
+# TRAINING_DISCOVERIES_002
+
+## Critérios recorrentes observados
+
+Os materiais de formação analisados apresentam repetidamente:
+
+- receita;
+- rotina;
+- necessidade visual;
+- experiência anterior;
+- expectativa;
+- adaptação.
+
+Observação:
+
+A recomendação parece ser ensinada como consequência da análise desses critérios.
+
+---
+
+## Adaptação como competência
+
+A adaptação visual aparece repetidamente como tema de formação.
+
+O profissional não aprende apenas a indicar lentes.
+
+Ele aprende também a orientar expectativas e adaptação.
+
+---
+
+## Erros que os treinamentos tentam evitar
+
+- indicar sem compreender a rotina;
+- focar apenas no preço;
+- focar apenas na armação;
+- ignorar experiências anteriores;
+- ignorar dificuldades de adaptação.
+
+---
+
+## Hipótese em validação
+
+Possível checklist mental observado:
+
+Receita
+↓
+Rotina
+↓
+Necessidade Visual
+↓
+Experiência Anterior
+↓
+Expectativa
+↓
+Lente
+↓
+Armação
+↓
+Adaptação
+
+Status:
+Necessita validação adicional.
+
