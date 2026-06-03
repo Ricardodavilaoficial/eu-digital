@@ -118,3 +118,95 @@ Cada tema técnico deve virar estrutura compatível com GPT-4o-mini:
   "boundary": "Não prometer resultado final sem avaliar receita, lente e armação."
 }
 
+# TRAINING_DISCOVERIES_001
+
+## Formação Recorrente Observada
+
+Os programas de formação de consultores ópticos e técnicos em óptica apresentam repetidamente os seguintes pilares:
+
+- atendimento;
+- armações;
+- lentes;
+- interpretação de receitas;
+- medidas ópticas;
+- adaptação visual;
+- indicação adequada.
+
+Observação:
+
+A formação não começa pela venda.
+
+A formação normalmente começa pela compreensão da necessidade visual e pela interpretação correta da receita.
+
+---
+
+## Competências Recorrentes Observadas
+
+Especialistas são treinados para:
+
+- interpretar receitas;
+- compreender necessidades visuais;
+- relacionar lente e armação;
+- orientar adaptação;
+- explicar diferenças relevantes;
+- indicar soluções adequadas ao contexto.
+
+---
+
+## Sequência de Formação Observada
+
+Padrão recorrente encontrado:
+
+Atendimento
+↓
+Armações
+↓
+Lentes
+↓
+Receita
+↓
+Medidas
+↓
+Adaptação
+↓
+Indicação
+
+Hipótese atual:
+
+A sequência de formação pode refletir parcialmente a sequência mental utilizada por profissionais experientes durante o atendimento.
+
+Status:
+Necessita validação adicional.
+
+---
+
+## Erros de Iniciantes Observados
+
+Padrões recorrentes:
+
+- foco excessivo no produto;
+- pouca atenção à receita;
+- recomendação sem critérios suficientes;
+- pouca investigação da rotina visual;
+- foco excessivo em preço.
+
+---
+
+## Descoberta Relevante
+
+A formação profissional parece enfatizar:
+
+compreensão da necessidade visual
+
+antes de
+
+recomendação de produto.
+
+Esta descoberta é compatível com os padrões já observados em:
+
+- Information Gap Patterns;
+- Expert Reframing Patterns;
+- Specialist vs Beginner Patterns.
+
+Status:
+Candidata forte para consolidação futura.
