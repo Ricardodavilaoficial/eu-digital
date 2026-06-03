@@ -443,3 +443,160 @@ Reduzir Retrabalho
 Status:
 Necessita validação adicional.
 
+# TRAINING_SYNTHESIS_001
+
+## Pergunta
+
+O que os treinamentos observados parecem tentar desenvolver?
+
+---
+
+## Observação Consolidada
+
+As descobertas realizadas até o momento apresentam forte convergência.
+
+Os treinamentos analisados não parecem focar inicialmente em:
+
+- produto;
+- preço;
+- fechamento.
+
+Os treinamentos parecem focar inicialmente em:
+
+- compreensão;
+- interpretação;
+- investigação;
+- critérios;
+- adequação.
+
+---
+
+## Possível Modelo Observado
+
+Entender Cliente
+↓
+Entender Necessidade
+↓
+Entender Rotina
+↓
+Entender Histórico
+↓
+Identificar Critérios
+↓
+Identificar Riscos
+↓
+Definir Solução
+↓
+Alinhar Expectativa
+↓
+Confirmar Entendimento
+
+---
+
+## Evidências Associadas
+
+Compatível com:
+
+- TRAINING_DISCOVERIES_001
+- TRAINING_DISCOVERIES_002
+- TRAINING_DISCOVERIES_003
+- TRAINING_DISCOVERIES_004
+
+---
+
+## Status
+
+Hipótese forte.
+
+Necessita validação adicional em novas pesquisas.
+
+Ainda não promover para modelo canônico.
+
+# TRAINING_DISCOVERIES_005
+
+## FAILURE_PATTERNS
+
+Objetivo:
+
+Investigar situações em que o resultado final não foi satisfatório e identificar possíveis causas relacionadas ao processo de atendimento.
+
+---
+
+## Padrão Observado
+
+Muitos problemas aparentam surgir não da falta de conhecimento técnico, mas da compreensão insuficiente do contexto do cliente.
+
+---
+
+## Problema
+
+Não adaptação.
+
+Possível causa observada:
+
+- expectativa não alinhada;
+- adaptação insuficientemente explicada;
+- histórico anterior não investigado.
+
+Status:
+Necessita validação adicional.
+
+---
+
+## Problema
+
+Insatisfação com a solução escolhida.
+
+Possível causa observada:
+
+- rotina não compreendida;
+- necessidade mal identificada;
+- critérios insuficientes.
+
+Status:
+Necessita validação adicional.
+
+---
+
+## Problema
+
+Troca de produto.
+
+Possível causa observada:
+
+- expectativa incompatível;
+- contexto incompleto;
+- indicação realizada com critérios insuficientes.
+
+Status:
+Necessita validação adicional.
+
+---
+
+## Hipótese em investigação
+
+Os problemas mais recorrentes podem estar associados à ausência de etapas anteriores do processo de entendimento do cliente.
+
+Possível relação:
+
+Rotina ignorada
+↓
+Indicação inadequada
+
+Expectativa ignorada
+↓
+Insatisfação
+
+Histórico ignorado
+↓
+Problemas de adaptação
+
+Status:
+Necessita validação adicional.
+
+---
+
+## Objetivo da pesquisa
+
+Verificar se os principais problemas observados no pós-venda podem ser relacionados à ausência de critérios utilizados por profissionais experientes durante a fase de orientação.
+
