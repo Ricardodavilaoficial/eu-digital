@@ -233,6 +233,80 @@ Definir slots de personalização adequados ao segmento novo.
 
 ---
 
+
+## COMPONENT_CONSULTANT_DECISION_SEQUENCE
+
+Status:
+
+CANDIDATE
+
+Origem:
+
+Ótica.
+
+FIRST_OBSERVED_IN:
+
+comercio_varejista__loja_oculos
+
+CONFIDENCE_LEVEL:
+
+HIGH
+
+Função:
+
+Representar a sequência mental utilizada por especialistas antes de orientar.
+
+Sequência observada:
+
+Entender necessidade
+↓
+Entender contexto
+↓
+Identificar lacunas
+↓
+Avaliar critérios
+↓
+Avaliar riscos
+↓
+Orientar decisão
+↓
+Alinhar expectativa
+
+Customização futura:
+
+Adaptar os critérios e lacunas ao domínio do novo segmento.
+
+---
+
+## OUTCOME_TRUST_BUILDING
+
+Status:
+
+OBSERVED_OUTCOME
+
+Origem:
+
+Ótica.
+
+FIRST_OBSERVED_IN:
+
+comercio_varejista__loja_oculos
+
+Descrição:
+
+Confiança não é um componente operacional.
+
+Confiança é consequência da aplicação correta de:
+
+- descoberta de necessidade;
+- identificação de lacunas;
+- critérios;
+- redução de risco;
+- alinhamento de expectativa.
+
+---
+
+
 # 4. Como usar no próximo segmento
 
 Ao iniciar o próximo segmento:

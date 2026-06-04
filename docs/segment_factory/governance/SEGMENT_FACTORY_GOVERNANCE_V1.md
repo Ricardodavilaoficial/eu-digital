@@ -74,6 +74,23 @@ Uma coleção como `kb_patterns_v1` ou `kb_components_v1` só deve ser considera
 
 ---
 
+
+
+# 6.1 Regra de bloqueio para componentes
+
+É proibido criar:
+
+- kb_components_v1
+- kb_patterns_v1
+
+antes que os componentes sejam validados em múltiplos segmentos reais.
+
+A Ótica é apenas o primeiro segmento.
+
+A recorrência deve ser comprovada antes da criação de novas coleções Firestore.
+
+---
+
 # 7. Modo operacional
 
 O modo operacional continua 100% CMD:
