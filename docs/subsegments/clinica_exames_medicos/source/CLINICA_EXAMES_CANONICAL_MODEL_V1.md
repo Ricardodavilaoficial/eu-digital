@@ -481,6 +481,240 @@ Devem ficar fora da expertise-base e ser preenchidos pelo assinante:
 
 ---
 
+# ADDENDUM_V2_ACCESS_PATH_AND_EXAM_READINESS
+
+## Objetivo
+
+Registrar a descoberta complementar de que a Clínica de Exames Médicos precisa identificar a forma de acesso ao exame antes de conduzir para agendamento, autorização, comparecimento ou resultado.
+
+Esta seção preserva o Modelo Canônico V1 e adiciona a camada operacional descoberta na pesquisa complementar.
+
+---
+
+# Novos estados canônicos
+
+## STATE_ACCESS_PATH_UNDEFINED
+
+Paciente deseja realizar exame, mas ainda não está definida a forma de acesso.
+
+Possibilidades:
+
+- particular;
+- convênio sem autorização;
+- convênio com autorização;
+- pré-agendamento com validação posterior;
+- SUS/regulação;
+- ordem de chegada;
+- atendimento exclusivamente presencial.
+
+Próximo objetivo:
+
+OBJECTIVE_DEFINE_ACCESS_PATH
+
+---
+
+## STATE_PATH_PRIVATE
+
+Paciente pretende realizar exame particular.
+
+Próximo objetivo:
+
+OBJECTIVE_CONFIRM_PRIVATE_FLOW
+
+---
+
+## STATE_PATH_CONVENIO
+
+Paciente pretende usar convênio.
+
+Próximo objetivo:
+
+OBJECTIVE_CONFIRM_COVERAGE_AND_AUTHORIZATION_PATH
+
+---
+
+## STATE_PATH_SUS
+
+Paciente menciona SUS, regulação, posto de saúde, secretaria de saúde ou central de marcação.
+
+Próximo objetivo:
+
+OBJECTIVE_ROUTE_SUS_REGULATION
+
+---
+
+## STATE_PATH_WALK_IN
+
+Exame ou unidade opera por ordem de chegada ou atendimento presencial.
+
+Próximo objetivo:
+
+OBJECTIVE_CONFIRM_WALK_IN_REQUIREMENTS
+
+---
+
+## STATE_NEEDS_DOCUMENT_VALIDATION
+
+Paciente ainda precisa enviar ou apresentar documentos necessários para seguir.
+
+Próximo objetivo:
+
+OBJECTIVE_VALIDATE_DOCUMENT_SET
+
+---
+
+## STATE_AUTHORIZATION_PENDING
+
+Autorização foi solicitada ou precisa de retorno da operadora.
+
+Próximo objetivo:
+
+OBJECTIVE_TRACK_AUTHORIZATION_STATUS
+
+---
+
+## STATE_PREPARATION_UNCONFIRMED
+
+Paciente ainda não confirmou preparo necessário.
+
+Próximo objetivo:
+
+OBJECTIVE_CONFIRM_EXAM_PREPARATION
+
+---
+
+## STATE_READY_FOR_EXAM
+
+Paciente possui trilha definida, documentação suficiente, preparo confirmado e próximo passo claro.
+
+Próximo objetivo:
+
+OBJECTIVE_CONFIRM_EXECUTION_STEP
+
+---
+
+# Novas lacunas canônicas
+
+## GAP_ACCESS_PATH
+
+Forma de acesso ao exame ainda não definida.
+
+## GAP_AUTHORIZATION_DOCUMENTS
+
+Documentos necessários para autorização ainda ausentes ou incompletos.
+
+## GAP_COVERAGE_INFORMATION
+
+Informações do plano, cobertura ou operadora ainda insuficientes.
+
+## GAP_WALK_IN_RULES
+
+Regras de ordem de chegada ou comparecimento presencial ainda não confirmadas.
+
+## GAP_SUS_ROUTING
+
+Fluxo de regulação, posto, secretaria ou central de marcação ainda não definido.
+
+---
+
+# Novos riscos canônicos
+
+## RISK_WRONG_ACCESS_PATH
+
+Conduzir o paciente para trilha operacional incorreta.
+
+## RISK_AUTHORIZATION_DELAY
+
+Atraso por documentação incompleta, análise pendente ou complementação solicitada.
+
+## RISK_INVALID_DOCUMENTATION
+
+Paciente apresentar documento incorreto, vencido, divergente ou insuficiente.
+
+## RISK_NO_SHOW
+
+Paciente faltar por esquecimento, conflito de agenda, preparo incorreto ou falta de confirmação.
+
+## RISK_EXAM_NOT_READY
+
+Paciente chegar ao exame sem preparo, autorização, documentação ou condição operacional adequada.
+
+---
+
+# Novos objetivos canônicos
+
+## OBJECTIVE_DEFINE_ACCESS_PATH
+
+Identificar se o exame seguirá por particular, convênio, SUS, ordem de chegada ou outro fluxo da clínica.
+
+## OBJECTIVE_CONFIRM_COVERAGE_AND_AUTHORIZATION_PATH
+
+Confirmar se o convênio cobre, se exige autorização e quais documentos são necessários.
+
+## OBJECTIVE_ROUTE_SUS_REGULATION
+
+Orientar a rota adequada quando o atendimento depender de SUS, regulação ou central de marcação.
+
+## OBJECTIVE_CONFIRM_WALK_IN_REQUIREMENTS
+
+Orientar documentos, preparo, horários e condições para atendimento por ordem de chegada.
+
+## OBJECTIVE_VALIDATE_DOCUMENT_SET
+
+Conferir se o conjunto documental está suficiente para seguir.
+
+## OBJECTIVE_TRACK_AUTHORIZATION_STATUS
+
+Acompanhar o status da autorização até aprovação, pendência, negativa ou complementação.
+
+## OBJECTIVE_CONFIRM_EXAM_PREPARATION
+
+Confirmar preparo necessário antes do comparecimento.
+
+## OBJECTIVE_CONFIRM_EXECUTION_STEP
+
+Confirmar o próximo passo operacional para realizar o exame.
+
+---
+
+# Novos componentes candidatos
+
+## COMPONENT_ACCESS_PATH_ROUTING
+
+Função:
+
+Identificar a trilha operacional correta antes de conduzir o paciente para agendamento, autorização, comparecimento ou regulação.
+
+Status:
+
+CANDIDATE
+
+---
+
+## COMPONENT_AUTHORIZATION_WORKFLOW
+
+Função:
+
+Orquestrar coleta documental, envio, acompanhamento e retorno de autorização quando houver exigência de operadora ou fluxo regulado.
+
+Status:
+
+CANDIDATE
+
+---
+
+## COMPONENT_EXAM_READINESS_VALIDATION
+
+Função:
+
+Validar se o paciente está apto para realizar o exame com documentação, autorização, preparo e comparecimento adequados.
+
+Status:
+
+CANDIDATE
+
+---
+
 # 16. Componente novo candidato
 
 ## COMPONENT_READINESS_VALIDATION

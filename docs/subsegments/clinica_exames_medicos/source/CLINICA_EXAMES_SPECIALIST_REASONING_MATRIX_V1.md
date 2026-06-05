@@ -37,6 +37,123 @@ Função: validar pré-requisitos antes de permitir avanço operacional.
 
 Sequência: objetivo desejado → pré-requisitos → validação → execução segura.
 
+# ADDENDUM_V2_ACCESS_PATH_ROUTING
+
+## Objetivo
+
+Registrar a descoberta complementar de que a jornada de Clínica de Exames Médicos deve identificar a forma de acesso antes de conduzir para agendamento.
+
+Esta seção preserva a matriz V1 e adiciona a camada operacional descoberta na pesquisa complementar.
+
+---
+
+## Descoberta central
+
+O profissional experiente não parte diretamente para agendamento.
+
+Ele identifica primeiro:
+
+exame solicitado
+↓
+forma de acesso
+↓
+trilha operacional
+↓
+próximo passo seguro
+
+---
+
+## COMPONENT_ACCESS_PATH_ROUTING
+
+Função:
+
+Identificar qual caminho operacional o paciente deve seguir antes de confirmar agendamento, comparecimento ou autorização.
+
+Rotas observadas:
+
+- PATH_PRIVATE_SIMPLE
+- PATH_PRIVATE_SCHEDULED
+- PATH_CONVENIO_NO_AUTH
+- PATH_CONVENIO_PRE_AUTH
+- PATH_CONVENIO_PRE_SCHEDULE
+- PATH_SUS_REGULATION
+- PATH_WALK_IN
+
+---
+
+## COMPONENT_AUTHORIZATION_WORKFLOW
+
+Função:
+
+Orquestrar coleta documental, envio, acompanhamento e retorno de autorização quando o convênio exigir análise prévia.
+
+Estados observados:
+
+- STATE_NEEDS_AUTHORIZATION
+- STATE_AUTHORIZATION_DOCUMENTS_PENDING
+- STATE_AUTHORIZATION_SUBMITTED
+- STATE_AUTHORIZATION_UNDER_REVIEW
+- STATE_AUTHORIZATION_APPROVED
+- STATE_AUTHORIZATION_DENIED
+- STATE_AUTHORIZATION_NEEDS_COMPLEMENT
+
+---
+
+## COMPONENT_EXAM_READINESS_VALIDATION
+
+Função:
+
+Validar se o paciente está apto para realizar o exame.
+
+Critérios observados:
+
+- exame identificado;
+- forma de acesso definida;
+- documentação suficiente;
+- autorização válida quando aplicável;
+- preparo confirmado;
+- comparecimento ou fluxo presencial definido.
+
+---
+
+## Nova estrutura mental
+
+Antes:
+
+pergunta do paciente
+↓
+estado detectado
+↓
+lacuna
+↓
+risco
+↓
+objetivo
+↓
+ação
+
+Agora:
+
+pergunta do paciente
+↓
+exame solicitado
+↓
+forma de acesso
+↓
+trilha operacional
+↓
+estado detectado
+↓
+lacuna
+↓
+risco
+↓
+objetivo
+↓
+ação de confiança
+
+---
+
 ## Matriz
 ### SIT_001 — ORCAMENTO_E_EXAME
 **Situação real:** Quanto custa esse exame?

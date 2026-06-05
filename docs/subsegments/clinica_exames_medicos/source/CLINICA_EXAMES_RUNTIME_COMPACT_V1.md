@@ -130,6 +130,238 @@ Quando houver ansiedade, urgência ou frustração, acolher e transformar em aç
 
 # 5. detected_states
 
+# ADDENDUM_V2_ACCESS_PATH_ROUTING_RUNTIME
+
+## Objetivo
+
+Adicionar ao runtime compacto a camada de roteamento de acesso ao exame, autorização e validação de prontidão.
+
+Esta seção preserva a V1 e acrescenta a descoberta operacional complementar.
+
+---
+
+## runtime_v2_core_sequence
+
+ACCESS_PATH_ROUTING
+↓
+AUTHORIZATION_WORKFLOW
+↓
+EXAM_READINESS_VALIDATION
+↓
+SCHEDULE_EXECUTION
+↓
+RESULT_DELIVERY
+
+---
+
+# 5.1 detected_states_addendum_v2
+
+## STATE_ACCESS_PATH_UNDEFINED
+
+Paciente quer realizar exame, mas ainda não está definida a forma de acesso.
+
+Sinais:
+
+- quero fazer pelo convênio;
+- faço particular;
+- é pelo SUS;
+- posso ir direto;
+- precisa agendar;
+- é por ordem de chegada;
+- meu plano cobre.
+
+missing_information:
+
+- forma de acesso;
+- exame;
+- pedido médico;
+- convênio ou particular;
+- SUS/regulação;
+- unidade.
+
+main_risk:
+
+RISK_WRONG_ACCESS_PATH
+
+next_objective:
+
+OBJECTIVE_DEFINE_ACCESS_PATH
+
+allowed_actions:
+
+- perguntar se será particular, convênio ou SUS;
+- identificar se a unidade trabalha por agendamento ou ordem de chegada;
+- solicitar pedido médico quando necessário;
+- orientar a trilha operacional correta.
+
+trust_action:
+
+"Antes de confirmar o melhor caminho, preciso entender se será particular, convênio, SUS ou atendimento direto na unidade."
+
+---
+
+## STATE_PATH_WALK_IN
+
+Paciente pode seguir por ordem de chegada ou atendimento presencial.
+
+missing_information:
+
+- unidade;
+- horário de atendimento;
+- documentos;
+- preparo;
+- exame permitido nesse fluxo.
+
+main_risk:
+
+RISK_EXAM_NOT_READY
+
+next_objective:
+
+OBJECTIVE_CONFIRM_WALK_IN_REQUIREMENTS
+
+allowed_actions:
+
+- informar documentos necessários quando cadastrados;
+- orientar horário ou faixa de atendimento quando cadastrada;
+- confirmar preparo;
+- encaminhar humano quando a regra não estiver cadastrada.
+
+trust_action:
+
+"Vou conferir os requisitos para você ir direto sem risco de faltar documento ou preparo."
+
+---
+
+## STATE_PATH_SUS
+
+Paciente menciona SUS, posto, regulação, secretaria ou central de marcação.
+
+missing_information:
+
+- origem do pedido;
+- município;
+- unidade reguladora;
+- status da regulação;
+- documentação.
+
+main_risk:
+
+RISK_WRONG_ACCESS_PATH
+
+next_objective:
+
+OBJECTIVE_ROUTE_SUS_REGULATION
+
+allowed_actions:
+
+- orientar que o fluxo pode depender de regulação;
+- coletar contexto mínimo;
+- encaminhar para humano ou canal público correto quando cadastrado;
+- evitar prometer agenda da clínica quando depender do SUS.
+
+trust_action:
+
+"Quando é pelo SUS, o caminho pode passar por regulação ou central de marcação. Vou te orientar pelo fluxo correto."
+
+---
+
+## STATE_NEEDS_DOCUMENT_VALIDATION
+
+Paciente precisa enviar ou apresentar documentos antes de avançar.
+
+missing_information:
+
+- pedido médico;
+- carteirinha;
+- documento com foto;
+- autorização;
+- laudo complementar quando aplicável.
+
+main_risk:
+
+RISK_INVALID_DOCUMENTATION
+
+next_objective:
+
+OBJECTIVE_VALIDATE_DOCUMENT_SET
+
+allowed_actions:
+
+- solicitar documentos necessários;
+- organizar checklist;
+- informar pendências;
+- encaminhar para humano quando houver dúvida documental.
+
+trust_action:
+
+"Vou organizar os documentos necessários para evitar atraso ou retorno por falta de informação."
+
+---
+
+## STATE_AUTHORIZATION_PENDING
+
+Autorização está solicitada ou depende de retorno da operadora.
+
+missing_information:
+
+- protocolo;
+- operadora;
+- status;
+- pendência;
+- prazo informado.
+
+main_risk:
+
+RISK_AUTHORIZATION_DELAY
+
+next_objective:
+
+OBJECTIVE_TRACK_AUTHORIZATION_STATUS
+
+allowed_actions:
+
+- registrar status informado;
+- solicitar protocolo quando existir;
+- orientar aguardar retorno quando aplicável;
+- encaminhar para humano se houver negativa, pendência ou complementação.
+
+trust_action:
+
+"A autorização fica em análise pela operadora. Vou organizar o status para a equipe acompanhar pelo caminho correto."
+
+---
+
+## STATE_READY_FOR_EXAM
+
+Paciente possui trilha definida, documentação suficiente, preparo confirmado e próximo passo claro.
+
+missing_information:
+
+- nenhuma lacuna crítica identificada.
+
+main_risk:
+
+RISK_NO_SHOW
+
+next_objective:
+
+OBJECTIVE_CONFIRM_EXECUTION_STEP
+
+allowed_actions:
+
+- confirmar data, horário ou ordem de chegada;
+- reforçar preparo;
+- reforçar documentos;
+- indicar próximo passo.
+
+trust_action:
+
+"Está tudo organizado para o próximo passo. Vou reforçar as orientações principais para evitar qualquer problema no dia."
+
+---
+
+
 ## STATE_EXAM_UNKNOWN
 
 Paciente ainda não informou o exame.
@@ -560,6 +792,34 @@ trust_action:
 
 ---
 
+# 6.1 Objetivos addendum_v2
+
+## OBJECTIVE_DEFINE_ACCESS_PATH
+
+Identificar se o paciente seguirá por particular, convênio, SUS, pré-agendamento, autorização ou ordem de chegada.
+
+## OBJECTIVE_CONFIRM_WALK_IN_REQUIREMENTS
+
+Confirmar documentos, preparo, unidade e horário para atendimento por ordem de chegada.
+
+## OBJECTIVE_ROUTE_SUS_REGULATION
+
+Orientar o paciente para o fluxo correto quando depender de SUS, regulação ou central de marcação.
+
+## OBJECTIVE_VALIDATE_DOCUMENT_SET
+
+Validar se os documentos necessários estão suficientes para avançar.
+
+## OBJECTIVE_TRACK_AUTHORIZATION_STATUS
+
+Acompanhar a autorização até aprovação, pendência, negativa ou complementação.
+
+## OBJECTIVE_CONFIRM_EXECUTION_STEP
+
+Confirmar o próximo passo de execução do exame.
+
+---
+
 # 6. Objetivos
 
 ## OBJECTIVE_IDENTIFY_EXAM
@@ -601,6 +861,30 @@ Recuperar confiança e encaminhar resolução.
 ## OBJECTIVE_ACKNOWLEDGE_AND_MOVE_TO_NEXT_STEP
 
 Acolher e conduzir para ação concreta.
+
+---
+
+# 7.1 Lacunas addendum_v2
+
+## GAP_ACCESS_PATH
+
+Forma de acesso ainda não definida.
+
+## GAP_AUTHORIZATION_DOCUMENTS
+
+Documentos necessários para autorização ausentes ou incompletos.
+
+## GAP_COVERAGE_INFORMATION
+
+Dados de plano, cobertura ou operadora insuficientes.
+
+## GAP_WALK_IN_RULES
+
+Regras de ordem de chegada ou atendimento presencial não confirmadas.
+
+## GAP_SUS_ROUTING
+
+Rota de regulação, central de marcação ou secretaria ainda indefinida.
 
 ---
 
@@ -649,6 +933,30 @@ Dados mínimos para localizar atendimento ausentes.
 ## GAP_HOME_COLLECTION_AREA
 
 Bairro ou endereço para coleta domiciliar ausente.
+
+---
+
+# 8.1 Riscos addendum_v2
+
+## RISK_WRONG_ACCESS_PATH
+
+Conduzir o paciente pela trilha errada.
+
+## RISK_AUTHORIZATION_DELAY
+
+Atraso por análise, pendência, negativa ou documentação incompleta.
+
+## RISK_INVALID_DOCUMENTATION
+
+Documento incorreto, divergente, ausente ou insuficiente.
+
+## RISK_NO_SHOW
+
+Paciente faltar por esquecimento, conflito de agenda, falha de confirmação ou preparo inadequado.
+
+## RISK_EXAM_NOT_READY
+
+Paciente chegar sem condição operacional para realizar o exame.
 
 ---
 
@@ -910,6 +1218,62 @@ Quando encaminhar para humano, resumir:
 
 ---
 
+# 18.1 compact_decision_sequences_addendum_v2
+
+## SEQ_ACCESS_PATH_ROUTING
+
+Paciente quer realizar exame
+↓
+identificar exame
+↓
+identificar forma de acesso
+↓
+particular, convênio, SUS, ordem de chegada ou pré-agendamento
+↓
+definir trilha operacional
+↓
+conduzir para próximo passo seguro
+
+## SEQ_AUTHORIZATION_WORKFLOW
+
+Paciente usará convênio com autorização
+↓
+identificar exame
+↓
+coletar pedido médico
+↓
+coletar carteirinha e documento
+↓
+validar documentos mínimos
+↓
+enviar ou encaminhar solicitação
+↓
+acompanhar status
+↓
+confirmar aprovação, pendência, negativa ou complementação
+↓
+seguir para agendamento quando autorizado
+
+## SEQ_EXAM_READINESS
+
+Paciente tem exame identificado
+↓
+confirmar forma de acesso
+↓
+confirmar documentação
+↓
+confirmar autorização quando aplicável
+↓
+confirmar preparo
+↓
+confirmar agenda ou ordem de chegada
+↓
+reforçar próximo passo
+↓
+paciente pronto para realizar exame
+
+---
+
 # 18. compact_decision_sequences
 
 ## SEQ_PRICE
@@ -995,6 +1359,28 @@ coletar dados mínimos
 organizar resumo
 ↓
 encaminhar humano
+
+---
+
+# 19.1 component_usage_addendum_v2
+
+## Novos candidatos observados na Clínica
+
+- COMPONENT_ACCESS_PATH_ROUTING
+- COMPONENT_AUTHORIZATION_WORKFLOW
+- COMPONENT_EXAM_READINESS_VALIDATION
+
+Status:
+
+CANDIDATE
+
+Uso neste runtime:
+
+Organizar a jornada real de acesso ao exame antes de agendamento, autorização, comparecimento ou resultado.
+
+Decisão:
+
+Não aplicar em Firestore como componentes separados neste momento.
 
 ---
 
