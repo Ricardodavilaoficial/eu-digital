@@ -1298,6 +1298,28 @@ def _compact_front_kb_doc(
                 if _clip_front_text(x, 80)
             ]
 
+        # ==========================================================
+        # Firestore V2 Runtime Blocks
+        # FASE 1 = preservação do snapshot
+        # Sem interpretação.
+        # Sem alteração comportamental.
+        # ==========================================================
+
+        if "commercial_runtime" in d:
+            out["commercial_runtime"] = d.get("commercial_runtime")
+
+        if "operational_runtime" in d:
+            out["operational_runtime"] = d.get("operational_runtime")
+
+        if "medical_runtime" in d:
+            out["medical_runtime"] = d.get("medical_runtime")
+
+        if "behavior_components" in d:
+            out["behavior_components"] = d.get("behavior_components")
+
+        if "snapshot_priority" in d:
+            out["snapshot_priority"] = d.get("snapshot_priority")
+
         return out
     except Exception:
         return {}
@@ -2214,6 +2236,44 @@ def _build_front_kb_snapshot(topic: str) -> str:
                 len(_json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":"))),
                 snapshot_limit,
             )
+
+            try:
+                subsegments_v1 = (payload or {}).get("kb_subsegments_v1") or {}
+
+                has_commercial_runtime = False
+                has_operational_runtime = False
+                has_medical_runtime = False
+                has_behavior_components = False
+                has_snapshot_priority = False
+
+                for doc in subsegments_v1.values():
+                    if not isinstance(doc, dict):
+                        continue
+
+                    has_commercial_runtime = has_commercial_runtime or ("commercial_runtime" in doc)
+                    has_operational_runtime = has_operational_runtime or ("operational_runtime" in doc)
+                    has_medical_runtime = has_medical_runtime or ("medical_runtime" in doc)
+                    has_behavior_components = has_behavior_components or ("behavior_components" in doc)
+                    has_snapshot_priority = has_snapshot_priority or ("snapshot_priority" in doc)
+
+                logging.info(
+                    "[KB_V2_SNAPSHOT] "
+                    "commercial_runtime=%s "
+                    "operational_runtime=%s "
+                    "medical_runtime=%s "
+                    "behavior_components=%s "
+                    "snapshot_priority=%s "
+                    "subsegments=%s",
+                    has_commercial_runtime,
+                    has_operational_runtime,
+                    has_medical_runtime,
+                    has_behavior_components,
+                    has_snapshot_priority,
+                    len(subsegments_v1),
+                )
+
+            except Exception:
+                pass
 
             s = _safe_json_dumps_with_limit(payload, snapshot_limit)
             try:

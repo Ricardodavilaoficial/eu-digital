@@ -11,6 +11,7 @@ Objetivo:
 
 from __future__ import annotations
 
+import logging
 import json
 import re
 from typing import Any, Dict
@@ -360,6 +361,17 @@ def _extract_kb_profile(doc: Dict[str, Any]) -> Dict[str, Any]:
                     rr[rk] = vals
             if rr:
                 out["operational_rules"] = rr
+
+        # Firestore V2 pass-through preservation
+        for key in (
+            "commercial_runtime",
+            "operational_runtime",
+            "medical_runtime",
+            "behavior_components",
+            "snapshot_priority",
+        ):
+            if key in doc:
+                out[key] = doc.get(key)
 
         return out
     except Exception:
@@ -866,10 +878,28 @@ def build_kb_context(
     if merged_profile:
         ctx["segment_profile"] = merged_profile
 
+    # ==========================================================
+    # Firestore V2 - exposição explícita dos blocos V2
+    # Mantém compatibilidade total.
+    # Não altera comportamento.
+    # Não altera decisões.
+    # Não altera fallback.
+    # Apenas facilita o acesso do GPT aos blocos V2.
+    # ==========================================================
+    for key in (
+        "commercial_runtime",
+        "operational_runtime",
+        "medical_runtime",
+        "behavior_components",
+        "snapshot_priority",
+    ):
+        if key in merged_profile:
+            ctx[key] = merged_profile[key]
+
     preferred_capabilities = _as_clean_list(
         (kb_subsegment_profile or {}).get("preferred_capabilities")
         or (kb_segment_profile or {}).get("preferred_capabilities")
-    )
+    )    
     if preferred_capabilities:
         ctx["preferred_capabilities"] = preferred_capabilities
 
