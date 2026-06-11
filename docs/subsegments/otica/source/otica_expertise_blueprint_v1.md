@@ -113,3 +113,46 @@ A base global da ótica deve ser herdada automaticamente. A conta da ótica pode
 ## Critério de qualidade
 
 Este subsegmento só estará pronto quando uma resposta do MEI ROBÔ parecer ter sido construída por alguém que entende o balcão de uma ótica, e não por uma IA genérica.
+
+# Evolução V2 para GPT-4o-mini
+
+## Regra de modelagem
+
+Todo tópico de expertise deve conter:
+
+- principle
+- why_it_matters
+- common_customer_confusion
+- decision_factors
+- safe_response_direction
+
+Objetivo:
+
+Reduzir inferência necessária do modelo GPT-4o-mini.
+
+O foco não é armazenar respostas prontas.
+
+O foco é armazenar raciocínio profissional estruturado.
+
+## Exemplo
+
+topic:
+compatibilidade_armação_lente
+
+principle:
+Nem toda armação é adequada para qualquer grau ou lente.
+
+why_it_matters:
+A combinação entre receita, armação e lente influencia espessura, conforto e resultado visual.
+
+common_customer_confusion:
+O cliente costuma acreditar que a escolha da armação é apenas estética.
+
+decision_factors:
+- grau
+- tipo de lente
+- tamanho da armação
+- rotina de uso
+
+safe_response_direction:
+Explicar que a receita e o tipo de uso ajudam a indicar opções mais adequadas e que a equipe pode orientar a melhor combinação.

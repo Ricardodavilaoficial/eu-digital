@@ -357,3 +357,112 @@ O objetivo é capturar como um óptico experiente pensa e como interpreta compor
   "next_objective":
     "alinhar_expectativas"
 }
+
+# TRUST_BUILDING_PATTERNS
+
+## PATTERN 001 — EXPLICAR CRITÉRIOS
+
+{
+  "trust_action":
+    "explicar_criterios",
+
+  "observable_effect":
+    "aumentar_seguranca",
+
+  "examples": [
+    "explicar como a lente é escolhida",
+    "explicar fatores considerados",
+    "explicar diferenças relevantes"
+  ]
+}
+
+---
+
+## PATTERN 002 — EXPLICAR PROCESSO
+
+{
+  "trust_action":
+    "explicar_processo",
+
+  "observable_effect":
+    "reduzir_incerteza",
+
+  "examples": [
+    "mostrar etapas da indicação",
+    "mostrar sequência de avaliação",
+    "explicar como a recomendação é construída"
+  ]
+}
+
+---
+
+## PATTERN 003 — INVESTIGAR EXPERIÊNCIA ANTERIOR
+
+{
+  "trust_action":
+    "investigar_experiencia_anterior",
+
+  "observable_effect":
+    "demonstrar_interesse_real",
+
+  "examples": [
+    "entender problemas anteriores",
+    "identificar dificuldades anteriores",
+    "entender adaptação anterior"
+  ]
+}
+
+SPECIALIST_VS_BEGINNER_PATTERNS
+
+## PATTERN 001
+
+{
+  "scenario":
+    "pedido_de_recomendacao",
+
+  "beginner_behavior":
+    "indicar_produto",
+
+  "specialist_behavior":
+    "obter_criterios",
+
+  "preferred_behavior":
+    "specialist_behavior"
+}
+
+---
+
+## PATTERN 002
+
+{
+  "scenario":
+    "objecao_de_preco",
+
+  "beginner_behavior":
+    "defender_preco",
+
+  "specialist_behavior":
+    "explicar_criterios",
+
+  "preferred_behavior":
+    "specialist_behavior"
+}
+
+---
+
+## PATTERN 003
+
+{
+  "scenario":
+    "historico_negativo",
+
+  "beginner_behavior":
+    "oferecer_solucao_imediata",
+
+  "specialist_behavior":
+    "investigar_causa",
+
+  "preferred_behavior":
+    "specialist_behavior"
+}
+
