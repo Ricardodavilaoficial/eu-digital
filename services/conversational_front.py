@@ -12305,13 +12305,30 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         or ""
                     ).strip()
 
+                    _reply_source_now = str(reply_source or "").strip()
+                    _response_mode_now = str(response_mode or "").strip().upper()
+                    _contract_now = (
+                        operational_contract
+                        if isinstance(operational_contract, dict)
+                        else {}
+                    )
+
                     _structured_scene_first_contact = bool(
-                        str(reply_source or "").strip()
-                        == "front_structured_python_assembly"
-                        and str(response_mode or "").strip().upper() == "SCENE"
-                        and _assembly_source_type in ("subsegment", "archetype", "segment")
-                        and int(ai_turns or 0) == 0
+                        int(ai_turns or 0) == 0
                         and not bool(has_name)
+                        and (
+                            (
+                                _reply_source_now == "front_structured_python_assembly"
+                                and _response_mode_now == "SCENE"
+                                and _assembly_source_type in ("subsegment", "archetype", "segment")
+                            )
+                            or (
+                                _reply_source_now == "front_free_mode_fallback"
+                                and bool(_contract_now.get("hydrated_from_docs"))
+                                and bool(_contract_now.get("has_practical_scene"))
+                                and bool(_contract_now.get("micro_scene_conversational"))
+                            )
+                        )
                     )
 
                     if _structured_scene_first_contact:
