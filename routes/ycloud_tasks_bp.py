@@ -1896,21 +1896,45 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     # OUTBOX (determinístico): sempre grava 1 doc do envio (sem depender de _try_log_outbox_immediate)
     def _wa_log_outbox_deterministic(*, route: str, to_e164: str, reply_text: str, sent_ok: bool, extra: dict | None = None) -> None:
         try:
-            _doc_out = _sha1_id(f"{event_key}:out:{to_e164}:{int(time.time())}")
+            # DocId estável por evento/rota/destino.
+            # Evita depender de timestamp para localizar auditoria e reduz duplicação por retry.
+            _route = str(route or "").strip()
+            _to = str(to_e164 or "").strip()
+            _reply = str(reply_text or "")
+            _doc_out = _sha1_id(f"{event_key}:out:{_to}:{_route}")
+
+            try:
+                _from = str(from_e164 or "").strip()
+            except Exception:
+                _from = ""
+
+            try:
+                _wa_key = "".join(ch for ch in str(wa_key or "") if ch.isdigit())
+            except Exception:
+                _wa_key = ""
+
             payload_out = {
                 "createdAt": _fs_admin().SERVER_TIMESTAMP,
                 "eventKey": event_key,
                 "wamid": str(wamid or "")[:180],
-                "to": str(to_e164 or "")[:40],
-                "route": str(route or "")[:80],
+                "waKey": _wa_key,
+                "direction": "out",
+                "from": _from[:40],
+                "to": _to[:40],
+                "route": _route[:80],
+                "sentVia": _route[:80],
                 "cta_reason": "",
                 "msgType": str(msg_type or "")[:40],
-                "chars": int(len(reply_text or "")),
+                "chars": int(len(_reply or "")),
                 "sent_ok": bool(sent_ok),
+                "sentOk": bool(sent_ok),
+                "replyText": _reply[:4000],
+                "text": _reply[:4000],
                 "service": "ycloud_inbound_worker",
+                "collection": "platform_wa_outbox_logs",
             }
             try:
-                _r = str(route or "").strip()
+                _r = _route
                 if _r == "send_text_site_cta":
                     payload_out["cta_reason"] = "next_step_send_link"
                 elif _r == "cta_skipped":
@@ -1918,10 +1942,22 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             except Exception:
                 pass
             try:
-                payload_out.update(_outbox_rich_enxuto(_sent_via=str(route or ""), _reply_text=str(reply_text or "")))
+                payload_out.update(_outbox_rich_enxuto(_sent_via=_route, _reply_text=_reply))
             except Exception:
                 pass
 
+            # Garante que a auditoria rápida sempre tenha o texto final,
+            # mesmo se o helper rico não preencher ou sobrescrever campos.
+            payload_out["direction"] = "out"
+            payload_out["from"] = _from[:40]
+            payload_out["to"] = _to[:40]
+            payload_out["route"] = _route[:80]
+            payload_out["sentVia"] = _route[:80]
+            payload_out["sent_ok"] = bool(sent_ok)
+            payload_out["sentOk"] = bool(sent_ok)
+            payload_out["replyText"] = _reply[:4000]
+            payload_out["text"] = _reply[:4000]
+            payload_out["chars"] = int(len(_reply or ""))
 
             try:
                 if isinstance(extra, dict) and extra:
@@ -1929,7 +1965,10 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             except Exception:
                 pass
             _db().collection("platform_wa_outbox_logs").document(_doc_out).set(payload_out, merge=True)
-            logger.info("[tasks] wa_log_outbox ok docId=%s to=%s sent_ok=%s", _doc_out, to_e164, bool(sent_ok))
+            logger.info(
+                "[tasks] wa_log_outbox ok collection=platform_wa_outbox_logs docId=%s to=%s sent_ok=%s chars=%s",
+                _doc_out, _to, bool(sent_ok), int(len(_reply or ""))
+            )
         except Exception:
             logger.warning("[tasks] wa_log_outbox_failed eventKey=%s", str(event_key or "")[:160], exc_info=True)
 
