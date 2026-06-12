@@ -10348,9 +10348,26 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 except Exception:
                     pass
 
-                response_mode = "DISCOVERY"
-                needs_clarify = "yes"
-                name_use = "clarify"
+                # Preserva SCENE real/hidratado.
+                # A descoberta de identidade deve ser anexada ao final,
+                # não substituir a cena prática já qualificada.
+                if (
+                    str(response_mode or "").strip().upper() == "SCENE"
+                    and isinstance(operational_contract, dict)
+                    and bool(operational_contract.get("hydrated_from_docs"))
+                    and bool(operational_contract.get("has_practical_scene"))
+                ):
+                    needs_clarify = "yes"
+                    name_use = "clarify"
+                    try:
+                        operational_contract["identity_discovery_required"] = True
+                    except Exception:
+                        pass
+                else:
+                    response_mode = "DISCOVERY"
+                    needs_clarify = "yes"
+                    name_use = "clarify"
+
                 if isinstance(kb_context, dict):
                     kb_context["needs_name_discovery"] = True
         except Exception:
