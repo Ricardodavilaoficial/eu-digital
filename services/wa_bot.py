@@ -1145,6 +1145,8 @@ def _front_topic_hint(user_text: str) -> str:
             return "PRECO"
         if any(k in t for k in ("orçamento", "orcamento", "contratar", "ativar", "assinar", "fechar", "como funciona", "quero o mei robô")):
             return "ORCAMENTO"
+        if ("mei rob" in t) and any(k in t for k in ("ajuda", "whatsapp", "vender", "vendas", "faz", "faria", "atendimento", "pacientes", "clientes")):
+            return "ORCAMENTO"
         if any(k in t for k in ("voz", "áudio", "audio", "audios", "ptt", "fala", "responder por voz")):
             return "VOZ"
         if any(k in t for k in ("oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "valeu", "obrigado", "obrigada")):
@@ -1152,6 +1154,232 @@ def _front_topic_hint(user_text: str) -> str:
         return "OTHER"
     except Exception:
         return "OTHER"
+
+
+def _front_normalize_text_for_match(user_text: str) -> str:
+    try:
+        import unicodedata
+        t = unicodedata.normalize("NFKD", str(user_text or ""))
+        t = "".join(ch for ch in t if not unicodedata.combining(ch))
+        return t.lower()
+    except Exception:
+        return str(user_text or "").lower()
+
+
+def _front_target_subsegment_ids(user_text: str) -> list:
+    """
+    Seleção determinística mínima para o snapshot institucional.
+
+    Regra:
+    - só seleciona quando o texto declara um subsegmento claro;
+    - não força seleção em mensagens ambíguas;
+    - não decide a resposta final, apenas preserva o documento certo antes do prune.
+    """
+    try:
+        t = _front_normalize_text_for_match(user_text)
+
+        if any(k in t for k in ("otorrino", "otorrinolaringologia", "ouvido nariz garganta")):
+            return ["consultorio_medico_otorrinolaringologia"]
+
+        if any(k in t for k in ("clinica de exames", "clinica exames", "exames medicos", "laboratorio de exames", "laboratorio clinico")):
+            return ["saude__clinica_exames_medicos"]
+
+        if any(k in t for k in ("consultorio medico", "consultorio de medico", "consultorio de medicina")):
+            return ["saude__consultorio_medico"]
+
+        if any(k in t for k in ("otica", "loja de oculos", "loja de óculos", "oculos de grau", "óculos de grau")):
+            return ["comercio_varejista__loja_oculos"]
+
+        return []
+    except Exception:
+        return []
+
+
+def _front_snapshot_json_len(obj: object) -> int:
+    try:
+        return len(json.dumps(obj or {}, ensure_ascii=False, separators=(",", ":")))
+    except Exception:
+        return 999999
+
+
+def _front_clip_runtime_value(value: object, str_limit: int = 360, list_limit: int = 5, depth: int = 0) -> object:
+    """
+    Compactação genérica e conservadora para blocos V2.
+    Mantém estrutura útil, corta excesso textual e evita JSON grande demais.
+    """
+    try:
+        if value is None:
+            return None
+
+        if isinstance(value, str):
+            return _clip_front_text(value, str_limit)
+
+        if isinstance(value, (int, float, bool)):
+            return value
+
+        if isinstance(value, list):
+            out = []
+            for item in value[:list_limit]:
+                clipped = _front_clip_runtime_value(item, str_limit=str_limit, list_limit=3, depth=depth + 1)
+                if clipped not in (None, "", [], {}):
+                    out.append(clipped)
+            return out
+
+        if isinstance(value, dict):
+            if depth >= 3:
+                return {}
+
+            out = {}
+            for k, v in list(value.items())[:12]:
+                key = str(k or "").strip()
+                if not key:
+                    continue
+                clipped = _front_clip_runtime_value(v, str_limit=max(180, str_limit - 80), list_limit=4, depth=depth + 1)
+                if clipped not in (None, "", [], {}):
+                    out[key] = clipped
+            return out
+
+        return _clip_front_text(str(value), str_limit)
+    except Exception:
+        return None
+
+
+def _front_compact_v2_runtime_block(block: object, char_limit: int = 1800) -> dict:
+    """
+    Compacta um bloco V2 para caber no snapshot.
+    Preserva chaves prioritárias primeiro e reduz o restante por limite.
+    """
+    try:
+        if not isinstance(block, dict) or not block:
+            return {}
+
+        priority_keys = [
+            "summary",
+            "value_proposition",
+            "positioning",
+            "main_promises",
+            "key_situations",
+            "real_customer_situations",
+            "decision_sequence",
+            "consultant_decision_sequence",
+            "operational_sequence",
+            "response_rules",
+            "next_steps",
+            "handoff_triggers",
+            "safety_limits",
+            "limits",
+            "dont_diagnose",
+            "do_not_diagnose",
+            "micro_scene_conversational",
+            "micro_scene",
+        ]
+
+        ordered_keys = []
+        for k in priority_keys:
+            if k in block:
+                ordered_keys.append(k)
+        for k in block.keys():
+            if k not in ordered_keys:
+                ordered_keys.append(k)
+
+        out = {}
+        for k in ordered_keys:
+            v = _front_clip_runtime_value(block.get(k), str_limit=420, list_limit=5, depth=0)
+            if v not in (None, "", [], {}):
+                out[str(k)] = v
+
+            if _front_snapshot_json_len(out) >= char_limit:
+                break
+
+        while len(out) > 1 and _front_snapshot_json_len(out) > char_limit:
+            last_key = list(out.keys())[-1]
+            out.pop(last_key, None)
+
+        return out
+    except Exception:
+        return {}
+
+
+def _front_compact_snapshot_priority(value: object) -> object:
+    try:
+        clipped = _front_clip_runtime_value(value, str_limit=260, list_limit=6, depth=0)
+        return clipped if clipped not in (None, "", [], {}) else {}
+    except Exception:
+        return {}
+
+
+def _front_compact_selected_subsegment_doc(raw_doc: dict, base_doc: dict) -> dict:
+    """
+    Documento selecionado recebe tratamento especial:
+    - mantém compactação canônica existente;
+    - injeta V2 compactado;
+    - evita copiar blocos longos integralmente.
+    """
+    try:
+        v2_keys = {
+            "commercial_runtime",
+            "operational_runtime",
+            "medical_runtime",
+            "behavior_components",
+            "snapshot_priority",
+        }
+        out = {
+            k: v
+            for k, v in dict(base_doc or {}).items()
+            if k not in v2_keys
+        }
+
+        if not isinstance(raw_doc, dict):
+            return out
+
+        basic_fields = [
+            "id",
+            "name",
+            "summary",
+            "description",
+            "one_liner",
+            "micro_scene",
+            "micro_scene_conversational",
+            "segment_id",
+            "archetype_id",
+            "keywords",
+            "negative_keywords",
+            "common_intents",
+            "preferred_capabilities",
+            "customer_noun",
+            "conversion_noun",
+            "handoff_format",
+            "operational_ritual",
+            "operational_rules",
+        ]
+
+        for key in basic_fields:
+            if key in raw_doc and key not in out:
+                value = _front_clip_runtime_value(raw_doc.get(key), str_limit=520, list_limit=8, depth=0)
+                if value not in (None, "", [], {}):
+                    out[key] = value
+
+        if "snapshot_priority" in raw_doc:
+            sp = _front_compact_snapshot_priority(raw_doc.get("snapshot_priority"))
+            if sp not in (None, "", [], {}):
+                out["snapshot_priority"] = sp
+
+        v2_limits = {
+            "commercial_runtime": 2600,
+            "operational_runtime": 2200,
+            "medical_runtime": 1800,
+            "behavior_components": 1600,
+        }
+
+        for key, block_limit in v2_limits.items():
+            if key in raw_doc:
+                block = _front_compact_v2_runtime_block(raw_doc.get(key), char_limit=block_limit)
+                if block:
+                    out[key] = block
+
+        return out
+    except Exception:
+        return dict(base_doc or {})
 
 
 def _safe_str(x: Any) -> str:
@@ -1300,25 +1528,35 @@ def _compact_front_kb_doc(
 
         # ==========================================================
         # Firestore V2 Runtime Blocks
-        # FASE 1 = preservação do snapshot
-        # Sem interpretação.
-        # Sem alteração comportamental.
+        # FASE 2 = preservação compactada para snapshot.
+        # Blocos completos continuam no Firestore; o snapshot recebe
+        # apenas o necessário para o GPT-4o-mini trabalhar com foco.
         # ==========================================================
 
+        if "snapshot_priority" in d:
+            sp = _front_compact_snapshot_priority(d.get("snapshot_priority"))
+            if sp not in (None, "", [], {}):
+                out["snapshot_priority"] = sp
+
         if "commercial_runtime" in d:
-            out["commercial_runtime"] = d.get("commercial_runtime")
+            block = _front_compact_v2_runtime_block(d.get("commercial_runtime"), char_limit=900)
+            if block:
+                out["commercial_runtime"] = block
 
         if "operational_runtime" in d:
-            out["operational_runtime"] = d.get("operational_runtime")
+            block = _front_compact_v2_runtime_block(d.get("operational_runtime"), char_limit=800)
+            if block:
+                out["operational_runtime"] = block
 
         if "medical_runtime" in d:
-            out["medical_runtime"] = d.get("medical_runtime")
+            block = _front_compact_v2_runtime_block(d.get("medical_runtime"), char_limit=700)
+            if block:
+                out["medical_runtime"] = block
 
         if "behavior_components" in d:
-            out["behavior_components"] = d.get("behavior_components")
-
-        if "snapshot_priority" in d:
-            out["snapshot_priority"] = d.get("snapshot_priority")
+            block = _front_compact_v2_runtime_block(d.get("behavior_components"), char_limit=650)
+            if block:
+                out["behavior_components"] = block
 
         return out
     except Exception:
@@ -1652,6 +1890,30 @@ def _safe_json_dumps_with_limit(payload: dict, limit: int) -> str:
         if len(s) <= limit:
             return s
 
+        protected_subsegment_ids = [
+            str(x or "").strip()
+            for x in (payload.get("_protected_subsegment_ids") or [])
+            if str(x or "").strip()
+        ]
+        if protected_subsegment_ids:
+            protected_minimal = {
+                "answer_playbook_v1": {
+                    "runtime_selector_v1": ((payload.get("answer_playbook_v1") or {}).get("runtime_selector_v1") or {}),
+                    "pack_selection_policy_v1": ((payload.get("answer_playbook_v1") or {}).get("pack_selection_policy_v1") or {}),
+                    "segment_template_v1": ((payload.get("answer_playbook_v1") or {}).get("segment_template_v1") or {}),
+                    "segment_value_map_v1": {},
+                },
+                "value_packs_v1": {},
+                "platform_pricing": payload.get("platform_pricing") or {},
+                "process_facts": {},
+                "kb_segments_v1": payload.get("kb_segments_v1") or {},
+                "kb_subsegments_v1": payload.get("kb_subsegments_v1") or {},
+                "kb_archetypes_v1": payload.get("kb_archetypes_v1") or {},
+            }
+            s_protected = json.dumps(protected_minimal, ensure_ascii=False, separators=(",", ":"))
+            if len(s_protected) <= limit:
+                return s_protected
+
         # fallback seguro mínimo:
         # preserva o runtime de packs_v1 antes do banco operacional auxiliar.
         minimal = {
@@ -1768,6 +2030,11 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
                     "handoff_format",
                     "conversation_mode",
                     "service_noun",
+                    "snapshot_priority",
+                    "commercial_runtime",
+                    "operational_runtime",
+                    "medical_runtime",
+                    "behavior_components",
                 )
                 for doc_id, doc in list(docs.items()):
                     if not isinstance(doc, dict):
@@ -1776,7 +2043,16 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
                     for field in keep_fields:
                         value = doc.get(field)
                         if value not in (None, "", [], {}):
-                            item[field] = value
+                            if field == "snapshot_priority":
+                                compacted = _front_compact_snapshot_priority(value)
+                                if compacted not in (None, "", [], {}):
+                                    item[field] = compacted
+                            elif field in ("commercial_runtime", "operational_runtime", "medical_runtime", "behavior_components"):
+                                compacted = _front_compact_v2_runtime_block(value, char_limit=700)
+                                if compacted:
+                                    item[field] = compacted
+                            else:
+                                item[field] = value
                     if item:
                         out[str(doc_id)] = item
                 return out
@@ -1881,8 +2157,40 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
         except Exception:
             pass
 
-        # 7) último recurso antes de remover packs globais:
-        # só agora sacrifica docs operacionais segmentados.
+        # 7) proteção do subsegmento selecionado:
+        # quando há candidato explícito, o documento específico tem prioridade
+        # sobre packs globais. Isso evita preservar fallback e sacrificar V2.
+        protected_subsegment_ids = []
+        try:
+            protected_subsegment_ids = [
+                str(x or "").strip()
+                for x in (work.get("_protected_subsegment_ids") or [])
+                if str(x or "").strip()
+            ]
+        except Exception:
+            protected_subsegment_ids = []
+
+        if protected_subsegment_ids:
+            if work.get("value_packs_v1"):
+                work["value_packs_v1"] = {}
+                if _size(work) <= limit:
+                    return work
+
+            ap = dict(work.get("answer_playbook_v1") or {})
+            if ap.get("segment_value_map_v1"):
+                ap["segment_value_map_v1"] = {}
+                work["answer_playbook_v1"] = ap
+                if _size(work) <= limit:
+                    return work
+
+            if work.get("process_facts"):
+                work["process_facts"] = {}
+                if _size(work) <= limit:
+                    return work
+
+        # 8) último recurso antes de remover packs globais:
+        # só agora sacrifica docs operacionais segmentados quando não há proteção
+        # ou quando, mesmo protegido, os pais ainda precisam ser reduzidos.
         if work.get("kb_archetypes_v1"):
             work["kb_archetypes_v1"] = {}
             if _size(work) <= limit:
@@ -1893,12 +2201,12 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
             if _size(work) <= limit:
                 return work
 
-        if work.get("kb_subsegments_v1"):
+        if work.get("kb_subsegments_v1") and not protected_subsegment_ids:
             work["kb_subsegments_v1"] = {}
             if _size(work) <= limit:
                 return work
 
-        # 8) último recurso comercial: remove packs somente se nem assim couber.
+        # 9) último recurso comercial: remove packs somente se nem assim couber.
         if work.get("value_packs_v1"):
             work["value_packs_v1"] = {}
             if _size(work) <= limit:
@@ -2113,7 +2421,7 @@ def _front_find_kb_map_anywhere(obj: Any, target_key: str, max_depth: int = 5) -
         return {}
 
 
-def _build_front_kb_snapshot(topic: str) -> str:
+def _build_front_kb_snapshot(topic: str, user_text: str = "") -> str:
     """
     Monta snapshot textual compacto com teto de chars.
     """
@@ -2161,6 +2469,67 @@ def _build_front_kb_snapshot(topic: str) -> str:
     except Exception:
         compact_archetypes = {}
 
+    protected_subsegment_ids = []
+    try:
+        target_subsegment_ids = _front_target_subsegment_ids(user_text)
+
+        if target_subsegment_ids and compact_subsegments:
+            target_set = set(str(x or "").strip() for x in target_subsegment_ids if str(x or "").strip())
+
+            selected_subsegments = {}
+            for sid, base_doc in list(compact_subsegments.items()):
+                sid_s = str(sid or "").strip()
+                if sid_s not in target_set:
+                    continue
+
+                raw_doc = (subsegments or {}).get(sid_s) or {}
+                selected_subsegments[sid_s] = _front_compact_selected_subsegment_doc(
+                    raw_doc if isinstance(raw_doc, dict) else {},
+                    base_doc if isinstance(base_doc, dict) else {},
+                )
+
+            if selected_subsegments:
+                related_segment_ids = set()
+                related_archetype_ids = set()
+
+                for doc in selected_subsegments.values():
+                    if not isinstance(doc, dict):
+                        continue
+                    seg_id = str(doc.get("segment_id") or "").strip()
+                    arch_id = str(doc.get("archetype_id") or "").strip()
+                    if seg_id:
+                        related_segment_ids.add(seg_id)
+                    if arch_id:
+                        related_archetype_ids.add(arch_id)
+
+                compact_subsegments = selected_subsegments
+                protected_subsegment_ids = list(selected_subsegments.keys())
+
+                if related_segment_ids and compact_segments:
+                    compact_segments = {
+                        sid: doc
+                        for sid, doc in compact_segments.items()
+                        if str(sid or "").strip() in related_segment_ids
+                    }
+
+                if related_archetype_ids and compact_archetypes:
+                    compact_archetypes = {
+                        aid: doc
+                        for aid, doc in compact_archetypes.items()
+                        if str(aid or "").strip() in related_archetype_ids
+                    }
+
+                logging.info(
+                    "[WA_BOT][KB_TARGET_SUBSEGMENT] targets=%s kept_subsegments=%s kept_segments=%s kept_archetypes=%s",
+                    target_subsegment_ids,
+                    list(compact_subsegments.keys())[:8],
+                    list(compact_segments.keys())[:8],
+                    list(compact_archetypes.keys())[:8],
+                )
+    except Exception as e:
+        protected_subsegment_ids = []
+        logging.warning("[WA_BOT][KB_TARGET_SUBSEGMENT] error=%s", str(e)[:180])
+
 
     # ✅ packs_v1: snapshot em JSON compacto (para render determinístico no front)
     try:
@@ -2205,6 +2574,7 @@ def _build_front_kb_snapshot(topic: str) -> str:
                 "kb_segments_v1": compact_segments,
                 "kb_subsegments_v1": compact_subsegments,
                 "kb_archetypes_v1": compact_archetypes,
+                "_protected_subsegment_ids": protected_subsegment_ids,
             }
 
             # garantia mínima: se houver subsegments reais, eles são prioridade máxima
@@ -2226,6 +2596,11 @@ def _build_front_kb_snapshot(topic: str) -> str:
             )
 
             payload = _prune_front_kb_payload(payload, snapshot_limit)
+            try:
+                if isinstance(payload, dict):
+                    payload.pop("_protected_subsegment_ids", None)
+            except Exception:
+                pass
 
             logging.info(
                 "[WA_BOT][KB_SNAPSHOT][AFTER_PRUNE] payload_segments=%s payload_subsegments=%s payload_archetypes=%s payload_value_packs=%s payload_chars=%s limit=%s",
@@ -2794,7 +3169,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
                         # Monta KB Snapshot compacto (Firestore->wa_bot) com teto.
                         topic_hint = _front_topic_hint(text or "")
-                        kb_snapshot = _build_front_kb_snapshot(topic_hint)
+                        kb_snapshot = _build_front_kb_snapshot(topic_hint, text or "")
 
                         _segment_for_name_guard = (
                             ctx.get("segment_hint")
