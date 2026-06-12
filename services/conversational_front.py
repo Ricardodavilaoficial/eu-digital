@@ -12292,13 +12292,38 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         _free_spoken = _front_clean_free_mode_tail(_free_spoken)
 
                 # Cumprimento seguro no ramo regressivo.
-                # Não usa vocativo nominal e não depende do LLM.
+                # Não usa vocativo nominal, não depende do LLM e não cria
+                # novo ritual comercial no código.
+                #
+                # Quando a resposta veio do structured assembly em SCENE real,
+                # reaplica o ritual de primeiro contato já existente neste arquivo
+                # no ponto em que ele não será substituído pela montagem estruturada.
                 try:
                     _allow_safe_greeting = int(ai_turns or 0) <= 0
-                    if _allow_safe_greeting and _free_reply and not re.match(r"(?i)^\s*ol[áa]\b", _free_reply):
-                        _free_reply = f"Olá. {_free_reply}".strip()
-                    if _allow_safe_greeting and _free_spoken and not re.match(r"(?i)^\s*ol[áa]\b", _free_spoken):
-                        _free_spoken = f"Olá. {_free_spoken}".strip()
+                    _assembly_source_type = str(
+                        (structured_assembly_result or {}).get("contentSourceType")
+                        or ""
+                    ).strip()
+
+                    _structured_scene_first_contact = bool(
+                        str(reply_source or "").strip()
+                        == "front_structured_python_assembly"
+                        and str(response_mode or "").strip().upper() == "SCENE"
+                        and _assembly_source_type in ("subsegment", "archetype", "segment")
+                        and int(ai_turns or 0) == 0
+                        and not bool(has_name)
+                    )
+
+                    if _structured_scene_first_contact:
+                        if _free_reply and not re.match(r"(?i)^\s*(obrigad[oa]|ol[áa])\b", _free_reply):
+                            _free_reply = f"Obrigado pelo contato! {_free_reply}".strip()
+                        if _free_spoken and not re.match(r"(?i)^\s*(obrigad[oa]|ol[áa])\b", _free_spoken):
+                            _free_spoken = f"Obrigado pelo contato! {_free_spoken}".strip()
+                    elif _allow_safe_greeting:
+                        if _free_reply and not re.match(r"(?i)^\s*ol[áa]\b", _free_reply):
+                            _free_reply = f"Olá. {_free_reply}".strip()
+                        if _free_spoken and not re.match(r"(?i)^\s*ol[áa]\b", _free_spoken):
+                            _free_spoken = f"Olá. {_free_spoken}".strip()
                 except Exception:
                     pass
 
