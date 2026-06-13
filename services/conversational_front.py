@@ -5868,7 +5868,7 @@ Preencha os campos usando a mensagem atual do usuário.
 - `lead_segment`: use `outros` quando a atividade não corresponder a uma chave específica.
 - `question_type`: use `broad` quando o lead pedir visão geral, funcionamento completo ou valor do robô para o negócio.
 - `question_type`: use `punctual` quando o lead fizer uma pergunta específica ou de continuidade.
-- `question_type`: use `simulation` quando o lead pedir o robô em ação numa situação prática.
+- `question_type`: use `simulation` quando o lead pedir para ver o robô em ação, pedir uma resposta exemplo ou perguntar como o robô responderia uma pessoa em uma situação prática. A mensagem pode misturar dados do lead com uma fala de cliente, paciente, aluno, morador ou outro destinatário.
 - Em `simulation`, `replyText` deve conter somente a mensagem final para a pessoa atendida no WhatsApp. O lead é contexto; a pessoa atendida é o destinatário. Fale diretamente com o destinatário. Use o subsegmento ativo, a situação apresentada, a próxima informação necessária e os limites do subsegmento.
 """
 DISCOVERY_PROMPT = """
