@@ -12326,20 +12326,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     )
 
                     _structured_scene_first_contact = bool(
-                        int(ai_turns or 0) == 0
+                        _missing_identity
+                        and bool(_identity_question)
                         and not bool(has_name)
+                        and bool(_contract_now.get("hydrated_from_docs"))
+                        and bool(_contract_now.get("has_practical_scene"))
+                        and bool(_contract_now.get("micro_scene_conversational"))
                         and (
-                            (
-                                _reply_source_now == "front_structured_python_assembly"
-                                and _response_mode_now == "SCENE"
-                                and _assembly_source_type in ("subsegment", "archetype", "segment")
-                            )
-                            or (
-                                _reply_source_now == "front_free_mode_fallback"
-                                and bool(_contract_now.get("hydrated_from_docs"))
-                                and bool(_contract_now.get("has_practical_scene"))
-                                and bool(_contract_now.get("micro_scene_conversational"))
-                            )
+                            _reply_source_now == "front_structured_python_assembly"
+                            or _reply_source_now == "front_free_mode_fallback"
                         )
                     )
 
