@@ -542,8 +542,11 @@ def _front_build_structured_assembly_reply(
         q_type = str(question_type or "broad").strip().lower()
 
         allow_structured_long = bool(
-            mode == "SCENE"
-            or (mode == "DIRECT" and q_type == "broad")
+            q_type != "simulation"
+            and (
+                mode == "SCENE"
+                or (mode == "DIRECT" and q_type == "broad")
+            )
         )
 
         if not allow_structured_long:
@@ -1870,7 +1873,7 @@ def _front_response_json_schema() -> Dict[str, Any]:
                         },
                         "question_type": {
                             "type": "string",
-                            "enum": ["broad", "punctual"],
+                            "enum": ["broad", "punctual", "simulation"],
                         },
                     },
                     "required": ["topic", "confidence", "question_type"],
@@ -4889,7 +4892,7 @@ def _infer_response_mode_from_signals(
         # Perguntas pontuais/continuidade devem responder direto.
         # Não altera prompt e não interpreta palavras do usuário; usa somente
         # o tipo estrutural já produzido pelo próprio front/modelo.
-        if qt in ("punctual", "continuity"):
+        if qt in ("punctual", "continuity", "simulation"):
             return "DIRECT"
 
         has_operational_base = bool(
@@ -5433,7 +5436,7 @@ def _apply_discovery_to_scene_bypass(
         q_type = str(question_type or "broad").strip().lower()
 
         contract_ready_for_scene = bool(
-            q_type not in ("punctual", "continuity")
+            q_type not in ("punctual", "continuity", "simulation")
             and str(response_mode or "").strip().upper() == "DISCOVERY"
             and str(next_step or "").strip().upper() != "SEND_LINK"
             and str(needs_clarify or "").strip().lower() != "yes"
@@ -5550,7 +5553,7 @@ def _apply_response_mode_arbitration(
         elif (
             global_pack_scene_ready
             and str(question_type or "").strip().lower()
-            not in ("punctual", "continuity")
+            not in ("punctual", "continuity", "simulation")
         ):
             response_mode = "SCENE"
             needs_clarify = "no"
@@ -5565,7 +5568,7 @@ def _apply_response_mode_arbitration(
         ):
             response_mode = "DISCOVERY"
 
-        elif str(question_type or "").strip().lower() in ("punctual", "continuity"):
+        elif str(question_type or "").strip().lower() in ("punctual", "continuity", "simulation"):
             if response_mode == "SCENE":
                 response_mode = "DIRECT"
 
@@ -5848,7 +5851,7 @@ FORMATO DE SAÍDA (OBRIGATÓRIO JSON):
   "understanding": {
     "topic": "...",
     "confidence": "high|medium|low",
-    "question_type": "broad|punctual"
+    "question_type": "broad|punctual|simulation"
   },
   "nextStep": "SEND_LINK|NONE",
   "replyText": "...",
@@ -5863,8 +5866,10 @@ Preencha os campos usando a mensagem atual do usuário.
 - `lead_segment_raw`: atividade, profissão ou descrição do trabalho do usuário.
 - `lead_segment`: escolha uma chave da lista de segmentos disponíveis que melhor represente a atividade do usuário.
 - `lead_segment`: use `outros` quando a atividade não corresponder a uma chave específica.
-- `question_type`: use `broad` quando a mensagem pedir explicação geral, funcionamento completo ou demonstração do robô.
-- `question_type`: use `punctual` quando a mensagem fizer uma pergunta específica, direta ou de continuidade.
+- `question_type`: use `broad` quando o lead pedir visão geral, funcionamento completo ou valor do robô para o negócio.
+- `question_type`: use `punctual` quando o lead fizer uma pergunta específica ou de continuidade.
+- `question_type`: use `simulation` quando o lead pedir o robô em ação numa situação prática.
+- Em `simulation`, mostre como o robô responderia, conduziria ou executaria o próximo passo no WhatsApp, usando o subsegmento ativo. Seja direto, concreto e útil. Colete só a próxima informação necessária. Aplique os limites do subsegmento.
 """
 DISCOVERY_PROMPT = """
 Você está no modo DISCOVERY.
@@ -5929,7 +5934,7 @@ def _call_openai_for_front(*, system: str, user: str, temperature: float = 0.2, 
                             },
                             "question_type": {
                                 "type": "string",
-                                "enum": ["broad", "punctual"]
+                                "enum": ["broad", "punctual", "simulation"]
                             }
                         },
                         "required": ["topic", "confidence", "question_type"]
@@ -8636,7 +8641,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or "broad"
         ).strip().lower()
 
-        if question_type not in ("broad", "punctual", "continuity"):
+        if question_type not in ("broad", "punctual", "continuity", "simulation"):
             question_type = "broad"
 
         try:
@@ -9801,7 +9806,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # NÃO reabre SCENE procedural.
         # Apenas reutiliza a camada humana já existente.
         # ==========================================================
-        _is_broad_question = str(question_type or "").strip().lower() not in ("punctual", "continuity")
+        _is_broad_question = str(question_type or "").strip().lower() not in ("punctual", "continuity", "simulation")
 
         use_direct_scene = bool(
             has_structured_scene
@@ -9943,7 +9948,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     except Exception:
                         pass
 
-                    if has_real_operational_context and str(question_type or "").strip().lower() not in ("punctual", "continuity"):
+                    if has_real_operational_context and str(question_type or "").strip().lower() not in ("punctual", "continuity", "simulation"):
                         response_mode = "SCENE"
                         micro_scene_allowed = True
                         operational_contract["micro_scene_allowed"] = True
@@ -12063,7 +12068,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if _free_spoken.startswith("{") or _free_spoken.startswith("```"):
                     _free_spoken = _unwrap_front_json_envelope(_free_spoken) or _free_reply
 
-                _is_broad_question_fallback = str(question_type or "").strip().lower() not in ("punctual", "continuity")
+                _is_broad_question_fallback = str(question_type or "").strip().lower() not in ("punctual", "continuity", "simulation")
                 _prefer_current_reply = bool(
                     (int(ai_turns or 0) > 0 and len(str(_free_reply or "").strip()) >= 60)
                     or not _is_broad_question_fallback
@@ -12150,7 +12155,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 )
 
                 _apply_final_continuity = (
-                    _continuity_question_type in ("punctual", "continuity")
+                    _continuity_question_type in ("punctual", "continuity", "simulation")
                     and not _has_scene_contract_for_final_continuity
                 )
                 _continuity_reply_built = False
