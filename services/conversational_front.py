@@ -5895,6 +5895,114 @@ Regras:
 FREE_MODE_APPEND_PROMPT = ""
 
 
+def _front_simulation_reply_needs_target_repair(text: str) -> bool:
+    """
+    Detecta somente forma de saída ruim em `simulation`.
+
+    Não classifica intenção do usuário.
+    Não decide segmento.
+    Atua apenas quando a IA já decidiu question_type=simulation.
+    """
+    import re
+
+    t = re.sub(r"\s+", " ", str(text or "").strip().lower())
+    if len(t) < 20:
+        return False
+
+    markers = (
+        "o mei robô",
+        "o robô ",
+        "o robô",
+        "quando um paciente",
+        "quando o paciente",
+        "um paciente",
+        "a mensagem do paciente",
+        "acolhe a mensagem",
+        "organiza as informações",
+        "envia as solicitações",
+        "informa o paciente",
+        "mantendo o paciente",
+        "número virtual",
+        "configuração concluída",
+        "até 7 dias úteis",
+    )
+
+    return any(m in t for m in markers)
+
+
+def _front_repair_simulation_reply_for_target(
+    *,
+    user_text: str,
+    current_reply: str,
+    operational_contract: dict | None = None,
+) -> str:
+    """
+    Repara uma resposta de simulation para virar mensagem final ao destinatário.
+
+    Mantém o modelo como redator, mas força o endereçamento:
+    lead = contexto
+    pessoa atendida = destinatário
+    """
+    import json
+    import re
+
+    contract = operational_contract if isinstance(operational_contract, dict) else {}
+    compact_contract = {
+        "segment": contract.get("segment") or "",
+        "service_noun": contract.get("service_noun") or "",
+        "customer_noun": contract.get("customer_noun") or "",
+        "primary_goal": contract.get("primary_goal") or "",
+        "handoff_format": contract.get("handoff_format") or "",
+        "operational_ritual": contract.get("operational_ritual") or [],
+        "preferred_capabilities": contract.get("preferred_capabilities") or [],
+    }
+
+    system = (
+        "Você reescreve respostas de simulação para WhatsApp. "
+        "Entregue somente a mensagem final que o destinatário da situação simulada leria. "
+        "O lead é contexto; a pessoa atendida é o destinatário. "
+        "Fale diretamente com o destinatário. "
+        "Use o subsegmento ativo, a situação apresentada, a próxima informação necessária e os limites do segmento. "
+        "Inclua informações de plataforma, configuração, número virtual, preço ou prazo apenas quando a situação apresentada tratar desse tema."
+    )
+
+    user = (
+        "Mensagem recebida:\n"
+        f"{str(user_text or '').strip()}\n\n"
+        "Resposta atual a reparar:\n"
+        f"{str(current_reply or '').strip()}\n\n"
+        "Contexto operacional compacto:\n"
+        f"{json.dumps(compact_contract, ensure_ascii=False)[:1400]}\n\n"
+        "Reescreva agora somente a mensagem final ao destinatário simulado."
+    )
+
+    repaired = _call_openai_for_front(
+        system=system,
+        user=user,
+        temperature=0.1,
+        max_tokens=190,
+    )
+
+    cleaned = str(repaired or "").strip()
+    try:
+        if cleaned.startswith("{") or cleaned.startswith("```"):
+            cleaned = _unwrap_front_json_envelope(cleaned) or cleaned
+    except Exception:
+        pass
+
+    cleaned = re.sub(r"^\s*\[MENSAGEM SIMULADA\]\s*", "", cleaned, flags=re.I).strip()
+    cleaned = re.sub(r"^\s*(replyText|resposta)\s*:\s*", "", cleaned, flags=re.I).strip()
+    cleaned = cleaned.strip().strip('"').strip("'").strip()
+
+    if len(cleaned) < 30:
+        return ""
+
+    if _front_simulation_reply_needs_target_repair(cleaned):
+        return ""
+
+    return cleaned[:900].strip()
+
+
 
 def _compact_kb_snapshot(s: str) -> str:
     """Reduz tokens sem perder conteúdo: remove excesso de whitespace."""
@@ -11368,6 +11476,33 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 structured_assembly_result = {}
 
+            try:
+                if (
+                    str(question_type or "").strip().lower() == "simulation"
+                    and _front_simulation_reply_needs_target_repair(reply_text)
+                ):
+                    _simulation_repaired_reply = _front_repair_simulation_reply_for_target(
+                        user_text=user_text,
+                        current_reply=reply_text,
+                        operational_contract=operational_contract if isinstance(operational_contract, dict) else {},
+                    )
+
+                    if _simulation_repaired_reply:
+                        reply_text = _simulation_repaired_reply
+                        spoken_text = _simulation_repaired_reply
+                        reply_source = "front_simulation_target_repair"
+                        accepted = True
+                        ia_accepted = True
+                        try:
+                            logging.info(
+                                "[SIMULATION_TARGET_REPAIR] applied=True reply_len=%s",
+                                len(str(reply_text or "")),
+                            )
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             logging.info(
                 "[IA_FINAL_DECISION] source=%s accepted=%s len=%s live=%s density=%s",
                 str(reply_source or "").strip(),
@@ -11451,7 +11586,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     ],
                 )
 
-                if reply_text and _context_lead_name:
+                if (
+                    reply_text
+                    and _context_lead_name
+                    and str(question_type or "").strip().lower() != "simulation"
+                ):
                     reply_text = _humanize_reply_with_lead_context(
                         reply=reply_text,
                         lead_name=_context_lead_name if has_name else "",
