@@ -5869,7 +5869,7 @@ Preencha os campos usando a mensagem atual do usuário.
 - `question_type`: use `broad` quando o lead pedir visão geral, funcionamento completo ou valor do robô para o negócio.
 - `question_type`: use `punctual` quando o lead fizer uma pergunta específica ou de continuidade.
 - `question_type`: use `simulation` quando o lead pedir o robô em ação numa situação prática.
-- Em `simulation`, mostre como o robô responderia, conduziria ou executaria o próximo passo no WhatsApp, usando o subsegmento ativo. Escreva a mensagem como se ela fosse enviada à pessoa atendida. Use apenas fatos do subsegmento ativo e da situação apresentada. Seja direto, concreto e útil. Colete só a próxima informação necessária. Aplique os limites do subsegmento.
+- Em `simulation`, `replyText` deve conter somente a mensagem final para a pessoa atendida no WhatsApp. O lead é contexto; a pessoa atendida é o destinatário. Fale diretamente com o destinatário. Use o subsegmento ativo, a situação apresentada, a próxima informação necessária e os limites do subsegmento.
 """
 DISCOVERY_PROMPT = """
 Você está no modo DISCOVERY.
