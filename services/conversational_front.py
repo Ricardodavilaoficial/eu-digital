@@ -3252,6 +3252,16 @@ def _build_operational_contract(
                 (arch_doc or {}).get("micro_scene_conversational"),
                 ((seg_doc or {}).get("micro_scene_conversational") if use_seg else ""),
             ),
+            "lead_refinement_question": _pick_str(
+                (kb_context or {}).get("lead_refinement_question"),
+                (sub_doc or {}).get("lead_refinement_question"),
+                (sub_doc or {}).get("refinement_question"),
+                (sub_doc or {}).get("business_refinement_question"),
+                (arch_doc or {}).get("lead_refinement_question"),
+                (arch_doc or {}).get("refinement_question"),
+                ((seg_doc or {}).get("lead_refinement_question") if use_seg else ""),
+                ((seg_doc or {}).get("refinement_question") if use_seg else ""),
+            ),
             "micro_scene": _pick_str(
                 (sub_doc or {}).get("micro_scene"),
                 (arch_doc or {}).get("micro_scene"),
@@ -3295,6 +3305,7 @@ def _build_operational_contract(
             "has_practical_scene": bool(str(operational_reference or "").strip()),
             "allowed_next_step": "none",
             "hydrated_from_docs": False,
+            "lead_refinement_question": "",
             "operational_reference": str(operational_reference or "").strip(),
             "reference_example": str(reference_example or "").strip(),
         }
@@ -12298,6 +12309,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 # Quando a resposta veio do structured assembly em SCENE real,
                 # reaplica o ritual de primeiro contato já existente neste arquivo
                 # no ponto em que ele não será substituído pela montagem estruturada.
+                _structured_scene_first_contact = False
                 try:
                     _allow_safe_greeting = int(ai_turns or 0) <= 0
                     _assembly_source_type = str(
@@ -12332,10 +12344,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     )
 
                     if _structured_scene_first_contact:
-                        if _free_reply and not re.match(r"(?i)^\s*(obrigad[oa]|ol[áa])\b", _free_reply):
-                            _free_reply = f"Obrigado pelo contato! {_free_reply}".strip()
-                        if _free_spoken and not re.match(r"(?i)^\s*(obrigad[oa]|ol[áa])\b", _free_spoken):
-                            _free_spoken = f"Obrigado pelo contato! {_free_spoken}".strip()
+                        _scene_body = str(
+                            _contract_now.get("micro_scene_conversational")
+                            or _free_reply
+                            or ""
+                        ).strip()
+                        _scene_body = re.sub(
+                            r"(?i)^\s*ol[áa][!.]?\s*",
+                            "",
+                            _scene_body,
+                        ).strip()
+
+                        if _scene_body:
+                            _free_reply = (
+                                "Olá! Obrigado pelo contato.\n\n"
+                                f"{_scene_body}"
+                            ).strip()
+                            _free_spoken = _free_reply
                     elif _allow_safe_greeting:
                         if _free_reply and not re.match(r"(?i)^\s*ol[áa]\b", _free_reply):
                             _free_reply = f"Olá. {_free_reply}".strip()
@@ -12343,6 +12368,34 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             _free_spoken = f"Olá. {_free_spoken}".strip()
                 except Exception:
                     pass
+
+                if (
+                    _structured_scene_first_contact
+                    and _identity_question
+                    and isinstance(operational_contract, dict)
+                ):
+                    try:
+                        _lead_refinement_question = str(
+                            operational_contract.get("lead_refinement_question")
+                            or ""
+                        ).strip()
+                        if _lead_refinement_question:
+                            _identity_base = re.sub(
+                                r"[\s.?!]+$",
+                                "",
+                                str(_identity_question or "").strip(),
+                            )
+                            _refinement_tail = re.sub(
+                                r"^[\s,.;:!?]+|[\s.?!]+$",
+                                "",
+                                _lead_refinement_question,
+                            )
+                            if _identity_base and _refinement_tail:
+                                _identity_question = (
+                                    f"{_identity_base} e {_refinement_tail}."
+                                ).strip()
+                    except Exception:
+                        pass
 
                 if (
                     str(next_step or "").strip().upper() != "SEND_LINK"
@@ -12353,7 +12406,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         _identity_question,
                     )
                 ):
-                    _limit = 820
+                    _limit = 1200 if _structured_scene_first_contact else 820
                     _sep = "\n\n"
                     _base_limit = max(
                         320,
@@ -12368,9 +12421,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     name_use = "clarify"
                     needs_clarify = "yes"
 
+                _free_reply_limit = 1200 if _structured_scene_first_contact else 820
                 out["replyText"] = _front_trim_free_mode_sentence(
                     _free_reply,
-                    820,
+                    _free_reply_limit,
                 )
 
                 try:

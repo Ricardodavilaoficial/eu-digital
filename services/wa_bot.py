@@ -1271,6 +1271,7 @@ def _front_compact_v2_runtime_block(block: object, char_limit: int = 1800) -> di
             "dont_diagnose",
             "do_not_diagnose",
             "micro_scene_conversational",
+            "lead_refinement_question",
             "micro_scene",
         ]
 
@@ -1340,6 +1341,7 @@ def _front_compact_selected_subsegment_doc(raw_doc: dict, base_doc: dict) -> dic
             "one_liner",
             "micro_scene",
             "micro_scene_conversational",
+            "lead_refinement_question",
             "segment_id",
             "archetype_id",
             "keywords",
@@ -2017,6 +2019,7 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
                     "description",
                     "one_liner",
                     "micro_scene_conversational",
+                    "lead_refinement_question",
                     "micro_scene",
                     "direct_scene",
                     "runtime_long_text",
@@ -2136,6 +2139,7 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
                     # continuidade precisa mais do núcleo factual do que de
                     # cenas longas conversacionais.
                     rs.pop("micro_scene_conversational", None)
+                    "lead_refinement_question",
                     rs.pop("micro_scene", None)
 
                     if rs:
