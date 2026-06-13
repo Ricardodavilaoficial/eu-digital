@@ -5963,8 +5963,10 @@ def _front_repair_simulation_reply_for_target(
         "O lead é contexto; a pessoa atendida é o destinatário. "
         "Use nome ou vocativo apenas quando pertencer claramente ao destinatário. "
         "Se o destinatário não tiver nome claro, cumprimente sem nome. "
-        "Escreva como atendimento real: acolha a situação, confirme o caminho de atendimento, "
-        "peça a próxima informação que aproxima da conversão e respeite os limites do subsegmento. "
+        "Escreva como atendimento real: acolha a situação e confirme o caminho de atendimento. "
+        "Use no máximo uma pergunta. "
+        "Quando a necessidade já estiver clara, priorize a pergunta que avance para agendamento, forma de atendimento, pagamento, convênio, disponibilidade ou visita, conforme o subsegmento. "
+        "Respeite os limites do subsegmento. "
         "A resposta deve demonstrar valor comercial para o dono do negócio sem explicar o robô em terceira pessoa. "
         "Inclua informações de plataforma, configuração, número virtual, preço ou prazo apenas quando a situação apresentada tratar desse tema."
     )
