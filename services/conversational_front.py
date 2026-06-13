@@ -5961,8 +5961,11 @@ def _front_repair_simulation_reply_for_target(
         "Você reescreve respostas de simulação para WhatsApp. "
         "Entregue somente a mensagem final que o destinatário da situação simulada leria. "
         "O lead é contexto; a pessoa atendida é o destinatário. "
-        "Fale diretamente com o destinatário. "
-        "Use o subsegmento ativo, a situação apresentada, a próxima informação necessária e os limites do segmento. "
+        "Use nome ou vocativo apenas quando pertencer claramente ao destinatário. "
+        "Se o destinatário não tiver nome claro, cumprimente sem nome. "
+        "Escreva como atendimento real: acolha a situação, confirme o caminho de atendimento, "
+        "peça a próxima informação que aproxima da conversão e respeite os limites do subsegmento. "
+        "A resposta deve demonstrar valor comercial para o dono do negócio sem explicar o robô em terceira pessoa. "
         "Inclua informações de plataforma, configuração, número virtual, preço ou prazo apenas quando a situação apresentada tratar desse tema."
     )
 
@@ -5973,7 +5976,8 @@ def _front_repair_simulation_reply_for_target(
         f"{str(current_reply or '').strip()}\n\n"
         "Contexto operacional compacto:\n"
         f"{json.dumps(compact_contract, ensure_ascii=False)[:1400]}\n\n"
-        "Reescreva agora somente a mensagem final ao destinatário simulado."
+        "Reescreva agora somente a mensagem final ao destinatário simulado. "
+        "Use a resposta atual apenas como sinal do erro a corrigir, não como modelo de conteúdo."
     )
 
     repaired = _call_openai_for_front(
