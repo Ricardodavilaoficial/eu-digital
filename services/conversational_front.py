@@ -5930,6 +5930,71 @@ def _front_simulation_reply_needs_target_repair(text: str) -> bool:
     return any(m in t for m in markers)
 
 
+def _front_simulation_reply_needs_quality_repair(text: str) -> bool:
+    """
+    Detecta resposta de simulation tecnicamente limpa, mas fraca para demo comercial.
+
+    Não classifica intenção.
+    Não decide segmento.
+    Atua apenas quando question_type já é simulation.
+    """
+    import re
+
+    raw = str(text or "").strip()
+    t = re.sub(r"\s+", " ", raw.lower()).strip()
+
+    if len(t) < 45:
+        return True
+
+    has_question = "?" in raw
+    conversion_cues = (
+        "convênio",
+        "particular",
+        "horário",
+        "agendar",
+        "agendamento",
+        "disponibilidade",
+        "receita",
+        "grau",
+        "modelo",
+        "endereço",
+        "bairro",
+        "entrega",
+        "retirada",
+        "pagamento",
+        "pedido",
+        "consulta",
+        "reunião",
+    )
+
+    if len(t) < 140 and not has_question and not any(c in t for c in conversion_cues):
+        return True
+
+    weak_questions = (
+        "poderia me informar se é a primeira vez",
+        "poderia informar se é a primeira vez",
+        "é a primeira vez que",
+        "poderia me informar mais detalhes",
+        "pode me passar mais detalhes",
+        "qual seria a sua necessidade",
+    )
+
+    if any(q in t for q in weak_questions):
+        return True
+
+    generic_openings = (
+        "sim, atendemos casos de",
+        "atendemos casos de",
+        "para agendarmos a consulta",
+        "para agendar, poderia",
+    )
+
+    if len(t) < 140 and any(g in t for g in generic_openings):
+        return True
+
+    return False
+
+
 def _front_repair_simulation_reply_for_target(
     *,
     user_text: str,
@@ -11483,7 +11548,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             try:
                 if (
                     str(question_type or "").strip().lower() == "simulation"
-                    and _front_simulation_reply_needs_target_repair(reply_text)
+                    and (
+                        _front_simulation_reply_needs_target_repair(reply_text)
+                        or _front_simulation_reply_needs_quality_repair(reply_text)
+                    )
                 ):
                     _simulation_repaired_reply = _front_repair_simulation_reply_for_target(
                         user_text=user_text,
