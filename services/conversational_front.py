@@ -5967,7 +5967,7 @@ def _front_simulation_reply_needs_quality_repair(text: str) -> bool:
         "reunião",
     )
 
-    if len(t) < 140 and not has_question and not any(c in t for c in conversion_cues):
+    if not has_question and not any(c in t for c in conversion_cues):
         return True
 
     weak_questions = (
@@ -5989,10 +5989,138 @@ def _front_simulation_reply_needs_quality_repair(text: str) -> bool:
         "para agendar, poderia",
     )
 
-    if len(t) < 140 and any(g in t for g in generic_openings):
+    if len(t) < 260 and any(g in t for g in generic_openings):
+        return True
+
+    unsafe_demo_closings = (
+        "melhor tratamento possível",
+        "aguardo você no consultório",
+        "aguardamos você no consultório",
+        ":)",
+        "😉",
+    )
+
+    if any(u in t for u in unsafe_demo_closings):
         return True
 
     return False
+
+
+def _front_extract_simulation_role_contract(user_text: str) -> dict:
+    """
+    Extrai um contrato leve de papéis para simulation_reply.
+
+    Não decide intenção.
+    Não decide segmento.
+    Não executa ação real.
+    Apenas organiza sinais do turno para reduzir confusão entre lead e destinatário.
+    """
+    import re
+
+    raw = str(user_text or "").strip()
+    compact = re.sub(r"\s+", " ", raw).strip()
+
+    lead_name = ""
+    try:
+        lead_name = _extract_lead_name_from_current_turn(compact)
+    except Exception:
+        lead_name = ""
+
+    business_context = ""
+    business_patterns = (
+        r"\b(?:atendo|trabalho)\s+(?:num|em um|em uma|no|na)\s+(.+?)(?:\.\s|\?\s|\s+como\s+o\s+mei\s+robô|\s+como\s+a\s+ia|$)",
+        r"\btenho\s+(?:um|uma)\s+(.+?)(?:\.\s|\?\s|\s+como\s+o\s+mei\s+robô|\s+como\s+a\s+ia|$)",
+    )
+    for pattern in business_patterns:
+        m = re.search(pattern, compact, flags=re.I)
+        if m:
+            business_context = str(m.group(1) or "").strip(" .,:;")
+            break
+
+    simulated_message = ""
+    message_patterns = (
+        r"\bque\s+diz\s*:\s*(.+)$",
+        r"\bque\s+disse\s*:\s*(.+)$",
+        r"\bcliente\s+diz\s*:\s*(.+)$",
+        r"\bpaciente\s+diz\s*:\s*(.+)$",
+    )
+    for pattern in message_patterns:
+        m = re.search(pattern, compact, flags=re.I)
+        if m:
+            simulated_message = str(m.group(1) or "").strip(" \"'“”")
+            break
+
+    final_addressee_hint = ""
+    addressee_patterns = (
+        r"responderia\s+(?:a|ao|à|para\s+)?(?:um|uma|o|a)?\s*([^?.,:;]+?)\s+que\s+(?:diz|disse)",
+        r"responderia\s+(?:a|ao|à|para\s+)?(?:um|uma|o|a)?\s*([^?.,:;]+?)\s+com\s+a\s+mensagem",
+    )
+    for pattern in addressee_patterns:
+        m = re.search(pattern, compact, flags=re.I)
+        if m:
+            final_addressee_hint = str(m.group(1) or "").strip(" .,:;")
+            break
+
+    mentioned_subject_hint = ""
+    msg_lower = simulated_message.lower()
+    if any(x in msg_lower for x in ("meu filho", "minha filha", "meu bebê", "minha bebê", "minha criança", "meu menino", "minha menina")):
+        mentioned_subject_hint = "filho/criança mencionada"
+        if not final_addressee_hint or final_addressee_hint.lower() in ("paciente", "cliente"):
+            final_addressee_hint = "responsável pela pessoa mencionada"
+    elif any(x in msg_lower for x in ("minha mãe", "meu pai", "minha esposa", "meu marido", "meu irmão", "minha irmã")):
+        mentioned_subject_hint = "familiar mencionado"
+        if not final_addressee_hint:
+            final_addressee_hint = "pessoa que enviou a mensagem"
+
+    if not final_addressee_hint:
+        final_addressee_hint = "pessoa que enviou a mensagem simulada"
+
+    return {
+        "demo_kind": "simulation_reply",
+        "lead_name": lead_name,
+        "lead_role": "dono do negócio/contexto",
+        "business_context": business_context,
+        "final_addressee_hint": final_addressee_hint,
+        "mentioned_subject_hint": mentioned_subject_hint,
+        "simulated_message": simulated_message,
+    }
+
+
+def _front_strip_simulation_lead_vocative(text: str, lead_name: str) -> str:
+    """
+    Guarda final: remove vocativo inicial com nome do lead em simulation.
+
+    Exemplo:
+    "Olá, José! Sim, atendemos..." -> "Olá! Sim, atendemos..."
+    """
+    import re
+
+    raw = str(text or "").strip()
+    name = str(lead_name or "").strip()
+
+    if not raw or not name:
+        return raw
+
+    safe_name = re.escape(name)
+    pattern = re.compile(
+        rf"^\s*(olá|ola|oi|bom dia|boa tarde|boa noite)\s*,?\s*{safe_name}\s*[!\.,:;\-]*\s*",
+        flags=re.I,
+    )
+
+    m = pattern.match(raw)
+    if not m:
+        return raw
+
+    greeting = m.group(1)
+    rest = raw[m.end():].lstrip()
+
+    if not rest:
+        return raw
+
+    if greeting.lower() == "ola":
+        greeting = "Olá"
+
+    return f"{greeting}! {rest}".strip()
 
 
 def _front_repair_simulation_reply_for_target(
@@ -6012,6 +6140,12 @@ def _front_repair_simulation_reply_for_target(
     import re
 
     contract = operational_contract if isinstance(operational_contract, dict) else {}
+
+    simulation_role_contract = _front_extract_simulation_role_contract(user_text)
+    simulation_lead_name = str(
+        (simulation_role_contract or {}).get("lead_name") or ""
+    ).strip()
+
     compact_contract = {
         "segment": contract.get("segment") or "",
         "service_noun": contract.get("service_noun") or "",
@@ -6028,8 +6162,15 @@ def _front_repair_simulation_reply_for_target(
         "O lead é contexto; a pessoa atendida é o destinatário. "
         "Use nome ou vocativo apenas quando pertencer claramente ao destinatário. "
         "Se o destinatário não tiver nome claro, cumprimente sem nome. "
-        "Escreva como atendimento real: acolha a situação, confirme o caminho de atendimento, "
-        "peça a próxima informação que aproxima da conversão e respeite os limites do subsegmento. "
+        "Siga os papéis informados. "
+        "Responda para o destinatário final. "
+        "Use \"você\" somente para o destinatário final. "
+        "Quando houver pessoa mencionada, fale com o destinatário sobre essa pessoa. "
+        "Use o nome do lead apenas se ele também for o destinatário final. "
+        "Escreva como atendimento real: acolha a situação, confirme o caminho de atendimento e avance a conversa. "
+        "Finalize com exatamente uma pergunta curta que peça a próxima informação útil para atendimento, agendamento, orçamento, entrega, visita, disponibilidade, pagamento, convênio ou reunião. "
+        "Use convite conversacional; evite ordem como 'agende uma consulta' quando puder perguntar o próximo dado. "
+        "Respeite os limites do subsegmento. "
         "A resposta deve demonstrar valor comercial para o dono do negócio sem explicar o robô em terceira pessoa. "
         "Inclua informações de plataforma, configuração, número virtual, preço ou prazo apenas quando a situação apresentada tratar desse tema."
     )
@@ -6039,6 +6180,8 @@ def _front_repair_simulation_reply_for_target(
         f"{str(user_text or '').strip()}\n\n"
         "Resposta atual a reparar:\n"
         f"{str(current_reply or '').strip()}\n\n"
+        "Contrato de papéis da simulação:\n"
+        f"{json.dumps(simulation_role_contract, ensure_ascii=False)[:900]}\n\n"
         "Contexto operacional compacto:\n"
         f"{json.dumps(compact_contract, ensure_ascii=False)[:1400]}\n\n"
         "Reescreva agora somente a mensagem final ao destinatário simulado. "
@@ -6062,6 +6205,7 @@ def _front_repair_simulation_reply_for_target(
     cleaned = re.sub(r"^\s*\[MENSAGEM SIMULADA\]\s*", "", cleaned, flags=re.I).strip()
     cleaned = re.sub(r"^\s*(replyText|resposta)\s*:\s*", "", cleaned, flags=re.I).strip()
     cleaned = cleaned.strip().strip('"').strip("'").strip()
+    cleaned = _front_strip_simulation_lead_vocative(cleaned, simulation_lead_name)
 
     if len(cleaned) < 30:
         return ""
@@ -13593,6 +13737,35 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        try:
+            if (
+                str(question_type or "").strip().lower() == "simulation"
+                and str(reply_source or "").strip() != "front_simulation_target_repair"
+                and (
+                    _front_simulation_reply_needs_target_repair(reply_text)
+                    or _front_simulation_reply_needs_quality_repair(reply_text)
+                )
+            ):
+                _simulation_repaired_reply = _front_repair_simulation_reply_for_target(
+                    user_text=user_text,
+                    current_reply=reply_text,
+                    operational_contract=operational_contract if isinstance(operational_contract, dict) else {},
+                )
+
+                if _simulation_repaired_reply:
+                    reply_text = _simulation_repaired_reply
+                    spoken_text = _simulation_repaired_reply
+                    reply_source = "front_simulation_target_repair"
+                    try:
+                        logging.info(
+                            "[SIMULATION_TARGET_REPAIR] applied=True phase=common_path reply_len=%s",
+                            len(str(reply_text or "")),
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         out = {
             "response_mode": response_mode,
             "replyText": reply_text,
@@ -13698,7 +13871,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             out["nextStep"] = next_step
 
         try:
-            if ai_turns == 0:
+            if (
+                ai_turns == 0
+                and str(question_type or "").strip().lower() != "simulation"
+            ):
                 txt = str(out.get("replyText") or reply_text or "").strip()
                 greetings = (
                     "obrigado",
