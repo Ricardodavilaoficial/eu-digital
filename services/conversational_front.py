@@ -13323,7 +13323,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
 
-        if ai_turns == 0 and reply_text:
+        if (
+            ai_turns == 0
+            and reply_text
+            and str(question_type or "").strip().lower() != "simulation"
+        ):
             if not has_name:
                 reply_text = "Obrigado pelo contato! " + reply_text
 
@@ -13380,22 +13384,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             structured_assembly_result = {}
 
         try:
-            reply_text = _humanize_reply_with_lead_context(
-                reply=reply_text,
-                lead_name=(
-                    _front_sanitize_lead_name_candidate(
-                        inferred_lead_name or name_hint,
-                        segment_refs=[
-                            segment_hint,
-                            inferred_lead_segment_raw,
-                            inferred_lead_segment,
-                        ],
-                    )
-                    if has_name else ""
-                ),
-                lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
-            )
-            spoken_text = reply_text
+            if str(question_type or "").strip().lower() != "simulation":
+                reply_text = _humanize_reply_with_lead_context(
+                    reply=reply_text,
+                    lead_name=(
+                        _front_sanitize_lead_name_candidate(
+                            inferred_lead_name or name_hint,
+                            segment_refs=[
+                                segment_hint,
+                                inferred_lead_segment_raw,
+                                inferred_lead_segment,
+                            ],
+                        )
+                        if has_name else ""
+                    ),
+                    lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
+                )
+                spoken_text = reply_text
         except Exception:
             pass
 
