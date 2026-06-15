@@ -11821,12 +11821,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     if _simulation_repaired_reply:
                         reply_text = _simulation_repaired_reply
                         spoken_text = _simulation_repaired_reply
+                        try:
+                            _free_reply = _simulation_repaired_reply
+                            _free_spoken = _simulation_repaired_reply
+                        except Exception:
+                            pass
                         reply_source = "front_simulation_target_repair"
                         accepted = True
                         ia_accepted = True
                         try:
                             logging.info(
-                                "[SIMULATION_TARGET_REPAIR] applied=True reply_len=%s",
+                                "[SIMULATION_TARGET_REPAIR] applied=True reply_len=%s synced_free_reply=True",
                                 len(str(reply_text or "")),
                             )
                         except Exception:
