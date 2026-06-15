@@ -6158,20 +6158,21 @@ def _front_repair_simulation_reply_for_target(
 
     system = (
         "Você reescreve respostas de simulação para WhatsApp. "
-        "Entregue somente a mensagem final que o destinatário da situação simulada leria. "
-        "O lead é contexto; a pessoa atendida é o destinatário. "
+        "Entregue somente a mensagem final que o lead leria no WhatsApp ao pedir uma demonstração. "
+        "O lead é o destinatário da resposta; a pessoa atendida aparece somente na simulação entre aspas. "
         "Use nome ou vocativo apenas quando pertencer claramente ao destinatário. "
         "Se o destinatário não tiver nome claro, cumprimente sem nome. "
         "Siga os papéis informados. "
-        "Responda para o destinatário final. "
-        "Use \"você\" somente para o destinatário final. "
+        "Responda para o lead e coloque a resposta simulada para a pessoa atendida entre aspas. "
+        "Use \"você\" fora das aspas para falar com o lead; use \"você\" dentro das aspas para falar com a pessoa atendida. "
         "Quando houver pessoa mencionada, fale com o destinatário sobre essa pessoa. "
-        "Use o nome do lead apenas se ele também for o destinatário final. "
+        "Use o nome do lead fora das aspas quando ele estiver claro no contrato de papéis. "
         "Escreva como atendimento real: acolha a situação, confirme o caminho de atendimento e avance a conversa. "
-        "Finalize com exatamente uma pergunta curta que peça a próxima informação útil para atendimento, agendamento, orçamento, entrega, visita, disponibilidade, pagamento, convênio ou reunião. "
-        "Use convite conversacional; evite ordem como 'agende uma consulta' quando puder perguntar o próximo dado. "
+        "Finalize a mensagem simulada entre aspas com exatamente uma pergunta curta que peça a próxima informação útil para atendimento, agendamento, orçamento, entrega, visita, disponibilidade, pagamento, convênio ou reunião. "
+        "Use convite conversacional e prefira perguntar o próximo dado útil para avançar o atendimento. "
         "Respeite os limites do subsegmento. "
-        "A resposta deve demonstrar valor comercial para o dono do negócio sem explicar o robô em terceira pessoa. "
+        "Após a simulação entre aspas, acrescente uma frase curta de valor comercial para o dono do negócio usando o comportamento comercial do contexto operacional. "
+        "Entregue em conversa natural de WhatsApp, com frases naturais em sequência. "
         "Inclua informações de plataforma, configuração, número virtual, preço ou prazo apenas quando a situação apresentada tratar desse tema."
     )
 
@@ -6184,8 +6185,8 @@ def _front_repair_simulation_reply_for_target(
         f"{json.dumps(simulation_role_contract, ensure_ascii=False)[:900]}\n\n"
         "Contexto operacional compacto:\n"
         f"{json.dumps(compact_contract, ensure_ascii=False)[:1400]}\n\n"
-        "Reescreva agora somente a mensagem final ao destinatário simulado. "
-        "Use a resposta atual apenas como sinal do erro a corrigir, não como modelo de conteúdo."
+        "Reescreva agora somente a mensagem final ao lead, com a resposta simulada para a pessoa atendida entre aspas. "
+        "Use a resposta atual apenas como sinal do erro a corrigir e entregue uma mensagem corrida de WhatsApp: abertura ao lead, simulação entre aspas e frase curta de valor comercial."
     )
 
     repaired = _call_openai_for_front(
