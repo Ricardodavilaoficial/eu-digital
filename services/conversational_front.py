@@ -7464,6 +7464,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     spoken_text = ""
     response_mode = "DIRECT"
     question_type = "broad"
+    simulation_repaired_reply_final = ""
     _final_candidate = None
     inferred_lead_name = ""
     current_turn_lead_name = ""
@@ -11819,13 +11820,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     )
 
                     if _simulation_repaired_reply:
+                        simulation_repaired_reply_final = str(
+                            _simulation_repaired_reply or ""
+                        ).strip()
                         reply_text = _simulation_repaired_reply
                         spoken_text = _simulation_repaired_reply
-                        try:
-                            _free_reply = _simulation_repaired_reply
-                            _free_spoken = _simulation_repaired_reply
-                        except Exception:
-                            pass
                         reply_source = "front_simulation_target_repair"
                         accepted = True
                         ia_accepted = True
@@ -11880,7 +11879,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             # 🔒 Garantir no máximo 1 pergunta válida (policy)
             try:
-                if "?" in reply_text:
+                if (
+                    "?" in reply_text
+                    and str(question_type or "").strip().lower() != "simulation"
+                ):
                     parts = reply_text.split("?")
                     if len(parts) > 2:
                         reply_text = parts[0].strip() + "?"
@@ -12548,6 +12550,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 _free_reply = str(out.get("replyText") or reply_text or "").strip()
                 _free_spoken = str(out.get("spokenText") or spoken_text or _free_reply or "").strip()
+                _is_simulation_repair_owner = bool(
+                    str(question_type or "").strip().lower() == "simulation"
+                    and str(reply_source or "").strip() == "front_simulation_target_repair"
+                    and str(simulation_repaired_reply_final or "").strip()
+                )
+
+                if _is_simulation_repair_owner:
+                    _free_reply = str(simulation_repaired_reply_final).strip()
+                    _free_spoken = _free_reply
 
                 if _free_reply.startswith("{") or _free_reply.startswith("```"):
                     _free_reply = _unwrap_front_json_envelope(_free_reply) or _free_reply
@@ -12644,6 +12655,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 _apply_final_continuity = (
                     _continuity_question_type in ("punctual", "continuity", "simulation")
                     and not _has_scene_contract_for_final_continuity
+                    and not _is_simulation_repair_owner
                 )
                 _continuity_reply_built = False
 
@@ -12769,6 +12781,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         )
                 except Exception:
                     _identity_question = ""
+
+                if _is_simulation_repair_owner:
+                    _free_reply = str(simulation_repaired_reply_final).strip()
+                    _free_spoken = _free_reply
+                    _identity_question = ""
+                    _missing_identity = False
 
                 _free_reply = _front_remove_known_open_question_tail(
                     _free_reply,
@@ -12910,10 +12928,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     needs_clarify = "yes"
 
                 _free_reply_limit = 1200 if _structured_scene_first_contact else 820
-                out["replyText"] = _front_trim_free_mode_sentence(
-                    _free_reply,
-                    _free_reply_limit,
-                )
+                if _is_simulation_repair_owner:
+                    out["replyText"] = str(simulation_repaired_reply_final).strip()
+                else:
+                    out["replyText"] = _front_trim_free_mode_sentence(
+                        _free_reply,
+                        _free_reply_limit,
+                    )
 
                 try:
                     _spoken_limit = 820
@@ -13019,6 +13040,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         _free_spoken or out["replyText"],
                         460,
                     )
+
+                if _is_simulation_repair_owner:
+                    out["replyText"] = str(simulation_repaired_reply_final).strip()
+                    out["spokenText"] = out["replyText"]
 
                 # Identidade no retorno:
                 # se o nome veio do turno atual e foi sanitizado, ele pode
