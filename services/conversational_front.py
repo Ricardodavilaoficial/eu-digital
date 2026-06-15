@@ -6200,6 +6200,44 @@ def _front_strip_simulation_lead_vocative(text: str, lead_name: str) -> str:
     return f"{greeting}! {rest}".strip()
 
 
+def _front_simulation_commercial_demo_is_valid(text: str) -> bool:
+    """
+    Valida somente a estrutura da resposta de simulation:
+    texto ao lead fora das aspas + exemplo ao destinatário final entre aspas
+    + fechamento fora das aspas.
+
+    Não valida por palavra de produto, marca, segmento, profissão ou situação.
+    """
+    raw = str(text or "").strip()
+    if len(raw) < 70:
+        return False
+
+    quote_pairs = [
+        ('"', '"'),
+        ("“", "”"),
+        ("“", '"'),
+        ('"', "”"),
+    ]
+
+    for open_q, close_q in quote_pairs:
+        start = raw.find(open_q)
+        if start < 0:
+            continue
+
+        end = raw.find(close_q, start + 1)
+        if end <= start:
+            continue
+
+        before = raw[:start].strip()
+        inside = raw[start + 1:end].strip()
+        after = raw[end + 1:].strip()
+
+        if len(before) >= 10 and len(inside) >= 25 and len(after) >= 10:
+            return True
+
+    return False
+
+
 def _front_repair_simulation_reply_for_target(
     *,
     user_text: str,
@@ -6279,12 +6317,12 @@ def _front_repair_simulation_reply_for_target(
     cleaned = re.sub(r"^\s*\[MENSAGEM SIMULADA\]\s*", "", cleaned, flags=re.I).strip()
     cleaned = re.sub(r"^\s*(replyText|resposta)\s*:\s*", "", cleaned, flags=re.I).strip()
     cleaned = cleaned.strip().strip('"').strip("'").strip()
-    cleaned = _front_strip_simulation_lead_vocative(cleaned, simulation_lead_name)
+    # Em demo comercial, o vocativo do lead pertence ao contrato de saída.
 
     if len(cleaned) < 30:
         return ""
 
-    if _front_simulation_reply_needs_target_repair(cleaned):
+    if not _front_simulation_commercial_demo_is_valid(cleaned):
         return ""
 
     return cleaned[:900].strip()
@@ -11764,13 +11802,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 structured_assembly_result = {}
 
             try:
-                if (
-                    str(question_type or "").strip().lower() == "simulation"
-                    and (
-                        _front_simulation_reply_needs_target_repair(reply_text)
-                        or _front_simulation_reply_needs_quality_repair(reply_text)
-                    )
-                ):
+                if str(question_type or "").strip().lower() == "simulation":
+                    try:
+                        logging.info(
+                            "[SIMULATION_TARGET_REPAIR] attempted=True source=%s reply_len=%s",
+                            str(reply_source or "").strip(),
+                            len(str(reply_text or "")),
+                        )
+                    except Exception:
+                        pass
+
                     _simulation_repaired_reply = _front_repair_simulation_reply_for_target(
                         user_text=user_text,
                         current_reply=reply_text,
@@ -11790,8 +11831,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             )
                         except Exception:
                             pass
+                    else:
+                        try:
+                            logging.info(
+                                "[SIMULATION_TARGET_REPAIR] applied=False reason=empty_or_invalid reply_len=%s",
+                                len(str(reply_text or "")),
+                            )
+                        except Exception:
+                            pass
             except Exception:
-                pass
+                try:
+                    logging.exception("[SIMULATION_TARGET_REPAIR] exception=True")
+                except Exception:
+                    pass
 
             logging.info(
                 "[IA_FINAL_DECISION] source=%s accepted=%s len=%s live=%s density=%s",
@@ -11984,7 +12036,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 ).strip()
 
                 if (
-                    str(next_step or "").strip().upper() != "SEND_LINK"
+                    str(question_type or "").strip().lower() != "simulation"
+                    and str(next_step or "").strip().upper() != "SEND_LINK"
                     and (not bool(has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
                     and _identity_question
                     and "?" not in str(reply_text or "")
@@ -12827,7 +12880,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         pass
 
                 if (
-                    str(next_step or "").strip().upper() != "SEND_LINK"
+                    str(question_type or "").strip().lower() != "simulation"
+                    and str(next_step or "").strip().upper() != "SEND_LINK"
                     and _missing_identity
                     and _identity_question
                     and not _front_has_identity_request_tail(
