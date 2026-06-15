@@ -3054,6 +3054,78 @@ def _build_operational_contract(
                     return s
             return ""
 
+        def _pick_v2_block(key: str) -> Any:
+            # Firestore V2: usa a fonte mais específica disponível.
+            # Não cria conduta nova; apenas promove contrato já existente no KB.
+            try:
+                if isinstance(kb_context, dict) and key in kb_context:
+                    return kb_context.get(key)
+                if isinstance(segment_profile, dict) and key in segment_profile:
+                    return segment_profile.get(key)
+                if isinstance(sub_doc, dict) and key in sub_doc:
+                    return sub_doc.get(key)
+                if isinstance(arch_doc, dict) and key in arch_doc:
+                    return arch_doc.get(key)
+                if use_seg and isinstance(seg_doc, dict) and key in seg_doc:
+                    return seg_doc.get(key)
+            except Exception:
+                return None
+            return None
+
+        def _compact_v2_block(value: Any, *, max_items: int = 4, max_text: int = 180) -> Any:
+            # Compactação defensiva para GPT-4o-mini:
+            # preserva sinais comerciais/operacionais sem despejar JSON bruto.
+            try:
+                if isinstance(value, list):
+                    out = []
+                    for item in value:
+                        s = str(item or "").strip()
+                        if s:
+                            out.append(s[:max_text])
+                        if len(out) >= max_items:
+                            break
+                    return out
+
+                if isinstance(value, dict):
+                    out = {}
+                    for k, v in value.items():
+                        if len(out) >= max_items:
+                            break
+                        ks = str(k or "").strip()
+                        if not ks:
+                            continue
+                        if isinstance(v, list):
+                            items = []
+                            for item in v:
+                                s = str(item or "").strip()
+                                if s:
+                                    items.append(s[:max_text])
+                                if len(items) >= max_items:
+                                    break
+                            if items:
+                                out[ks] = items
+                        elif isinstance(v, dict):
+                            nested = {}
+                            for nk, nv in v.items():
+                                if len(nested) >= max_items:
+                                    break
+                                ns = str(nk or "").strip()
+                                vs = str(nv or "").strip()
+                                if ns and vs:
+                                    nested[ns] = vs[:max_text]
+                            if nested:
+                                out[ks] = nested
+                        else:
+                            s = str(v or "").strip()
+                            if s:
+                                out[ks] = s[:max_text]
+                    return out
+
+                s = str(value or "").strip()
+                return s[:max_text] if s else None
+            except Exception:
+                return None
+
         archetype_id = _pick_str(
             (kb_context or {}).get("archetype_id"),
             (sub_doc or {}).get("archetype_id"),
@@ -3246,6 +3318,11 @@ def _build_operational_contract(
             "common_intents": intent_list,
             "catalog_groups": group_list,
             "operational_rules": rule_map,
+            "commercial_runtime": _compact_v2_block(_pick_v2_block("commercial_runtime")),
+            "behavior_components": _compact_v2_block(_pick_v2_block("behavior_components")),
+            "operational_runtime": _compact_v2_block(_pick_v2_block("operational_runtime")),
+            "medical_runtime": _compact_v2_block(_pick_v2_block("medical_runtime")),
+            "snapshot_priority": _compact_v2_block(_pick_v2_block("snapshot_priority")),
             "has_reference_example": has_reference_example,
             "has_practical_scene": has_practical_scene,
             "allowed_next_step": allowed_next_step,
@@ -6154,6 +6231,11 @@ def _front_repair_simulation_reply_for_target(
         "handoff_format": contract.get("handoff_format") or "",
         "operational_ritual": contract.get("operational_ritual") or [],
         "preferred_capabilities": contract.get("preferred_capabilities") or [],
+        "commercial_runtime": contract.get("commercial_runtime") or {},
+        "behavior_components": contract.get("behavior_components") or {},
+        "operational_runtime": contract.get("operational_runtime") or {},
+        "medical_runtime": contract.get("medical_runtime") or {},
+        "snapshot_priority": contract.get("snapshot_priority") or {},
     }
 
     system = (
