@@ -5946,7 +5946,7 @@ Preencha os campos usando a mensagem atual do usuário.
 - `question_type`: use `broad` quando o lead pedir visão geral, funcionamento completo ou valor do robô para o negócio.
 - `question_type`: use `punctual` quando o lead fizer uma pergunta específica ou de continuidade.
 - `question_type`: use `simulation` quando o lead pedir para ver o robô em ação, pedir uma resposta exemplo ou perguntar como o robô responderia uma pessoa em uma situação prática. A mensagem pode misturar dados do lead com uma fala de cliente, paciente, aluno, morador ou outro destinatário.
-- Em `simulation`, `replyText` deve conter somente a mensagem final para a pessoa atendida no WhatsApp. O lead é contexto; a pessoa atendida é o destinatário. Fale diretamente com o destinatário. Use o subsegmento ativo, a situação apresentada, a próxima informação necessária e os limites do subsegmento.
+- Em `simulation`, `replyText` deve responder ao lead real e mostrar o exemplo entre aspas. Use 3 partes: A. Lead anuncia o exemplo; B. Exemplo ao destinatário final entre aspas; C. Valor comercial ao lead. Perguntas de descoberta ficam fora das aspas e servem apenas para nome, atividade ou objetivo do lead real.
 """
 DISCOVERY_PROMPT = """
 Você está no modo DISCOVERY.
@@ -6239,21 +6239,13 @@ def _front_repair_simulation_reply_for_target(
     }
 
     system = (
-        "Você reescreve respostas de simulação para WhatsApp. "
-        "Entregue somente a mensagem final que o destinatário da situação simulada leria. "
-        "O lead é contexto; a pessoa atendida é o destinatário. "
-        "Use nome ou vocativo apenas quando pertencer claramente ao destinatário. "
-        "Se o destinatário não tiver nome claro, cumprimente sem nome. "
-        "Siga os papéis informados. "
-        "Responda para o destinatário final. "
-        "Use \"você\" somente para o destinatário final. "
-        "Quando houver pessoa mencionada, fale com o destinatário sobre essa pessoa. "
-        "Use o nome do lead apenas se ele também for o destinatário final. "
-        "Escreva como atendimento real: acolha a situação, confirme o caminho de atendimento e avance a conversa. "
-        "Monte a resposta em 3 partes: 1) reconheça a situação do destinatário; 2) informe o caminho de atendimento usando operational_runtime, behavior_components e commercial_runtime; 3) encerre declarando uma ação concreta do atendimento pelo WhatsApp: registrar, organizar, encaminhar, confirmar, acompanhar ou lembrar, conforme o contexto operacional compacto. "
-        "Use pergunta somente quando faltar nome do lead, atividade do lead ou objetivo do lead. "
-        "Respeite os limites do subsegmento. "
-        "A resposta deve demonstrar valor comercial para o dono do negócio sem explicar o robô em terceira pessoa. "
+        "Você reescreve respostas de simulation para WhatsApp comercial. "
+        "Quando question_type=simulation, escreva em 3 partes obrigatórias. "
+        "A. Lead: fale com o dono do negócio pelo nome quando o nome estiver claro e anuncie o exemplo. "
+        "B. Exemplo: escreva entre aspas a mensagem que o atendimento enviaria ao destinatário final; monte o exemplo em 3 passos: reconhecer a situação, informar o caminho de atendimento e declarar uma ação concreta do atendimento pelo WhatsApp: registrar, organizar, encaminhar, confirmar, acompanhar ou lembrar, conforme o contexto operacional compacto. "
+        "C. Valor: finalize para o lead dizendo que o SEU MEI Robô executa no WhatsApp o fluxo que a equipe faria manualmente, usando as regras configuradas na conta. "
+        "Perguntas de descoberta ficam fora das aspas e servem apenas para nome, atividade ou objetivo do lead real. "
+        "Com nome, atividade e objetivo claros, finalize com frase afirmativa. "
         "Inclua informações de plataforma, configuração, número virtual, preço ou prazo apenas quando a situação apresentada tratar desse tema."
     )
 
@@ -6266,7 +6258,7 @@ def _front_repair_simulation_reply_for_target(
         f"{json.dumps(simulation_role_contract, ensure_ascii=False)[:900]}\n\n"
         "Contexto operacional compacto:\n"
         f"{json.dumps(compact_contract, ensure_ascii=False)[:1400]}\n\n"
-        "Reescreva agora somente a mensagem final ao destinatário simulado. "
+        "Reescreva agora como demonstração comercial em 3 partes: A. Lead, B. Exemplo entre aspas, C. Valor para o lead. "
         "Use a resposta atual apenas como sinal do erro a corrigir, não como modelo de conteúdo."
     )
 
@@ -6274,7 +6266,7 @@ def _front_repair_simulation_reply_for_target(
         system=system,
         user=user,
         temperature=0.1,
-        max_tokens=190,
+        max_tokens=280,
     )
 
     cleaned = str(repaired or "").strip()
