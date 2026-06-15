@@ -13083,18 +13083,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 except Exception:
                     pass
 
-                if str(reply_source or "").strip() == "front_simulation_target_repair":
-                    out["replyText"] = str(reply_text or out.get("replyText") or "").strip()
-                    out["spokenText"] = str(spoken_text or reply_text or out.get("spokenText") or "").strip()
-                    try:
-                        logging.info(
-                            "[SIMULATION_TARGET_REPAIR] owns_out=True reply_len=%s spoken_len=%s",
-                            len(str(out.get("replyText") or "")),
-                            len(str(out.get("spokenText") or "")),
-                        )
-                    except Exception:
-                        pass
-
                 if out["replyText"] and out["replyText"][-1] not in ".!?":
                     out["replyText"] = out["replyText"].rstrip() + "."
 
