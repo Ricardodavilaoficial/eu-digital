@@ -6208,6 +6208,21 @@ def _front_repair_simulation_reply_for_target(
     cleaned = cleaned.strip().strip('"').strip("'").strip()
     cleaned = _front_strip_simulation_lead_vocative(cleaned, simulation_lead_name)
 
+    # Acabamento estrutural da demonstração:
+    # quando o modelo expõe marcadores de roteiro A/B/C, preserva o conteúdo
+    # e remove apenas os rótulos visíveis.
+    try:
+        _has_visible_abc_script = bool(
+            re.search(r"^\s*A[\.)]\s+", cleaned)
+            and re.search(r"\sB[\.)]\s+", cleaned)
+            and re.search(r"\sC[\.)]\s+", cleaned)
+        )
+        if _has_visible_abc_script:
+            cleaned = re.sub(r"(^|\s)[ABC][\.)]\s+", r"\1", cleaned).strip()
+            cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    except Exception:
+        pass
+
     if len(cleaned) < 30:
         return ""
 
