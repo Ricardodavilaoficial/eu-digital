@@ -11749,8 +11749,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             # ---------------------------------------------------------
 
             # 🔒 Garantir no máximo 1 pergunta válida (policy)
+            # Simulation repair já contém a demonstração final ao lead, com a pergunta
+            # útil dentro da mensagem simulada entre aspas. Neste caso, preservar o texto.
             try:
-                if "?" in reply_text:
+                _simulation_repair_keeps_questions = bool(
+                    str(question_type or "").strip().lower() == "simulation"
+                    and str(reply_source or "").strip() == "front_simulation_target_repair"
+                )
+                if "?" in reply_text and not _simulation_repair_keeps_questions:
                     parts = reply_text.split("?")
                     if len(parts) > 2:
                         reply_text = parts[0].strip() + "?"
