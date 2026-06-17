@@ -5592,6 +5592,78 @@ def _apply_response_mode_arbitration(
         return response_mode, needs_clarify, clarify_q
 
 
+
+def _front_identity_question_already_covered(reply_text: str, identity_question: str) -> bool:
+    """
+    Idempotência estrutural para pergunta de identidade.
+
+    Não usa lista fixa de palavras, não depende de "?" e não tenta entender
+    português por keyword. Compara apenas a pergunta de identidade já
+    calculada pelo runtime com a janela final da resposta já escrita.
+    """
+    try:
+        import re
+
+        reply = str(reply_text or "").strip()
+        question = str(identity_question or "").strip()
+
+        if not reply or not question:
+            return False
+
+        def _norm(value: str) -> str:
+            raw = str(value or "").lower()
+            raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+            return " ".join(raw.split())
+
+        def _tokens(value: str) -> set:
+            return {tok for tok in _norm(value).split() if len(tok) >= 3}
+
+        question_tokens = _tokens(question)
+        if len(question_tokens) < 2:
+            return False
+
+        tail_window = reply[-260:]
+
+        sentence_parts = [
+            part.strip()
+            for part in re.split(r"(?<=[.!?])\s+|\n+", tail_window)
+            if str(part or "").strip()
+        ]
+        final_sentence = sentence_parts[-1] if sentence_parts else tail_window
+
+        clause_parts = [
+            part.strip()
+            for part in re.split(r"[,;:]\s+", final_sentence)
+            if str(part or "").strip()
+        ]
+        final_clause = clause_parts[-1] if clause_parts else final_sentence
+
+        candidates = []
+        for candidate in (final_clause, final_sentence, tail_window[-220:]):
+            candidate = str(candidate or "").strip()
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        for candidate in candidates:
+            candidate_tokens = _tokens(candidate)
+            if not candidate_tokens:
+                continue
+
+            intersection = question_tokens.intersection(candidate_tokens)
+            coverage = len(intersection) / max(1, len(question_tokens))
+            jaccard = len(intersection) / max(1, len(question_tokens.union(candidate_tokens)))
+
+            if len(question_tokens) <= 3:
+                if len(intersection) >= 2 and coverage >= 0.66 and jaccard >= 0.25:
+                    return True
+            else:
+                if len(intersection) >= 3 and coverage >= 0.75 and jaccard >= 0.30:
+                    return True
+
+        return False
+    except Exception:
+        return False
+
 def _apply_identity_clarify_guard(
     *,
     reply_text: str,
@@ -5637,6 +5709,14 @@ def _apply_identity_clarify_guard(
             and _front_normalize_identity_text(identity_question)
             not in _front_normalize_identity_text(reply_text)
         ):
+            if _front_identity_question_already_covered(reply_text, identity_question):
+                return (
+                    reply_text,
+                    reply_text,
+                    "clarify",
+                    "yes",
+                )
+
             sep = "\n\n"
 
             base_limit = max(
@@ -5700,6 +5780,9 @@ def _ensure_discovery_identity_request(
             return reply, spoken, "clarify"
 
         if question:
+            if _front_identity_question_already_covered(reply, question):
+                return reply, spoken, "clarify"
+
             reply = str(reply or "").strip()
             reply = re.sub(r"[\s\.,;]+$", "", reply)
             reply = f"{reply}\n\n{question}".strip()
