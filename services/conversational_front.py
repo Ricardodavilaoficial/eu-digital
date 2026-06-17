@@ -11041,6 +11041,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     except Exception:
                         pass
 
+                if not str(discovery_q or "").strip():
+                    discovery_q = "Oi! Posso te ajudar com o MEI Robô. Como posso te chamar e em qual atividade você atua?"
+
                 return {
                     "response_mode": "DISCOVERY",
                     "replyText": discovery_q,
