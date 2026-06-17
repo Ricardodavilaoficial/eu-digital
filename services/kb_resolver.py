@@ -1174,9 +1174,7 @@ def build_kb_context(
             if preferred_discovery:
                 ctx["discovery_question_hint"] = preferred_discovery
             elif not ctx.get("discovery_question_hint"):
-                ctx["discovery_question_hint"] = (
-                    "Como posso te chamar e em qual atividade você atua?"
-                )
+                pass
     except Exception:
         pass
 

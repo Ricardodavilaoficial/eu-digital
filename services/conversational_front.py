@@ -11042,7 +11042,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         pass
 
                 if not str(discovery_q or "").strip():
-                    discovery_q = "Oi! Posso te ajudar com o MEI Robô. Como posso te chamar e em qual atividade você atua?"
+                    discovery_q = str(clarify_q or question or "").strip()
 
                 return {
                     "response_mode": "DISCOVERY",
@@ -11321,7 +11321,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         kb_fallback
                         or _reply_before_sanitize
                         or question
-                        or "Hoje no WhatsApp, o que você precisa responder ou organizar manualmente para os clientes?"
+                        or ""
                     )
                 if _looks_like_bureaucratic_stub(spoken_text):
                     kb_fallback = ""
@@ -13217,6 +13217,52 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 except Exception:
                     pass
 
+                try:
+                    def _remove_duplicate_known_tail_by_overlap_v1(value: str, known_tail: str) -> str:
+                        import re
+
+                        s = str(value or "").strip()
+                        c = str(known_tail or "").strip()
+                        if not s or not c:
+                            return s
+
+                        def _norm(v: str) -> str:
+                            raw = str(v or "").lower()
+                            raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+                            return " ".join(raw.split())
+
+                        def _tokens(v: str) -> set:
+                            return {tok for tok in _norm(v).split() if len(tok) >= 4}
+
+                        norm_s = _norm(s)
+                        norm_c = _norm(c)
+
+                        if not norm_s or not norm_c or not norm_s.endswith(norm_c):
+                            return s
+
+                        cand_tokens = _tokens(c)
+                        if len(cand_tokens) < 2:
+                            return s
+
+                        prefix_norm = norm_s[: max(0, len(norm_s) - len(norm_c))].strip()
+                        prefix_tail = " ".join(prefix_norm.split()[-24:])
+                        prefix_tokens = _tokens(prefix_tail)
+
+                        if not prefix_tokens:
+                            return s
+
+                        overlap = len(cand_tokens.intersection(prefix_tokens)) / max(1, len(cand_tokens))
+                        if overlap < 0.60:
+                            return s
+
+                        pattern = r"(?is)\s*" + r"\s+".join(re.escape(part) for part in c.split()) + r"\s*$"
+                        return re.sub(pattern, "", s).strip()
+
+                    _free_reply = _remove_duplicate_known_tail_by_overlap_v1(_free_reply, _identity_question)
+                    _free_spoken = _remove_duplicate_known_tail_by_overlap_v1(_free_spoken, _identity_question)
+                except Exception:
+                    pass
+
                 logging.info(
                     "[FREE_MODE_FINAL_GUARD] topic=%s reply_len=%s spoken_len=%s missing_identity=%s identity_question=%s",
                     topic,
@@ -13553,10 +13599,38 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if isinstance(kb_context, dict):
                     kb_context["needs_name_discovery"] = True
 
-                if reply_text and "?" not in reply_text:
-                    reply_text = reply_text.rstrip(" .") + ". Como posso te chamar?"
-                    spoken_text = reply_text
-                    name_use = "clarify"
+                identity_tail = str(locals().get("_identity_question") or "").strip()
+                if (
+                    reply_text
+                    and identity_tail
+                    and "?" not in reply_text
+                    and not _front_has_identity_request_tail(reply_text, identity_tail)
+                ):
+                    def _front_tail_overlap_runtime_v1(base: str, tail: str) -> bool:
+                        try:
+                            def _norm(v: str) -> str:
+                                raw = str(v or "").lower()
+                                raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+                                return " ".join(raw.split())
+
+                            def _tokens(v: str) -> set:
+                                return {tok for tok in _norm(v).split() if len(tok) >= 4}
+
+                            base_tokens = _tokens(" ".join(_norm(base).split()[-24:]))
+                            tail_tokens = _tokens(tail)
+
+                            if len(tail_tokens) < 2 or not base_tokens:
+                                return False
+
+                            overlap = len(base_tokens.intersection(tail_tokens)) / max(1, len(tail_tokens))
+                            return overlap >= 0.60
+                        except Exception:
+                            return False
+
+                    if not _front_tail_overlap_runtime_v1(reply_text, identity_tail):
+                        reply_text = (reply_text.rstrip(" .") + ". " + identity_tail).strip()
+                        spoken_text = reply_text
+                        name_use = "clarify"
         except Exception:
             pass
 
