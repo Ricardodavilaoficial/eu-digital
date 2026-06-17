@@ -9654,7 +9654,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         operational_contract["material_source"] = platform_runtime["material_source"]
 
                     operational_contract["hydrated_from_platform_kb"] = True
-                    operational_contract["global_pack_fallback"] = True
+                    operational_contract["global_pack_fallback"] = bool(
+                        not raw_unqualified_lead_discovery_state
+                    )
         except Exception:
             pass
 
@@ -12064,11 +12066,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     or ""
                 ).strip()
 
+                _raw_discovery_reply_already_exists = bool(
+                    raw_unqualified_lead_discovery_state
+                    and str(reply_text or "").strip()
+                )
+
                 if (
                     str(next_step or "").strip().upper() != "SEND_LINK"
                     and (not bool(has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
                     and _identity_question
                     and "?" not in str(reply_text or "")
+                    and not _raw_discovery_reply_already_exists
                 ):
                     reply_text = f"{str(reply_text or '').rstrip()}\n\n{_identity_question}".strip()
                     spoken_text = reply_text
@@ -12891,7 +12899,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 f"{_scene_body}"
                             ).strip()
                             _free_spoken = _free_reply
-                    elif _allow_safe_greeting:
+                    elif _allow_safe_greeting and not raw_unqualified_lead_discovery_state:
                         if _free_reply and not re.match(r"(?i)^\s*ol[áa]\b", _free_reply):
                             _free_reply = f"Olá. {_free_reply}".strip()
                         if _free_spoken and not re.match(r"(?i)^\s*ol[áa]\b", _free_spoken):
@@ -12927,24 +12935,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     except Exception:
                         pass
 
-                _reply_already_requests_identity = False
-                try:
-                    _reply_identity_text = str(_free_reply or "").strip()
-                    _reply_already_requests_identity = bool(
-                        _front_identity_request_is_valid(_reply_identity_text)
-                        or (
-                            re.search(r"(?i)\bnome\b", _reply_identity_text)
-                            and re.search(r"(?i)\b(segmento|atividade|ramo|neg[oó]cio|atua|profiss[aã]o|trabalho)\b", _reply_identity_text)
-                        )
-                    )
-                except Exception:
-                    _reply_already_requests_identity = False
+                _raw_discovery_free_reply_already_exists = bool(
+                    raw_unqualified_lead_discovery_state
+                    and str(_free_reply or "").strip()
+                )
 
                 if (
                     str(next_step or "").strip().upper() != "SEND_LINK"
                     and _missing_identity
                     and _identity_question
-                    and not _reply_already_requests_identity
+                    and not _raw_discovery_free_reply_already_exists
                     and not _front_has_identity_request_tail(
                         _free_reply,
                         _identity_question,
@@ -13047,6 +13047,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         and bool(reply_size_policy.get("is_audio"))
                         and _missing_identity
                         and _identity_question
+                        and not _raw_discovery_free_reply_already_exists
                     ):
                         _sep = " "
                         _base_limit = max(
