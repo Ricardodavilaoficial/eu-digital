@@ -8566,8 +8566,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "[DISCOVERY_CONTRACT]\n"
                 "estado=lead_institucional_com_qualificacao_pendente\n"
                 "objetivo=responder_a_mensagem_atual_e_avancar_identificacao\n"
-                "conteudo_atual=saudacao_brincadeira_comentario_pergunta_lateral_social_duvida_simples_ou_inicio_sem_contexto\n"
-                "acao_1=usar_reacao_social_curta_e_leve_ao_conteudo_atual\n"
+                "conteudo_atual=saudacao_brincadeira_comentario_duvida_simples_ou_inicio_sem_contexto\n"
+                "acao_1=reagir_de_forma_breve_e_natural_ao_conteudo_atual\n"
                 "acao_2=conduzir_para_os_dados_faltantes\n"
                 f"dados_faltantes={','.join(_discovery_missing) if _discovery_missing else 'nenhum'}\n"
                 "se_faltam_nome_e_atividade=pedir_os_dois_na_mesma_frase\n"
@@ -10155,31 +10155,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             operational_contract=operational_contract,
             question_type=question_type,
         )
-
-        # ----------------------------------------------------------
-        # EXTRACTABLE: late discovery contract preservation
-        #
-        # Algumas arbitragens tardias podem rebaixar OTHER/DISCOVERY
-        # para DIRECT para limpar cena operacional antiga. Isso é bom
-        # para herança de cena, mas ruim quando o lead institucional
-        # ainda está em qualificação. Aqui preservamos o modo de
-        # discovery sem ressuscitar microcena.
-        # ----------------------------------------------------------
-        try:
-            if raw_unqualified_lead_discovery_state:
-                response_mode = "DISCOVERY"
-                needs_clarify = "yes"
-                name_use = "clarify"
-                clarify_q = str(clarify_q or "").strip()
-                global_pack_scene_ready = False
-                micro_scene_allowed = False
-                if isinstance(operational_contract, dict):
-                    operational_contract["response_mode"] = "DISCOVERY"
-                    operational_contract["micro_scene_allowed"] = False
-                    operational_contract["global_pack_fallback"] = False
-                    operational_contract["discovery_contract_active"] = True
-        except Exception:
-            pass
 
         try:
             reply_size_policy = _resolve_reply_size_policy(
@@ -12933,20 +12908,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     except Exception:
                         pass
 
-                _reply_already_requests_identity = False
-                try:
-                    _reply_already_requests_identity = bool(
-                        raw_unqualified_lead_discovery_state
-                        and _front_identity_request_is_valid(_free_reply)
-                    )
-                except Exception:
-                    _reply_already_requests_identity = False
-
                 if (
                     str(next_step or "").strip().upper() != "SEND_LINK"
                     and _missing_identity
                     and _identity_question
-                    and not _reply_already_requests_identity
                     and not _front_has_identity_request_tail(
                         _free_reply,
                         _identity_question,
