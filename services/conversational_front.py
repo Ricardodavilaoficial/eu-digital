@@ -12564,8 +12564,22 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             try:
                 out = _sanitize_front_result_payload(out)
 
-                _free_reply = str(out.get("replyText") or reply_text or "").strip()
+                _out_reply_candidate = str(out.get("replyText") or "").strip()
+                _ia_reply_candidate = str(reply_text or "").strip()
+
+                _free_reply = str(_out_reply_candidate or _ia_reply_candidate or "").strip()
                 _free_spoken = str(out.get("spokenText") or spoken_text or _free_reply or "").strip()
+
+                try:
+                    if (
+                        raw_unqualified_lead_discovery_state
+                        and _ia_reply_candidate
+                        and len(_ia_reply_candidate) > len(_free_reply)
+                    ):
+                        _free_reply = _ia_reply_candidate
+                        _free_spoken = str(spoken_text or _ia_reply_candidate).strip()
+                except Exception:
+                    pass
 
                 if _free_reply.startswith("{") or _free_reply.startswith("```"):
                     _free_reply = _unwrap_front_json_envelope(_free_reply) or _free_reply
@@ -12908,10 +12922,25 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     except Exception:
                         pass
 
+                _reply_already_requests_identity = False
+                try:
+                    _reply_identity_text = str(_free_reply or "").strip()
+                    _reply_already_requests_identity = bool(
+                        _front_identity_request_is_valid(_reply_identity_text)
+                        or (
+                            raw_unqualified_lead_discovery_state
+                            and re.search(r"(?i)\bnome\b", _reply_identity_text)
+                            and re.search(r"(?i)\b(segmento|atividade|ramo|neg[oó]cio|atua)\b", _reply_identity_text)
+                        )
+                    )
+                except Exception:
+                    _reply_already_requests_identity = False
+
                 if (
                     str(next_step or "").strip().upper() != "SEND_LINK"
                     and _missing_identity
                     and _identity_question
+                    and not _reply_already_requests_identity
                     and not _front_has_identity_request_tail(
                         _free_reply,
                         _identity_question,
