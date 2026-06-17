@@ -8488,6 +8488,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
     raw_unqualified_lead_discovery_state = False
 
     try:
+        logging.info(
+            "[RAW_DISCOVERY_GATE_ENTER] is_lead=%s qt=%s next=%s has_name=%s segment_for_prompt=%s effective_segment=%s segment_hint=%s",
+            bool(locals().get("is_lead")),
+            str(locals().get("question_type") or ""),
+            str(locals().get("next_step") or ""),
+            bool(locals().get("has_name")),
+            str(locals().get("segment_for_prompt") or ""),
+            str(locals().get("effective_segment") or ""),
+            str(locals().get("segment_hint") or ""),
+        )
+    except Exception:
+        pass
+
+    try:
         _discovery_has_name = bool(
             has_name
             or str(name_hint or "").strip()
@@ -8597,7 +8611,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 "temas_comerciais_especificos=usar_quando_o_assunto_atual_for_preco_prazo_ativacao_numero_virtual_ou_configuracao"
                 + (f"\nhint_pergunta={_discovery_hint}" if _discovery_hint else "")
             ).strip()
-    except Exception:
+    except Exception as _raw_gate_exc:
+        try:
+            logging.info(
+                "[RAW_DISCOVERY_GATE_ERROR] error=%s is_lead=%s qt=%s next=%s has_name=%s segment_for_prompt=%s effective_segment=%s segment_hint=%s",
+                repr(_raw_gate_exc),
+                bool(locals().get("is_lead")),
+                str(locals().get("question_type") or ""),
+                str(locals().get("next_step") or ""),
+                bool(locals().get("has_name")),
+                str(locals().get("segment_for_prompt") or ""),
+                str(locals().get("effective_segment") or ""),
+                str(locals().get("segment_hint") or ""),
+            )
+        except Exception:
+            pass
         discovery_contract_block = ""
         raw_unqualified_lead_discovery_state = False
 
@@ -13176,6 +13204,16 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     bool(operational_contract.get("global_pack_fallback")) if isinstance(operational_contract, dict) else None,
                     str(response_mode or ""),
                 )
+                try:
+                    logging.info(
+                        "[FREE_MODE_FINAL_GUARD_ENTER] raw_discovery=%s raw_free_reply_exists=%s response_mode=%s",
+                        bool(locals().get("raw_unqualified_lead_discovery_state")),
+                        bool(locals().get("_raw_discovery_free_reply_already_exists")) if "_raw_discovery_free_reply_already_exists" in locals() else None,
+                        str(locals().get("response_mode") or ""),
+                    )
+                except Exception:
+                    pass
+
                 logging.info(
                     "[FREE_MODE_FINAL_GUARD] topic=%s reply_len=%s spoken_len=%s missing_identity=%s identity_question=%s",
                     topic,
