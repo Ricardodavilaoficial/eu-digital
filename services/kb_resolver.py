@@ -1175,7 +1175,7 @@ def build_kb_context(
                 ctx["discovery_question_hint"] = preferred_discovery
             elif not ctx.get("discovery_question_hint"):
                 ctx["discovery_question_hint"] = (
-                    "Hoje no WhatsApp, o que você precisa responder ou organizar manualmente para os clientes?"
+                    "Como posso te chamar e em qual atividade você atua?"
                 )
     except Exception:
         pass

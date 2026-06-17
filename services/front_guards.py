@@ -699,11 +699,38 @@ def _front_has_identity_request_tail(text: str, identity_question: str = "") -> 
         q = str(identity_question or "").strip()
         if q:
             norm_q = _front_normalize_identity_text(q)
-            # Quando já temos a pergunta de identidade calculada, só aceitamos
-            # como "pedido já presente" se a cauda terminar exatamente nela.
-            # Isso evita confundir explicações como "o robô pergunta o nome"
-            # com um pedido real de nome ao lead.
-            return bool(norm_q and norm_tail.endswith(norm_q))
+            if norm_q and norm_tail.endswith(norm_q):
+                return True
+
+            # Aceita pedido equivalente somente quando a cauda fala diretamente
+            # com o lead e pede nome + atividade/segmento.
+            # Evita falso positivo em frases explicativas como
+            # "o robô pergunta o nome e o segmento do cliente".
+            tail_norm = _front_normalize_identity_text(tail)
+
+            asks_name_direct = bool(
+                re.search(
+                    r"\b(qual e o seu nome|qual seu nome|seu nome|teu nome|como posso te chamar|como voce se chama|como você se chama|me diga seu nome)\b",
+                    tail_norm,
+                )
+            )
+
+            asks_activity_direct = bool(
+                re.search(
+                    r"\b(qual segmento|seu segmento|em qual atividade|qual atividade|sua atividade|voce atua|você atua|ramo de atividade|area de atuacao|área de atuação)\b",
+                    tail_norm,
+                )
+            )
+
+            has_direct_question_shape = bool(
+                "?" in str(tail or "")
+                or re.search(r"\b(qual|como posso|como voce|como você|me diga|em qual)\b", tail_norm)
+            )
+
+            if asks_name_direct and asks_activity_direct and has_direct_question_shape:
+                return True
+
+            return False
 
         return _front_identity_request_is_valid(tail)
     except Exception:
