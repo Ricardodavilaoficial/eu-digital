@@ -8473,6 +8473,113 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         or selected_pack_id
     )
 
+    # ----------------------------------------------------------
+    # EXTRACTABLE: discovery contract builder
+    #
+    # Estado estrutural, não léxico:
+    # quando o lead institucional ainda precisa de nome e/ou
+    # atividade/segmento, o contrato deve chegar cedo à IA.
+    #
+    # Este bloco prepara o front para futura extração para um
+    # módulo menor, mantendo o conversational_front.py como
+    # orquestrador.
+    # ----------------------------------------------------------
+    discovery_contract_block = ""
+    raw_unqualified_lead_discovery_state = False
+
+    try:
+        _discovery_has_name = bool(
+            has_name
+            or str(name_hint or "").strip()
+            or str(current_turn_lead_name or "").strip()
+            or str(inferred_lead_name or "").strip()
+        )
+
+        _discovery_has_segment = bool(
+            segment_for_prompt
+            or effective_segment
+            or segment_hint
+            or inferred_lead_segment_raw
+            or inferred_lead_segment
+        )
+
+        _kb_needs_segment = bool(
+            isinstance(kb_context, dict)
+            and bool(kb_context.get("needs_segment_discovery"))
+        )
+
+        _kb_allows_question = bool(
+            not isinstance(kb_context, dict)
+            or bool(kb_context.get("allow_question", True))
+        )
+
+        _contract_for_discovery = {}
+        try:
+            if "operational_contract" in locals() and isinstance(operational_contract, dict):
+                _contract_for_discovery = operational_contract
+            elif isinstance(base_operational_contract, dict):
+                _contract_for_discovery = base_operational_contract
+        except Exception:
+            _contract_for_discovery = {}
+
+        raw_unqualified_lead_discovery_state = bool(
+            is_lead
+            and _kb_allows_question
+            and (
+                not _discovery_has_name
+                or not _discovery_has_segment
+                or _kb_needs_segment
+            )
+            and str(question_type or "").strip().lower() != "simulation"
+            and str(next_step or "").strip().upper() != "SEND_LINK"
+            and not bool(_contract_for_discovery.get("hydrated_from_docs"))
+            and not bool(_contract_for_discovery.get("has_practical_scene"))
+        )
+
+        if raw_unqualified_lead_discovery_state:
+            response_mode = "DISCOVERY"
+            needs_clarify = "yes"
+            name_use = "clarify"
+
+            if isinstance(kb_context, dict):
+                kb_context["discovery_contract_active"] = True
+                if not _discovery_has_name:
+                    kb_context["needs_name_discovery"] = True
+                if not _discovery_has_segment:
+                    kb_context["needs_segment_discovery"] = True
+
+            _discovery_missing = []
+            if not _discovery_has_name:
+                _discovery_missing.append("nome")
+            if not _discovery_has_segment:
+                _discovery_missing.append("atividade_segmento")
+
+            _discovery_hint = ""
+            if isinstance(kb_context, dict):
+                _discovery_hint = str(
+                    kb_context.get("discovery_question_hint")
+                    or kb_context.get("segment_question_preferred")
+                    or ""
+                ).strip()
+
+            discovery_contract_block = (
+                "[DISCOVERY_CONTRACT]\n"
+                "estado=lead_institucional_com_qualificacao_pendente\n"
+                "objetivo=responder_a_mensagem_atual_e_avancar_identificacao\n"
+                "conteudo_atual=saudacao_brincadeira_comentario_duvida_simples_ou_inicio_sem_contexto\n"
+                "acao_1=reagir_de_forma_breve_e_natural_ao_conteudo_atual\n"
+                "acao_2=conduzir_para_os_dados_faltantes\n"
+                f"dados_faltantes={','.join(_discovery_missing) if _discovery_missing else 'nenhum'}\n"
+                "se_faltam_nome_e_atividade=pedir_os_dois_na_mesma_frase\n"
+                "se_ja_tem_nome=pedir_atividade_segmento\n"
+                "se_ja_tem_atividade_segmento=pedir_nome\n"
+                "temas_comerciais_especificos=usar_quando_o_assunto_atual_for_preco_prazo_ativacao_numero_virtual_ou_configuracao"
+                + (f"\nhint_pergunta={_discovery_hint}" if _discovery_hint else "")
+            ).strip()
+    except Exception:
+        discovery_contract_block = ""
+        raw_unqualified_lead_discovery_state = False
+
     reply_size_policy = _resolve_reply_size_policy(
         ai_turns=ai_turns,
         msg_type=msg_type,
@@ -8583,6 +8690,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         )
         + f"last_intent={last_intent or 'NONE'}\n"
         + f"last_user_goal={last_user_goal or 'NONE'}\n\n"
+        + (discovery_contract_block + "\n\n" if discovery_contract_block else "")
         + (
             "[BASE OPERACIONAL DO KB]\n"
             + (
@@ -9956,6 +10064,26 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             micro_scene_allowed=micro_scene_allowed,
             operational_contract=operational_contract,
         )
+
+        # ----------------------------------------------------------
+        # EXTRACTABLE: discovery mode preservation
+        #
+        # O reset continua protegendo contra herança operacional
+        # indevida. Este bloco apenas preserva DISCOVERY quando o
+        # lead institucional ainda está sem qualificação suficiente.
+        # ----------------------------------------------------------
+        try:
+            if raw_unqualified_lead_discovery_state:
+                response_mode = "DISCOVERY"
+                needs_clarify = "yes"
+                name_use = "clarify"
+                micro_scene_allowed = False
+                if isinstance(operational_contract, dict):
+                    operational_contract["response_mode"] = "DISCOVERY"
+                    operational_contract["micro_scene_allowed"] = False
+                    operational_contract["discovery_contract_active"] = True
+        except Exception:
+            pass
 
         global_pack_scene_ready = False
         try:
@@ -12450,6 +12578,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     (int(ai_turns or 0) > 0 and len(str(_free_reply or "").strip()) >= 60)
                     or not _is_broad_question_fallback
                 )
+
+                try:
+                    if raw_unqualified_lead_discovery_state and str(_free_reply or "").strip():
+                        _prefer_current_reply = True
+                except Exception:
+                    pass
 
                 _free_reply = _front_pick_rich_free_mode_base(
                     current_reply=_free_reply,
