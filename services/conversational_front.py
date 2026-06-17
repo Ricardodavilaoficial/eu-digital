@@ -12928,9 +12928,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     _reply_already_requests_identity = bool(
                         _front_identity_request_is_valid(_reply_identity_text)
                         or (
-                            raw_unqualified_lead_discovery_state
-                            and re.search(r"(?i)\bnome\b", _reply_identity_text)
-                            and re.search(r"(?i)\b(segmento|atividade|ramo|neg[oó]cio|atua)\b", _reply_identity_text)
+                            re.search(r"(?i)\bnome\b", _reply_identity_text)
+                            and re.search(r"(?i)\b(segmento|atividade|ramo|neg[oó]cio|atua|profiss[aã]o|trabalho)\b", _reply_identity_text)
                         )
                     )
                 except Exception:
