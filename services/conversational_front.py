@@ -8536,6 +8536,27 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             and not bool(_contract_for_discovery.get("has_practical_scene"))
         )
 
+        try:
+            logging.info(
+                "[RAW_DISCOVERY_GATE] raw=%s is_lead=%s allows_question=%s has_name=%s has_segment=%s kb_needs_segment=%s qt=%s next=%s hydrated=%s practical=%s segment_for_prompt=%s effective_segment=%s segment_hint=%s inferred_segment=%s",
+                bool(raw_unqualified_lead_discovery_state),
+                bool(is_lead),
+                bool(_kb_allows_question),
+                bool(_discovery_has_name),
+                bool(_discovery_has_segment),
+                bool(_kb_needs_segment),
+                str(question_type or ""),
+                str(next_step or ""),
+                bool(_contract_for_discovery.get("hydrated_from_docs")) if isinstance(_contract_for_discovery, dict) else None,
+                bool(_contract_for_discovery.get("has_practical_scene")) if isinstance(_contract_for_discovery, dict) else None,
+                str(segment_for_prompt or ""),
+                str(effective_segment or ""),
+                str(segment_hint or ""),
+                str(inferred_lead_segment or ""),
+            )
+        except Exception:
+            pass
+
         if raw_unqualified_lead_discovery_state:
             response_mode = "DISCOVERY"
             needs_clarify = "yes"
@@ -13148,6 +13169,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 out = _sanitize_front_result_payload(out)
 
+                logging.info(
+                    "[FREE_MODE_FINAL_GUARD_RAW] raw_discovery=%s raw_free_reply_exists=%s global_pack_fallback=%s response_mode=%s",
+                    bool(raw_unqualified_lead_discovery_state),
+                    bool(_raw_discovery_free_reply_already_exists) if "_raw_discovery_free_reply_already_exists" in locals() else None,
+                    bool(operational_contract.get("global_pack_fallback")) if isinstance(operational_contract, dict) else None,
+                    str(response_mode or ""),
+                )
                 logging.info(
                     "[FREE_MODE_FINAL_GUARD] topic=%s reply_len=%s spoken_len=%s missing_identity=%s identity_question=%s",
                     topic,
