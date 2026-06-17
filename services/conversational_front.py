@@ -13251,6 +13251,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                     _free_reply = _remove_duplicate_known_tail_by_overlap_v1(_free_reply, _identity_question)
                     _free_spoken = _remove_duplicate_known_tail_by_overlap_v1(_free_spoken, _identity_question)
+
+                    if str(_free_reply or "").strip():
+                        out["replyText"] = str(_free_reply or "").strip()
+                        reply_text = out["replyText"]
+
+                    if str(_free_spoken or _free_reply or "").strip():
+                        out["spokenText"] = str(_free_spoken or _free_reply or "").strip()
+                        spoken_text = out["spokenText"]
                 except Exception:
                     pass
 
