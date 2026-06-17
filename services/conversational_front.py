@@ -13002,18 +13002,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         _identity_question,
                     )
                 ):
-                    _limit = 1200 if _structured_scene_first_contact else 820
-                    _sep = "\n\n"
-                    _base_limit = max(
-                        320,
-                        _limit - len(_identity_question) - len(_sep),
-                    )
-                    _base_reply = _front_trim_free_mode_sentence(
-                        _free_reply,
-                        _base_limit,
-                    )
-                    _free_reply = f"{_base_reply}{_sep}{_identity_question}".strip()
-                    _free_spoken = _free_reply
+                    # Não anexar pergunta de identidade ao texto visível.
+                    # A IA escreve a resposta; o código apenas preserva o sinal
+                    # interno de que ainda falta identidade para governança/metadata.
                     name_use = "clarify"
                     needs_clarify = "yes"
 
@@ -13600,37 +13591,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     kb_context["needs_name_discovery"] = True
 
                 identity_tail = str(locals().get("_identity_question") or "").strip()
-                if (
-                    reply_text
-                    and identity_tail
-                    and "?" not in reply_text
-                    and not _front_has_identity_request_tail(reply_text, identity_tail)
-                ):
-                    def _front_tail_overlap_runtime_v1(base: str, tail: str) -> bool:
-                        try:
-                            def _norm(v: str) -> str:
-                                raw = str(v or "").lower()
-                                raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
-                                return " ".join(raw.split())
-
-                            def _tokens(v: str) -> set:
-                                return {tok for tok in _norm(v).split() if len(tok) >= 4}
-
-                            base_tokens = _tokens(" ".join(_norm(base).split()[-24:]))
-                            tail_tokens = _tokens(tail)
-
-                            if len(tail_tokens) < 2 or not base_tokens:
-                                return False
-
-                            overlap = len(base_tokens.intersection(tail_tokens)) / max(1, len(tail_tokens))
-                            return overlap >= 0.60
-                        except Exception:
-                            return False
-
-                    if not _front_tail_overlap_runtime_v1(reply_text, identity_tail):
-                        reply_text = (reply_text.rstrip(" .") + ". " + identity_tail).strip()
-                        spoken_text = reply_text
-                        name_use = "clarify"
+                if reply_text and identity_tail:
+                    # Não anexar pergunta de identidade ao texto final.
+                    # Este bloco só preserva a intenção interna de descoberta.
+                    name_use = "clarify"
         except Exception:
             pass
 
