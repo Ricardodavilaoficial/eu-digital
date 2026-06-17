@@ -10081,6 +10081,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if isinstance(operational_contract, dict):
                     operational_contract["response_mode"] = "DISCOVERY"
                     operational_contract["micro_scene_allowed"] = False
+                    operational_contract["global_pack_fallback"] = False
                     operational_contract["discovery_contract_active"] = True
         except Exception:
             pass
@@ -10312,6 +10313,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             if (
                 platform_kb_mode
                 and not current_turn_topic_reset
+                and not raw_unqualified_lead_discovery_state
                 and isinstance(operational_contract, dict)
                 and selected_pack_id
                 and str(next_step or "").strip().upper() != "SEND_LINK"
@@ -10507,9 +10509,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             )
 
             if not _has_operational:
-                operational_contract["global_pack_fallback"] = bool(platform_kb_mode)
+                operational_contract["global_pack_fallback"] = bool(
+                    platform_kb_mode and not raw_unqualified_lead_discovery_state
+                )
             elif (
                 platform_kb_mode
+                and not raw_unqualified_lead_discovery_state
                 and isinstance(operational_contract, dict)
                 and not bool(operational_contract.get("hydrated_from_docs"))
             ):
@@ -13406,7 +13411,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             ):
                 _should_run_late_payload = False
 
-            if (_valid_real_scene or _valid_compact_fallback) and _should_run_late_payload:
+            if (
+                (_valid_real_scene or _valid_compact_fallback)
+                and _should_run_late_payload
+                and not raw_unqualified_lead_discovery_state
+            ):
                 use_human_wrapper = bool(
                     str(response_mode or "").strip().upper() == "DIRECT"
                     and _contract_for_direct.get("global_pack_fallback")
