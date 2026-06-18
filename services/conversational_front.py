@@ -5674,6 +5674,12 @@ def _resolve_identity_question_for_final_visibility(
     has_segment: bool = False,
 ) -> str:
     try:
+        if (not bool(has_name)) or (not bool(has_segment)):
+            return _front_build_identity_request(
+                has_name=bool(has_name),
+                has_segment=bool(has_segment),
+            )
+
         resolved = str(
             clarify_q
             or question
@@ -5690,16 +5696,7 @@ def _resolve_identity_question_for_final_visibility(
             or ""
         ).strip()
 
-        if resolved:
-            return resolved
-
-        if (not bool(has_name)) or (not bool(has_segment)):
-            return _front_build_identity_request(
-                has_name=bool(has_name),
-                has_segment=bool(has_segment),
-            )
-
-        return ""
+        return resolved
     except Exception:
         return ""
 
@@ -5968,34 +5965,12 @@ def _apply_identity_clarify_guard(
             str(next_step or "").strip().upper() != "SEND_LINK"
             and missing_identity
             and identity_question
-            and _front_normalize_identity_text(identity_question)
-            not in _front_normalize_identity_text(reply_text)
         ):
-            if _front_identity_question_already_covered(reply_text, identity_question):
-                return (
-                    reply_text,
-                    reply_text,
-                    "clarify",
-                    "yes",
-                )
-
-            sep = "\n\n"
-
-            base_limit = max(
-                320,
-                limit - len(identity_question) - len(sep),
-            )
-
-            base_reply = _front_trim_to_complete_sentence(
-                reply_text,
-                base_limit,
-            )
-
-            final_reply = f"{base_reply}{sep}{identity_question}".strip()
-
+            # Metadata-only: a pergunta visível de identidade pertence
+            # ao finalizador universal.
             return (
-                final_reply,
-                final_reply,
+                reply_text,
+                reply_text,
                 "clarify",
                 "yes",
             )
@@ -6042,13 +6017,8 @@ def _ensure_discovery_identity_request(
             return reply, spoken, "clarify"
 
         if question:
-            if _front_identity_question_already_covered(reply, question):
-                return reply, spoken, "clarify"
-
-            reply = str(reply or "").strip()
-            reply = re.sub(r"[\s\.,;]+$", "", reply)
-            reply = f"{reply}\n\n{question}".strip()
-            spoken = reply
+            # Metadata-only: a pergunta visível de identidade pertence
+            # ao finalizador universal.
             return reply, spoken, "clarify"
 
         return reply, spoken, "none"
@@ -6171,8 +6141,9 @@ Se ele informou nome, profissão, segmento ou contexto de uso, use essas informa
 → encerrar na última ação
 
 7. SE for DISCOVERY:
-→ responder algo útil
-→ incluir exatamente 1 pergunta pedindo nome e/ou segmento
+→ responder algo útil em frase curta
+→ entregar no replyText apenas a resposta útil, encerrada com ponto final
+→ a camada determinística do runtime adiciona a pergunta final com os dados faltantes
 
 8. SE for CLOSING:
 → agradecer
@@ -6225,14 +6196,12 @@ Construa a resposta seguindo esta sequência:
 
 1. Responda diretamente o que o usuário perguntou (máx 1 frase)
 2. Diga que o MEI Robô automatiza o atendimento no WhatsApp
-3. Faça exatamente 1 pergunta pedindo:
-   - nome do lead
-   OU
-   - segmento do negócio
+3. Encerre com ponto final
 
 Regras:
 - escrever em 1 único parágrafo
-- não fazer mais de 1 pergunta
+- entregar no replyText apenas a resposta útil
+- a camada determinística do runtime adiciona a pergunta final com os dados faltantes
 - não criar microcena
 """
 
@@ -12472,11 +12441,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     str(next_step or "").strip().upper() != "SEND_LINK"
                     and (not bool(has_name) or not bool(effective_segment or segment_for_prompt or segment_hint))
                     and _identity_question
-                    and "?" not in str(reply_text or "")
                     and not _raw_discovery_reply_already_exists
                 ):
-                    reply_text = f"{str(reply_text or '').rstrip()}\n\n{_identity_question}".strip()
-                    spoken_text = reply_text
+                    # Metadata-only: a pergunta visível de identidade pertence
+                    # ao finalizador universal.
                     name_use = "clarify"
                     needs_clarify = "yes"
             except Exception:
