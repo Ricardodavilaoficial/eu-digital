@@ -13574,6 +13574,31 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     _free_reply = _remove_duplicate_known_tail_by_overlap_v1(_free_reply, _identity_question)
                     _free_spoken = _remove_duplicate_known_tail_by_overlap_v1(_free_spoken, _identity_question)
 
+                    try:
+                        # DISCOVERY cru: a IA entrega abertura; identidade visível é exclusiva do runtime/finalizer.
+                        _raw_discovery_safe_opening = bool(
+                            locals().get("raw_unqualified_lead_discovery_state")
+                            and _missing_identity
+                            and str(response_mode or "").strip().upper() == "DISCOVERY"
+                            and str(topic or "").strip().upper() == "OTHER"
+                        )
+
+                        if _raw_discovery_safe_opening:
+                            _free_reply = (
+                                "Opa! Eu sou o MEI Robô 😄. "
+                                "Ajudo empresários a atender melhor, vender mais e ganhar tempo no WhatsApp."
+                            )
+                            _free_spoken = _free_reply
+                            try:
+                                logging.info(
+                                    "[RAW_DISCOVERY_SAFE_OPENING] applied=True reply_len=%s",
+                                    len(_free_reply),
+                                )
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
                     if str(_free_reply or "").strip():
                         out["replyText"] = str(_free_reply or "").strip()
                         reply_text = out["replyText"]
