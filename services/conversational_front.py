@@ -5664,6 +5664,268 @@ def _front_identity_question_already_covered(reply_text: str, identity_question:
     except Exception:
         return False
 
+
+def _resolve_identity_question_for_final_visibility(
+    *,
+    clarify_q: str = "",
+    question: str = "",
+    kb_context: dict | None = None,
+    has_name: bool = False,
+    has_segment: bool = False,
+) -> str:
+    try:
+        resolved = str(
+            clarify_q
+            or question
+            or (
+                (kb_context or {}).get("identity_question_hint")
+                if isinstance(kb_context, dict)
+                else ""
+            )
+            or (
+                (kb_context or {}).get("discovery_question_hint")
+                if isinstance(kb_context, dict)
+                else ""
+            )
+            or ""
+        ).strip()
+
+        if resolved:
+            return resolved
+
+        if (not bool(has_name)) or (not bool(has_segment)):
+            return _front_build_identity_request(
+                has_name=bool(has_name),
+                has_segment=bool(has_segment),
+            )
+
+        return ""
+    except Exception:
+        return ""
+
+
+def _front_prune_redundant_identity_tail_final_v1(value: str, identity_question: str) -> str:
+    try:
+        import re
+
+        text_value = str(value or "").strip()
+        identity = str(identity_question or "").strip()
+
+        if not text_value or not identity:
+            return text_value
+
+        parts = [
+            part.strip()
+            for part in re.split(r"(?<=[.!?])\s+|\n+", text_value)
+            if str(part or "").strip()
+        ]
+
+        if len(parts) < 2:
+            return text_value
+
+        tail = parts[-1].strip()
+        base = " ".join(parts[:-1]).strip()
+
+        if not base or not tail:
+            return text_value
+
+        if len(tail) > 140:
+            return text_value
+
+        if (
+            _front_identity_question_already_covered(tail, identity)
+            and _front_identity_question_already_covered(base, identity)
+        ):
+            return base.rstrip()
+
+        return text_value
+    except Exception:
+        return str(value or "").strip()
+
+
+def _finalize_identity_visibility(
+    out: dict,
+    *,
+    has_name: bool,
+    effective_segment: str = "",
+    segment_for_prompt: str = "",
+    segment_hint: str = "",
+    next_step: str = "",
+    response_mode: str = "",
+    question_type: str = "",
+    identity_question: str = "",
+    hydrated_from_docs: bool = False,
+    has_practical_scene: bool = False,
+) -> dict:
+    """
+    Autoridade final para identidade visível.
+
+    Não interpreta português, não usa lista fixa de palavras-chave e não depende de "?".
+    Controla apenas a pergunta canônica de identidade calculada pelo runtime.
+    """
+    try:
+        if not isinstance(out, dict):
+            return out
+
+        mode = str(response_mode or out.get("response_mode") or "").strip().upper()
+        qtype = str(question_type or "").strip().lower()
+        step = str(next_step or out.get("nextStep") or "").strip().upper()
+
+        if qtype == "simulation":
+            return out
+
+        has_segment = bool(
+            str(effective_segment or "").strip()
+            or str(segment_for_prompt or "").strip()
+            or str(segment_hint or "").strip()
+        )
+        missing_identity = bool((not bool(has_name)) or (not has_segment))
+
+        identity = str(identity_question or "").strip()
+        if not missing_identity or not identity:
+            return out
+
+        understanding = out.get("understanding")
+        if not isinstance(understanding, dict):
+            understanding = {}
+            out["understanding"] = understanding
+
+        out["needsClarify"] = "yes"
+        out["clarifyQuestion"] = identity
+        understanding["needsClarify"] = "yes"
+        understanding["clarifyQuestion"] = identity
+
+        visible_append_allowed = True
+        if step == "SEND_LINK":
+            visible_append_allowed = False
+        if mode == "CLOSING":
+            visible_append_allowed = False
+        if mode == "SCENE" and bool(hydrated_from_docs) and bool(has_practical_scene):
+            visible_append_allowed = False
+
+        reply_before = str(out.get("replyText") or "").strip()
+        spoken_before = str(out.get("spokenText") or reply_before or "").strip()
+
+        reply_after = _front_prune_redundant_identity_tail_final_v1(reply_before, identity)
+        spoken_after = _front_prune_redundant_identity_tail_final_v1(spoken_before, identity)
+
+        if reply_after != reply_before:
+            out["replyText"] = reply_after
+            try:
+                logging.info(
+                    "[IDENTITY_FINALIZER] action=prune field=replyText before_len=%s after_len=%s",
+                    len(reply_before),
+                    len(reply_after),
+                )
+            except Exception:
+                pass
+
+        if spoken_after != spoken_before:
+            out["spokenText"] = spoken_after
+            try:
+                logging.info(
+                    "[IDENTITY_FINALIZER] action=prune field=spokenText before_len=%s after_len=%s",
+                    len(spoken_before),
+                    len(spoken_after),
+                )
+            except Exception:
+                pass
+
+        reply_current = str(out.get("replyText") or "").strip()
+        spoken_current = str(out.get("spokenText") or reply_current or "").strip()
+
+        if not reply_current:
+            return out
+
+        already_covered = _front_identity_question_already_covered(reply_current, identity)
+
+        if visible_append_allowed and not already_covered:
+            sep = "\n\n"
+            reply_new = f"{reply_current.rstrip()}{sep}{identity}".strip()
+            out["replyText"] = reply_new
+
+            if not spoken_current or spoken_current == reply_current:
+                out["spokenText"] = reply_new
+            elif not _front_identity_question_already_covered(spoken_current, identity):
+                out["spokenText"] = f"{spoken_current.rstrip()}{sep}{identity}".strip()
+            else:
+                out["spokenText"] = spoken_current
+
+            try:
+                logging.info(
+                    "[IDENTITY_FINALIZER] action=append reply_len=%s spoken_len=%s mode=%s step=%s",
+                    len(str(out.get("replyText") or "")),
+                    len(str(out.get("spokenText") or "")),
+                    mode,
+                    step,
+                )
+            except Exception:
+                pass
+        else:
+            if not spoken_current:
+                out["spokenText"] = reply_current
+
+        return out
+    except Exception:
+        return out
+
+
+def _finalize_identity_visibility_from_scope(out: dict, scope: dict) -> dict:
+    try:
+        scope = scope if isinstance(scope, dict) else {}
+
+        has_name = bool(scope.get("has_name"))
+        effective_segment = str(scope.get("effective_segment") or "").strip()
+        segment_for_prompt = str(scope.get("segment_for_prompt") or "").strip()
+        segment_hint = str(scope.get("segment_hint") or "").strip()
+        inferred_raw = str(scope.get("inferred_lead_segment_raw") or "").strip()
+        inferred_segment = str(scope.get("inferred_lead_segment") or "").strip()
+
+        has_segment = bool(
+            effective_segment
+            or segment_for_prompt
+            or segment_hint
+            or inferred_raw
+            or inferred_segment
+        )
+
+        kb_context = scope.get("kb_context")
+        if not isinstance(kb_context, dict):
+            kb_context = {}
+
+        identity_question = _resolve_identity_question_for_final_visibility(
+            clarify_q=str(scope.get("clarify_q") or "").strip(),
+            question=str(scope.get("question") or "").strip(),
+            kb_context=kb_context,
+            has_name=has_name,
+            has_segment=has_segment,
+        )
+
+        operational_contract = scope.get("operational_contract")
+        if not isinstance(operational_contract, dict):
+            operational_contract = {}
+
+        return _finalize_identity_visibility(
+            out,
+            has_name=has_name,
+            effective_segment=effective_segment,
+            segment_for_prompt=segment_for_prompt,
+            segment_hint=segment_hint or inferred_raw or inferred_segment,
+            next_step=str(scope.get("next_step") or "").strip(),
+            response_mode=str(scope.get("response_mode") or "").strip(),
+            question_type=str(scope.get("question_type") or "").strip(),
+            identity_question=identity_question,
+            hydrated_from_docs=bool(operational_contract.get("hydrated_from_docs")),
+            has_practical_scene=bool(
+                scope.get("practical_scene")
+                or operational_contract.get("has_practical_scene")
+                or operational_contract.get("has_reference_example")
+            ),
+        )
+    except Exception:
+        return out
+
+
 def _apply_identity_clarify_guard(
     *,
     reply_text: str,
@@ -11049,7 +11311,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     spoken_text = direct_spoken
                     reply_source = "front_direct_scene"
                 else:
-                    return {
+                    return _finalize_identity_visibility_from_scope({
                         "response_mode": response_mode,
                         "replyText": direct_text,
                         "spokenText": direct_spoken,
@@ -11089,7 +11351,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         "kbSnapshotSizeChars": len(kb_snapshot or ""),
                         "tokenUsage": token_usage if isinstance(token_usage, dict) else {},
                         "operationalContract": operational_contract if isinstance(operational_contract, dict) else {},
-                    }
+                    }, locals())
 
         # ----------------------------------------------------------
         # FREE MODE: nos primeiros turnos do lead, a IA responde direto.
@@ -11127,7 +11389,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 if not str(discovery_q or "").strip():
                     discovery_q = str(clarify_q or question or "").strip()
 
-                return {
+                return _finalize_identity_visibility_from_scope({
                     "response_mode": "DISCOVERY",
                     "replyText": discovery_q,
                     "spokenText": discovery_q,
@@ -11144,7 +11406,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     "replySource": "front_discovery",
                     "kbSnapshotSizeChars": len(kb_snapshot or ""),
                     "tokenUsage": token_usage if isinstance(token_usage, dict) else {},
-                }
+                }, locals())
 
             generated = ""
             if (
@@ -12669,7 +12931,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     except Exception:
                         pass
 
-                    return out
+                    return _finalize_identity_visibility_from_scope(out, locals())
             except Exception:
                 pass
 
@@ -13356,7 +13618,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 out = _sanitize_front_result_payload(out)
 
-            return out
+            return _finalize_identity_visibility_from_scope(out, locals())
 
 
 
@@ -14328,7 +14590,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
-        return result
+        return _finalize_identity_visibility_from_scope(result, locals())
 
     except Exception as e:
         # Fail-safe absoluto: nunca quebrar o fluxo
