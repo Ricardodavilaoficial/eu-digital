@@ -13586,7 +13586,68 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             except Exception:
                 out = _sanitize_front_result_payload(out)
 
-            return _finalize_identity_visibility_from_scope(out, locals())
+            try:
+                _explicit_has_segment = bool(
+                    effective_segment
+                    or segment_for_prompt
+                    or segment_hint
+                )
+
+                if (not bool(has_name)) or (not _explicit_has_segment):
+                    _explicit_identity_question = _front_build_identity_request(
+                        has_name=bool(has_name),
+                        has_segment=bool(_explicit_has_segment),
+                    )
+                else:
+                    _explicit_identity_question = str(_identity_question or "").strip()
+
+                out = _finalize_identity_visibility(
+                    out,
+                    has_name=bool(has_name),
+                    effective_segment=str(effective_segment or "").strip(),
+                    segment_for_prompt=str(segment_for_prompt or "").strip(),
+                    segment_hint=str(segment_hint or "").strip(),
+                    next_step=str(next_step or "").strip(),
+                    response_mode=str(out.get("response_mode") or response_mode or "").strip(),
+                    question_type=str(question_type or "").strip(),
+                    identity_question=_explicit_identity_question,
+                    hydrated_from_docs=bool(
+                        bool(locals().get("hydrated_from_docs"))
+                        or (
+                            isinstance(operational_contract, dict)
+                            and operational_contract.get("hydrated_from_docs")
+                        )
+                    ),
+                    has_practical_scene=bool(
+                        bool(locals().get("practical_scene"))
+                        or (
+                            isinstance(operational_contract, dict)
+                            and operational_contract.get("has_practical_scene")
+                        )
+                    ),
+                )
+
+                try:
+                    logging.info(
+                        "[FREE_MODE_FINAL_GUARD_EXPLICIT_FINALIZER] reply_len=%s spoken_len=%s identity=%s",
+                        len(str(out.get("replyText") or "")),
+                        len(str(out.get("spokenText") or "")),
+                        bool(_explicit_identity_question),
+                    )
+                except Exception:
+                    pass
+
+                return out
+            except Exception as _identity_finalizer_error:
+                try:
+                    logging.exception(
+                        "[FREE_MODE_FINAL_GUARD_EXPLICIT_FINALIZER_ERROR] error=%s",
+                        _identity_finalizer_error,
+                    )
+                except Exception:
+                    pass
+
+                return _finalize_identity_visibility_from_scope(out, locals())
 
 
 
