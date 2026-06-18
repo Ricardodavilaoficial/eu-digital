@@ -13575,27 +13575,92 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     _free_spoken = _remove_duplicate_known_tail_by_overlap_v1(_free_spoken, _identity_question)
 
                     try:
-                        # DISCOVERY cru: a IA entrega abertura; identidade visível é exclusiva do runtime/finalizer.
-                        _raw_discovery_safe_opening = bool(
+                        def _strip_model_identity_tail_in_raw_discovery_v1(value: str, identity_question: str) -> str:
+                            import re
+
+                            s = str(value or "").strip()
+                            identity = str(identity_question or "").strip()
+                            if not s or not identity:
+                                return s
+
+                            parts = [
+                                part.strip()
+                                for part in re.split(r"(?<=[.!?])\s+|\n+", s)
+                                if str(part or "").strip()
+                            ]
+
+                            if len(parts) < 2:
+                                return s
+
+                            tail = parts[-1].strip()
+                            base = " ".join(parts[:-1]).strip()
+
+                            if not base or not tail:
+                                return s
+
+                            if len(tail) > 180:
+                                return s
+
+                            if _front_identity_question_already_covered(tail, identity):
+                                return base.rstrip()
+
+                            def _norm(v: str) -> str:
+                                raw = str(v or "").lower()
+                                raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+                                return " ".join(raw.split())
+
+                            identity_tokens = {
+                                tok for tok in _norm(identity).split()
+                                if len(tok) >= 4
+                            }
+                            tail_tokens = {
+                                tok for tok in _norm(tail).split()
+                                if len(tok) >= 4
+                            }
+
+                            if not identity_tokens or not tail_tokens:
+                                return s
+
+                            overlap = identity_tokens.intersection(tail_tokens)
+
+                            if len(overlap) >= 1 and len(tail_tokens) <= 14:
+                                return base.rstrip()
+
+                            return s
+
+                        _raw_discovery_identity_sanitize = bool(
                             locals().get("raw_unqualified_lead_discovery_state")
                             and _missing_identity
                             and str(response_mode or "").strip().upper() == "DISCOVERY"
                             and str(topic or "").strip().upper() == "OTHER"
+                            and str(_identity_question or "").strip()
                         )
 
-                        if _raw_discovery_safe_opening:
-                            _free_reply = (
-                                "Opa! Eu sou o MEI Robô 😄. "
-                                "Ajudo empresários a atender melhor, vender mais e ganhar tempo no WhatsApp."
+                        if _raw_discovery_identity_sanitize:
+                            _before_reply_len = len(str(_free_reply or ""))
+                            _before_spoken_len = len(str(_free_spoken or _free_reply or ""))
+
+                            _free_reply = _strip_model_identity_tail_in_raw_discovery_v1(
+                                _free_reply,
+                                _identity_question,
                             )
-                            _free_spoken = _free_reply
-                            try:
-                                logging.info(
-                                    "[RAW_DISCOVERY_SAFE_OPENING] applied=True reply_len=%s",
-                                    len(_free_reply),
-                                )
-                            except Exception:
-                                pass
+                            _free_spoken = _strip_model_identity_tail_in_raw_discovery_v1(
+                                _free_spoken or _free_reply,
+                                _identity_question,
+                            )
+
+                            if (
+                                len(str(_free_reply or "")) != _before_reply_len
+                                or len(str(_free_spoken or "")) != _before_spoken_len
+                            ):
+                                try:
+                                    logging.info(
+                                        "[RAW_DISCOVERY_IDENTITY_TAIL_PRUNE] applied=True reply_len=%s spoken_len=%s",
+                                        len(str(_free_reply or "")),
+                                        len(str(_free_spoken or "")),
+                                    )
+                                except Exception:
+                                    pass
                     except Exception:
                         pass
 
