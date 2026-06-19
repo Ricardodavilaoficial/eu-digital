@@ -13770,7 +13770,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 for p in re.split(r"(?<=[.!?])\s+|\n+", compact)
                                 if str(p or "").strip()
                             ]
-                            if len(parts) <= 1 and len(compact) < 120:
+                            if len(parts) <= 1 and len(compact) <= 160:
                                 return True
 
                             return False
@@ -13793,7 +13793,6 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             _pack_spoken = ""
 
                             try:
-                                import json
                                 _kb_for_raw_pack = {}
                                 if str(kb_snapshot or "").strip().startswith("{"):
                                     _kb_for_raw_pack = json.loads(str(kb_snapshot or "{}"))
