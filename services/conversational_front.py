@@ -9530,13 +9530,13 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # Fallback estrutural seguro para nome do lead no turno atual.
         # Atua quando o JSON quebra e o campo leadName não vem do modelo.
         # Não usa lista de nomes nem frases prontas de resposta.
+        _current_turn_name_structural = ""
         try:
-            if not inferred_lead_name:
-                _turn_name = _extract_lead_name_from_current_turn(user_text)
-                if _turn_name:
-                    inferred_lead_name = _turn_name
-                    data["lead_name"] = _turn_name
-                    data["leadName"] = _turn_name
+            _current_turn_name_structural = _extract_lead_name_from_current_turn(user_text)
+            if not inferred_lead_name and _current_turn_name_structural:
+                inferred_lead_name = _current_turn_name_structural
+                data["lead_name"] = _current_turn_name_structural
+                data["leadName"] = _current_turn_name_structural
         except Exception as e:
             logging.warning("[CONVERSATIONAL_FRONT][LEAD_NAME_FALLBACK_FAIL] %s", e)
 
@@ -9577,6 +9577,90 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         if not inferred_lead_segment_raw and inferred_lead_segment:
             inferred_lead_segment_raw = inferred_lead_segment
+
+        try:
+            def _front_norm_identity_field_v1(value: object) -> str:
+                raw = str(value or "").strip().lower()
+                raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+                return " ".join(raw.split())
+
+            def _front_same_identity_field_value_v1(left: object, right: object) -> bool:
+                a = _front_norm_identity_field_v1(left)
+                b = _front_norm_identity_field_v1(right)
+                return bool(a and b and a == b)
+
+            _current_turn_name_for_field_guard = _front_sanitize_lead_name_candidate(
+                _current_turn_name_structural or inferred_lead_name,
+                segment_refs=[],
+            )
+
+            def _front_drop_segment_equal_name_v1(value: object, field_name: str) -> str:
+                v = str(value or "").strip()
+                if (
+                    v
+                    and _current_turn_name_for_field_guard
+                    and _front_same_identity_field_value_v1(v, _current_turn_name_for_field_guard)
+                ):
+                    try:
+                        logging.info(
+                            "[IDENTITY_FIELD_GUARD] dropped_segment_equal_name=True field=%s value=%s",
+                            field_name,
+                            v,
+                        )
+                    except Exception:
+                        pass
+                    return ""
+                return v
+
+            if _current_turn_name_for_field_guard:
+                inferred_lead_segment_raw = _front_drop_segment_equal_name_v1(
+                    inferred_lead_segment_raw,
+                    "inferred_lead_segment_raw",
+                )
+                inferred_lead_segment = _front_drop_segment_equal_name_v1(
+                    inferred_lead_segment,
+                    "inferred_lead_segment",
+                )
+                segment_hint = _front_drop_segment_equal_name_v1(
+                    segment_hint,
+                    "segment_hint",
+                )
+
+                if isinstance(operational_contract, dict):
+                    _contract_segment_current = str(operational_contract.get("segment") or "").strip()
+                    if _front_same_identity_field_value_v1(
+                        _contract_segment_current,
+                        _current_turn_name_for_field_guard,
+                    ):
+                        operational_contract["segment"] = ""
+                        try:
+                            logging.info(
+                                "[IDENTITY_FIELD_GUARD] dropped_segment_equal_name=True field=operational_contract.segment value=%s",
+                                _contract_segment_current,
+                            )
+                        except Exception:
+                            pass
+
+                if not str(segment_hint or "").strip():
+                    _known_segment_context = str(
+                        locals().get("effective_segment")
+                        or locals().get("segment_for_prompt")
+                        or locals().get("inferred_segment_for_kb")
+                        or ((kb_context or {}).get("subsegment_hint") if isinstance(kb_context, dict) else "")
+                        or ((kb_context or {}).get("segment_hint") if isinstance(kb_context, dict) else "")
+                        or ""
+                    ).strip()
+
+                    if (
+                        _known_segment_context
+                        and not _front_same_identity_field_value_v1(
+                            _known_segment_context,
+                            _current_turn_name_for_field_guard,
+                        )
+                    ):
+                        segment_hint = _known_segment_context
+        except Exception as e:
+            logging.warning("[IDENTITY_FIELD_GUARD_FAIL] %s", e)
 
         try:
             if inferred_lead_segment_raw:

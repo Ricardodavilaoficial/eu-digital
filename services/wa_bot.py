@@ -3661,27 +3661,72 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 else {}
                             )
 
-                            segment_persisted = (
-                                str(ctx.get("segment") or "").strip()
-                                or str(ctx.get("segment_hint") or "").strip()
-                                or str(front_result.get("segment") or "").strip()
-                                or str(front_result.get("segmentHint") or "").strip()
-                                or str(operational_contract_obj.get("segment") or "").strip()
-                                or str(understanding_obj.get("segmentHint") or "").strip()
-                                or str(understanding_obj.get("leadSegmentRaw") or "").strip()
-                            )
+                            def _wa_norm_identity_field_v1(value: object) -> str:
+                                raw = str(value or "").strip().lower()
+                                raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+                                return " ".join(raw.split())
 
-                            segment_hint_persisted = (
-                                str(ctx.get("segment_hint") or "").strip()
-                                or str(front_result.get("segmentHint") or "").strip()
-                                or str(operational_contract_obj.get("segment") or "").strip()
-                                or str(understanding_obj.get("segmentHint") or "").strip()
-                            )
+                            def _wa_drop_segment_equal_name_v1(value: object, field_name: str) -> str:
+                                v = str(value or "").strip()
+                                n = str(_safe_front_lead_name or "").strip()
+                                if (
+                                    v
+                                    and n
+                                    and _wa_norm_identity_field_v1(v) == _wa_norm_identity_field_v1(n)
+                                ):
+                                    try:
+                                        logging.info(
+                                            "[WA_LEAD_MEMORY_FIELD_GUARD] dropped_segment_equal_name=True field=%s value=%s",
+                                            field_name,
+                                            v,
+                                        )
+                                    except Exception:
+                                        pass
+                                    return ""
+                                return v
 
-                            lead_segment_raw_persisted = (
-                                str(front_result.get("leadSegmentRaw") or "").strip()
-                                or str(understanding_obj.get("leadSegmentRaw") or "").strip()
-                            )
+                            _segment_candidates = [
+                                ("ctx.segment", ctx.get("segment")),
+                                ("ctx.segment_hint", ctx.get("segment_hint")),
+                                ("front.segment", front_result.get("segment")),
+                                ("front.segmentHint", front_result.get("segmentHint")),
+                                ("contract.segment", operational_contract_obj.get("segment")),
+                                ("understanding.segmentHint", understanding_obj.get("segmentHint")),
+                                ("understanding.leadSegmentRaw", understanding_obj.get("leadSegmentRaw")),
+                            ]
+
+                            segment_persisted = ""
+                            for _field_name, _field_value in _segment_candidates:
+                                _candidate = _wa_drop_segment_equal_name_v1(_field_value, _field_name)
+                                if _candidate:
+                                    segment_persisted = _candidate
+                                    break
+
+                            _segment_hint_candidates = [
+                                ("ctx.segment_hint", ctx.get("segment_hint")),
+                                ("front.segmentHint", front_result.get("segmentHint")),
+                                ("contract.segment", operational_contract_obj.get("segment")),
+                                ("understanding.segmentHint", understanding_obj.get("segmentHint")),
+                            ]
+
+                            segment_hint_persisted = ""
+                            for _field_name, _field_value in _segment_hint_candidates:
+                                _candidate = _wa_drop_segment_equal_name_v1(_field_value, _field_name)
+                                if _candidate:
+                                    segment_hint_persisted = _candidate
+                                    break
+
+                            _lead_segment_raw_candidates = [
+                                ("front.leadSegmentRaw", front_result.get("leadSegmentRaw")),
+                                ("understanding.leadSegmentRaw", understanding_obj.get("leadSegmentRaw")),
+                            ]
+
+                            lead_segment_raw_persisted = ""
+                            for _field_name, _field_value in _lead_segment_raw_candidates:
+                                _candidate = _wa_drop_segment_equal_name_v1(_field_value, _field_name)
+                                if _candidate:
+                                    lead_segment_raw_persisted = _candidate
+                                    break
 
                             if segment_persisted:
                                 ctx["segment"] = segment_persisted
