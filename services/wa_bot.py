@@ -3579,12 +3579,68 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             am["fallbackReason"] = ""
 
                             if isinstance(contract, dict) and contract:
+                                def _wa_norm_ai_meta_identity_v1(value: object) -> str:
+                                    raw = str(value or "").strip().lower()
+                                    raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+                                    return " ".join(raw.split())
+
+                                def _wa_extract_turn_name_for_ai_meta_guard_v1() -> str:
+                                    try:
+                                        picked = _pick_lead_name(front_out, ctx)
+                                        if str(picked or "").strip():
+                                            return str(picked or "").strip()
+                                    except Exception:
+                                        pass
+
+                                    try:
+                                        txt = str(text or "").strip()
+                                        m = re.search(
+                                            r"(?i)\b(?:sou|me chamo|meu nome é|meu nome e)\s+(?:o\s+|a\s+)?([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-zà-ÿ]{1,30})\b",
+                                            txt,
+                                        )
+                                        if m:
+                                            return str(m.group(1) or "").strip()
+                                    except Exception:
+                                        pass
+
+                                    return ""
+
+                                _ai_meta_lead_name_guard = _wa_extract_turn_name_for_ai_meta_guard_v1()
+
+                                def _wa_drop_ai_meta_value_if_name_v1(value: object, field_name: str) -> str:
+                                    v = str(value or "").strip()
+                                    if (
+                                        v
+                                        and _ai_meta_lead_name_guard
+                                        and _wa_norm_ai_meta_identity_v1(v) == _wa_norm_ai_meta_identity_v1(_ai_meta_lead_name_guard)
+                                    ):
+                                        try:
+                                            logging.info(
+                                                "[WA_AI_META_NAME_GUARD] dropped=True field=%s value=%s",
+                                                field_name,
+                                                v,
+                                            )
+                                        except Exception:
+                                            pass
+                                        return ""
+                                    return v
+
+                                _contract_segment_ai_meta = _wa_drop_ai_meta_value_if_name_v1(
+                                    contract.get("segment"),
+                                    "contract.segment",
+                                )
+                                _contract_id_ai_meta = _wa_drop_ai_meta_value_if_name_v1(
+                                    contract.get("contract_id"),
+                                    "contract.contract_id",
+                                )
+                                _contract_archetype_ai_meta = str(contract.get("archetype_id") or "").strip()
+
                                 kb_used = bool(
                                     contract.get("hydrated_from_docs")
                                     or contract.get("has_example_line")
                                     or contract.get("has_practical_scene")
-                                    or contract.get("archetype_id")
-                                    or contract.get("segment")
+                                    or _contract_archetype_ai_meta
+                                    or _contract_segment_ai_meta
                                 )
 
                                 am["kbUsed"] = kb_used
@@ -3593,15 +3649,15 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                 am["kbSceneUsed"] = bool(contract.get("has_practical_scene"))
 
                                 am["kbDocPath"] = (
-                                    contract.get("segment")
-                                    or contract.get("archetype_id")
+                                    _contract_segment_ai_meta
+                                    or _contract_archetype_ai_meta
                                     or ""
                                 )
 
                                 am["kbContractId"] = str(
-                                    contract.get("contract_id")
-                                    or contract.get("archetype_id")
-                                    or contract.get("segment")
+                                    _contract_id_ai_meta
+                                    or _contract_archetype_ai_meta
+                                    or _contract_segment_ai_meta
                                     or ""
                                 )
 
@@ -4091,20 +4147,72 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                     contract = cf.get("operationalContract") or {}
 
                     if isinstance(contract, dict) and contract:
+                        def _wa_norm_customer_final_meta_identity_v1(value: object) -> str:
+                            raw = str(value or "").strip().lower()
+                            raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+                            return " ".join(raw.split())
+
+                        def _wa_extract_customer_final_turn_name_for_meta_guard_v1() -> str:
+                            try:
+                                picked = _pick_lead_name(cf, ctx)
+                                if str(picked or "").strip():
+                                    return str(picked or "").strip()
+                            except Exception:
+                                pass
+
+                            try:
+                                txt = str(text or "").strip()
+                                m = re.search(
+                                    r"(?i)\b(?:sou|me chamo|meu nome é|meu nome e)\s+(?:o\s+|a\s+)?([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-zà-ÿ]{1,30})\b",
+                                    txt,
+                                )
+                                if m:
+                                    return str(m.group(1) or "").strip()
+                            except Exception:
+                                pass
+
+                            return ""
+
+                        _customer_final_meta_name_guard = _wa_extract_customer_final_turn_name_for_meta_guard_v1()
+
+                        def _wa_drop_customer_final_meta_value_if_name_v1(value: object, field_name: str) -> str:
+                            v = str(value or "").strip()
+                            if (
+                                v
+                                and _customer_final_meta_name_guard
+                                and _wa_norm_customer_final_meta_identity_v1(v) == _wa_norm_customer_final_meta_identity_v1(_customer_final_meta_name_guard)
+                            ):
+                                try:
+                                    logging.info(
+                                        "[WA_CUSTOMER_FINAL_META_NAME_GUARD] dropped=True field=%s value=%s",
+                                        field_name,
+                                        v,
+                                    )
+                                except Exception:
+                                    pass
+                                return ""
+                            return v
+
+                        _customer_final_contract_segment_meta = _wa_drop_customer_final_meta_value_if_name_v1(
+                            contract.get("segment"),
+                            "contract.segment",
+                        )
+                        _customer_final_contract_archetype_meta = str(contract.get("archetype_id") or "").strip()
+
                         am["kbUsed"] = bool(
                             contract.get("hydrated_from_docs")
                             or contract.get("has_example_line")
                             or contract.get("has_practical_scene")
-                            or contract.get("archetype_id")
-                            or contract.get("segment")
+                            or _customer_final_contract_archetype_meta
+                            or _customer_final_contract_segment_meta
                         )
 
                         am["kbExampleUsed"] = bool(contract.get("has_example_line"))
                         am["kbSceneUsed"] = bool(contract.get("has_practical_scene"))
 
                         am["kbDocPath"] = (
-                            contract.get("segment")
-                            or contract.get("archetype_id")
+                            _customer_final_contract_segment_meta
+                            or _customer_final_contract_archetype_meta
                             or ""
                         )
 
