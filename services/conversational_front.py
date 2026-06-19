@@ -13827,31 +13827,94 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             if not s or not identity:
                                 return s
 
+                            def _norm(v: str) -> str:
+                                raw = str(v or "").lower()
+                                raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+                                return " ".join(raw.split())
+
+                            def _safe_join(base_text: str, tail_text: str) -> str:
+                                base_text = str(base_text or "").strip()
+                                tail_text = str(tail_text or "").strip()
+                                if base_text and tail_text:
+                                    return f"{base_text} {tail_text}".strip()
+                                return (base_text or tail_text or "").strip()
+
+                            def _strip_terminal_identity_suffix_v1(text: str) -> str:
+                                t = str(text or "").strip()
+                                if not t:
+                                    return t
+
+                                identity_words = re.findall(r"\w+", identity, flags=re.UNICODE)
+                                if len(identity_words) < 2:
+                                    return t
+
+                                sep = r"[\W_]+"
+                                pattern = (
+                                    r"(?is)"
+                                    r"(?:^|[\s,;:\-—])"
+                                    r"(?:e\s+)?"
+                                    + sep.join(re.escape(word) for word in identity_words)
+                                    + r"[\s.!?]*$"
+                                )
+
+                                cleaned = re.sub(pattern, "", t).strip()
+                                cleaned = cleaned.rstrip(" ,;:-—").strip()
+
+                                if cleaned != t:
+                                    try:
+                                        logging.info(
+                                            "[RAW_DISCOVERY_IDENTITY_TAIL_PRUNE_SURGICAL] applied=True mode=suffix before_len=%s after_len=%s",
+                                            len(t),
+                                            len(cleaned),
+                                        )
+                                    except Exception:
+                                        pass
+                                    return cleaned
+
+                                return t
+
                             parts = [
                                 part.strip()
                                 for part in re.split(r"(?<=[.!?])\s+|\n+", s)
                                 if str(part or "").strip()
                             ]
 
+                            if not parts:
+                                return s
+
                             if len(parts) < 2:
+                                cleaned_single = _strip_terminal_identity_suffix_v1(s)
+                                if cleaned_single != s:
+                                    return cleaned_single
                                 return s
 
                             tail = parts[-1].strip()
                             base = " ".join(parts[:-1]).strip()
 
-                            if not base or not tail:
+                            if not tail:
+                                return s
+
+                            # Primeiro tenta a poda cirúrgica: remove somente o sufixo
+                            # equivalente à pergunta canônica de identidade calculada pelo runtime.
+                            # Não classifica intenção, não olha tema externo e não cria resposta pronta.
+                            if len(tail) <= 360:
+                                cleaned_tail = _strip_terminal_identity_suffix_v1(tail)
+                                if cleaned_tail != tail:
+                                    if cleaned_tail:
+                                        return _safe_join(base, cleaned_tail)
+                                    if base:
+                                        return base.rstrip()
+
+                            if not base:
                                 return s
 
                             if len(tail) > 180:
                                 return s
 
+                            # Se a pergunta de identidade for uma sentença/cláusula separada,
+                            # mantém o comportamento seguro anterior: remove a cauda inteira.
                             if _front_identity_question_already_covered(tail, identity):
                                 return base.rstrip()
-
-                            def _norm(v: str) -> str:
-                                raw = str(v or "").lower()
-                                raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
-                                return " ".join(raw.split())
 
                             identity_tokens = {
                                 tok for tok in _norm(identity).split()
