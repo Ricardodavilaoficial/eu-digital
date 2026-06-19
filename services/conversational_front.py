@@ -13954,15 +13954,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             # e sem relação com a abertura social do lead.
                             # Preferimos descartar o corpo degradado e deixar o finalizador
                             # anexar a pergunta canônica de identidade.
-                            _free_reply = ""
-                            _free_spoken = ""
-                            out["replyText"] = ""
-                            out["spokenText"] = ""
-                            reply_text = ""
-                            spoken_text = ""
+                            _identity_only_reply = str(_identity_question or "").strip()
+                            _free_reply = _identity_only_reply
+                            _free_spoken = _identity_only_reply
+                            out["replyText"] = _identity_only_reply
+                            out["spokenText"] = _identity_only_reply
+                            reply_text = _identity_only_reply
+                            spoken_text = _identity_only_reply
                             _raw_discovery_pack_repair_disabled = True
                             try:
-                                logging.info("[RAW_DISCOVERY_DEGRADED_BODY_DROPPED] applied=True pack_repair_disabled=True")
+                                logging.info(
+                                    "[RAW_DISCOVERY_DEGRADED_BODY_IDENTITY_ONLY] applied=True pack_repair_disabled=True reply_len=%s",
+                                    len(str(_identity_only_reply or "")),
+                                )
                             except Exception:
                                 pass
                     except Exception as e:
