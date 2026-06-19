@@ -13949,63 +13949,22 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             except Exception:
                                 pass
 
-                            _pack_reply = ""
-                            _pack_spoken = ""
-
+                            # Em raw discovery, nunca reparar corpo degradado com pack genérico.
+                            # O pack pode gerar frase institucional solta, com pontuação quebrada
+                            # e sem relação com a abertura social do lead.
+                            # Preferimos descartar o corpo degradado e deixar o finalizador
+                            # anexar a pergunta canônica de identidade.
+                            _free_reply = ""
+                            _free_spoken = ""
+                            out["replyText"] = ""
+                            out["spokenText"] = ""
+                            reply_text = ""
+                            spoken_text = ""
+                            _raw_discovery_pack_repair_disabled = True
                             try:
-                                _kb_for_raw_pack = {}
-                                if str(kb_snapshot or "").strip().startswith("{"):
-                                    _kb_for_raw_pack = json.loads(str(kb_snapshot or "{}"))
-
-                                if isinstance(_kb_for_raw_pack, dict) and _kb_for_raw_pack:
-                                    try:
-                                        from services.pack_engine import render_pack_reply  # type: ignore
-
-                                        _rend = render_pack_reply(
-                                            kb=_kb_for_raw_pack,
-                                            intent="WHAT_IS",
-                                            segment=None,
-                                            pack_id=None,
-                                            render_mode="short",
-                                        ) or {}
-
-                                        if _rend.get("ok") and str(_rend.get("replyText") or "").strip():
-                                            _pack_reply = str(_rend.get("replyText") or "").strip()
-                                            _pack_spoken = str(_rend.get("spokenText") or _pack_reply).strip()
-                                    except Exception as e:
-                                        try:
-                                            logging.warning("[RAW_DISCOVERY_PACK_REPAIR_FAIL] %s", e)
-                                        except Exception:
-                                            pass
-                            except Exception as e:
-                                try:
-                                    logging.warning("[RAW_DISCOVERY_PACK_CONTEXT_FAIL] %s", e)
-                                except Exception:
-                                    pass
-
-                            if _pack_reply:
-                                _free_reply = _pack_reply
-                                _free_spoken = _pack_spoken or _pack_reply
-                                try:
-                                    logging.info(
-                                        "[RAW_DISCOVERY_PACK_REPAIR] applied=True reply_len=%s",
-                                        len(str(_free_reply or "")),
-                                    )
-                                except Exception:
-                                    pass
-                            else:
-                                # Sem pack disponível, preferimos não enviar o corpo degradado.
-                                # O finalizador ainda poderá anexar a pergunta canônica de identidade.
-                                _free_reply = ""
-                                _free_spoken = ""
-                                out["replyText"] = ""
-                                out["spokenText"] = ""
-                                reply_text = ""
-                                spoken_text = ""
-                                try:
-                                    logging.info("[RAW_DISCOVERY_DEGRADED_BODY_DROPPED] applied=True")
-                                except Exception:
-                                    pass
+                                logging.info("[RAW_DISCOVERY_DEGRADED_BODY_DROPPED] applied=True pack_repair_disabled=True")
+                            except Exception:
+                                pass
                     except Exception as e:
                         try:
                             logging.warning("[RAW_DISCOVERY_DEGRADED_BODY_GUARD_FAIL] %s", e)
@@ -14106,7 +14065,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 intent = "WHAT_IS"
                 topic = "WHAT_IS"
 
-            if not reply_text:
+            if not reply_text and not bool(locals().get("_raw_discovery_pack_repair_disabled")):
                 _kb = None
                 try:
                     if kb_snapshot and str(kb_snapshot).strip().startswith("{"):
@@ -14142,7 +14101,11 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         pass
 
             # fallback humano (sem depender do Firestore) quando ainda ficar vazio
-            if not reply_text and (intent in ("WHAT_IS", "OTHER")):
+            if (
+                not reply_text
+                and not bool(locals().get("_raw_discovery_pack_repair_disabled"))
+                and (intent in ("WHAT_IS", "OTHER"))
+            ):
                 reply_text = (
                     "O MEI Robô vira um atendente no seu WhatsApp: responde cliente, organiza agenda, orçamento e pedido sem te prender no celular. "
                     "Na prática: o cliente chama, o robô conduz o básico, confirma por escrito e adianta seu atendimento sem conversa perdida."
