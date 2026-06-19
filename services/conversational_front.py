@@ -9626,13 +9626,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     "segment_hint",
                 )
 
-                if isinstance(operational_contract, dict):
-                    _contract_segment_current = str(operational_contract.get("segment") or "").strip()
+                _identity_guard_contract = locals().get("operational_contract")
+                if isinstance(_identity_guard_contract, dict):
+                    _contract_segment_current = str(_identity_guard_contract.get("segment") or "").strip()
                     if _front_same_identity_field_value_v1(
                         _contract_segment_current,
                         _current_turn_name_for_field_guard,
                     ):
-                        operational_contract["segment"] = ""
+                        _identity_guard_contract["segment"] = ""
                         try:
                             logging.info(
                                 "[IDENTITY_FIELD_GUARD] dropped_segment_equal_name=True field=operational_contract.segment value=%s",
@@ -9829,9 +9830,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 "segment_hint",
                             )
 
-                            if isinstance(operational_contract, dict):
-                                operational_contract["segment"] = _front_drop_segment_if_current_name_v1(
-                                    operational_contract.get("segment"),
+                            _current_turn_recovery_contract = locals().get("operational_contract")
+                            if isinstance(_current_turn_recovery_contract, dict):
+                                _current_turn_recovery_contract["segment"] = _front_drop_segment_if_current_name_v1(
+                                    _current_turn_recovery_contract.get("segment"),
                                     "operational_contract.segment",
                                 )
 
@@ -9851,10 +9853,10 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                     != _front_norm_current_turn_name_recovery_v1(_turn_name_v2)
                                 ):
                                     segment_hint = _known_segment_context_v2
-                                    if isinstance(operational_contract, dict) and not str(
-                                        operational_contract.get("segment") or ""
+                                    if isinstance(_current_turn_recovery_contract, dict) and not str(
+                                        _current_turn_recovery_contract.get("segment") or ""
                                     ).strip():
-                                        operational_contract["segment"] = _known_segment_context_v2
+                                        _current_turn_recovery_contract["segment"] = _known_segment_context_v2
 
                             try:
                                 logging.info(
