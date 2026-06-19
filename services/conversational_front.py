@@ -9756,6 +9756,117 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             understanding["leadName"] = _turn_name
                 except Exception:
                     pass
+
+            try:
+                if not current_turn_lead_name:
+                    _turn_name_v2 = str(_extract_lead_name_from_current_turn(user_text) or "").strip()
+
+                    def _front_norm_current_turn_name_recovery_v1(value: object) -> str:
+                        raw = str(value or "").strip().lower()
+                        raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+                        return " ".join(raw.split())
+
+                    if _turn_name_v2:
+                        _turn_name_norm_v2 = _front_norm_current_turn_name_recovery_v1(_turn_name_v2)
+
+                        _safe_segment_refs_v2 = []
+                        for _ref_v2 in [
+                            segment_hint,
+                            inferred_lead_segment_raw,
+                            inferred_lead_segment,
+                            state_summary.get("segment"),
+                            state_summary.get("segmentHint"),
+                            state_summary.get("leadSegmentRaw"),
+                        ]:
+                            if (
+                                str(_ref_v2 or "").strip()
+                                and _front_norm_current_turn_name_recovery_v1(_ref_v2) != _turn_name_norm_v2
+                            ):
+                                _safe_segment_refs_v2.append(_ref_v2)
+
+                        _turn_name_v2 = _front_sanitize_lead_name_candidate(
+                            _turn_name_v2,
+                            segment_refs=_safe_segment_refs_v2,
+                        )
+
+                        if _turn_name_v2:
+                            current_turn_lead_name = _turn_name_v2
+                            inferred_lead_name = _turn_name_v2
+                            data["lead_name"] = _turn_name_v2
+                            data["leadName"] = _turn_name_v2
+                            if isinstance(understanding, dict):
+                                understanding["lead_name"] = _turn_name_v2
+                                understanding["leadName"] = _turn_name_v2
+
+                            def _front_drop_segment_if_current_name_v1(value: object, field_name: str) -> str:
+                                v = str(value or "").strip()
+                                if (
+                                    v
+                                    and _front_norm_current_turn_name_recovery_v1(v)
+                                    == _front_norm_current_turn_name_recovery_v1(_turn_name_v2)
+                                ):
+                                    try:
+                                        logging.info(
+                                            "[CURRENT_TURN_NAME_RECOVERY_GUARD] dropped_segment_equal_name=True field=%s value=%s",
+                                            field_name,
+                                            v,
+                                        )
+                                    except Exception:
+                                        pass
+                                    return ""
+                                return v
+
+                            inferred_lead_segment_raw = _front_drop_segment_if_current_name_v1(
+                                inferred_lead_segment_raw,
+                                "inferred_lead_segment_raw",
+                            )
+                            inferred_lead_segment = _front_drop_segment_if_current_name_v1(
+                                inferred_lead_segment,
+                                "inferred_lead_segment",
+                            )
+                            segment_hint = _front_drop_segment_if_current_name_v1(
+                                segment_hint,
+                                "segment_hint",
+                            )
+
+                            if isinstance(operational_contract, dict):
+                                operational_contract["segment"] = _front_drop_segment_if_current_name_v1(
+                                    operational_contract.get("segment"),
+                                    "operational_contract.segment",
+                                )
+
+                            if not str(segment_hint or "").strip():
+                                _known_segment_context_v2 = str(
+                                    locals().get("effective_segment")
+                                    or locals().get("segment_for_prompt")
+                                    or locals().get("inferred_segment_for_kb")
+                                    or ((kb_context or {}).get("subsegment_hint") if isinstance(kb_context, dict) else "")
+                                    or ((kb_context or {}).get("segment_hint") if isinstance(kb_context, dict) else "")
+                                    or ""
+                                ).strip()
+
+                                if (
+                                    _known_segment_context_v2
+                                    and _front_norm_current_turn_name_recovery_v1(_known_segment_context_v2)
+                                    != _front_norm_current_turn_name_recovery_v1(_turn_name_v2)
+                                ):
+                                    segment_hint = _known_segment_context_v2
+                                    if isinstance(operational_contract, dict) and not str(
+                                        operational_contract.get("segment") or ""
+                                    ).strip():
+                                        operational_contract["segment"] = _known_segment_context_v2
+
+                            try:
+                                logging.info(
+                                    "[CURRENT_TURN_NAME_RECOVERY_GUARD] recovered=True name=%s segment_hint=%s",
+                                    _turn_name_v2,
+                                    str(segment_hint or ""),
+                                )
+                            except Exception:
+                                pass
+            except Exception as e:
+                logging.warning("[CURRENT_TURN_NAME_RECOVERY_GUARD_FAIL] %s", e)
+
             if current_turn_lead_name and not name_hint:
                 name_hint = current_turn_lead_name
 
@@ -13114,13 +13225,48 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 # segundo turno, sem aceitar segmento como nome.
                 # -----------------------------------------------------
                 try:
+                    _continuity_name_candidate = (
+                        name_hint or current_turn_lead_name or inferred_lead_name
+                    )
+                    _continuity_segment_refs = [
+                        segment_hint,
+                        inferred_lead_segment_raw,
+                        inferred_lead_segment,
+                    ]
+
+                    def _front_filter_segment_refs_for_name_v1(name_value: object, refs: list) -> list:
+                        try:
+                            name_norm = str(name_value or "").strip().lower()
+                            name_norm = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in name_norm)
+                            name_norm = " ".join(name_norm.split())
+                            if not name_norm:
+                                return refs
+
+                            safe_refs = []
+                            for ref in refs:
+                                ref_norm = str(ref or "").strip().lower()
+                                ref_norm = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in ref_norm)
+                                ref_norm = " ".join(ref_norm.split())
+                                if ref_norm and ref_norm == name_norm:
+                                    try:
+                                        logging.info(
+                                            "[FINAL_IDENTITY_REF_FILTER] dropped_ref_equal_name=True ref=%s",
+                                            str(ref or "").strip(),
+                                        )
+                                    except Exception:
+                                        pass
+                                    continue
+                                safe_refs.append(ref)
+                            return safe_refs
+                        except Exception:
+                            return refs
+
                     _continuity_safe_name = _front_sanitize_lead_name_candidate(
-                        name_hint or current_turn_lead_name or inferred_lead_name,
-                        segment_refs=[
-                            segment_hint,
-                            inferred_lead_segment_raw,
-                            inferred_lead_segment,
-                        ],
+                        _continuity_name_candidate,
+                        segment_refs=_front_filter_segment_refs_for_name_v1(
+                            _continuity_name_candidate,
+                            _continuity_segment_refs,
+                        ),
                     )
                 except Exception:
                     _continuity_safe_name = ""
@@ -13530,13 +13676,25 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 # se o nome veio do turno atual e foi sanitizado, ele pode
                 # sair para o wa_bot persistir. Caso contrário, seguimos
                 # bloqueando hipóteses não validadas.
+                _safe_payload_name_candidate = (
+                    name_hint or current_turn_lead_name or inferred_lead_name
+                )
+                _safe_payload_segment_refs = [
+                    segment_hint,
+                    inferred_lead_segment_raw,
+                    inferred_lead_segment,
+                ]
+                try:
+                    _safe_payload_segment_refs = _front_filter_segment_refs_for_name_v1(
+                        _safe_payload_name_candidate,
+                        _safe_payload_segment_refs,
+                    )
+                except Exception:
+                    pass
+
                 _safe_payload_name = _front_sanitize_lead_name_candidate(
-                    name_hint or current_turn_lead_name or inferred_lead_name,
-                    segment_refs=[
-                        segment_hint,
-                        inferred_lead_segment_raw,
-                        inferred_lead_segment,
-                    ],
+                    _safe_payload_name_candidate,
+                    segment_refs=_safe_payload_segment_refs,
                 )
 
                 if not bool(_safe_payload_name):
@@ -14735,6 +14893,56 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         pass
         except Exception:
             pass
+
+        try:
+            _final_identity_name_guard = str(
+                name_hint or current_turn_lead_name or inferred_lead_name or ""
+            ).strip()
+
+            def _front_norm_final_identity_guard_v1(value: object) -> str:
+                raw = str(value or "").strip().lower()
+                raw = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+                return " ".join(raw.split())
+
+            def _front_drop_final_segment_if_name_v1(value: object, field_name: str) -> str:
+                v = str(value or "").strip()
+                if (
+                    v
+                    and _final_identity_name_guard
+                    and _front_norm_final_identity_guard_v1(v)
+                    == _front_norm_final_identity_guard_v1(_final_identity_name_guard)
+                ):
+                    try:
+                        logging.info(
+                            "[FINAL_IDENTITY_FIELD_GUARD] dropped_segment_equal_name=True field=%s value=%s",
+                            field_name,
+                            v,
+                        )
+                    except Exception:
+                        pass
+                    return ""
+                return v
+
+            if _final_identity_name_guard:
+                inferred_lead_segment_raw = _front_drop_final_segment_if_name_v1(
+                    inferred_lead_segment_raw,
+                    "inferred_lead_segment_raw",
+                )
+                inferred_lead_segment = _front_drop_final_segment_if_name_v1(
+                    inferred_lead_segment,
+                    "inferred_lead_segment",
+                )
+                segment_hint = _front_drop_final_segment_if_name_v1(
+                    segment_hint,
+                    "segment_hint",
+                )
+                if isinstance(operational_contract, dict):
+                    operational_contract["segment"] = _front_drop_final_segment_if_name_v1(
+                        operational_contract.get("segment"),
+                        "operational_contract.segment",
+                    )
+        except Exception as e:
+            logging.warning("[FINAL_IDENTITY_FIELD_GUARD_FAIL] %s", e)
 
         out = {
             "response_mode": response_mode,
