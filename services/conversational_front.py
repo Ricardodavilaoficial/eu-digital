@@ -597,6 +597,20 @@ def _front_build_structured_assembly_reply(
 
             source_type = str((source or {}).get("contentSourceType") or "").strip()
 
+            try:
+                logging.info(
+                    "[STRUCTURED_ASSEMBLY_CURRENT_PROBE_V1] mode=%s source_type=%s q_type=%s current_len=%s core_len=%s current_head=%s core_head=%s",
+                    mode,
+                    source_type,
+                    q_type,
+                    len(str(current_clean or "")),
+                    len(str(core or "")),
+                    " ".join(str(current_clean or "").split())[:180],
+                    " ".join(str(core or "").split())[:180],
+                )
+            except Exception:
+                pass
+
             if (
                 mode == "DIRECT"
                 and source_type == "platform_kb_pack"
@@ -684,6 +698,18 @@ def _front_build_structured_assembly_reply(
 
         if not assembled:
             return {}
+
+        try:
+            logging.info(
+                "[STRUCTURED_ASSEMBLY_RETURN_PROBE_V1] assembled_len=%s source_type=%s mode=%s q_type=%s assembled_head=%s",
+                len(str(assembled or "")),
+                str((source or {}).get("contentSourceType") or "").strip(),
+                mode,
+                q_type,
+                " ".join(str(assembled or "").split())[:180],
+            )
+        except Exception:
+            pass
 
         return {
             "replyText": assembled,
@@ -14061,6 +14087,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         if _raw_discovery_identity_sanitize:
                             _before_reply_len = len(str(_free_reply or ""))
                             _before_spoken_len = len(str(_free_spoken or _free_reply or ""))
+                            try:
+                                logging.info(
+                                    "[RAW_DISCOVERY_PRUNE_BEFORE_V1] reply_len=%s spoken_len=%s response_mode=%s raw_discovery=%s head=%s",
+                                    _before_reply_len,
+                                    _before_spoken_len,
+                                    str(response_mode or ""),
+                                    bool(locals().get("raw_unqualified_lead_discovery_state")),
+                                    " ".join(str(_free_reply or "").split())[:180],
+                                )
+                            except Exception:
+                                pass
 
                             _free_reply = _strip_model_identity_tail_in_raw_discovery_v1(
                                 _free_reply,
@@ -14071,10 +14108,22 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 _identity_question,
                             )
 
-                            if (
+                            _raw_discovery_prune_applied = bool(
                                 len(str(_free_reply or "")) != _before_reply_len
                                 or len(str(_free_spoken or "")) != _before_spoken_len
-                            ):
+                            )
+                            try:
+                                logging.info(
+                                    "[RAW_DISCOVERY_PRUNE_AFTER_V1] reply_len=%s spoken_len=%s applied=%s head=%s",
+                                    len(str(_free_reply or "")),
+                                    len(str(_free_spoken or "")),
+                                    _raw_discovery_prune_applied,
+                                    " ".join(str(_free_reply or "").split())[:180],
+                                )
+                            except Exception:
+                                pass
+
+                            if _raw_discovery_prune_applied:
                                 try:
                                     logging.info(
                                         "[RAW_DISCOVERY_IDENTITY_TAIL_PRUNE] applied=True reply_len=%s spoken_len=%s",
@@ -14113,10 +14162,32 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                             return False
 
+                        try:
+                            logging.info(
+                                "[RAW_DISCOVERY_DEGRADED_CHECK_V1] candidate_len=%s has_identity_question=%s response_mode=%s head=%s",
+                                len(str(_free_reply or "")),
+                                bool(str(_identity_question or "").strip()),
+                                str(response_mode or ""),
+                                " ".join(str(_free_reply or "").split())[:180],
+                            )
+                        except Exception:
+                            pass
+
                         _raw_discovery_degraded_body = bool(
                             locals().get("_raw_discovery_identity_sanitize")
                             and _raw_discovery_body_is_degraded_v1(_free_reply)
                         )
+
+                        try:
+                            logging.info(
+                                "[RAW_DISCOVERY_DEGRADED_RESULT_V1] degraded=%s candidate_len=%s response_mode=%s head=%s",
+                                bool(_raw_discovery_degraded_body),
+                                len(str(_free_reply or "")),
+                                str(response_mode or ""),
+                                " ".join(str(_free_reply or "").split())[:180],
+                            )
+                        except Exception:
+                            pass
 
                         if _raw_discovery_degraded_body:
                             try:
@@ -14132,6 +14203,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             # e sem relação com a abertura social do lead.
                             # Preferimos descartar o corpo degradado e deixar o finalizador
                             # anexar a pergunta canônica de identidade.
+                            try:
+                                logging.info(
+                                    "[RAW_DISCOVERY_IDENTITY_ONLY_OVERWRITE_V1] before_len=%s identity_len=%s before_head=%s identity_head=%s response_mode=%s raw_discovery=%s",
+                                    len(str(_free_reply or "")),
+                                    len(str(_identity_question or "")),
+                                    " ".join(str(_free_reply or "").split())[:180],
+                                    " ".join(str(_identity_question or "").split())[:180],
+                                    str(response_mode or ""),
+                                    bool(locals().get("raw_unqualified_lead_discovery_state")),
+                                )
+                            except Exception:
+                                pass
+
                             _identity_only_reply = str(_identity_question or "").strip()
                             _free_reply = _identity_only_reply
                             _free_spoken = _identity_only_reply
@@ -14854,6 +14938,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             if structured_assembly_result and structured_assembly_result.get("replyText"):
                 _reply_source_before_structured_assembly = str(reply_source or "").strip()
+                try:
+                    _structured_new_reply_probe = str(
+                        structured_assembly_result.get("replyText") or ""
+                    ).strip()
+                    logging.info(
+                        "[STRUCTURED_ASSEMBLY_REPLACE_PROBE_V1] old_reply_len=%s new_reply_len=%s old_head=%s new_head=%s response_mode=%s source=%s reason=%s",
+                        len(str(reply_text or "")),
+                        len(str(_structured_new_reply_probe or "")),
+                        " ".join(str(reply_text or "").split())[:180],
+                        " ".join(str(_structured_new_reply_probe or "").split())[:180],
+                        str(response_mode or ""),
+                        _reply_source_before_structured_assembly,
+                        "common_path",
+                    )
+                except Exception:
+                    pass
+
                 reply_text = str(structured_assembly_result.get("replyText") or "").strip()
                 spoken_text = str(structured_assembly_result.get("spokenText") or reply_text).strip()
                 reply_source = "front_structured_python_assembly"
