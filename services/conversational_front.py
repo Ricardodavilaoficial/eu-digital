@@ -12614,17 +12614,17 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         _max_structured_chars = 520 if _is_audio_policy else 800
 
                         # FRONT_FACTORY_MICRO_SCENE_BUDGET:
-                        # Resposta demonstrativa com micro_scene_conversational real
-                        # usa o orçamento grande de texto, sem cair no molde curto
-                        # de resposta social/pontual.
-                        #
-                        # Regra da fábrica:
-                        # - micro_scene_conversational vem pronta do Firestore;
-                        # - molde preferencial: 620-660 chars;
-                        # - teto absoluto aceito: 680 chars;
-                        # - resposta final continua limitada a 800 chars;
-                        # - se faltar espaço, reduzimos a abertura;
-                        # - nunca cortamos a microcena compatível com a fábrica.
+                        # Guarda estrutural da fabrica:
+                        # - nao cria abertura;
+                        # - nao usa frase fixa;
+                        # - nao usa palavra-chave de segmento;
+                        # - nao mexe em prompt;
+                        # - nao chama LLM;
+                        # - usa somente o proprio campo micro_scene_conversational
+                        #   como bloco soberano de comparacao;
+                        # - preserva a abertura ja produzida pelo fluxo/IA;
+                        # - restaura a microcena inteira somente quando detectar
+                        #   truncamento por prefixo do proprio campo do Firestore.
                         try:
                             _factory_scene = str(
                                 _contract.get("micro_scene_conversational")
@@ -12641,6 +12641,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             if _factory_scene_guard:
                                 _scene_len = len(_factory_scene)
                                 _reply_now = str(reply_text or "").strip()
+                                _max_total = int(_max_structured_chars or 800)
 
                                 if _scene_len > 680:
                                     try:
@@ -12651,53 +12652,85 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                         )
                                     except Exception:
                                         pass
-                                else:
-                                    _head = ""
 
-                                    if _factory_scene in _reply_now:
-                                        _head = _reply_now.partition(_factory_scene)[0]
-                                    else:
-                                        _scene_marker = ""
-                                        _scene_words = _factory_scene.split()
-                                        if len(_scene_words) >= 4:
-                                            _scene_marker = " ".join(_scene_words[:4]).strip()
-
-                                        if _scene_marker and _scene_marker in _reply_now:
-                                            _head = _reply_now.partition(_scene_marker)[0]
-                                        elif "Veja um exemplo prático:" in _reply_now:
-                                            _head = _reply_now.partition("Veja um exemplo prático:")[0]
-                                        elif "Veja um exemplo pratico:" in _reply_now:
-                                            _head = _reply_now.partition("Veja um exemplo pratico:")[0]
-                                        else:
-                                            _head = ""
-
-                                    _head = str(_head or "").strip()
-                                    _head_budget = max(0, 800 - _scene_len - 1)
+                                elif _reply_now:
+                                    _head_budget = max(0, _max_total - _scene_len - 1)
                                     _head_budget = min(120, _head_budget)
 
-                                    if _head and len(_head) > _head_budget:
-                                        _head = _front_trim_to_complete_sentence(
-                                            _head,
-                                            _head_budget,
-                                        ).strip()
+                                    _applied = False
+                                    _reason = "no_repair_needed"
 
-                                    if _head:
-                                        reply_text = f"{_head} {_factory_scene}".strip()
+                                    def _fit_factory_head(_raw_head):
+                                        _h = str(_raw_head or "").strip()
+                                        if not _h:
+                                            return ""
+                                        if _head_budget <= 0:
+                                            return ""
+                                        if len(_h) > _head_budget:
+                                            _h = _front_trim_to_complete_sentence(
+                                                _h,
+                                                _head_budget,
+                                            ).strip()
+                                        return _h
+
+                                    def _compose_factory_candidate(_raw_head):
+                                        _h = _fit_factory_head(_raw_head)
+                                        if _h:
+                                            return f"{_h} {_factory_scene}".strip()
+                                        return _factory_scene
+
+                                    if _factory_scene in _reply_now:
+                                        _head, _sep, _tail = _reply_now.partition(_factory_scene)
+                                        _tail = str(_tail or "").strip()
+
+                                        # Se ja contem a microcena completa e cabe no limite,
+                                        # preserva exatamente o fluxo existente, incluindo a
+                                        # abertura natural gerada antes deste acabamento.
+                                        if len(_reply_now) <= _max_total and not _tail:
+                                            _reason = "already_complete"
+                                        else:
+                                            _candidate = _compose_factory_candidate(_head)
+                                            if len(_candidate) <= _max_total:
+                                                reply_text = _candidate
+                                                spoken_text = _candidate
+                                                _applied = True
+                                                _reason = "complete_scene_rebudget"
+                                            else:
+                                                _reason = "complete_scene_candidate_over_budget"
+
                                     else:
-                                        reply_text = _factory_scene
+                                        # Ancora dinamica: prefixo do proprio campo vindo do
+                                        # Firestore. Nao depende de frase editorial fixa.
+                                        _anchor_len = min(180, max(80, _scene_len // 3))
+                                        _scene_anchor = _factory_scene[:_anchor_len].strip()
 
-                                    spoken_text = reply_text
+                                        if _scene_anchor and _scene_anchor in _reply_now:
+                                            _head, _sep, _tail = _reply_now.partition(_scene_anchor)
+                                            _candidate = _compose_factory_candidate(_head)
+
+                                            if len(_candidate) <= _max_total:
+                                                reply_text = _candidate
+                                                spoken_text = _candidate
+                                                _applied = True
+                                                _reason = "truncated_scene_restored_from_dynamic_anchor"
+                                            else:
+                                                _reason = "truncated_scene_candidate_over_budget"
+                                        else:
+                                            _reason = "dynamic_anchor_not_found"
 
                                     try:
                                         logging.info(
-                                            "[FRONT_FACTORY_MICRO_SCENE_BUDGET] applied=True scene_len=%s head_budget=%s reply_len=%s max_chars=%s",
+                                            "[FRONT_FACTORY_MICRO_SCENE_BUDGET] applied=%s reason=%s scene_len=%s head_budget=%s reply_len=%s max_chars=%s",
+                                            bool(_applied),
+                                            _reason,
                                             _scene_len,
                                             _head_budget,
                                             len(str(reply_text or "")),
-                                            _max_structured_chars,
+                                            _max_total,
                                         )
                                     except Exception:
                                         pass
+
                         except Exception as _factory_scene_budget_exc:
                             try:
                                 logging.warning(
