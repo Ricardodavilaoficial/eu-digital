@@ -12613,7 +12613,99 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     else:
                         _max_structured_chars = 520 if _is_audio_policy else 800
 
+                        # FRONT_FACTORY_MICRO_SCENE_BUDGET:
+                        # Resposta demonstrativa com micro_scene_conversational real
+                        # usa o orçamento grande de texto, sem cair no molde curto
+                        # de resposta social/pontual.
+                        #
+                        # Regra da fábrica:
+                        # - micro_scene_conversational vem pronta do Firestore;
+                        # - molde preferencial: 620-660 chars;
+                        # - teto absoluto aceito: 680 chars;
+                        # - resposta final continua limitada a 800 chars;
+                        # - se faltar espaço, reduzimos a abertura;
+                        # - nunca cortamos a microcena compatível com a fábrica.
+                        try:
+                            _factory_scene = str(
+                                _contract.get("micro_scene_conversational")
+                                or ""
+                            ).strip()
 
+                            _factory_scene_guard = bool(
+                                not _is_audio_policy
+                                and bool(_contract.get("hydrated_from_docs"))
+                                and bool(_contract.get("has_practical_scene"))
+                                and _factory_scene
+                            )
+
+                            if _factory_scene_guard:
+                                _scene_len = len(_factory_scene)
+                                _reply_now = str(reply_text or "").strip()
+
+                                if _scene_len > 680:
+                                    try:
+                                        logging.info(
+                                            "[FRONT_FACTORY_MICRO_SCENE_BUDGET] applied=False reason=scene_over_budget scene_len=%s max_scene=680 reply_len=%s",
+                                            _scene_len,
+                                            len(_reply_now),
+                                        )
+                                    except Exception:
+                                        pass
+                                else:
+                                    _head = ""
+
+                                    if _factory_scene in _reply_now:
+                                        _head = _reply_now.partition(_factory_scene)[0]
+                                    else:
+                                        _scene_marker = ""
+                                        _scene_words = _factory_scene.split()
+                                        if len(_scene_words) >= 4:
+                                            _scene_marker = " ".join(_scene_words[:4]).strip()
+
+                                        if _scene_marker and _scene_marker in _reply_now:
+                                            _head = _reply_now.partition(_scene_marker)[0]
+                                        elif "Veja um exemplo prático:" in _reply_now:
+                                            _head = _reply_now.partition("Veja um exemplo prático:")[0]
+                                        elif "Veja um exemplo pratico:" in _reply_now:
+                                            _head = _reply_now.partition("Veja um exemplo pratico:")[0]
+                                        else:
+                                            _head = ""
+
+                                    _head = str(_head or "").strip()
+                                    _head_budget = max(0, 800 - _scene_len - 1)
+                                    _head_budget = min(120, _head_budget)
+
+                                    if _head and len(_head) > _head_budget:
+                                        _head = _front_trim_to_complete_sentence(
+                                            _head,
+                                            _head_budget,
+                                        ).strip()
+
+                                    if _head:
+                                        reply_text = f"{_head} {_factory_scene}".strip()
+                                    else:
+                                        reply_text = _factory_scene
+
+                                    spoken_text = reply_text
+
+                                    try:
+                                        logging.info(
+                                            "[FRONT_FACTORY_MICRO_SCENE_BUDGET] applied=True scene_len=%s head_budget=%s reply_len=%s max_chars=%s",
+                                            _scene_len,
+                                            _head_budget,
+                                            len(str(reply_text or "")),
+                                            _max_structured_chars,
+                                        )
+                                    except Exception:
+                                        pass
+                        except Exception as _factory_scene_budget_exc:
+                            try:
+                                logging.warning(
+                                    "[FRONT_FACTORY_MICRO_SCENE_BUDGET_FAIL] %s",
+                                    _factory_scene_budget_exc,
+                                )
+                            except Exception:
+                                pass
 
                         reply_text = _front_trim_to_complete_sentence(
                             reply_text,
