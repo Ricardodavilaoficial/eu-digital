@@ -6143,7 +6143,7 @@ Se ele informou nome, profissão, segmento ou contexto de uso, use essas informa
 7. SE for DISCOVERY:
 → escrever apenas o corpo útil do replyText
 → começar com cumprimento curto e apresentação como "MEI Robô"
-→ para mensagem genérica, social, vaga ou sobre assunto externo ao MEI Robô: trate como abertura social; use o assunto apenas para perceber o tom do lead (leve, brincalhão, preocupado, tenso, triste, curioso ou animado); responda com reação curta, humana e atemporal, usando apenas o contexto recebido; use no máximo 1 emoji; em seguida faça ponte curta dizendo que o MEI Robô ajuda quem atende pelo WhatsApp a responder melhor, organizar demandas, ganhar tempo e gerar mais resultado
+→ para mensagem genérica, social, vaga ou sobre assunto externo: responder como abertura social; cumprimentar, fazer uma reação curta e simpática à mensagem, sem afirmar fatos externos; em seguida fazer ponte curta dizendo que o MEI Robô ajuda quem atende pelo WhatsApp a responder melhor, organizar demandas, ganhar tempo e gerar mais resultado
 → para pergunta específica, comercial ou técnica: responder primeiro o ponto pedido usando os dados disponíveis
 → terminar o corpo útil antes de qualquer solicitação de dados do lead
 → a descoberta de nome e segmento é exclusiva do runtime
@@ -6199,9 +6199,9 @@ Mensagem do usuário: "{user_text}"
 Construa somente o corpo útil do replyText:
 
 1. Cumprimente e apresente "MEI Robô".
-2. Para mensagem genérica, social, vaga ou sobre assunto externo ao MEI Robô, trate como abertura social: use o assunto apenas para perceber o tom do lead (leve, brincalhão, preocupado, tenso, triste, curioso ou animado) e responda com reação curta, humana e atemporal, usando apenas o contexto recebido.
-3. Use no máximo 1 emoji.
-4. Faça uma ponte curta dizendo que o MEI Robô ajuda quem atende pelo WhatsApp a responder melhor, organizar demandas, ganhar tempo e gerar mais resultado.
+2. Para mensagem genérica, social, vaga ou sobre assunto externo, responda como abertura social: cumprimente, faça uma reação curta e simpática à mensagem, sem afirmar fatos externos, e faça uma ponte curta para o MEI Robô.
+3. Diga que o MEI Robô ajuda quem atende pelo WhatsApp a responder melhor, organizar demandas, ganhar tempo e gerar mais resultado.
+4. Termine com frase afirmativa e ponto final.
 5. Para pergunta específica, comercial ou técnica, responda primeiro o ponto pedido com os dados disponíveis.
 6. Termine com frase afirmativa e ponto final.
 
