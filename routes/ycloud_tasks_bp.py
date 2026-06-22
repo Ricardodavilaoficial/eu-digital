@@ -4658,7 +4658,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                     close_heur2 = False
                     if not _already_audio_plus_text:
-                        _tr2 = str(transcript or "").strip().lower()
+                        _tr2 = str(text_in or "").strip().lower()
                         if _tr2 and msg_type in ("audio", "voice", "ptt"):
                             close_words2 = (
                                 "assinar", "assinatura", "contratar", "contrato",
