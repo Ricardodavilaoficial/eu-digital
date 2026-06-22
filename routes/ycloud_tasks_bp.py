@@ -2261,7 +2261,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
         # Em produção, o status "waiting" pode falhar por drift de schema/endpoint de invite.
         # Para deixar o fluxo redondinho: se o MEI (uid resolvido) mandar áudio, aceitamos como VOZ.
-        voice_accept_any = (os.environ.get("VOICE_ACCEPT_ANY_AUDIO", "1") == "1")
+        voice_accept_any = (os.environ.get("VOICE_ACCEPT_ANY_AUDIO", "0") == "1")
 
         # UID efetivo para fluxo de voz (prioriza o link TTL de voice_links quando existir)
         voice_uid_effective = ((uid_voice_link or uid) or "").strip()
