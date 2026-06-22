@@ -13300,6 +13300,44 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 _free_spoken = str(out.get("spokenText") or spoken_text or _free_reply or "").strip()
 
                 try:
+                    # FRONT_FACTORY_MICRO_SCENE_HEAD_PRESERVE:
+                    # Se a montagem estruturada ja preservou uma abertura curta
+                    # antes da micro_scene_conversational e ela ainda cabe no
+                    # orcamento, o final guard deve preferir essa versao rica
+                    # em vez de voltar ao out["replyText"] antigo, que pode ser
+                    # apenas a microcena pura do Firestore.
+                    _factory_scene_for_head = str(
+                        (
+                            operational_contract
+                            if isinstance(operational_contract, dict)
+                            else {}
+                        ).get("micro_scene_conversational")
+                        or ""
+                    ).strip()
+                    if (
+                        _factory_scene_for_head
+                        and _ia_reply_candidate
+                        and _free_reply
+                        and _factory_scene_for_head in _ia_reply_candidate
+                        and _factory_scene_for_head in _free_reply
+                        and len(_ia_reply_candidate) > len(_free_reply)
+                        and len(_ia_reply_candidate) <= 820
+                    ):
+                        _free_reply = _ia_reply_candidate
+                        _free_spoken = str(spoken_text or _ia_reply_candidate).strip()
+                        try:
+                            logging.info(
+                                "[FRONT_FACTORY_MICRO_SCENE_HEAD_PRESERVE] applied=True old_len=%s new_len=%s scene_len=%s",
+                                len(_out_reply_candidate),
+                                len(_ia_reply_candidate),
+                                len(_factory_scene_for_head),
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+                try:
                     if (
                         raw_unqualified_lead_discovery_state
                         and _ia_reply_candidate
