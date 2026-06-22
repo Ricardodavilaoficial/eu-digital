@@ -1678,6 +1678,35 @@ def ycloud_flush_worker():
 
         if not final_text:
             logger.info("[tasks][flush] empty_text waKey=%s count=%s has_audio=%s", wa_key, len(items), bool(has_audio))
+            if has_audio:
+                fallback_text = "Não consegui entender esse áudio. Pode mandar em texto ou repetir rapidinho?"
+                to_e164 = ""
+                try:
+                    to_e164 = _to_plus_e164(str((last_payload or {}).get("from") or ""))
+                except Exception:
+                    to_e164 = str((last_payload or {}).get("from") or "").strip()
+                if to_e164:
+                    try:
+                        from providers.ycloud import send_text as _send_text  # type: ignore
+                        _ok_fb, _ = _send_text(to_e164=to_e164, text=fallback_text)
+                        try:
+                            _db().collection("platform_wa_outbox_logs").add({
+                                "createdAt": _fs_admin().SERVER_TIMESTAMP,
+                                "from": to_e164,
+                                "to": to_e164,
+                                "wamid": (wamids[-1] if wamids else ""),
+                                "msgType": "audio",
+                                "route": "audio_stt_fallback",
+                                "replyText": fallback_text,
+                                "audioUrl": "",
+                                "audioDebug": {"stt": {"ok": False, "reason": "buffer_empty_transcript"}},
+                                "eventKey": (event_keys[-1] if event_keys else ""),
+                                "sentOk": bool(_ok_fb),
+                            })
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        logger.warning("[tasks][flush] audio_fallback_send_failed waKey=%s err=%s", wa_key, f"{type(e).__name__}:{str(e)[:120]}")
             return jsonify({"ok": True, "reason": "empty_text", "count": len(items)}), 200
 
         synthetic_payload = dict(last_payload or {})
