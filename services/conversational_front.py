@@ -542,10 +542,16 @@ def _front_build_structured_assembly_reply(
         q_type = str(question_type or "broad").strip().lower()
 
         allow_structured_long = bool(
-            q_type != "simulation"
-            and (
-                mode == "SCENE"
-                or (mode == "DIRECT" and q_type == "broad")
+            (
+                q_type != "simulation"
+                and (
+                    mode == "SCENE"
+                    or (mode == "DIRECT" and q_type == "broad")
+                )
+            )
+            or (
+                q_type == "simulation"
+                and mode in ("SCENE", "DIRECT")
             )
         )
 
@@ -570,6 +576,33 @@ def _front_build_structured_assembly_reply(
                 selected_pack_id=selected_pack_id,
                 response_mode=response_mode,
             )
+
+        try:
+            if q_type == "simulation":
+                _simulation_source_type = str(
+                    (source or {}).get("contentSourceType") or ""
+                ).strip()
+                _simulation_has_structured_scene = bool(
+                    (source or {}).get("hasRichScene")
+                    or str((source or {}).get("micro_scene_conversational") or "").strip()
+                    or str((source or {}).get("micro_scene") or "").strip()
+                )
+                if not (
+                    _simulation_source_type in ("subsegment", "segment", "archetype")
+                    and _simulation_has_structured_scene
+                ):
+                    try:
+                        logging.info(
+                            "[CONVERSATIONAL_FRONT][STRUCTURED_ASSEMBLY_SKIP] mode=%s q_type=%s source_type=%s reason=simulation_without_structured_rich_scene",
+                            mode,
+                            q_type,
+                            _simulation_source_type,
+                        )
+                    except Exception:
+                        pass
+                    return {}
+        except Exception:
+            return {}
 
         core = str((source or {}).get("core") or "").strip()
         if not core:
@@ -12426,6 +12459,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     _reply_source_before_structured_assembly = str(reply_source or "").strip()
                     reply_text = str(structured_assembly_result.get("replyText") or "").strip()
                     spoken_text = str(structured_assembly_result.get("spokenText") or reply_text).strip()
+                    try:
+                        if isinstance(out, dict):
+                            out["replyText"] = reply_text
+                            out["spokenText"] = spoken_text
+                    except Exception:
+                        pass
                     reply_source = "front_structured_python_assembly"
                     accepted = True
                     ia_accepted = True
