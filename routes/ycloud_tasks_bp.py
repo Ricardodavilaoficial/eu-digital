@@ -2206,6 +2206,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         owner_name = _get_owner_name(uid) if uid else ""
 
         # --- 1) ÁUDIO: fluxo de VOZ (ingest) ---
+        voice_link_active = bool(uid_voice_link)
         voice_waiting = False
         try:
             prof = _db().collection("profissionais").document(uid).get()
@@ -2249,7 +2250,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # Heurística: alguns invites antigos não carimbam status no Firestore.
             # Se ainda não existe voiceId e status vier vazio, tratamos o 1º áudio como parte do onboarding.
             try:
-                if (not voice_waiting) and (os.environ.get("VOICE_AUTO_ACCEPT_FIRST_AUDIO", "1") != "0"):
+                if (not voice_waiting) and voice_link_active and (os.environ.get("VOICE_AUTO_ACCEPT_FIRST_AUDIO", "0") != "0"):
                     vc_voice_id = str(vc.get("voiceId") or vc.get("providerVoiceId") or "").strip()
                     if (not vc_status) and (not wa_status) and (not vc_voice_id):
                         voice_waiting = True
@@ -2259,14 +2260,21 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         except Exception:
             voice_waiting = False
 
+        # voice_links is an explicit system signal from the voice invite/link flow.
+        # Without it (or a waiting status), ordinary audio must continue to STT.
+        if voice_link_active and not voice_waiting:
+            voice_waiting = True
+            logger.info("[tasks] voice_waiting_link_active uid=%s from=%s", uid, from_e164)
+
         # Em produção, o status "waiting" pode falhar por drift de schema/endpoint de invite.
-        # Para deixar o fluxo redondinho: se o MEI (uid resolvido) mandar áudio, aceitamos como VOZ.
-        voice_accept_any = (os.environ.get("VOICE_ACCEPT_ANY_AUDIO", "0") == "1")
+        # VOICE_ACCEPT_ANY_AUDIO agora só vale dentro de contexto sistêmico de voz.
+        voice_accept_any_raw = (os.environ.get("VOICE_ACCEPT_ANY_AUDIO", "0") == "1")
+        voice_accept_any = bool(voice_accept_any_raw and (voice_link_active or voice_waiting))
 
         # UID efetivo para fluxo de voz (prioriza o link TTL de voice_links quando existir)
         voice_uid_effective = ((uid_voice_link or uid) or "").strip()
 
-        if voice_uid_effective and msg_type in ("audio", "voice", "ptt") and (not voice_waiting) and (not voice_accept_any):
+        if voice_link_active and voice_uid_effective and msg_type in ("audio", "voice", "ptt") and (not voice_waiting) and (not voice_accept_any):
             # Por enquanto: áudio do cliente só é processado no onboarding de VOZ.
             # Isso evita o "áudio nada a ver" (TTS) quando o usuário manda áudio fora do fluxo de voz.
             try:
