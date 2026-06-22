@@ -3470,7 +3470,22 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             pass
 
                         # ✅ Regra de canal (sem alterar linguagem)
+                        # Preserva a superfície do front antes da closure.
+                        # Se o SEND_LINK for rebaixado por não haver pedido explícito de link,
+                        # a resposta comercial original não pode continuar substituída por frase fixa.
+                        try:
+                            _pre_closure_reply = str(out.get("replyText") or "").strip()
+                            _pre_closure_spoken = str(out.get("spokenText") or "").strip()
+                            _pre_closure_prefers_text = bool(out.get("prefersText"))
+                            _pre_closure_intent_final = str(out.get("intentFinal") or "").strip()
+                        except Exception:
+                            _pre_closure_reply = ""
+                            _pre_closure_spoken = ""
+                            _pre_closure_prefers_text = False
+                            _pre_closure_intent_final = ""
+
                         out = _apply_sales_text_only_closure(out, ctx)
+
                         # ✅ Produto: SEND_LINK = venda fechada (link-only, sem pergunta)
                         # Guard-rail: NÃO mandar link cedo se o usuário não pediu link/site.
                         try:
@@ -3492,8 +3507,21 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                                         "Fechado. Te enviei o link no texto agora pra você copiar e assinar."
                                     )).strip()
                                 else:
-                                    # downgrade seguro: mantém reply do front e não força link-only
+                                    # Downgrade seguro: mantém a resposta do front e não força link-only.
                                     out["planNextStep"] = "NONE"
+                                    if str(out.get("textOnlyReason") or "").strip() == "sales_closure_send_link":
+                                        if _pre_closure_reply:
+                                            out["replyText"] = _pre_closure_reply
+                                        if _pre_closure_spoken:
+                                            out["spokenText"] = _pre_closure_spoken
+                                        else:
+                                            out["spokenText"] = out.get("replyText") or ""
+                                        out["prefersText"] = _pre_closure_prefers_text
+                                        out.pop("textOnlyReason", None)
+                                        if _pre_closure_intent_final:
+                                            out["intentFinal"] = _pre_closure_intent_final
+                                        elif str(out.get("intentFinal") or "").strip().upper() == "ATIVAR":
+                                            out.pop("intentFinal", None)
                         except Exception:
                             pass
 
