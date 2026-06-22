@@ -12440,17 +12440,14 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     response_mode=response_mode,
                     next_step=next_step,
                     ai_turns=ai_turns,
-                    lead_name=(
-                    _front_sanitize_lead_name_candidate(
+                    lead_name=_front_sanitize_lead_name_candidate(
                         inferred_lead_name or name_hint,
                         segment_refs=[
                             segment_hint,
                             inferred_lead_segment_raw,
                             inferred_lead_segment,
                         ],
-                    )
-                    if has_name else ""
-                ),
+                    ),
                     lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
                     question_type=question_type,
                 )
