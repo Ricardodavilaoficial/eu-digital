@@ -2303,19 +2303,6 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         # UID efetivo para fluxo de voz (prioriza o link TTL de voice_links quando existir)
         voice_uid_effective = ((uid_voice_link or uid) or "").strip()
 
-        if voice_link_active and voice_uid_effective and msg_type in ("audio", "voice", "ptt") and (not voice_waiting) and (not voice_accept_any):
-            # Por enquanto: áudio do cliente só é processado no onboarding de VOZ.
-            # Isso evita o "áudio nada a ver" (TTS) quando o usuário manda áudio fora do fluxo de voz.
-            try:
-                from providers.ycloud import send_text as _send_text  # type: ignore
-                _send_text(
-                    to_e164=from_e164,
-                    text="📌 Recebi seu áudio 🙂\nNo momento eu só entendo áudio quando você está ativando a Voz do Atendimento.\nSe quiser falar comigo agora, me manda em texto aqui no WhatsApp."
-                )
-            except Exception:
-                logger.exception("[tasks] customer_audio: falha ao enviar aviso texto wamid=%s eventKey=%s", wamid, event_key)
-            logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "CUSTOMER_AUDIO_NOT_WAITING_TEXT_ONLY", event_key, wamid)
-            return jsonify({"ok": True, "audio": "ignored_not_waiting"}), 200
         if voice_uid_effective and msg_type in ("audio", "voice", "ptt") and (voice_waiting or voice_accept_any):
             try:
                 from services.voice_wa_download import download_media_bytes  # type: ignore
