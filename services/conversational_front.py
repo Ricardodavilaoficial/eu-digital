@@ -14570,6 +14570,29 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 except Exception:
                     pass
 
+                try:
+                    _structured_audio_spoken_final = str(locals().get("_structured_audio_spoken") or "").strip()
+                    _final_out = out if isinstance(out, dict) else {}
+                    _final_source = str(_final_out.get("replySource") or reply_source or "").strip()
+                    _final_next_step = str(_final_out.get("nextStep") or next_step or "").strip().upper()
+                    if (
+                        _structured_audio_spoken_final
+                        and bool(locals().get("_is_audio_policy"))
+                        and bool(is_lead)
+                        and _final_source == "front_structured_python_assembly"
+                        and _final_next_step != "SEND_LINK"
+                    ):
+                        out["spokenText"] = _structured_audio_spoken_final
+                        try:
+                            logging.info(
+                                "[FRONT_STRUCTURED_AUDIO_SCENE_SPOKEN_FINAL] applied=True spoken_len=%s",
+                                len(_structured_audio_spoken_final),
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
                 return out
             except Exception as _identity_finalizer_error:
                 try:
