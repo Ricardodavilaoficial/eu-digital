@@ -754,6 +754,159 @@ def _front_build_structured_assembly_reply(
         }
     except Exception:
         return {}
+
+
+def _front_build_structured_audio_spoken_text(*, reply_text: str, micro_scene: str, max_chars: int = 460) -> str:
+    """
+    Builds a compact spoken surface from existing structured content only.
+    It uses sentence boundaries and character budget; it does not generate copy.
+    """
+    try:
+        max_chars = int(max_chars or 0)
+    except Exception:
+        max_chars = 0
+
+    if max_chars < 160:
+        max_chars = 160
+
+    def _norm(value: str) -> str:
+        return " ".join(str(value or "").split()).strip()
+
+    def _sentences(value: str):
+        text = _norm(value)
+        if not text:
+            return []
+        parts = [
+            m.group(0).strip()
+            for m in re.finditer(r"[^.!?]+[.!?]?", text)
+            if m.group(0).strip()
+        ]
+        return parts or [text]
+
+    def _tail_to_word_boundary(value: str, budget: int) -> str:
+        text = _norm(value)
+        try:
+            budget = int(budget or 0)
+        except Exception:
+            budget = 0
+        if budget <= 0 or len(text) <= budget:
+            return text
+        cut = text[-budget:].strip()
+        first_space = cut.find(" ")
+        if 0 < first_space <= max(24, int(budget * 0.25)):
+            cut = cut[first_space + 1 :].strip()
+        cut = cut.strip(" ,;:-")
+        if cut and cut[-1] not in ".!?":
+            cut += "."
+        return cut
+
+    def _head_for_budget(value: str, budget: int) -> str:
+        text = _norm(value)
+        try:
+            budget = int(budget or 0)
+        except Exception:
+            budget = 0
+        if not text or budget < 120:
+            return ""
+        if len(text) <= budget:
+            return text if text[-1:] in ".!?" else ""
+
+        cut = text[:budget].rstrip()
+        sentence_end = max(cut.rfind("."), cut.rfind("!"), cut.rfind("?"))
+        if sentence_end >= max(80, int(budget * 0.55)):
+            return cut[: sentence_end + 1].strip()
+
+        structural_break = max(
+            cut.rfind(", "),
+            cut.rfind("; "),
+            cut.rfind(": "),
+        )
+        if structural_break >= 120:
+            head = cut[:structural_break].strip(" ,;:-")
+            if head:
+                return head + "."
+
+        return ""
+
+    try:
+        scene = _norm(micro_scene)
+        source = _norm(reply_text)
+        if not scene:
+            return ""
+
+        if len(scene) <= max_chars:
+            return scene
+
+        prefix = ""
+        if source and scene in source:
+            raw_prefix = source.partition(scene)[0].strip()
+            prefix_units = _sentences(raw_prefix)
+            if prefix_units:
+                first_prefix = prefix_units[0]
+                if len(first_prefix) <= min(90, int(max_chars * 0.25)):
+                    prefix = first_prefix
+
+        scene_budget = max_chars - len(prefix) - (1 if prefix else 0)
+        if scene_budget < 120:
+            prefix = ""
+            scene_budget = max_chars
+
+        scene_units = _sentences(scene)
+        if not scene_units:
+            return ""
+
+        tail_cap = max(120, int(scene_budget * 0.74))
+        tail_start = len(scene_units) - 1
+        tail = scene_units[-1]
+
+        for idx in range(len(scene_units) - 1, -1, -1):
+            candidate = " ".join(scene_units[idx:]).strip()
+            if len(candidate) <= tail_cap:
+                tail_start = idx
+                tail = candidate
+            elif idx == len(scene_units) - 1:
+                tail_start = idx
+                tail = _tail_to_word_boundary(candidate, min(tail_cap, scene_budget))
+                break
+            else:
+                break
+
+        head = ""
+        head_budget = scene_budget - len(tail) - (1 if tail else 0)
+        if head_budget >= 70 and tail_start > 0:
+            head_source = " ".join(scene_units[:tail_start]).strip()
+            head = _head_for_budget(head_source, head_budget)
+
+        parts = []
+        for part in (prefix, head, tail):
+            part = _norm(part)
+            if part and part not in parts:
+                parts.append(part)
+
+        out = _norm(" ".join(parts))
+
+        if len(out) > max_chars and head:
+            overflow = len(out) - max_chars
+            head_budget = max(0, head_budget - overflow - 2)
+            head = _head_for_budget(" ".join(scene_units[:tail_start]).strip(), head_budget)
+            parts = []
+            for part in (prefix, head, tail):
+                part = _norm(part)
+                if part and part not in parts:
+                    parts.append(part)
+            out = _norm(" ".join(parts))
+
+        if len(out) > max_chars and prefix:
+            out = _norm(" ".join([p for p in (head, tail) if p]))
+
+        if len(out) > max_chars:
+            out = _front_trim_to_complete_sentence(out, max_chars)
+
+        return out if len(out) >= 80 else ""
+    except Exception:
+        return ""
+
+
 def _front_fs_client():
     """
     Firestore canônico via firebase_admin.
@@ -12678,6 +12831,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             pass
                     else:
                         _max_structured_chars = 520 if _is_audio_policy else 800
+                        _structured_audio_spoken = ""
+                        _structured_audio_source_len = len(str(spoken_text or reply_text or ""))
+                        _structured_audio_scene_len = len(str(_contract.get("micro_scene_conversational") or ""))
+
+                        try:
+                            if (
+                                _is_audio_policy
+                                and bool(is_lead)
+                                and str(next_step or "").strip().upper() != "SEND_LINK"
+                            ):
+                                _structured_audio_spoken = _front_build_structured_audio_spoken_text(
+                                    reply_text=spoken_text or reply_text,
+                                    micro_scene=str(_contract.get("micro_scene_conversational") or "").strip(),
+                                    max_chars=460,
+                                )
+                        except Exception:
+                            _structured_audio_spoken = ""
 
                         # FRONT_FACTORY_MICRO_SCENE_BUDGET:
                         # Guarda conservadora da fabrica:
@@ -12800,10 +12970,23 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             reply_text,
                             _max_structured_chars,
                         )
-                        spoken_text = _front_trim_to_complete_sentence(
-                            spoken_text or reply_text,
-                            520 if _is_audio_policy else _max_structured_chars,
-                        )
+                        if _structured_audio_spoken:
+                            spoken_text = _structured_audio_spoken
+                            try:
+                                logging.info(
+                                    "[FRONT_STRUCTURED_AUDIO_SCENE_SPOKEN] applied=True source_len=%s scene_len=%s spoken_len=%s max_chars=%s",
+                                    _structured_audio_source_len,
+                                    _structured_audio_scene_len,
+                                    len(str(_structured_audio_spoken or "")),
+                                    460,
+                                )
+                            except Exception:
+                                pass
+                        else:
+                            spoken_text = _front_trim_to_complete_sentence(
+                                spoken_text or reply_text,
+                                520 if _is_audio_policy else _max_structured_chars,
+                            )
             except Exception:
                 pass
 
