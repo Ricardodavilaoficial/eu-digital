@@ -161,3 +161,153 @@ def _tts_google(*, text: str, lang: str = "pt-BR") -> bytes:
         audio_config=audio_config,
     )
     return bytes(resp.audio_content or b"")
+
+
+
+def _tts_google_owner_clone(*, text: str, voice_cloning_key: str, lang: str = "pt-BR") -> bytes:
+    """
+    Google Chirp / Instant Custom Voice.
+
+    A chave da voz clonada deve vir de configuração segura.
+    Nunca logar voice_cloning_key.
+
+    Se a biblioteca/ambiente não suportar voice_clone, esta função levanta erro
+    e o chamador institucional cai para o Google padrão.
+    """
+    try:
+        from google.cloud import texttospeech_v1beta1 as texttospeech  # type: ignore
+    except Exception:
+        from google.cloud import texttospeech  # type: ignore
+
+    client = texttospeech.TextToSpeechClient()
+
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+    language_code = (os.getenv("TTS_LANGUAGE_CODE") or lang or "pt-BR").strip()
+
+    voice_clone = texttospeech.VoiceCloneParams(
+        voice_cloning_key=voice_cloning_key,
+    )
+    voice = texttospeech.VoiceSelectionParams(
+        language_code=language_code,
+        voice_clone=voice_clone,
+    )
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MP3,
+    )
+
+    resp = client.synthesize_speech(
+        input=synthesis_input,
+        voice=voice,
+        audio_config=audio_config,
+    )
+    return bytes(resp.audio_content or b"")
+
+
+def tts_institutional_bytes(
+    *,
+    text: str,
+    voice_id: Optional[str] = None,
+    lang: str = "pt-BR",
+    mime: str = "audio/mpeg",
+    tts_owner: Optional[str] = None,
+    telemetry: Optional[dict] = None,
+) -> bytes:
+    """
+    TTS institucional/vendas do MEI Robô.
+
+    Escopo:
+      - Google padrão atual como default absoluto.
+      - Google voz clonada do dono apenas quando explicitamente ativada.
+      - Em qualquer falha, volta para Google padrão.
+      - Não usa ElevenLabs.
+      - Não altera o contrato amplo de tts_bytes().
+    """
+    text = (text or "").strip()
+    if not text:
+        return b""
+
+    tel = telemetry if isinstance(telemetry, dict) else None
+
+    raw_mode = (os.getenv("INSTITUTIONAL_GOOGLE_TTS_MODE") or "standard").strip().lower()
+    if raw_mode in ("", "default", "google", "google_standard"):
+        mode = "standard"
+    else:
+        mode = raw_mode
+
+    fallback_reason = ""
+
+    def _record(*, voice_mode: str, provider_effective: str, reason: str, ok: bool) -> None:
+        if tel is not None:
+            try:
+                tel.update(
+                    {
+                        "voiceMode": voice_mode,
+                        "providerEffective": provider_effective,
+                        "fallbackReason": reason or "",
+                        "textLen": len(text),
+                        "mime": mime or "audio/mpeg",
+                        "ttsOwner": (tts_owner or ""),
+                        "ok": bool(ok),
+                    }
+                )
+            except Exception:
+                pass
+
+    if mode not in ("standard", "owner_clone"):
+        fallback_reason = "invalid_mode"
+        audio = _tts_google(text=text, lang=lang)
+        _record(
+            voice_mode="standard",
+            provider_effective="google",
+            reason=fallback_reason,
+            ok=bool(audio),
+        )
+        return audio
+
+    if mode == "owner_clone":
+        clone_key = (os.getenv("INSTITUTIONAL_GOOGLE_TTS_OWNER_CLONE_KEY") or "").strip()
+        if clone_key:
+            try:
+                audio = _tts_google_owner_clone(
+                    text=text,
+                    voice_cloning_key=clone_key,
+                    lang=lang,
+                )
+                if audio:
+                    _record(
+                        voice_mode="owner_clone",
+                        provider_effective="google_owner_clone",
+                        reason="",
+                        ok=True,
+                    )
+                    return audio
+                fallback_reason = "owner_clone_empty_audio"
+            except Exception as e:
+                fallback_reason = f"owner_clone_failed:{type(e).__name__}"
+        else:
+            fallback_reason = "missing_owner_clone_key"
+
+        audio = _tts_google(text=text, lang=lang)
+        _record(
+            voice_mode="owner_clone",
+            provider_effective="google",
+            reason=fallback_reason,
+            ok=bool(audio),
+        )
+        if fallback_reason:
+            log.info(
+                "[tts][institutional] owner_clone fallback provider=google reason=%s textLen=%s owner=%s",
+                fallback_reason,
+                len(text),
+                tts_owner or "",
+            )
+        return audio
+
+    audio = _tts_google(text=text, lang=lang)
+    _record(
+        voice_mode="standard",
+        provider_effective="google",
+        reason="",
+        ok=bool(audio),
+    )
+    return audio

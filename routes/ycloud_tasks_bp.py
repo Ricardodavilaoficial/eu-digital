@@ -409,6 +409,40 @@ try:
 except Exception:
     _tts_bytes_native = None  # type: ignore
 
+try:
+    from services.tts_fallback import tts_institutional_bytes as _tts_institutional_bytes_native  # type: ignore
+except Exception:
+    _tts_institutional_bytes_native = None  # type: ignore
+
+
+def _native_institutional_tts_bytes(*, text: str, voice_id: str = "", tts_owner: str = "worker", audio_debug: dict | None = None) -> bytes:
+    """
+    TTS institucional/vendas.
+
+    Usa a função institucional nova quando disponível.
+    Se ela não existir, preserva o caminho antigo.
+    """
+    fn = _tts_institutional_bytes_native or _tts_bytes_native
+    if fn is None:
+        return b""
+
+    if fn is _tts_institutional_bytes_native:
+        telemetry = None
+        try:
+            if isinstance(audio_debug, dict):
+                telemetry = audio_debug.setdefault("institutionalVoice", {})
+        except Exception:
+            telemetry = None
+
+        return fn(
+            text=text,
+            voice_id=voice_id,
+            tts_owner=tts_owner,
+            telemetry=telemetry,
+        )
+
+    return fn(text=text, voice_id=voice_id)
+
 
 _IDENTITY_MODE = (os.environ.get("IDENTITY_MODE") or "on").strip().lower()  # on|off
 
@@ -3773,10 +3807,15 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     if not audio_url:
                         try:
                             voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
-                            if _tts_bytes_native and voice_id:
+                            if (_tts_institutional_bytes_native or _tts_bytes_native) and voice_id:
                                 nm = (display_name or "").strip()
                                 ack = _build_ack_audio(nm)
-                                b = _tts_bytes_native(text=ack, voice_id=voice_id)
+                                b = _native_institutional_tts_bytes(
+                                    text=ack,
+                                    voice_id=voice_id,
+                                    tts_owner="worker",
+                                    audio_debug=audio_debug,
+                                )
                                 if b and len(b) > 256:
                                     audio_url = _upload_audio_bytes_to_signed_url(
                                         b=b,
@@ -3821,7 +3860,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     if not audio_url:
                         try:
                             voice_id = (os.environ.get("INSTITUTIONAL_VOICE_ID") or "").strip()
-                            if _tts_bytes_native and voice_id:
+                            if (_tts_institutional_bytes_native or _tts_bytes_native) and voice_id:
                                 nm = (display_name or "").strip()
                                 try:
                                     if not nm and wa_key_effective and _IDENTITY_MODE != "off":
@@ -3830,7 +3869,12 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                     pass
 
                                 ack = _build_ack_audio(nm)
-                                b = _tts_bytes_native(text=ack, voice_id=voice_id)
+                                b = _native_institutional_tts_bytes(
+                                    text=ack,
+                                    voice_id=voice_id,
+                                    tts_owner="worker",
+                                    audio_debug=audio_debug,
+                                )
 
                                 if b and len(b) > 256:
                                     audio_url = _upload_audio_bytes_to_signed_url(
@@ -4279,7 +4323,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                         tts_text_final_used = tts_text
 
-                        if _tts_bytes_native is None:
+                        if _tts_bytes_native is None and _tts_institutional_bytes_native is None:
                             audio_debug = dict(audio_debug or {})
                             audio_debug["tts"] = {
                                 "ok": False,
@@ -4302,10 +4346,18 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                         "retryLen": len(retry_text),
                                     }
 
-                                b = _tts_bytes_native(
-                                    text=tts_text_final_used,
-                                    voice_id=voice_id,
-                                )
+                                if not bool(locals().get("uid")):
+                                    b = _native_institutional_tts_bytes(
+                                        text=tts_text_final_used,
+                                        voice_id=voice_id,
+                                        tts_owner="worker",
+                                        audio_debug=audio_debug,
+                                    )
+                                else:
+                                    b = _tts_bytes_native(
+                                        text=tts_text_final_used,
+                                        voice_id=voice_id,
+                                    )
 
                                 if b and len(b) > 256:
                                     audio_url = _upload_audio_bytes_to_signed_url(
