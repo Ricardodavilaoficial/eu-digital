@@ -240,5 +240,23 @@
       "sigilo e cuidado documental",
       "urgência percebida sem decisão técnica"
     ]
-  }
+  },
+  "routing_identity_anchors": [
+    "advogado",
+    "advogada",
+    "advogado trabalhista",
+    "advogada trabalhista",
+    "advocacia individual",
+    "advogado autônomo",
+    "advogada autônoma",
+    "advogado particular",
+    "advogada particular"
+  ],
+  "routing_negative_anchors": [
+    "escritório de advocacia",
+    "sociedade de advogados",
+    "equipe jurídica",
+    "departamento jurídico",
+    "vários advogados"
+  ]
 }

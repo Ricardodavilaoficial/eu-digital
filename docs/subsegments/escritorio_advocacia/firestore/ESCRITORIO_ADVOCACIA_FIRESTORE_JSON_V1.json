@@ -245,5 +245,21 @@
       "urgência percebida sem decisão técnica",
       "área provável e routing_target"
     ]
-  }
+  },
+  "routing_identity_anchors": [
+    "escritório de advocacia",
+    "sociedade de advogados",
+    "equipe jurídica",
+    "departamento jurídico",
+    "vários advogados",
+    "banca de advocacia",
+    "advogados associados"
+  ],
+  "routing_negative_anchors": [
+    "advocacia individual",
+    "advogado autônomo",
+    "advogada autônoma",
+    "advogado particular",
+    "advogada particular"
+  ]
 }

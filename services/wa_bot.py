@@ -1560,6 +1560,30 @@ def _compact_front_kb_doc(
             if block:
                 out["behavior_components"] = block
 
+        # FRONT_KB_GENERIC_SUBSEGMENT_TARGET_V1_COMPACT_FIELDS
+        if "enabled" in d:
+            out["enabled"] = bool(d.get("enabled"))
+        if d.get("negative_keywords"):
+            out["negative_keywords"] = [
+                _clip_front_text(x, 60)
+                for x in (d.get("negative_keywords") or [])[:8]
+                if _clip_front_text(x, 60)
+            ]
+
+        # FRONT_KB_GENERIC_SUBSEGMENT_TARGET_V1_ROUTING_ANCHORS
+        if d.get("routing_identity_anchors"):
+            out["routing_identity_anchors"] = [
+                _clip_front_text(x, 80)
+                for x in (d.get("routing_identity_anchors") or [])[:10]
+                if _clip_front_text(x, 80)
+            ]
+        if d.get("routing_negative_anchors"):
+            out["routing_negative_anchors"] = [
+                _clip_front_text(x, 80)
+                for x in (d.get("routing_negative_anchors") or [])[:10]
+                if _clip_front_text(x, 80)
+            ]
+
         return out
     except Exception:
         return {}
@@ -2026,7 +2050,9 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
                     "primary_goal",
                     "customer_noun",
                     "conversion_noun",
+                    "enabled",
                     "keywords",
+                    "negative_keywords",
                     "common_intents",
                     "preferred_capabilities",
                     "operational_ritual",
@@ -2425,6 +2451,330 @@ def _front_find_kb_map_anywhere(obj: Any, target_key: str, max_depth: int = 5) -
         return {}
 
 
+# FRONT_KB_GENERIC_SUBSEGMENT_TARGET_V1
+# Seleção genérica KB-driven de subsegmentos antes do prune.
+# Não contém palavras-chave de negócio; usa somente campos publicados no Firestore.
+def _front_kb_match_norm_v1(value: object) -> str:
+    try:
+        import re
+        import unicodedata
+
+        s = str(value or "")
+        s = unicodedata.normalize("NFKD", s)
+        s = "".join(ch for ch in s if not unicodedata.combining(ch))
+        s = s.lower()
+        s = re.sub(r"[^a-z0-9]+", " ", s)
+        return " ".join(s.split())
+    except Exception:
+        return str(value or "").lower().strip()
+
+
+def _front_kb_match_tokens_v1(value: object) -> set:
+    try:
+        return {tok for tok in _front_kb_match_norm_v1(value).split() if len(tok) >= 3}
+    except Exception:
+        return set()
+
+
+def _front_kb_clean_list_v1(value: object) -> list:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple, set)):
+        out = []
+        for item in value:
+            s = str(item or "").strip()
+            if s:
+                out.append(s)
+        return out
+    return []
+
+
+def _front_kb_identity_values_for_doc_v1(doc_key: str, doc: object) -> list:
+    """Valores identitários vindos do KB.
+
+    Se routing_identity_anchors existir, ele é soberano para seleção genérica.
+    Caso contrário, usa fallback conservador por id/name/keywords.
+    """
+    try:
+        if not isinstance(doc, dict):
+            return []
+
+        explicit = _front_kb_clean_list_v1(doc.get("routing_identity_anchors"))
+        if explicit:
+            return [str(v or "").strip() for v in explicit if str(v or "").strip()]
+
+        values = [
+            str(doc_key or ""),
+            str(doc.get("id") or ""),
+            str(doc.get("name") or ""),
+        ]
+
+        for item in _front_kb_clean_list_v1(doc.get("keywords")):
+            values.append(str(item or ""))
+
+        return [v for v in values if str(v or "").strip()]
+    except Exception:
+        return []
+
+def _front_kb_identity_terms_for_doc_v1(doc_key: str, doc: object) -> set:
+    try:
+        terms = set()
+        for value in _front_kb_identity_values_for_doc_v1(doc_key, doc):
+            terms.update(_front_kb_match_tokens_v1(value))
+        return terms
+    except Exception:
+        return set()
+
+
+def _front_kb_identity_phrases_for_doc_v1(doc_key: str, doc: object) -> set:
+    try:
+        phrases = set()
+        for value in _front_kb_identity_values_for_doc_v1(doc_key, doc):
+            norm = _front_kb_match_norm_v1(value)
+            if norm and len(norm) >= 4:
+                phrases.add(norm)
+        return phrases
+    except Exception:
+        return set()
+
+
+def _front_kb_negative_matches_current_text_v1(user_text: str, doc: object) -> bool:
+    try:
+        if not isinstance(doc, dict):
+            return False
+
+        q_norm = _front_kb_match_norm_v1(user_text)
+        q_tokens = _front_kb_match_tokens_v1(user_text)
+
+        items = []
+        items.extend(_front_kb_clean_list_v1(doc.get("routing_negative_anchors")))
+        items.extend(_front_kb_clean_list_v1(doc.get("negative_keywords")))
+
+        for item in items:
+            norm = _front_kb_match_norm_v1(item)
+            toks = _front_kb_match_tokens_v1(item)
+
+            if not norm or not toks:
+                continue
+
+            if len(toks) == 1:
+                tok = next(iter(toks))
+                if tok in q_tokens:
+                    return True
+                continue
+
+            if len(norm) >= 4 and norm in q_norm:
+                return True
+            if toks.issubset(q_tokens):
+                return True
+
+        return False
+    except Exception:
+        return False
+
+def _front_score_subsegment_for_current_text_v1(user_text: str, doc_key: str, doc: object) -> int:
+    """Score genérico KB-driven.
+
+    id/name/keywords destravam seleção.
+    Contexto reforça apenas depois.
+    negative_keywords veta.
+    """
+    try:
+        if not isinstance(doc, dict):
+            return 0
+        if doc.get("enabled") is False:
+            return 0
+        if _front_kb_negative_matches_current_text_v1(user_text, doc):
+            return 0
+
+        q_norm = _front_kb_match_norm_v1(user_text)
+        q_tokens = _front_kb_match_tokens_v1(user_text)
+        if not q_norm or not q_tokens:
+            return 0
+
+        score = 0
+        identity_score = 0
+
+        synthetic_id = str(doc.get("id") or doc_key or "").strip()
+
+        for raw, weight in (
+            (synthetic_id, 1),
+            (doc.get("name"), 6),
+        ):
+            if not raw:
+                continue
+            norm = _front_kb_match_norm_v1(raw)
+            toks = _front_kb_match_tokens_v1(raw)
+            overlap = len(q_tokens.intersection(toks))
+            if overlap:
+                points = overlap * weight
+                score += points
+                identity_score += points
+            if norm and len(norm) >= 4 and norm in q_norm:
+                points = weight + 5
+                score += points
+                identity_score += points
+
+        for item in _front_kb_clean_list_v1(doc.get("keywords")):
+            norm = _front_kb_match_norm_v1(item)
+            toks = _front_kb_match_tokens_v1(item)
+            overlap = len(q_tokens.intersection(toks))
+            if overlap:
+                points = overlap * 7
+                score += points
+                identity_score += points
+            if norm and len(norm) >= 4 and norm in q_norm:
+                points = 12
+                score += points
+                identity_score += points
+
+        if identity_score < 8:
+            return 0
+
+        for field in ("service_noun", "conversion_noun", "primary_goal", "one_liner"):
+            raw = doc.get(field)
+            if not raw:
+                continue
+            overlap = len(q_tokens.intersection(_front_kb_match_tokens_v1(raw)))
+            if overlap:
+                score += overlap
+
+        for item in _front_kb_clean_list_v1(doc.get("common_intents")):
+            norm = _front_kb_match_norm_v1(item)
+            toks = _front_kb_match_tokens_v1(item)
+            overlap = len(q_tokens.intersection(toks))
+            if norm and len(norm) >= 8 and norm in q_norm:
+                score += 4
+            elif overlap >= 2:
+                score += overlap
+
+        return max(int(score), 0)
+    except Exception:
+        return 0
+
+def _front_select_kb_subsegment_ids_from_text_v1(
+    *,
+    user_text: str,
+    subsegments: object,
+    max_ids: int = 1,
+    min_score: int = 16,
+    relative_floor: float = 0.85,
+) -> list:
+    """Seleciona top 1 apenas quando há âncora identitária rara/específica.
+
+    Conservador por padrão:
+    - id/name/keywords são a fonte de identidade;
+    - common_intents e campos contextuais não destravam seleção;
+    - negative_keywords vetam com regra segura;
+    - enabled=False nunca entra;
+    - termo comum no corpus não destrava seleção;
+    - ambiguidade forte retorna [].
+    """
+    try:
+        if not isinstance(subsegments, dict) or not str(user_text or "").strip():
+            return []
+
+        q_norm = _front_kb_match_norm_v1(user_text)
+        q_tokens = _front_kb_match_tokens_v1(user_text)
+        if not q_norm or not q_tokens:
+            return []
+
+        docs = {
+            str(k or ""): v
+            for k, v in subsegments.items()
+            if str(k or "").strip() and isinstance(v, dict) and v.get("enabled") is not False
+        }
+
+        if not docs:
+            return []
+
+        corpus_size = max(1, len(docs))
+        rare_limit = max(2, int(corpus_size * 0.02))
+
+        token_doc_counts = {}
+        phrase_doc_counts = {}
+
+        for key, doc in docs.items():
+            for tok in _front_kb_identity_terms_for_doc_v1(key, doc):
+                token_doc_counts[tok] = token_doc_counts.get(tok, 0) + 1
+
+            for phrase in _front_kb_identity_phrases_for_doc_v1(key, doc):
+                phrase_tokens = _front_kb_match_tokens_v1(phrase)
+                if len(phrase_tokens) >= 2:
+                    phrase_doc_counts[phrase] = phrase_doc_counts.get(phrase, 0) + 1
+
+        ranked = []
+
+        for key, doc in docs.items():
+            if _front_kb_negative_matches_current_text_v1(user_text, doc):
+                continue
+
+            identity_terms = _front_kb_identity_terms_for_doc_v1(key, doc)
+            identity_phrases = _front_kb_identity_phrases_for_doc_v1(key, doc)
+
+            phrase_hits = []
+            for phrase in identity_phrases:
+                phrase_tokens = _front_kb_match_tokens_v1(phrase)
+                if len(phrase_tokens) < 2:
+                    continue
+                if phrase and phrase in q_norm and int(phrase_doc_counts.get(phrase) or 0) <= rare_limit:
+                    phrase_hits.append(phrase)
+
+            token_hits = []
+            for tok in q_tokens.intersection(identity_terms):
+                if len(tok) >= 5 and int(token_doc_counts.get(tok) or 0) <= rare_limit:
+                    token_hits.append(tok)
+
+            # Sem âncora identitária rara, não protege nada.
+            if not phrase_hits and not token_hits:
+                continue
+
+            base_score = _front_score_subsegment_for_current_text_v1(
+                user_text=str(user_text or ""),
+                doc_key=key,
+                doc=doc,
+            )
+            if base_score <= 0:
+                continue
+
+            phrase_bonus = sum(
+                20 + (len(_front_kb_match_tokens_v1(phrase)) * 4)
+                for phrase in phrase_hits
+            )
+            token_bonus = len(token_hits) * 14
+
+            score = int(base_score) + int(phrase_bonus) + int(token_bonus)
+
+            ranked.append((
+                score,
+                key,
+                len(phrase_hits),
+                len(token_hits),
+            ))
+
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+
+        if not ranked:
+            return []
+
+        top_score, top_key, top_phrase_count, top_token_count = ranked[0]
+
+        if int(top_score) < max(int(min_score), 16):
+            return []
+
+        if len(ranked) > 1:
+            runner_score = int(ranked[1][0])
+
+            # Empate forte: melhor discovery do que snapshot contaminado.
+            if runner_score >= int(int(top_score) * float(relative_floor)):
+                return []
+
+        return [top_key]
+    except Exception:
+        return []
+
 def _build_front_kb_snapshot(topic: str, user_text: str = "") -> str:
     """
     Monta snapshot textual compacto com teto de chars.
@@ -2599,6 +2949,69 @@ def _build_front_kb_snapshot(topic: str, user_text: str = "") -> str:
                 len((payload or {}).get("kb_archetypes_v1") or {}),
             )
 
+            # FRONT_KB_GENERIC_SUBSEGMENT_TARGET_V1
+            try:
+                _generic_target_subsegment_ids = _front_select_kb_subsegment_ids_from_text_v1(
+                    user_text=user_text,
+                    subsegments=compact_subsegments,
+                    max_ids=1,
+                    min_score=16,
+                    relative_floor=0.85,
+                )
+                if _generic_target_subsegment_ids:
+                    _existing_protected = payload.get("_protected_subsegment_ids") or []
+                    if not isinstance(_existing_protected, list):
+                        _existing_protected = [str(_existing_protected)] if str(_existing_protected or "").strip() else []
+
+                    _protected_subsegment_ids = []
+                    for _sid in list(_existing_protected) + list(_generic_target_subsegment_ids):
+                        _sid = str(_sid or "").strip()
+                        if _sid and _sid not in _protected_subsegment_ids:
+                            _protected_subsegment_ids.append(_sid)
+
+                    payload["_protected_subsegment_ids"] = _protected_subsegment_ids
+
+                    _payload_subsegments = payload.setdefault("kb_subsegments_v1", {})
+                    if isinstance(_payload_subsegments, dict):
+                        for _sid in _generic_target_subsegment_ids:
+                            _doc = (compact_subsegments or {}).get(_sid)
+                            if isinstance(_doc, dict):
+                                _payload_subsegments[_sid] = _doc
+
+                    _payload_segments = payload.setdefault("kb_segments_v1", {})
+                    _payload_archetypes = payload.setdefault("kb_archetypes_v1", {})
+                    for _sid in _generic_target_subsegment_ids:
+                        _doc = (compact_subsegments or {}).get(_sid) or {}
+                        if not isinstance(_doc, dict):
+                            continue
+                        _seg_id = str(_doc.get("segment_id") or "").strip()
+                        _arch_id = str(_doc.get("archetype_id") or "").strip()
+                        if _seg_id and isinstance(_payload_segments, dict) and _seg_id in (compact_segments or {}):
+                            _payload_segments[_seg_id] = (compact_segments or {}).get(_seg_id)
+                        if _arch_id and isinstance(_payload_archetypes, dict) and _arch_id in (compact_archetypes or {}):
+                            _payload_archetypes[_arch_id] = (compact_archetypes or {}).get(_arch_id)
+
+                    try:
+                        import json as _json_for_generic_target_v1
+                        import logging as _logging_for_generic_target_v1
+                        _logging_for_generic_target_v1.info(
+                            "[WA_BOT][KB_TARGET_SUBSEGMENT_GENERIC] selected=%s protected=%s payload_chars=%s limit=%s",
+                            list(_generic_target_subsegment_ids),
+                            list(payload.get("_protected_subsegment_ids") or []),
+                            len(_json_for_generic_target_v1.dumps(payload or {}, ensure_ascii=False, separators=(",", ":"))),
+                            snapshot_limit,
+                        )
+                    except Exception:
+                        pass
+            except Exception as _generic_target_err:
+                try:
+                    import logging as _logging_for_generic_target_err_v1
+                    _logging_for_generic_target_err_v1.info(
+                        "[WA_BOT][KB_TARGET_SUBSEGMENT_GENERIC_ERROR] err=%s",
+                        str(_generic_target_err),
+                    )
+                except Exception:
+                    pass
             payload = _prune_front_kb_payload(payload, snapshot_limit)
             try:
                 if isinstance(payload, dict):
