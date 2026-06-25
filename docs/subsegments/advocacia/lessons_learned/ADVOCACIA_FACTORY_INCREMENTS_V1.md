@@ -292,3 +292,68 @@ O robô deve parecer responsável, útil e orientado ao próximo passo.
 O robô não precisa apenas evitar erro.
 
 O robô precisa conduzir bem.
+---
+
+# ROUTING_IDENTITY_ANCHORS_FROM_ADVOCACIA_V1
+
+## Incremento obrigatório para a Fábrica de Subsegmentos
+
+Durante a estabilização de Advocacia, foi identificado um risco estrutural para a escala da fábrica: quando o snapshot pré-prune depende apenas de heurísticas genéricas sobre name, keywords, common_intents, service_noun ou one_liner, subsegmentos errados podem ser protegidos no snapshot, especialmente quando a base crescer para dezenas ou centenas de subsegmentos.
+
+A solução aprovada foi mover a inteligência de roteamento para o KB, sem hardcode de negócio no código.
+
+## Campos canônicos novos
+
+Cada subsegmento deve avaliar a necessidade de publicar:
+
+- routing_identity_anchors
+- routing_negative_anchors
+
+## Função dos campos
+
+routing_identity_anchors define expressões de identidade fortes que indicam que o lead provavelmente pertence àquele subsegmento.
+
+routing_negative_anchors define expressões que, se aparecerem, derrubam aquele subsegmento em favor de outro mais adequado.
+
+## Regra arquitetural
+
+O código não deve conter palavras-chave de negócio como advogado, ótica, otorrino, loja, antenas ou política.
+
+O código deve ser genérico.
+
+O conhecimento de roteamento pertence ao Firestore/JSON do subsegmento.
+
+## Regra de fábrica
+
+Ao criar um novo subsegmento, a fábrica deve preencher estes campos quando houver risco de ambiguidade com:
+
+- subsegmentos irmãos;
+- subsegmentos guarda-chuva;
+- versões individual vs equipe/escritório;
+- termos amplos compartilhados por muitos segmentos;
+- atividades com nomes próximos.
+
+## Regra operacional
+
+O seletor genérico deve ser conservador:
+
+- top 1 por padrão;
+- se não houver âncora clara, retorna vazio;
+- se houver ambiguidade forte, retorna vazio;
+- common_intents não deve destravar seleção;
+- campos contextuais não substituem identidade;
+- melhor cair em discovery do que contaminar o snapshot.
+
+## Aprendizado vindo de Advocacia
+
+Advocacia Individual e Escritório de Advocacia exigiram distinção explícita:
+
+- advogado / advogada / advogado trabalhista -> Advocacia Individual;
+- escritório de advocacia / sociedade de advogados / equipe jurídica -> Escritório de Advocacia.
+
+Essa distinção deve viver no KB, não no código.
+
+## Status
+
+Incremento aceito como requisito de evolução da fábrica antes da escala para centenas de subsegmentos.
+
