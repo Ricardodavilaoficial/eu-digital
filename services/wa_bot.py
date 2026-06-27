@@ -1384,6 +1384,106 @@ def _front_compact_selected_subsegment_doc(raw_doc: dict, base_doc: dict) -> dic
         return dict(base_doc or {})
 
 
+def _front_reduce_kb_docs_to_selected_subsegments(
+    *,
+    selected_ids: Any,
+    compact_subsegments: Dict[str, Any],
+    compact_segments: Dict[str, Any],
+    compact_archetypes: Dict[str, Any],
+    raw_subsegments: Dict[str, Any],
+) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], list[str]]:
+    """
+    Reduz os docs operacionais ao alvo selecionado e seus pais diretos.
+    Não faz matching flexível: IDs precisam bater exatamente com o KB.
+    """
+    selected_subsegments: Dict[str, Any] = {}
+    selected_segments: Dict[str, Any] = {}
+    selected_archetypes: Dict[str, Any] = {}
+    protected_ids: list[str] = []
+
+    try:
+        for sid in list(selected_ids or []):
+            sid_s = str(sid or "").strip()
+            if not sid_s:
+                continue
+
+            base_doc = (compact_subsegments or {}).get(sid_s) or {}
+            if not isinstance(base_doc, dict) or not base_doc:
+                continue
+
+            raw_doc = (raw_subsegments or {}).get(sid_s) or {}
+            selected_doc = _front_compact_selected_subsegment_doc(
+                raw_doc if isinstance(raw_doc, dict) else {},
+                base_doc,
+            )
+            if not isinstance(selected_doc, dict) or not selected_doc:
+                continue
+
+            selected_subsegments[sid_s] = selected_doc
+            protected_ids.append(sid_s)
+
+            seg_id = str(selected_doc.get("segment_id") or "").strip()
+            seg_doc = (compact_segments or {}).get(seg_id) or {}
+            if seg_id and isinstance(seg_doc, dict) and seg_doc:
+                selected_segments[seg_id] = seg_doc
+
+            arch_id = str(selected_doc.get("archetype_id") or "").strip()
+            arch_doc = (compact_archetypes or {}).get(arch_id) or {}
+            if arch_id and isinstance(arch_doc, dict) and arch_doc:
+                selected_archetypes[arch_id] = arch_doc
+    except Exception:
+        return {}, {}, {}, []
+
+    return selected_subsegments, selected_segments, selected_archetypes, protected_ids
+
+
+def _front_minimal_hydratable_docs(docs: Any) -> Dict[str, Any]:
+    """
+    Fallback estrutural para serialização: preserva só campos hidratáveis do KB.
+    Não cria conteúdo comercial nem frases de resposta.
+    """
+    keep_fields = (
+        "id",
+        "name",
+        "segment_id",
+        "archetype_id",
+        "one_liner",
+        "micro_scene_conversational",
+        "lead_refinement_question",
+        "micro_scene",
+        "conversation_mode",
+        "primary_goal",
+        "customer_noun",
+        "conversion_noun",
+        "service_noun",
+    )
+    out: Dict[str, Any] = {}
+    try:
+        if not isinstance(docs, dict):
+            return {}
+        for doc_id, doc in list(docs.items()):
+            if not isinstance(doc, dict):
+                continue
+            item: Dict[str, Any] = {}
+            for field in keep_fields:
+                value = doc.get(field)
+                if value in (None, "", [], {}):
+                    continue
+                compacted = _front_clip_runtime_value(
+                    value,
+                    str_limit=420,
+                    list_limit=4,
+                    depth=0,
+                )
+                if compacted not in (None, "", [], {}):
+                    item[field] = compacted
+            if item:
+                out[str(doc_id)] = item
+    except Exception:
+        return {}
+    return out
+
+
 def _safe_str(x: Any) -> str:
     try:
         if x is None:
@@ -1912,33 +2012,73 @@ def _safe_json_dumps_with_limit(payload: dict, limit: int) -> str:
     Nunca corta string no meio.
     """
     try:
-        s = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        if len(s) <= limit:
-            return s
-
         protected_subsegment_ids = [
             str(x or "").strip()
             for x in (payload.get("_protected_subsegment_ids") or [])
             if str(x or "").strip()
         ]
+
+        payload_for_dump = dict(payload or {})
+        payload_for_dump.pop("_protected_subsegment_ids", None)
+
+        s = json.dumps(payload_for_dump, ensure_ascii=False, separators=(",", ":"))
+        if len(s) <= limit:
+            return s
+
         if protected_subsegment_ids:
+            kb_sub = payload.get("kb_subsegments_v1") or {}
+            kb_seg = payload.get("kb_segments_v1") or {}
+            kb_arch = payload.get("kb_archetypes_v1") or {}
+
+            protected_subsegments = {
+                sid: kb_sub.get(sid)
+                for sid in protected_subsegment_ids
+                if isinstance(kb_sub, dict) and isinstance(kb_sub.get(sid), dict)
+            }
+            protected_segment_ids = {
+                str(doc.get("segment_id") or "").strip()
+                for doc in protected_subsegments.values()
+                if isinstance(doc, dict) and str(doc.get("segment_id") or "").strip()
+            }
+            protected_archetype_ids = {
+                str(doc.get("archetype_id") or "").strip()
+                for doc in protected_subsegments.values()
+                if isinstance(doc, dict) and str(doc.get("archetype_id") or "").strip()
+            }
+
+            protected_segments = {
+                sid: kb_seg.get(sid)
+                for sid in protected_segment_ids
+                if isinstance(kb_seg, dict) and isinstance(kb_seg.get(sid), dict)
+            }
+            protected_archetypes = {
+                aid: kb_arch.get(aid)
+                for aid in protected_archetype_ids
+                if isinstance(kb_arch, dict) and isinstance(kb_arch.get(aid), dict)
+            }
+
             protected_minimal = {
                 "answer_playbook_v1": {
                     "runtime_selector_v1": ((payload.get("answer_playbook_v1") or {}).get("runtime_selector_v1") or {}),
-                    "pack_selection_policy_v1": ((payload.get("answer_playbook_v1") or {}).get("pack_selection_policy_v1") or {}),
-                    "segment_template_v1": ((payload.get("answer_playbook_v1") or {}).get("segment_template_v1") or {}),
                     "segment_value_map_v1": {},
                 },
                 "value_packs_v1": {},
-                "platform_pricing": payload.get("platform_pricing") or {},
+                "platform_pricing": {},
                 "process_facts": {},
-                "kb_segments_v1": payload.get("kb_segments_v1") or {},
-                "kb_subsegments_v1": payload.get("kb_subsegments_v1") or {},
-                "kb_archetypes_v1": payload.get("kb_archetypes_v1") or {},
+                "kb_segments_v1": _front_minimal_hydratable_docs(protected_segments),
+                "kb_subsegments_v1": _front_minimal_hydratable_docs(protected_subsegments),
+                "kb_archetypes_v1": _front_minimal_hydratable_docs(protected_archetypes),
             }
             s_protected = json.dumps(protected_minimal, ensure_ascii=False, separators=(",", ":"))
             if len(s_protected) <= limit:
                 return s_protected
+
+            protected_core = dict(protected_minimal)
+            protected_core["kb_segments_v1"] = {}
+            protected_core["kb_archetypes_v1"] = {}
+            s_core = json.dumps(protected_core, ensure_ascii=False, separators=(",", ":"))
+            if protected_core.get("kb_subsegments_v1") and len(s_core) <= limit:
+                return s_core
 
         # fallback seguro mínimo:
         # preserva o runtime de packs_v1 antes do banco operacional auxiliar.
@@ -2215,6 +2355,14 @@ def _prune_front_kb_payload(payload: dict, limit: int) -> dict:
 
             if work.get("process_facts"):
                 work["process_facts"] = {}
+                if _size(work) <= limit:
+                    return work
+
+            ap = dict(work.get("answer_playbook_v1") or {})
+            if ap.get("segment_template_v1") or ap.get("pack_selection_policy_v1") or ap.get("segment_value_map_v1"):
+                work["answer_playbook_v1"] = {
+                    "runtime_selector_v1": ap.get("runtime_selector_v1") or {},
+                }
                 if _size(work) <= limit:
                     return work
 
@@ -2577,7 +2725,7 @@ def _front_kb_negative_matches_current_text_v1(user_text: str, doc: object) -> b
 def _front_score_subsegment_for_current_text_v1(user_text: str, doc_key: str, doc: object) -> int:
     """Score genérico KB-driven.
 
-    id/name/keywords destravam seleção.
+    routing_identity_anchors/id/name/keywords destravam seleção.
     Contexto reforça apenas depois.
     negative_keywords veta.
     """
@@ -2596,6 +2744,19 @@ def _front_score_subsegment_for_current_text_v1(user_text: str, doc_key: str, do
 
         score = 0
         identity_score = 0
+
+        for item in _front_kb_clean_list_v1(doc.get("routing_identity_anchors")):
+            norm = _front_kb_match_norm_v1(item)
+            toks = _front_kb_match_tokens_v1(item)
+            overlap = len(q_tokens.intersection(toks))
+            if overlap:
+                points = overlap * 8
+                score += points
+                identity_score += points
+            if norm and len(norm) >= 4 and norm in q_norm:
+                points = 14
+                score += points
+                identity_score += points
 
         synthetic_id = str(doc.get("id") or doc_key or "").strip()
 
@@ -2828,58 +2989,29 @@ def _build_front_kb_snapshot(topic: str, user_text: str = "") -> str:
         target_subsegment_ids = _front_target_subsegment_ids(user_text)
 
         if target_subsegment_ids and compact_subsegments:
-            target_set = set(str(x or "").strip() for x in target_subsegment_ids if str(x or "").strip())
-
-            selected_subsegments = {}
-            for sid, base_doc in list(compact_subsegments.items()):
-                sid_s = str(sid or "").strip()
-                if sid_s not in target_set:
-                    continue
-
-                raw_doc = (subsegments or {}).get(sid_s) or {}
-                selected_subsegments[sid_s] = _front_compact_selected_subsegment_doc(
-                    raw_doc if isinstance(raw_doc, dict) else {},
-                    base_doc if isinstance(base_doc, dict) else {},
+            reduced_subsegments, reduced_segments, reduced_archetypes, reduced_protected_ids = (
+                _front_reduce_kb_docs_to_selected_subsegments(
+                    selected_ids=target_subsegment_ids,
+                    compact_subsegments=compact_subsegments,
+                    compact_segments=compact_segments,
+                    compact_archetypes=compact_archetypes,
+                    raw_subsegments=subsegments,
                 )
+            )
 
-            if selected_subsegments:
-                related_segment_ids = set()
-                related_archetype_ids = set()
+            if reduced_subsegments:
+                compact_subsegments = reduced_subsegments
+                compact_segments = reduced_segments
+                compact_archetypes = reduced_archetypes
+                protected_subsegment_ids = reduced_protected_ids
 
-                for doc in selected_subsegments.values():
-                    if not isinstance(doc, dict):
-                        continue
-                    seg_id = str(doc.get("segment_id") or "").strip()
-                    arch_id = str(doc.get("archetype_id") or "").strip()
-                    if seg_id:
-                        related_segment_ids.add(seg_id)
-                    if arch_id:
-                        related_archetype_ids.add(arch_id)
-
-                compact_subsegments = selected_subsegments
-                protected_subsegment_ids = list(selected_subsegments.keys())
-
-                if related_segment_ids and compact_segments:
-                    compact_segments = {
-                        sid: doc
-                        for sid, doc in compact_segments.items()
-                        if str(sid or "").strip() in related_segment_ids
-                    }
-
-                if related_archetype_ids and compact_archetypes:
-                    compact_archetypes = {
-                        aid: doc
-                        for aid, doc in compact_archetypes.items()
-                        if str(aid or "").strip() in related_archetype_ids
-                    }
-
-                logging.info(
-                    "[WA_BOT][KB_TARGET_SUBSEGMENT] targets=%s kept_subsegments=%s kept_segments=%s kept_archetypes=%s",
-                    target_subsegment_ids,
-                    list(compact_subsegments.keys())[:8],
-                    list(compact_segments.keys())[:8],
-                    list(compact_archetypes.keys())[:8],
-                )
+            logging.info(
+                "[WA_BOT][KB_TARGET_SUBSEGMENT] targets=%s kept_subsegments=%s kept_segments=%s kept_archetypes=%s",
+                target_subsegment_ids,
+                list(compact_subsegments.keys())[:8],
+                list(compact_segments.keys())[:8],
+                list(compact_archetypes.keys())[:8],
+            )
     except Exception as e:
         protected_subsegment_ids = []
         logging.warning("[WA_BOT][KB_TARGET_SUBSEGMENT] error=%s", str(e)[:180])
@@ -2959,37 +3091,20 @@ def _build_front_kb_snapshot(topic: str, user_text: str = "") -> str:
                     relative_floor=0.85,
                 )
                 if _generic_target_subsegment_ids:
-                    _existing_protected = payload.get("_protected_subsegment_ids") or []
-                    if not isinstance(_existing_protected, list):
-                        _existing_protected = [str(_existing_protected)] if str(_existing_protected or "").strip() else []
-
-                    _protected_subsegment_ids = []
-                    for _sid in list(_existing_protected) + list(_generic_target_subsegment_ids):
-                        _sid = str(_sid or "").strip()
-                        if _sid and _sid not in _protected_subsegment_ids:
-                            _protected_subsegment_ids.append(_sid)
-
-                    payload["_protected_subsegment_ids"] = _protected_subsegment_ids
-
-                    _payload_subsegments = payload.setdefault("kb_subsegments_v1", {})
-                    if isinstance(_payload_subsegments, dict):
-                        for _sid in _generic_target_subsegment_ids:
-                            _doc = (compact_subsegments or {}).get(_sid)
-                            if isinstance(_doc, dict):
-                                _payload_subsegments[_sid] = _doc
-
-                    _payload_segments = payload.setdefault("kb_segments_v1", {})
-                    _payload_archetypes = payload.setdefault("kb_archetypes_v1", {})
-                    for _sid in _generic_target_subsegment_ids:
-                        _doc = (compact_subsegments or {}).get(_sid) or {}
-                        if not isinstance(_doc, dict):
-                            continue
-                        _seg_id = str(_doc.get("segment_id") or "").strip()
-                        _arch_id = str(_doc.get("archetype_id") or "").strip()
-                        if _seg_id and isinstance(_payload_segments, dict) and _seg_id in (compact_segments or {}):
-                            _payload_segments[_seg_id] = (compact_segments or {}).get(_seg_id)
-                        if _arch_id and isinstance(_payload_archetypes, dict) and _arch_id in (compact_archetypes or {}):
-                            _payload_archetypes[_arch_id] = (compact_archetypes or {}).get(_arch_id)
+                    _sub, _seg, _arch, _protected_subsegment_ids = (
+                        _front_reduce_kb_docs_to_selected_subsegments(
+                            selected_ids=_generic_target_subsegment_ids,
+                            compact_subsegments=compact_subsegments,
+                            compact_segments=compact_segments,
+                            compact_archetypes=compact_archetypes,
+                            raw_subsegments=subsegments,
+                        )
+                    )
+                    if _sub:
+                        payload["kb_subsegments_v1"] = _sub
+                        payload["kb_segments_v1"] = _seg
+                        payload["kb_archetypes_v1"] = _arch
+                        payload["_protected_subsegment_ids"] = _protected_subsegment_ids
 
                     try:
                         import json as _json_for_generic_target_v1
@@ -3013,11 +3128,6 @@ def _build_front_kb_snapshot(topic: str, user_text: str = "") -> str:
                 except Exception:
                     pass
             payload = _prune_front_kb_payload(payload, snapshot_limit)
-            try:
-                if isinstance(payload, dict):
-                    payload.pop("_protected_subsegment_ids", None)
-            except Exception:
-                pass
 
             logging.info(
                 "[WA_BOT][KB_SNAPSHOT][AFTER_PRUNE] payload_segments=%s payload_subsegments=%s payload_archetypes=%s payload_value_packs=%s payload_chars=%s limit=%s",
