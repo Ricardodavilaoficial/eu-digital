@@ -4653,6 +4653,15 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 cta_reason = locals().get("cta_reason") or ""
 
                 try:
+                    _block_text_after_audio = bool(
+                        msg_type in ("audio", "voice", "ptt")
+                        and sent_ack_audio
+                        and str(plan_next_step or "").strip().upper() != "SEND_LINK"
+                    )
+                except Exception:
+                    _block_text_after_audio = False
+
+                try:
                     ia_next_step = str((understanding or {}).get("next_step") or "").strip().upper()
                 except Exception:
                     ia_next_step = ""
@@ -4661,7 +4670,8 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 # (clicável) — mas com cadência, pra não virar spam.
                 try:
                     if (
-                        (not force_send_link_text)
+                        (not _block_text_after_audio)
+                        and (not force_send_link_text)
                         and (not bool(uid))
                         and send_text
                         and bool(explicit_link_request)
@@ -4718,7 +4728,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                 "quero assinar", "quero contratar", "pode me enviar o procedimento",
                             )
                             close_heur2 = any(w in _tr2 for w in close_words2)
-                        if close_heur2 and send_text:
+                        if (not _block_text_after_audio) and close_heur2 and send_text:
                             _rt = (reply_text or "").strip()
                             if _rt:
                                 if ("http://" not in _rt.lower()) and ("https://" not in _rt.lower()):
