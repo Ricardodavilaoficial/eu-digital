@@ -338,6 +338,7 @@ def _front_apply_first_contact_scene_opening(
     *,
     reply_text: str,
     spoken_text: str = "",
+    opening_candidate: str = "",
     is_lead: bool = False,
     ai_turns: int = 0,
     lead_name: str = "",
@@ -345,13 +346,78 @@ def _front_apply_first_contact_scene_opening(
     next_step: str = "NONE",
     operational_contract: Dict[str, Any] | None = None,
     reply_source: str = "",
+    is_audio_policy: bool = False,
+    text_max_chars: int = 820,
+    opening_max_chars: int = 130,
+    spoken_max_chars: int = 460,
 ) -> Tuple[str, str, bool]:
     """
-    Primeiro contato com cena hidratada: cria abertura limpa a partir de
-    nome sanitizado e do corpo estruturado do contrato.
+    Primeiro contato com cena hidratada: preserva a cena integral e usa uma
+    abertura curta, validada estruturalmente, quando houver orçamento.
     """
     reply = str(reply_text or "").strip()
     spoken = str(spoken_text or reply or "").strip()
+    fallback_opening = ""
+
+    def _norm(value: object) -> str:
+        return " ".join(str(value or "").split()).strip()
+
+    def _opening_has_blocked_surface(value: str) -> bool:
+        text = _norm(value)
+        if not text:
+            return True
+        low = text.lower()
+        if "?" in text:
+            return True
+        if any(marker in low for marker in ("://", "www.", ".com", "link")):
+            return True
+        return False
+
+    def _safe_opening_from_candidate(
+        *,
+        candidate: str,
+        scene_text: str,
+        safe_name_value: str,
+        budget: int,
+    ) -> str:
+        try:
+            budget = int(budget or 0)
+        except Exception:
+            budget = 0
+        if budget <= 0:
+            return ""
+
+        cand = str(_unwrap_front_json_envelope(candidate) or candidate or "").strip()
+        if not cand or not scene_text or scene_text not in cand:
+            return ""
+
+        head = _sanitize_user_facing_reply(cand.partition(scene_text)[0])
+        head = _norm(head)
+        if not head:
+            return ""
+
+        if safe_name_value.lower() not in head.lower():
+            return ""
+
+        if _opening_has_blocked_surface(head):
+            return ""
+
+        if len(head) > budget:
+            head = _front_trim_to_complete_sentence(head, budget).strip()
+
+        head = _norm(head)
+        if (
+            not head
+            or len(head) > budget
+            or safe_name_value.lower() not in head.lower()
+            or _opening_has_blocked_surface(head)
+        ):
+            return ""
+
+        if head[-1:] not in ".!?":
+            head = f"{head}."
+        return head
+
     try:
         if not bool(is_lead):
             return reply, spoken, False
@@ -384,8 +450,78 @@ def _front_apply_first_contact_scene_opening(
         if re.match(r"(?i)^\s*ol[áa]\b", scene):
             return reply, spoken, False
 
-        assembled = f"Olá, {safe_name}. Obrigado pelo contato. {scene}".strip()
-        return assembled, assembled, True
+        try:
+            text_max_chars = int(text_max_chars or 0)
+        except Exception:
+            text_max_chars = 820
+        text_max_chars = max(240, text_max_chars)
+
+        try:
+            opening_max_chars = int(opening_max_chars or 0)
+        except Exception:
+            opening_max_chars = 130
+        opening_max_chars = max(40, min(opening_max_chars, 160))
+
+        scene_budget_left = text_max_chars - len(scene) - 1
+        if scene_budget_left <= 0:
+            return reply, spoken, False
+
+        opening_budget = min(opening_max_chars, scene_budget_left)
+        fallback_opening = f"Olá, {safe_name}. Obrigado pelo contato."
+
+        opening = _safe_opening_from_candidate(
+            candidate=opening_candidate or reply,
+            scene_text=scene,
+            safe_name_value=safe_name,
+            budget=opening_budget,
+        )
+
+        if not opening and len(fallback_opening) <= opening_budget:
+            opening = fallback_opening
+
+        if not opening:
+            return reply, spoken, False
+
+        assembled = f"{opening} {scene}".strip()
+        if len(assembled) > text_max_chars:
+            return reply, spoken, False
+
+        if not bool(is_audio_policy):
+            return assembled, assembled, True
+
+        try:
+            spoken_max_chars = int(spoken_max_chars or 0)
+        except Exception:
+            spoken_max_chars = 460
+        spoken_max_chars = max(220, spoken_max_chars)
+
+        spoken_opening = opening
+        scene_spoken_budget = spoken_max_chars - len(spoken_opening) - 1
+        if scene_spoken_budget < 140:
+            if len(fallback_opening) < len(spoken_opening):
+                spoken_opening = fallback_opening
+                scene_spoken_budget = spoken_max_chars - len(spoken_opening) - 1
+
+        scene_spoken = _front_build_structured_audio_spoken_text(
+            reply_text=scene,
+            micro_scene=scene,
+            max_chars=max(140, scene_spoken_budget),
+        )
+        if not scene_spoken:
+            scene_spoken = _front_trim_to_complete_sentence(
+                scene,
+                max(140, scene_spoken_budget),
+            )
+
+        spoken_out = _norm(f"{spoken_opening} {scene_spoken}")
+        if len(spoken_out) > spoken_max_chars:
+            scene_spoken = _front_trim_to_complete_sentence(
+                scene_spoken,
+                max(140, spoken_max_chars - len(spoken_opening) - 1),
+            )
+            spoken_out = _norm(f"{spoken_opening} {scene_spoken}")
+
+        return assembled, spoken_out, True
     except Exception:
         return reply, spoken, False
 
@@ -13641,6 +13777,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 except Exception:
                     pass
 
+                _scene_opening_candidate = str(_free_reply or "").strip()
+
                 _free_reply = _front_pick_rich_free_mode_base(
                     current_reply=_free_reply,
                     operational_contract=operational_contract if isinstance(operational_contract, dict) else {},
@@ -13672,6 +13810,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         _front_apply_first_contact_scene_opening(
                             reply_text=_free_reply,
                             spoken_text=_free_spoken,
+                            opening_candidate=_scene_opening_candidate,
                             is_lead=bool(is_lead),
                             ai_turns=int(ai_turns or 0),
                             lead_name=_scene_opening_name,
@@ -13683,9 +13822,30 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 else {}
                             ),
                             reply_source=str(reply_source or ""),
+                            is_audio_policy=bool(
+                                (
+                                    reply_size_policy
+                                    if isinstance(reply_size_policy, dict)
+                                    else {}
+                                ).get("is_audio")
+                            ),
+                            text_max_chars=820,
+                            opening_max_chars=130,
+                            spoken_max_chars=460,
                         )
                     )
                     if _scene_opening_applied:
+                        try:
+                            if bool(
+                                (
+                                    reply_size_policy
+                                    if isinstance(reply_size_policy, dict)
+                                    else {}
+                                ).get("is_audio")
+                            ):
+                                _structured_audio_spoken = _free_spoken
+                        except Exception:
+                            pass
                         logging.info(
                             "[FRONT_FIRST_CONTACT_SCENE_OPENING] applied=True scene_len=%s",
                             len(
