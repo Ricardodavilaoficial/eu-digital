@@ -334,6 +334,62 @@ atividade: {segment_raw}
         return str(reply or "").strip()
 
 
+def _front_apply_first_contact_scene_opening(
+    *,
+    reply_text: str,
+    spoken_text: str = "",
+    is_lead: bool = False,
+    ai_turns: int = 0,
+    lead_name: str = "",
+    segment_refs: list | None = None,
+    next_step: str = "NONE",
+    operational_contract: Dict[str, Any] | None = None,
+    reply_source: str = "",
+) -> Tuple[str, str, bool]:
+    """
+    Primeiro contato com cena hidratada: cria abertura limpa a partir de
+    nome sanitizado e do corpo estruturado do contrato.
+    """
+    reply = str(reply_text or "").strip()
+    spoken = str(spoken_text or reply or "").strip()
+    try:
+        if not bool(is_lead):
+            return reply, spoken, False
+
+        if int(ai_turns or 0) > 0:
+            return reply, spoken, False
+
+        if str(next_step or "").strip().upper() == "SEND_LINK":
+            return reply, spoken, False
+
+        contract = operational_contract if isinstance(operational_contract, dict) else {}
+        scene = str(contract.get("micro_scene_conversational") or "").strip()
+        if not scene:
+            return reply, spoken, False
+
+        if not (
+            bool(contract.get("hydrated_from_docs"))
+            and bool(contract.get("has_practical_scene"))
+            and str(reply_source or "").strip() == "front_structured_python_assembly"
+        ):
+            return reply, spoken, False
+
+        safe_name = _front_sanitize_lead_name_candidate(
+            lead_name,
+            segment_refs=segment_refs or [],
+        )
+        if not safe_name:
+            return reply, spoken, False
+
+        if re.match(r"(?i)^\s*ol[áa]\b", scene):
+            return reply, spoken, False
+
+        assembled = f"Olá, {safe_name}. Obrigado pelo contato. {scene}".strip()
+        return assembled, assembled, True
+    except Exception:
+        return reply, spoken, False
+
+
 def _front_structured_doc_content(docs: Dict[str, Any] | None) -> Dict[str, Any]:
     """
     Extrai conteúdo operacional de segmento/archetype já hidratados.
@@ -13602,6 +13658,49 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     _free_spoken or _free_reply,
                     has_name=has_name,
                 )
+
+                try:
+                    _scene_opening_name = (
+                        name_hint or current_turn_lead_name or inferred_lead_name
+                    )
+                    _scene_opening_refs = [
+                        segment_hint,
+                        inferred_lead_segment_raw,
+                        inferred_lead_segment,
+                    ]
+                    _free_reply, _free_spoken, _scene_opening_applied = (
+                        _front_apply_first_contact_scene_opening(
+                            reply_text=_free_reply,
+                            spoken_text=_free_spoken,
+                            is_lead=bool(is_lead),
+                            ai_turns=int(ai_turns or 0),
+                            lead_name=_scene_opening_name,
+                            segment_refs=_scene_opening_refs,
+                            next_step=next_step,
+                            operational_contract=(
+                                operational_contract
+                                if isinstance(operational_contract, dict)
+                                else {}
+                            ),
+                            reply_source=str(reply_source or ""),
+                        )
+                    )
+                    if _scene_opening_applied:
+                        logging.info(
+                            "[FRONT_FIRST_CONTACT_SCENE_OPENING] applied=True scene_len=%s",
+                            len(
+                                str(
+                                    (
+                                        operational_contract
+                                        if isinstance(operational_contract, dict)
+                                        else {}
+                                    ).get("micro_scene_conversational")
+                                    or ""
+                                ).strip()
+                            ),
+                        )
+                except Exception:
+                    pass
 
 
                 _continuity_topic = str(
