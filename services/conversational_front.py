@@ -244,12 +244,14 @@ def _extract_lead_name_from_current_turn(text: str) -> str:
         if not t:
             return ""
 
-        m = re.search(
-            r"(?i)\b(?:sou|me chamo|meu nome é|meu nome e)\s+(?:o\s+|a\s+)?([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-zà-ÿ]{1,30})\b",
-            t,
+        patterns = (
+            r"(?i)\b(?:me chamo|meu nome é|meu nome e)\s+(?:o\s+|a\s+)?([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-zà-ÿ]{1,30})\b",
+            r"(?i)\b(?:eu\s+)?sou\s+(?:o\s+|a\s+)([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-zà-ÿ]{1,30})\b",
         )
-        if m:
-            return m.group(1).strip()
+        for pat in patterns:
+            m = re.search(pat, t)
+            if m:
+                return m.group(1).strip()
 
         return ""
     except Exception:
@@ -346,6 +348,8 @@ def _front_apply_first_contact_scene_opening(
     next_step: str = "NONE",
     operational_contract: Dict[str, Any] | None = None,
     reply_source: str = "",
+    allow_effective_first_contact: bool = False,
+    prior_light_social_turn: bool = False,
     is_audio_policy: bool = False,
     text_max_chars: int = 820,
     opening_max_chars: int = 130,
@@ -422,7 +426,7 @@ def _front_apply_first_contact_scene_opening(
         if not bool(is_lead):
             return reply, spoken, False
 
-        if int(ai_turns or 0) > 0:
+        if int(ai_turns or 0) > 0 and not bool(allow_effective_first_contact):
             return reply, spoken, False
 
         if str(next_step or "").strip().upper() == "SEND_LINK":
@@ -467,7 +471,10 @@ def _front_apply_first_contact_scene_opening(
             return reply, spoken, False
 
         opening_budget = min(opening_max_chars, scene_budget_left)
-        fallback_opening = f"Olá, {safe_name}. Obrigado pelo contato."
+        if bool(prior_light_social_turn):
+            fallback_opening = f"Obrigado, {safe_name}."
+        else:
+            fallback_opening = f"Olá, {safe_name}. Obrigado pelo contato."
 
         opening = _safe_opening_from_candidate(
             candidate=opening_candidate or reply,
@@ -524,6 +531,157 @@ def _front_apply_first_contact_scene_opening(
         return assembled, spoken_out, True
     except Exception:
         return reply, spoken, False
+
+
+def _front_prior_light_social_turn(
+    *,
+    state_summary: Dict[str, Any] | None = None,
+    lead_memory_summary: str = "",
+    lead_memory_turns: int = 0,
+) -> bool:
+    """
+    Detecta continuidade social leve sem inferir segmento ou profissao.
+    """
+    try:
+        state = state_summary if isinstance(state_summary, dict) else {}
+        last_topic_value = str(
+            state.get("last_topic")
+            or state.get("previous_topic")
+            or ""
+        ).strip().upper()
+        if last_topic_value != "SOCIAL":
+            return False
+
+        try:
+            turns = int(lead_memory_turns or 0)
+        except Exception:
+            turns = 0
+
+        return bool(
+            turns <= 1
+            and not str(lead_memory_summary or "").strip()
+            and not str(state.get("name_hint") or state.get("leadName") or "").strip()
+            and not str(state.get("last_next_step") or "").strip()
+        )
+    except Exception:
+        return False
+
+
+def _front_scene_effective_first_contact_allowed(
+    *,
+    ai_turns: int = 0,
+    current_turn_lead_name: str = "",
+    lead_memory_summary: str = "",
+    lead_memory_turns: int = 0,
+    state_summary: Dict[str, Any] | None = None,
+) -> bool:
+    """
+    Separa contador técnico de memória útil real para a abertura de microcena.
+    """
+    try:
+        turns = int(ai_turns or 0)
+    except Exception:
+        turns = 0
+
+    if turns <= 0:
+        return True
+
+    if turns > 1:
+        return False
+
+    if not str(current_turn_lead_name or "").strip():
+        return False
+
+    state = state_summary if isinstance(state_summary, dict) else {}
+    saved_identity = str(
+        state.get("name_hint")
+        or state.get("leadName")
+        or state.get("displayName")
+        or ""
+    ).strip()
+    saved_progress = str(
+        state.get("last_user_goal")
+        or ""
+    ).strip()
+    saved_next_step = str(state.get("last_next_step") or "").strip().upper()
+    if saved_next_step and saved_next_step != "NONE":
+        saved_progress = saved_progress or saved_next_step
+
+    try:
+        memory_turns = int(lead_memory_turns or 0)
+    except Exception:
+        memory_turns = 0
+
+    prior_light_social = _front_prior_light_social_turn(
+        state_summary=state,
+        lead_memory_summary=lead_memory_summary,
+        lead_memory_turns=memory_turns,
+    )
+    if prior_light_social:
+        saved_progress = ""
+
+    useful_prior_memory = bool(
+        str(lead_memory_summary or "").strip()
+        or saved_identity
+        or saved_progress
+        or memory_turns > 1
+    )
+    return not useful_prior_memory
+
+
+def _front_auto_scene_blocked_by_real_continuity(
+    *,
+    ai_turns: int = 0,
+    lead_memory_summary: str = "",
+    lead_memory_turns: int = 0,
+    state_summary: Dict[str, Any] | None = None,
+    response_mode: str = "",
+    question_type: str = "",
+) -> bool:
+    """
+    Evita repetir microcena automaticamente em continuidade real.
+    """
+    try:
+        mode = str(response_mode or "").strip().upper()
+        qtype = str(question_type or "").strip().lower()
+        if mode == "SCENE" or qtype == "simulation":
+            return False
+
+        try:
+            turns = int(ai_turns or 0)
+        except Exception:
+            turns = 0
+        try:
+            memory_turns = int(lead_memory_turns or 0)
+        except Exception:
+            memory_turns = 0
+
+        state = state_summary if isinstance(state_summary, dict) else {}
+        scene_already_delivered = any(
+            bool(state.get(key))
+            for key in (
+                "micro_scene_delivered",
+                "front_micro_scene_delivered",
+                "last_micro_scene_delivered",
+                "scene_delivered",
+            )
+        )
+        useful_memory = bool(
+            str(lead_memory_summary or "").strip()
+            or memory_turns > 1
+            or scene_already_delivered
+            or (
+                str(state.get("name_hint") or state.get("leadName") or "").strip()
+                and (
+                    str(state.get("last_user_goal") or "").strip()
+                    or str(state.get("last_next_step") or "").strip()
+                    or str(state.get("last_topic") or "").strip()
+                )
+            )
+        )
+        return bool(turns > 1 and useful_memory)
+    except Exception:
+        return False
 
 
 def _front_structured_doc_content(docs: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -9859,6 +10017,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             or understanding.get("confidence")
             or "low"
         ).strip().lower()
+        _raw_confidence_from_ai = confidence
 
         question_type = str(
             data.get("question_type")
@@ -11738,10 +11897,18 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             next_step = "NONE"
 
         # IA Soberana: Se a IA decidiu SEND_LINK com confiança alta, liberamos mesmo no turno 0.
+        _reply_has_visible_link = bool(
+            "http://" in str(reply_text or "").lower()
+            or "https://" in str(reply_text or "").lower()
+        )
         allow_send_link = (
             next_step == "SEND_LINK"
             and (not is_trial)
-            and confidence == "high"
+            and (
+                confidence == "high"
+                or str(locals().get("_raw_confidence_from_ai") or "").strip().lower() == "high"
+                or _reply_has_visible_link
+            )
             and needs_clarify != "yes"
         )
 
@@ -12776,26 +12943,43 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     or ""
                 ).strip().upper()
 
-                structured_assembly_result = _front_build_structured_assembly_reply(
-                    current_reply=reply_text,
-                    real_kb_docs=real_kb_docs if 'real_kb_docs' in locals() else {},
-                    kb_snapshot_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
-                    platform_segment_profile=platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
-                    selected_pack_id=_pack_for_assembly,
-                    response_mode=response_mode,
-                    next_step=next_step,
-                    ai_turns=ai_turns,
-                    lead_name=_front_sanitize_lead_name_candidate(
-                        inferred_lead_name or name_hint,
-                        segment_refs=[
-                            segment_hint,
-                            inferred_lead_segment_raw,
-                            inferred_lead_segment,
-                        ],
-                    ),
-                    lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
-                    question_type=question_type,
+                _auto_scene_blocked_by_continuity = (
+                    _front_auto_scene_blocked_by_real_continuity(
+                        ai_turns=int(ai_turns or 0),
+                        lead_memory_summary=lead_memory_summary,
+                        lead_memory_turns=int(lead_memory_turns or 0),
+                        state_summary=state_summary,
+                        response_mode=response_mode,
+                        question_type=question_type,
+                    )
                 )
+                if (
+                    str(next_step or "").strip().upper() != "SEND_LINK"
+                    and str(response_mode or "").strip().upper() != "CLOSING"
+                    and not _auto_scene_blocked_by_continuity
+                ):
+                    structured_assembly_result = _front_build_structured_assembly_reply(
+                        current_reply=reply_text,
+                        real_kb_docs=real_kb_docs if 'real_kb_docs' in locals() else {},
+                        kb_snapshot_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                        platform_segment_profile=platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
+                        selected_pack_id=_pack_for_assembly,
+                        response_mode=response_mode,
+                        next_step=next_step,
+                        ai_turns=ai_turns,
+                        lead_name=_front_sanitize_lead_name_candidate(
+                            inferred_lead_name or name_hint,
+                            segment_refs=[
+                                segment_hint,
+                                inferred_lead_segment_raw,
+                                inferred_lead_segment,
+                            ],
+                        ),
+                        lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
+                        question_type=question_type,
+                    )
+                else:
+                    structured_assembly_result = {}
 
                 if structured_assembly_result and structured_assembly_result.get("replyText"):
                     _reply_source_before_structured_assembly = str(reply_source or "").strip()
@@ -13806,6 +13990,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         inferred_lead_segment_raw,
                         inferred_lead_segment,
                     ]
+                    _scene_effective_first_contact = (
+                        _front_scene_effective_first_contact_allowed(
+                            ai_turns=int(ai_turns or 0),
+                            current_turn_lead_name=current_turn_lead_name,
+                            lead_memory_summary=lead_memory_summary,
+                            lead_memory_turns=int(lead_memory_turns or 0),
+                            state_summary=state_summary,
+                        )
+                    )
+                    _scene_prior_light_social = _front_prior_light_social_turn(
+                        state_summary=state_summary,
+                        lead_memory_summary=lead_memory_summary,
+                        lead_memory_turns=int(lead_memory_turns or 0),
+                    )
                     _free_reply, _free_spoken, _scene_opening_applied = (
                         _front_apply_first_contact_scene_opening(
                             reply_text=_free_reply,
@@ -13822,6 +14020,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 else {}
                             ),
                             reply_source=str(reply_source or ""),
+                            allow_effective_first_contact=_scene_effective_first_contact,
+                            prior_light_social_turn=_scene_prior_light_social,
                             is_audio_policy=bool(
                                 (
                                     reply_size_policy
@@ -15455,29 +15655,46 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         structured_assembly_result: Dict[str, Any] = {}
         try:
-            structured_assembly_result = _front_build_structured_assembly_reply(
-                current_reply=reply_text,
-                real_kb_docs=real_kb_docs if 'real_kb_docs' in locals() else {},
-                kb_snapshot_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
-                platform_segment_profile=platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
-                selected_pack_id=selected_pack_id if 'selected_pack_id' in locals() else "",
-                response_mode=response_mode,
-                next_step=next_step,
-                ai_turns=ai_turns,
-                lead_name=(
-                    _front_sanitize_lead_name_candidate(
-                        inferred_lead_name or name_hint,
-                        segment_refs=[
-                            segment_hint,
-                            inferred_lead_segment_raw,
-                            inferred_lead_segment,
-                        ],
-                    )
-                    if has_name else ""
-                ),
-                lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
-                question_type=question_type,
+            _common_auto_scene_blocked_by_continuity = (
+                _front_auto_scene_blocked_by_real_continuity(
+                    ai_turns=int(ai_turns or 0),
+                    lead_memory_summary=lead_memory_summary,
+                    lead_memory_turns=int(lead_memory_turns or 0),
+                    state_summary=state_summary,
+                    response_mode=response_mode,
+                    question_type=question_type,
+                )
             )
+            if (
+                str(next_step or "").strip().upper() != "SEND_LINK"
+                and str(response_mode or "").strip().upper() != "CLOSING"
+                and not _common_auto_scene_blocked_by_continuity
+            ):
+                structured_assembly_result = _front_build_structured_assembly_reply(
+                    current_reply=reply_text,
+                    real_kb_docs=real_kb_docs if 'real_kb_docs' in locals() else {},
+                    kb_snapshot_obj=kb_snapshot_obj if isinstance(kb_snapshot_obj, dict) else {},
+                    platform_segment_profile=platform_segment_profile if isinstance(platform_segment_profile, dict) else {},
+                    selected_pack_id=selected_pack_id if 'selected_pack_id' in locals() else "",
+                    response_mode=response_mode,
+                    next_step=next_step,
+                    ai_turns=ai_turns,
+                    lead_name=(
+                        _front_sanitize_lead_name_candidate(
+                            inferred_lead_name or name_hint,
+                            segment_refs=[
+                                segment_hint,
+                                inferred_lead_segment_raw,
+                                inferred_lead_segment,
+                            ],
+                        )
+                        if has_name else ""
+                    ),
+                    lead_segment_raw=inferred_lead_segment_raw or inferred_lead_segment or segment_hint,
+                    question_type=question_type,
+                )
+            else:
+                structured_assembly_result = {}
 
             if structured_assembly_result and structured_assembly_result.get("replyText"):
                 _reply_source_before_structured_assembly = str(reply_source or "").strip()
@@ -15501,6 +15718,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 reply_text = str(structured_assembly_result.get("replyText") or "").strip()
                 spoken_text = str(structured_assembly_result.get("spokenText") or reply_text).strip()
                 reply_source = "front_structured_python_assembly"
+
                 try:
                     logging.info(
                         "[STRUCTURED_ASSEMBLY_OWNERSHIP] phase=common_path previous_source=%s final_source=%s mode=%s question_type=%s",
