@@ -3715,11 +3715,66 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             segment_hint=_segment_for_name_guard,
                         )
 
+                        # Continuidade estrutural de segmento:
+                        # o front lê principalmente segment_hint, mas o ctx pode
+                        # ter o subsegmento ativo persistido como leadSegmentRaw,
+                        # segmentHint, leadSegment ou segment. Não inferimos nada
+                        # novo aqui; apenas normalizamos o estado já persistido.
+                        def _state_segment_candidate(value: object) -> str:
+                            try:
+                                candidate = str(value or "").strip()
+                                if not candidate:
+                                    return ""
+
+                                known_names = [
+                                    _safe_name_hint,
+                                    ctx.get("name_hint"),
+                                    ctx.get("displayName"),
+                                    ctx.get("leadName"),
+                                ]
+                                candidate_norm = candidate.casefold()
+                                for _name_value in known_names:
+                                    name_norm = str(_name_value or "").strip().casefold()
+                                    if name_norm and candidate_norm == name_norm:
+                                        return ""
+
+                                return candidate
+                            except Exception:
+                                return ""
+
+                        _state_segment_hint = ""
+                        for _field_name, _field_value in (
+                            ("ctx.segment_hint", ctx.get("segment_hint")),
+                            ("ctx.subsegment_hint", ctx.get("subsegment_hint")),
+                            ("ctx.leadSegmentRaw", ctx.get("leadSegmentRaw")),
+                            ("ctx.segmentHint", ctx.get("segmentHint")),
+                            ("ctx.leadSegment", ctx.get("leadSegment")),
+                            ("ctx.segment", ctx.get("segment")),
+                        ):
+                            _candidate = _state_segment_candidate(_field_value)
+                            if _candidate:
+                                _state_segment_hint = _candidate
+                                break
+
                         state_summary = {
                             "ai_turns": ai_turns,
                             "is_lead": True,
                             "name_hint": _safe_name_hint,
-                            "segment_hint": ctx.get("segment_hint") or "",
+                            "segment_hint": _state_segment_hint,
+                            "subsegment_hint": (
+                                ctx.get("subsegment_hint")
+                                or (_state_segment_hint if "__" in str(_state_segment_hint or "") else "")
+                            ),
+                            "segmentHint": _state_segment_hint,
+                            "leadSegment": (
+                                ctx.get("leadSegment")
+                                or ctx.get("segmentHint")
+                                or _state_segment_hint
+                            ),
+                            "leadSegmentRaw": (
+                                ctx.get("leadSegmentRaw")
+                                or _state_segment_hint
+                            ),
                             "msg_type": ctx.get("msg_type") or "",
                             "entry_type": ctx.get("msg_type") or "",
                             "topic_hint": topic_hint,
