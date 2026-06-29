@@ -14800,7 +14800,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             locals().get("raw_unqualified_lead_discovery_state")
                             and _missing_identity
                             and str(response_mode or "").strip().upper() == "DISCOVERY"
-                            and str(topic or "").strip().upper() == "OTHER"
+                            and str(topic or "").strip().upper() in ("OTHER", "SOCIAL")
                             and str(_identity_question or "").strip()
                         )
 
