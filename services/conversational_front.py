@@ -2739,6 +2739,171 @@ def _build_user_scene_block(*, operational_reference: str, reference_example: st
         return str(kb_compact or "").strip()
 
 
+
+def _front_string_has_sla_prompt_risk(value: str) -> bool:
+    try:
+        t = _normalize_lookup_key(str(value or ""))
+        if not t:
+            return False
+        risky = (
+            "7 dias",
+            "7 dias uteis",
+            "depois do pagamento",
+            "ativacao do whatsapp",
+            "ativacao completa",
+            "numero virtual configuracao",
+            "numero virtual e configuracao",
+            "sla 7 dias",
+        )
+        return any(x in t for x in risky)
+    except Exception:
+        return False
+
+
+def _front_remove_sla_prompt_material(value: Any) -> Any:
+    """
+    Remove apenas material de SLA/ativação da cópia usada no prompt.
+
+    Não altera kb_context real, kb_snapshot real, state_summary nem persistência.
+    Atua somente para impedir que raw discovery genérico introduza SLA como
+    assunto novo.
+    """
+    risky_keys = {
+        "process_sla_text",
+        "sla_setup",
+        "process_facts_text",
+        "sla",
+    }
+    try:
+        if isinstance(value, dict):
+            out = {}
+            for k, v in value.items():
+                key_norm = str(k or "").strip().lower()
+                if key_norm in risky_keys:
+                    continue
+                cleaned = _front_remove_sla_prompt_material(v)
+                if cleaned in ("", None, [], {}):
+                    continue
+                out[k] = cleaned
+            return out
+
+        if isinstance(value, list):
+            out = []
+            for item in value:
+                cleaned = _front_remove_sla_prompt_material(item)
+                if cleaned in ("", None, [], {}):
+                    continue
+                out.append(cleaned)
+            return out
+
+        if isinstance(value, str):
+            return "" if _front_string_has_sla_prompt_risk(value) else value
+
+        return value
+    except Exception:
+        return value
+
+
+def _front_prompt_safe_compact_snapshot(kb_compact: str) -> str:
+    try:
+        raw = str(kb_compact or "").strip()
+        if not raw:
+            return ""
+
+        try:
+            obj = json.loads(raw) if raw.lstrip().startswith(("{", "[")) else None
+        except Exception:
+            obj = None
+
+        if isinstance(obj, (dict, list)):
+            cleaned = _front_remove_sla_prompt_material(obj)
+            return json.dumps(cleaned, ensure_ascii=False, separators=(",", ":"))
+
+        if _front_string_has_sla_prompt_risk(raw):
+            return ""
+
+        return raw
+    except Exception:
+        return str(kb_compact or "").strip()
+
+
+def _front_should_suppress_raw_discovery_sla(
+    *,
+    raw_unqualified_lead_discovery_state: bool,
+    response_mode: str,
+    topic: str = "",
+    intent: str = "",
+    canonical_topic: str = "",
+    upstream_topic_hint: str = "",
+    next_step: str = "",
+    question_type: str = "",
+    operational_contract: dict | None = None,
+    base_operational_contract: dict | None = None,
+) -> bool:
+    """
+    Decide somente se o SLA deve ser suprimido como assunto novo em raw discovery.
+
+    Não reseta conversa.
+    Não limpa memória.
+    Não remove fatos do runtime.
+    Não bloqueia SLA em PROCESS/PRECO/CLOSING/SEND_LINK/continuidade real.
+
+    Observação crítica:
+    topic=OTHER sozinho pode ser apenas default inicial. Por isso, OTHER isolado
+    não basta para suprimir SLA; preferimos sinais de turno vindos de
+    canonical_topic/upstream_topic_hint ou topic=SOCIAL já classificado.
+    """
+    try:
+        if not raw_unqualified_lead_discovery_state:
+            return False
+
+        if str(response_mode or "").strip().upper() != "DISCOVERY":
+            return False
+
+        if str(next_step or "").strip().upper() == "SEND_LINK":
+            return False
+
+        if str(question_type or "").strip().lower() == "simulation":
+            return False
+
+        for contract in (operational_contract, base_operational_contract):
+            if isinstance(contract, dict):
+                if str(contract.get("response_mode") or "").strip().upper() == "CLOSING":
+                    return False
+                if bool(contract.get("hydrated_from_docs")):
+                    return False
+                if bool(contract.get("has_practical_scene")):
+                    return False
+
+        canonical_u = str(canonical_topic or "").strip().upper()
+        upstream_u = str(upstream_topic_hint or "").strip().upper()
+        topic_u = str(topic or "").strip().upper()
+        intent_u = str(intent or "").strip().upper()
+
+        if intent_u and intent_u not in ("OTHER", "SOCIAL", "BROAD", "DISCOVERY"):
+            return False
+
+        if topic_u and topic_u not in ("OTHER", "SOCIAL"):
+            return False
+
+        structural_signals = [x for x in (canonical_u, upstream_u) if x]
+        if any(x not in ("OTHER", "SOCIAL") for x in structural_signals):
+            return False
+
+        if any(x in ("OTHER", "SOCIAL") for x in structural_signals):
+            return True
+
+        # Só o SOCIAL já classificado pelo modelo/front pode ativar.
+        # OTHER isolado é tratado como default e não ativa supressão.
+        if topic_u == "SOCIAL":
+            return True
+
+        return False
+    except Exception:
+        return False
+
+
+
 def _de_genericize_free_mode_text(text: str) -> str:
     # IA TOTAL: não reescrever semântica por regex.
     # Mantemos só uma higiene textual mínima.
@@ -5704,6 +5869,7 @@ def _apply_final_surface_polish(
     apply_sales_guardrails,
     operational_contract: dict | None,
     base_operational_contract: dict | None,
+    suppress_sla_injection: bool = False,
 ):
     """
     Encapsula o polimento final seguro da superfície.
@@ -5720,8 +5886,18 @@ def _apply_final_surface_polish(
         try:
             _kb_obj = _try_parse_kb_json(kb_snapshot)
 
-            reply_text = _sanitize_unverified_time_claims(reply_text, _kb_obj, kb_snapshot)
-            spoken_text = _sanitize_unverified_time_claims(spoken_text, _kb_obj, kb_snapshot)
+            reply_text = _sanitize_unverified_time_claims(
+                reply_text,
+                _kb_obj,
+                kb_snapshot,
+                suppress_sla_injection=suppress_sla_injection,
+            )
+            spoken_text = _sanitize_unverified_time_claims(
+                spoken_text,
+                _kb_obj,
+                kb_snapshot,
+                suppress_sla_injection=suppress_sla_injection,
+            )
         except Exception:
             pass
 
@@ -7344,7 +7520,7 @@ def _kb_get_process_sla_text(kb: Dict[str, Any] | None, kb_snapshot_raw: str) ->
     return ""
 
 
-def _sanitize_unverified_time_claims(reply: str, kb: Dict[str, Any] | None, kb_snapshot_raw: str) -> str:
+def _sanitize_unverified_time_claims(reply: str, kb: Dict[str, Any] | None, kb_snapshot_raw: str, *, suppress_sla_injection: bool = False) -> str:
     """Bloqueia promessas de tempo não verificadas (minutos/horas/dias) e troca por SLA do KB ou linguagem segura."""
     import re
 
@@ -7366,16 +7542,18 @@ def _sanitize_unverified_time_claims(reply: str, kb: Dict[str, Any] | None, kb_s
         return r
 
     # Se a frase de tempo aparece no KB (mesma substring), aceita.
-    try:
-        # pega janelas pequenas para checar presença no KB
-        m = re.search(r"(leva\s+[^\.\!\?]{0,40})", r_low)
-        if m and m.group(1) and m.group(1) in kb_low:
-            return r
-    except Exception:
-        pass
+    # Em raw discovery genérico, não aceitar SLA apenas por existir no KB.
+    if not suppress_sla_injection:
+        try:
+            # pega janelas pequenas para checar presença no KB
+            m = re.search(r"(leva\s+[^\.\!\?]{0,40})", r_low)
+            if m and m.group(1) and m.group(1) in kb_low:
+                return r
+        except Exception:
+            pass
 
     # Troca por SLA do KB quando existir; senão, linguagem segura sem número.
-    safe = (sla.strip() if sla else "")
+    safe = "" if suppress_sla_injection else (sla.strip() if sla else "")
 
     # Remove sentenças que prometem minutos/horas e injeta safe.
     parts = re.split(r"(?<=[\.\!\?])\s+", r)
@@ -9518,6 +9696,31 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         discovery_contract_block = ""
         raw_unqualified_lead_discovery_state = False
 
+    _suppress_raw_discovery_sla_for_prompt = _front_should_suppress_raw_discovery_sla(
+        raw_unqualified_lead_discovery_state=bool(raw_unqualified_lead_discovery_state),
+        response_mode=response_mode,
+        topic=topic,
+        intent=intent,
+        canonical_topic=canonical_topic if 'canonical_topic' in locals() else "",
+        upstream_topic_hint=upstream_topic_hint if 'upstream_topic_hint' in locals() else "",
+        next_step=next_step,
+        question_type=question_type,
+        operational_contract=operational_contract if 'operational_contract' in locals() else {},
+        base_operational_contract=base_operational_contract if 'base_operational_contract' in locals() else {},
+    )
+
+    kb_context_for_prompt = kb_context if isinstance(kb_context, dict) else {}
+    kb_section_for_prompt = kb_section
+    kb_compact_for_prompt = kb_compact
+
+    if _suppress_raw_discovery_sla_for_prompt:
+        kb_context_for_prompt = _front_remove_sla_prompt_material(kb_context_for_prompt)
+        try:
+            kb_section_for_prompt = "KB Context (selected facts):\n" + json.dumps(kb_context_for_prompt, ensure_ascii=False)
+        except Exception:
+            kb_section_for_prompt = ""
+        kb_compact_for_prompt = _front_prompt_safe_compact_snapshot(kb_compact_for_prompt)
+
     reply_size_policy = _resolve_reply_size_policy(
         ai_turns=ai_turns,
         msg_type=msg_type,
@@ -9571,15 +9774,15 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         user_scene_block = _build_user_scene_block(
             operational_reference=operational_reference,
             reference_example=reference_example,
-            kb_section=kb_section,
-            kb_compact=kb_compact,
+            kb_section=kb_section_for_prompt,
+            kb_compact=kb_compact_for_prompt,
         )
     else:
         # Mantém os fatos selecionados do KB, mas sem empurrar cena
         # antes da decisão soberana do modelo.
         # ARQUITETURA: NÃO vazar KB antes da confirmação de segmento
         if segment_for_prompt:
-            user_scene_block = kb_section
+            user_scene_block = kb_section_for_prompt
         elif platform_kb_mode and (operational_reference or reference_example or micro_scene):
             user_scene_block = (
                 "[BASE OPERACIONAL DO PLATFORM_KB]\n"
@@ -12399,8 +12602,30 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 _reply_before_sanitize = str(reply_text or "").strip()
                 _spoken_before_sanitize = str(spoken_text or "").strip()
                 _kb_obj = _try_parse_kb_json(kb_snapshot)
-                reply_text = _sanitize_unverified_time_claims(reply_text, _kb_obj, kb_snapshot)
-                spoken_text = _sanitize_unverified_time_claims(spoken_text, _kb_obj, kb_snapshot)
+                _suppress_raw_discovery_sla_now = _front_should_suppress_raw_discovery_sla(
+                    raw_unqualified_lead_discovery_state=bool(raw_unqualified_lead_discovery_state),
+                    response_mode=response_mode,
+                    topic=topic,
+                    intent=intent,
+                    canonical_topic=canonical_topic if 'canonical_topic' in locals() else "",
+                    upstream_topic_hint=upstream_topic_hint if 'upstream_topic_hint' in locals() else "",
+                    next_step=next_step,
+                    question_type=question_type,
+                    operational_contract=operational_contract if 'operational_contract' in locals() else {},
+                    base_operational_contract=base_operational_contract if 'base_operational_contract' in locals() else {},
+                )
+                reply_text = _sanitize_unverified_time_claims(
+                    reply_text,
+                    _kb_obj,
+                    kb_snapshot,
+                    suppress_sla_injection=_suppress_raw_discovery_sla_now,
+                )
+                spoken_text = _sanitize_unverified_time_claims(
+                    spoken_text,
+                    _kb_obj,
+                    kb_snapshot,
+                    suppress_sla_injection=_suppress_raw_discovery_sla_now,
+                )
 
                 # Nunca deixar o saneamento burocrático matar a resposta de vitrine.
                 if _looks_like_bureaucratic_stub(reply_text):
@@ -15464,6 +15689,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # =========================================================
         # FINAL SURFACE POLISH — SANITIZE / GUARDRAILS / SPOKEN SYNC
         # =========================================================
+        _suppress_raw_discovery_sla_final = _front_should_suppress_raw_discovery_sla(
+            raw_unqualified_lead_discovery_state=bool(raw_unqualified_lead_discovery_state),
+            response_mode=response_mode,
+            topic=topic,
+            intent=intent,
+            canonical_topic=canonical_topic if 'canonical_topic' in locals() else "",
+            upstream_topic_hint=upstream_topic_hint if 'upstream_topic_hint' in locals() else "",
+            next_step=next_step,
+            question_type=question_type,
+            operational_contract=operational_contract if 'operational_contract' in locals() else {},
+            base_operational_contract=base_operational_contract if 'base_operational_contract' in locals() else {},
+        )
+
         reply_text, spoken_text = _apply_final_surface_polish(
             reply_text=reply_text,
             spoken_text=spoken_text,
@@ -15476,6 +15714,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             apply_sales_guardrails=apply_sales_guardrails,
             operational_contract=operational_contract if 'operational_contract' in locals() else {},
             base_operational_contract=base_operational_contract if 'base_operational_contract' in locals() else {},
+            suppress_sla_injection=_suppress_raw_discovery_sla_final,
         )
 
 
