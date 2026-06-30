@@ -12172,12 +12172,29 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             # O repair factual de preço não pode vencer uma solicitação atual
             # de simulação. Memória antiga de PRECO segue útil para perguntas
             # de preço, mas não substitui microcena/demonstração do turno vivo.
-            _price_repair_allowed_v1 = (
-                str(question_type or "").strip().lower() != "simulation"
+            #
+            # FRONT_PRICE_REPAIR_CURRENT_TOPIC_GATE_V1
+            # O turno atual tem prioridade sobre memória antiga.
+            # Se o tópico atual já foi resolvido como não-PRECO, last_intent
+            # ou kb_context.intent_hint antigos não podem acionar repair de preço.
+            _price_qt_v1 = str(question_type or "").strip().lower()
+            _price_current_topic_v1 = str(topic or "").strip().upper()
+            _price_current_topic_known_v1 = bool(
+                _price_current_topic_v1
+                and _price_current_topic_v1 not in ("OTHER", "SOCIAL")
+            )
+            _price_current_topic_allows_price_v1 = (
+                not _price_current_topic_known_v1
+                or _price_current_topic_v1 == "PRECO"
+            )
+
+            _price_repair_allowed_v1 = bool(
+                _price_qt_v1 != "simulation"
+                and _price_current_topic_allows_price_v1
             )
 
             price_context_active = bool(_price_repair_allowed_v1 and any([
-                str(topic or "").strip().upper() == "PRECO",
+                _price_current_topic_v1 == "PRECO",
                 str(last_intent or "").strip().upper() == "PRECO",
                 str((kb_context or {}).get("intent_hint") or "").strip().upper() == "PRECO",
             ]))
