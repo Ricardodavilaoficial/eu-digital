@@ -10296,6 +10296,52 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             pass
 
         # ----------------------------------------------------------
+        # FRONT_RAW_DISCOVERY_FACTUAL_DEAUTH_V1
+        #
+        # O raw discovery nasce antes da IA devolver question_type final.
+        # Quando a IA classifica o turno como pergunta factual/pontual,
+        # esse turno não deve continuar como descoberta pura só porque
+        # ainda falta nome ou segmento.
+        #
+        # Escopo:
+        # - não usa palavra-chave do usuário;
+        # - não injeta prazo/SLA;
+        # - não altera prompt;
+        # - não afeta simulation nem SEND_LINK;
+        # - preserva a resposta factual da IA e deixa identidade como
+        #   complemento controlado pelos finalizadores existentes.
+        # ----------------------------------------------------------
+        try:
+            _raw_deauth_qt = str(question_type or "").strip().lower()
+            if (
+                bool(raw_unqualified_lead_discovery_state)
+                and _raw_deauth_qt in ("punctual", "continuity")
+                and str(next_step or "").strip().upper() != "SEND_LINK"
+            ):
+                raw_unqualified_lead_discovery_state = False
+
+                if str(response_mode or "").strip().upper() == "DISCOVERY":
+                    response_mode = "DIRECT"
+                    try:
+                        if isinstance(data, dict):
+                            data["response_mode"] = "DIRECT"
+                        if isinstance(understanding, dict):
+                            understanding["response_mode"] = "DIRECT"
+                    except Exception:
+                        pass
+
+                try:
+                    logging.info(
+                        "[FRONT_RAW_DISCOVERY_FACTUAL_DEAUTH_V1] applied=True question_type=%s response_mode=%s",
+                        _raw_deauth_qt,
+                        str(response_mode or ""),
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.warning("[FRONT_RAW_DISCOVERY_FACTUAL_DEAUTH_FAIL] %s", e)
+
+        # ----------------------------------------------------------
         # Trava estrutural contra topic bleeding.
         #
         # Continuidade factual deve continuar existindo para perguntas
