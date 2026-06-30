@@ -7686,6 +7686,23 @@ def _platform_kb_resolve_runtime(
 
         topic = str(current_topic or "").strip().upper()
 
+        # FRONT_PLATFORM_KB_TEXT_TOPIC_PACK_PRIORITY_V1
+        # Quando o próprio platform_kb roteia o texto atual para um tópico,
+        # esse tópico representa a intenção viva do turno e deve vencer a
+        # memória/perfil. preferred_packs continua útil quando o texto atual
+        # não traz roteamento explícito.
+        _platform_text_topic_v1 = ""
+        try:
+            _platform_text_topic_v1 = str(
+                _platform_topic_from_kb_rules(kb_obj, user_text)
+                or ""
+            ).strip().upper()
+        except Exception:
+            _platform_text_topic_v1 = ""
+
+        if _platform_text_topic_v1 in TOPICS and _platform_text_topic_v1 != "OTHER":
+            topic = _platform_text_topic_v1
+
         if topic not in TOPICS or topic == "OTHER":
             topic = str(
                 (kb_context or {}).get("topic")
@@ -7693,24 +7710,6 @@ def _platform_kb_resolve_runtime(
                 or (kb_context or {}).get("intent_hint")
                 or ""
             ).strip().upper()
-
-        if topic not in TOPICS or topic == "OTHER":
-            text_norm = _normalize_lookup_key(user_text)
-            rules = ((_platform_get_map(kb_obj, "routing_hints") or {}).get("intent_override_rules") or [])
-            if isinstance(rules, list):
-                for rule in rules:
-                    if not isinstance(rule, dict):
-                        continue
-                    forced_topic = str(rule.get("force_topic") or "").strip().upper()
-                    if forced_topic not in TOPICS:
-                        continue
-                    for trigger in (rule.get("when_any") or []):
-                        trigger_norm = _normalize_lookup_key(str(trigger or ""))
-                        if trigger_norm and trigger_norm in text_norm:
-                            topic = forced_topic
-                            break
-                    if topic in TOPICS and topic != "OTHER":
-                        break
 
         pack_id = _pick_pack_for_intent(topic)
 
@@ -7743,7 +7742,14 @@ def _platform_kb_resolve_runtime(
         if pack_id and pack_id in blocked:
             pack_id = ""
 
-        if preferred:
+        _text_topic_pack_priority_v1 = bool(
+            _platform_text_topic_v1
+            and _platform_text_topic_v1 == topic
+            and pack_id
+            and pack_id not in blocked
+        )
+
+        if preferred and not _text_topic_pack_priority_v1:
             if not pack_id or pack_id not in preferred:
                 for candidate in preferred:
                     if candidate and candidate not in blocked:
@@ -8150,6 +8156,24 @@ def _front_build_continuity_reply_from_platform_kb(
         pack_u = str(pack_id or "").strip().upper() or _pick_pack_for_intent(topic_u)
         if not pack_u:
             return base
+
+        # FRONT_PUNCTUAL_FACTUAL_CONTINUITY_V1
+        # Perguntas pontuais também podem ser continuidade factual quando
+        # o tópico atual já foi resolvido como operacional/processual.
+        #
+        # Escopo seguro:
+        # - não usa palavra-chave do usuário;
+        # - não altera prompt;
+        # - não chama IA;
+        # - preserva PRECO/WHAT_IS/SERVICOS/TRIAL/VOZ como resposta direta;
+        # - atua apenas quando tópico e pack estruturais apontam para
+        #   continuidade operacional.
+        if (
+            q_type == "punctual"
+            and topic_u in ("AGENDA", "PROCESSO", "STATUS", "PEDIDOS", "ORCAMENTO")
+            and pack_u in ("PACK_A_AGENDA", "PACK_C_PEDIDOS", "PACK_D_STATUS")
+        ):
+            is_continuity = True
 
         packs = _platform_get_map(kb_obj, "value_packs_v1")
         pack = packs.get(pack_u) if isinstance(packs, dict) else {}
@@ -9362,11 +9386,45 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         )
 
         if platform_kb_mode:
+            # FRONT_PLATFORM_KB_CURRENT_TURN_TOPIC_V1
+            # O tópico do turno atual deve vencer a memória recente quando
+            # houver regra explícita no próprio platform_kb para o texto atual.
+            #
+            # Isso preserva continuidade legítima via last_intent quando o
+            # texto atual não roteia nada, mas evita que PRECO/AGENDA antigos
+            # dominem perguntas factuais novas.
+            _platform_text_topic = ""
+            try:
+                _platform_text_topic = str(
+                    _platform_topic_from_kb_rules(kb_snapshot_obj, user_text)
+                    or ""
+                ).strip().upper()
+            except Exception:
+                _platform_text_topic = ""
+
+            _platform_current_topic = str(
+                _platform_text_topic
+                or upstream_topic_hint
+                or last_intent
+                or ""
+            ).strip().upper()
+
+            try:
+                logging.info(
+                    "[FRONT_PLATFORM_KB_CURRENT_TURN_TOPIC_V1] text_topic=%s upstream=%s last_intent=%s effective=%s",
+                    str(_platform_text_topic or ""),
+                    str(upstream_topic_hint or ""),
+                    str(last_intent or ""),
+                    str(_platform_current_topic or ""),
+                )
+            except Exception:
+                pass
+
             platform_runtime = _platform_kb_resolve_runtime(
                 kb_obj=kb_snapshot_obj,
                 kb_context=kb_context if isinstance(kb_context, dict) else {},
                 user_text=user_text,
-                current_topic=(upstream_topic_hint or last_intent),
+                current_topic=_platform_current_topic,
                 segment_hint=effective_segment or segment_hint,
             )
 
