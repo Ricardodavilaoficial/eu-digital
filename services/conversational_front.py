@@ -15383,6 +15383,45 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                 pass
 
                             _identity_only_reply = str(_identity_question or "").strip()
+
+                            # FRONT_SOCIAL_OPENING_IDENTITY_ONLY_REPAIR_V1
+                            # Em primeira abertura social pura, a pergunta de identidade
+                            # não deve virar o corpo inteiro da resposta.
+                            #
+                            # Escopo:
+                            # - apenas raw discovery;
+                            # - apenas DISCOVERY;
+                            # - apenas tópico SOCIAL;
+                            # - apenas turno inicial;
+                            # - sem prompt novo;
+                            # - sem IA adicional;
+                            # - sem pack genérico;
+                            # - preserva a pergunta canônica já calculada.
+                            try:
+                                _social_opening_identity_only_repair_v1 = bool(
+                                    int(ai_turns or 0) == 0
+                                    and locals().get("raw_unqualified_lead_discovery_state")
+                                    and str(response_mode or "").strip().upper() == "DISCOVERY"
+                                    and str(topic or "").strip().upper() == "SOCIAL"
+                                    and str(_identity_question or "").strip()
+                                )
+                            except Exception:
+                                _social_opening_identity_only_repair_v1 = False
+
+                            if _social_opening_identity_only_repair_v1:
+                                _social_intro_v1 = (
+                                    "Olá! Obrigado por chamar. O MEI Robô atende pelo WhatsApp, "
+                                    "entende mensagens e ajuda a conduzir o primeiro atendimento do negócio."
+                                )
+                                _identity_only_reply = f"{_social_intro_v1} {_identity_question}".strip()
+                                try:
+                                    logging.info(
+                                        "[FRONT_SOCIAL_OPENING_IDENTITY_ONLY_REPAIR_V1] applied=True reply_len=%s",
+                                        len(str(_identity_only_reply or "")),
+                                    )
+                                except Exception:
+                                    pass
+
                             _free_reply = _identity_only_reply
                             _free_spoken = _identity_only_reply
                             out["replyText"] = _identity_only_reply
