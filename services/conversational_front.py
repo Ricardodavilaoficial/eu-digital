@@ -6659,7 +6659,19 @@ def _finalize_identity_visibility_from_scope(out: dict, scope: dict) -> dict:
     try:
         scope = scope if isinstance(scope, dict) else {}
 
-        has_name = bool(scope.get("has_name"))
+        # FRONT_EFFECTIVE_NAME_IDENTITY_FINALIZER_V1
+        # A visibilidade final de identidade deve considerar o nome efetivo
+        # já disponível no escopo, não apenas o boolean `has_name`, que pode
+        # estar defasado em caminhos de continuidade/finalização.
+        # Não altera prompt, não interpreta segmento e não chama IA.
+        has_name = bool(
+            scope.get("has_name")
+            or str(scope.get("name_hint") or "").strip()
+            or str(scope.get("current_turn_lead_name") or "").strip()
+            or str(scope.get("inferred_lead_name") or "").strip()
+            or str(scope.get("lead_name") or "").strip()
+            or str(scope.get("leadName") or "").strip()
+        )
         effective_segment = str(scope.get("effective_segment") or "").strip()
         segment_for_prompt = str(scope.get("segment_for_prompt") or "").strip()
         segment_hint = str(scope.get("segment_hint") or "").strip()
@@ -14601,9 +14613,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                         ):
                             _identity_question = _kb_identity_question
 
+                    # FRONT_EFFECTIVE_NAME_IDENTITY_FINALIZER_V1
+                    # Para pergunta visível de identidade, nome já salvo ou
+                    # recuperado no turno atual deve impedir novo pedido de nome.
+                    _effective_has_name_for_identity_v1 = bool(
+                        has_name
+                        or str(name_hint or "").strip()
+                        or str(current_turn_lead_name or "").strip()
+                        or str(inferred_lead_name or "").strip()
+                    )
+
                     if _missing_identity and not _identity_question:
                         _identity_question = _front_build_identity_request(
-                            has_name=has_name,
+                            has_name=_effective_has_name_for_identity_v1,
                             has_segment=_has_segment_for_identity,
                         )
                 except Exception:
@@ -14620,6 +14642,51 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 _free_reply = _front_clean_free_mode_tail(_free_reply)
                 _free_spoken = _front_clean_free_mode_tail(_free_spoken)
+
+                # FRONT_EFFECTIVE_NAME_IDENTITY_TAIL_V1
+                # Se uma pergunta canônica antiga já veio embutida no corpo,
+                # normaliza o tail conforme a identidade efetiva atual.
+                # Escopo: somente a frase canônica gerada pelo próprio runtime.
+                try:
+                    def _front_replace_canonical_identity_tail_v1(value: object) -> str:
+                        v = str(value or "").strip()
+                        if not v:
+                            return ""
+
+                        full_identity = _front_build_identity_request(
+                            has_name=False,
+                            has_segment=False,
+                        )
+                        effective_identity = _front_build_identity_request(
+                            has_name=bool(_effective_has_name_for_identity_v1),
+                            has_segment=bool(_has_segment_for_identity),
+                        )
+
+                        if (
+                            full_identity
+                            and v.endswith(full_identity)
+                            and bool(_effective_has_name_for_identity_v1)
+                        ):
+                            base = v[: -len(full_identity)].rstrip()
+                            if effective_identity:
+                                if base:
+                                    return f"{base} {effective_identity}".strip()
+                                return effective_identity.strip()
+                            return base.strip()
+
+                        return v
+
+                    _free_reply = _front_replace_canonical_identity_tail_v1(_free_reply)
+                    _free_spoken = _front_replace_canonical_identity_tail_v1(_free_spoken)
+
+                    _effective_identity_question_tail_v1 = _front_build_identity_request(
+                        has_name=bool(_effective_has_name_for_identity_v1),
+                        has_segment=bool(_has_segment_for_identity),
+                    )
+                    if _effective_has_name_for_identity_v1:
+                        _identity_question = str(_effective_identity_question_tail_v1 or "").strip()
+                except Exception as e:
+                    logging.warning("[FRONT_EFFECTIVE_NAME_IDENTITY_TAIL_FAIL] %s", e)
 
                 # Remove pergunta aberta que tenha escapado no free_mode,
                 # preservando perguntas apenas quando forem exatamente a
@@ -15306,9 +15373,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                     or segment_hint
                 )
 
-                if (not bool(has_name)) or (not _explicit_has_segment):
+                # FRONT_EFFECTIVE_NAME_IDENTITY_FINALIZER_V1
+                # O finalizador explícito também deve usar nome efetivo
+                # para não repetir "seu nome" quando name_hint/leadName já existe.
+                _explicit_has_name = bool(
+                    has_name
+                    or str(name_hint or "").strip()
+                    or str(current_turn_lead_name or "").strip()
+                    or str(inferred_lead_name or "").strip()
+                )
+
+                if (not _explicit_has_name) or (not _explicit_has_segment):
                     _explicit_identity_question = _front_build_identity_request(
-                        has_name=bool(has_name),
+                        has_name=bool(_explicit_has_name),
                         has_segment=bool(_explicit_has_segment),
                     )
                 else:
@@ -15316,7 +15393,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                 out = _finalize_identity_visibility(
                     out,
-                    has_name=bool(has_name),
+                    has_name=bool(_explicit_has_name),
                     effective_segment=str(effective_segment or "").strip(),
                     segment_for_prompt=str(segment_for_prompt or "").strip(),
                     segment_hint=str(segment_hint or "").strip(),
