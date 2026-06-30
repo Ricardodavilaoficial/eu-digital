@@ -12168,11 +12168,19 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         # usa apenas o topic já decidido pela IA.
         # ----------------------------------------------------------
         try:
-            price_context_active = any([
+            # FRONT_SKIP_PRICE_REPAIR_FOR_SIMULATION_V1
+            # O repair factual de preço não pode vencer uma solicitação atual
+            # de simulação. Memória antiga de PRECO segue útil para perguntas
+            # de preço, mas não substitui microcena/demonstração do turno vivo.
+            _price_repair_allowed_v1 = (
+                str(question_type or "").strip().lower() != "simulation"
+            )
+
+            price_context_active = bool(_price_repair_allowed_v1 and any([
                 str(topic or "").strip().upper() == "PRECO",
                 str(last_intent or "").strip().upper() == "PRECO",
                 str((kb_context or {}).get("intent_hint") or "").strip().upper() == "PRECO",
-            ])
+            ]))
             if price_context_active:
                 needs_price_repair = (
                     (not str(reply_text or "").strip())
