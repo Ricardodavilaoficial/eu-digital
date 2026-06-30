@@ -244,9 +244,14 @@ def _extract_lead_name_from_current_turn(text: str) -> str:
         if not t:
             return ""
 
+        # FRONT_IDENTITY_SEGMENT_SPLIT_V1
+        # Captura apresentações pessoais estruturais.
+        # A forma "sou Nome" sem artigo só é aceita quando o candidato preserva
+        # capitalização de nome próprio; gírias/idiomas mistos ficam para a IA soberana.
         patterns = (
             r"(?i)\b(?:me chamo|meu nome é|meu nome e)\s+(?:o\s+|a\s+)?([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-zà-ÿ]{1,30})\b",
             r"(?i)\b(?:eu\s+)?sou\s+(?:o\s+|a\s+)([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-zà-ÿ]{1,30})\b",
+            r"\b(?:[Ee]u\s+)?[Ss]ou\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-zà-ÿ]{1,30})\b(?=\s*(?:$|[.,!?;:]|\be\b))",
         )
         for pat in patterns:
             m = re.search(pat, t)
@@ -5700,24 +5705,69 @@ def _front_extract_declared_segment_from_user_text(text: str) -> str:
         if not s:
             return ""
 
+        # FRONT_IDENTITY_SEGMENT_SPLIT_V1
+        # Se o mesmo turno contém apresentação pessoal ("Sou José"), esse trecho
+        # não deve virar segmento. A separação é estrutural, por forma do texto,
+        # sem lista de nomes/profissões/segmentos.
+        turn_name = _extract_lead_name_from_current_turn(s)
+
+        def _norm_identity(value: object) -> str:
+            try:
+                v = str(value or "").strip(" .,!?:;-\n\t")
+                v = re.sub(r"(?i)^(?:o|a)\s+", "", v).strip()
+                v = " ".join(v.split())
+                return v.casefold()
+            except Exception:
+                return ""
+
+        def _single_proper_candidate(value: object) -> bool:
+            try:
+                v = str(value or "").strip(" .,!?:;-\n\t")
+                v = re.sub(r"(?i)^(?:o|a)\s+", "", v).strip()
+                if not v or " " in v:
+                    return False
+                return bool(re.match(r"^[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-zà-ÿ]{1,30}$", v))
+            except Exception:
+                return False
+
+        turn_name_norm = _norm_identity(turn_name)
+
         patterns = [
-            r"(?i)(?:^|[.!?\n]\s*)sou\s+([^.!?\n,;:]{3,80})",
-            r"(?i)(?:^|[.!?\n]\s*|\s+)eu\s+sou\s+([^.!?\n,;:]{3,80})",
-            r"(?i)(?:^|[.!?\n]\s*)atuo\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
-            r"(?i)(?:^|[.!?\n]\s*|\s+)eu\s+atuo\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
-            r"(?i)(?:^|[.!?\n]\s*)trabalho\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
-            r"(?i)(?:^|[.!?\n]\s*|\s+)eu\s+trabalho\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
+            r"(?i)(?:^|[.!?,;:\n]\s*|\s+e\s+)sou\s+([^.!?\n,;:]{3,80})",
+            r"(?i)(?:^|[.!?,;:\n]\s*|\s+)eu\s+sou\s+([^.!?\n,;:]{3,80})",
+            r"(?i)(?:^|[.!?,;:\n]\s*|\s+e\s+)atuo\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
+            r"(?i)(?:^|[.!?,;:\n]\s*|\s+)eu\s+atuo\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
+            r"(?i)(?:^|[.!?,;:\n]\s*|\s+e\s+)trabalho\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
+            r"(?i)(?:^|[.!?,;:\n]\s*|\s+)eu\s+trabalho\s+(?:como|com|em)\s+([^.!?\n,;:]{3,80})",
         ]
+
         for pat in patterns:
-            m = re.search(pat, s)
-            if not m:
-                continue
-            value = str(m.group(1) or "").strip(" .,!?:;-\n\t")
-            if value:
+            for m in re.finditer(pat, s):
+                value = str(m.group(1) or "").strip(" .,!?:;-\n\t")
+                if not value:
+                    continue
+
+                marker = re.search(r"(?i)\s+e\s+(?:eu\s+)?(?:sou|atuo|trabalho)\s+", value)
+                if marker:
+                    before = value[:marker.start()].strip(" .,!?:;-\n\t")
+                    after = value[marker.end():].strip(" .,!?:;-\n\t")
+                    if turn_name_norm and _norm_identity(before) == turn_name_norm and after:
+                        value = after
+                    elif before:
+                        value = before
+
+                if turn_name_norm and _norm_identity(value) == turn_name_norm:
+                    continue
+
+                if _single_proper_candidate(value):
+                    continue
+
                 return value[:80].strip()
+
         return ""
     except Exception:
         return ""
+
 
 def _front_pick_rich_free_mode_base(
     *,
