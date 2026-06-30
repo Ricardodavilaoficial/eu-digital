@@ -3698,6 +3698,19 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         topic_hint = _front_topic_hint(text or "")
                         kb_snapshot = _build_front_kb_snapshot(topic_hint, text or "")
 
+                        # FRONT_STATE_TOPIC_SOCIAL_DEAUTH_V1
+                        # O hint determinístico pode escolher snapshot, mas SOCIAL não deve virar
+                        # tópico estrutural do front. Saudação/continuidade ficam para a IA soberana.
+                        front_state_topic_hint = str(topic_hint or "").strip()
+                        if front_state_topic_hint.upper() == "SOCIAL":
+                            front_state_topic_hint = ""
+                            try:
+                                logging.info(
+                                    "[WA_BOT][FRONT_STATE_TOPIC_SOCIAL_DEAUTH_V1] snapshot_topic=SOCIAL state_topic=empty"
+                                )
+                            except Exception:
+                                pass
+
                         _segment_for_name_guard = (
                             ctx.get("segment_hint")
                             or ctx.get("leadSegmentRaw")
@@ -3777,8 +3790,8 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             ),
                             "msg_type": ctx.get("msg_type") or "",
                             "entry_type": ctx.get("msg_type") or "",
-                            "topic_hint": topic_hint,
-                            "kb_topic": topic_hint,
+                            "topic_hint": front_state_topic_hint,
+                            "kb_topic": front_state_topic_hint,
                             # Micro-contexto (best-effort). Se não vier, segue vazio.
                             "last_intent": ctx.get("last_intent") or ctx.get("lastIntent") or "",
                             "last_user_goal": ctx.get("last_user_goal") or ctx.get("lastUserGoal") or "",
@@ -3814,8 +3827,9 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
 
                         try:
                             logging.info(
-                                "[WA_BOT][FRONT_CALL] topic_hint=%s state_summary_has_topic=%s",
+                                "[WA_BOT][FRONT_CALL] snapshot_topic=%s state_topic=%s state_summary_has_topic=%s",
                                 str(topic_hint or "").strip().upper(),
+                                str(front_state_topic_hint or "").strip().upper(),
                                 bool(state_summary.get("topic_hint")),
                             )
                         except Exception:
@@ -3980,7 +3994,8 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             if isinstance(und, dict):
                                 und.setdefault("nextStep", front_out.get("nextStep") or front_out.get("next_step") or front_out.get("planNextStep") or "NONE")
                                 und.setdefault("shouldEnd", bool(front_out.get("shouldEnd")))
-                                und.setdefault("topicHint", topic_hint)
+                                if front_state_topic_hint:
+                                    und.setdefault("topicHint", front_state_topic_hint)
                         except Exception:
                             pass
 
@@ -4108,7 +4123,7 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         try:
                             import re
                             _rt = (out.get("replyText") or "").strip()
-                            _topic = str((und or {}).get("topicHint") or (und or {}).get("topic") or topic_hint or "").strip().upper()
+                            _topic = str((und or {}).get("topicHint") or (und or {}).get("topic") or front_state_topic_hint or "").strip().upper()
 
                             # ✅ Produto: se já é SEND_LINK, não adiciona pergunta/CTA nenhuma
                             if str(out.get("planNextStep") or "").strip().upper() == "SEND_LINK":
