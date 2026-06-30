@@ -7331,6 +7331,68 @@ def _front_repair_simulation_reply_for_target(
     cleaned = cleaned.strip().strip('"').strip("'").strip()
     cleaned = _front_strip_simulation_lead_vocative(cleaned, simulation_lead_name)
 
+    # FRONT_SIMULATION_REPAIR_OUTPUT_GATE_V1
+    # O repair de simulação só pode substituir a resposta original
+    # quando a saída reparada ainda tem forma de demonstração/show.
+    #
+    # Escopo:
+    # - atua apenas dentro do repair de simulation;
+    # - não classifica intenção do usuário;
+    # - não chama IA adicional;
+    # - não altera prompts;
+    # - não força microcena;
+    # - apenas impede que reparo pior apague uma simulação existente.
+    def _front_simulation_demo_shape_ok_v1(value: object) -> bool:
+        try:
+            candidate = " ".join(str(value or "").strip().split())
+            if len(candidate) < 60:
+                return False
+
+            try:
+                if _is_show_micro_scene(
+                    text=candidate,
+                    operational_reference=str(
+                        contract.get("operational_reference")
+                        or contract.get("micro_scene_conversational")
+                        or contract.get("micro_scene")
+                        or ""
+                    ),
+                    reference_example=str(contract.get("reference_example") or ""),
+                    contract=contract,
+                ):
+                    return True
+            except Exception:
+                pass
+
+            low = candidate.casefold()
+            has_demo_intro = (
+                low.startswith("veja um exemplo prático")
+                or low.startswith("veja um exemplo pratico")
+            )
+            has_quoted_simulation = (
+                ('"' in candidate or "“" in candidate or "”" in candidate)
+                and len(candidate) >= 80
+            )
+
+            return bool(has_demo_intro or has_quoted_simulation)
+        except Exception:
+            return False
+
+    _repair_demo_shape_ok_v1 = _front_simulation_demo_shape_ok_v1(cleaned)
+    _original_demo_shape_ok_v1 = _front_simulation_demo_shape_ok_v1(current_reply)
+
+    if cleaned and not _repair_demo_shape_ok_v1:
+        try:
+            logging.info(
+                "[FRONT_SIMULATION_REPAIR_OUTPUT_GATE_V1] rejected=True repaired_len=%s original_demo=%s repaired_head=%s",
+                len(str(cleaned or "")),
+                bool(_original_demo_shape_ok_v1),
+                " ".join(str(cleaned or "").split())[:180],
+            )
+        except Exception:
+            pass
+        return ""
+
     # Acabamento estrutural da demonstração:
     # quando o modelo expõe marcadores de roteiro A/B/C, preserva o conteúdo
     # e remove apenas os rótulos visíveis.
@@ -7349,7 +7411,7 @@ def _front_repair_simulation_reply_for_target(
     if len(cleaned) < 30:
         return ""
 
-    if _front_simulation_reply_needs_target_repair(cleaned):
+    if _front_simulation_reply_needs_target_repair(cleaned) and not _repair_demo_shape_ok_v1:
         return ""
 
     return cleaned[:900].strip()
