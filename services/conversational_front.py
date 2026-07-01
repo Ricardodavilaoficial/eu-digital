@@ -15472,43 +15472,46 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             _identity_only_reply = str(_identity_question or "").strip()
 
                             # FRONT_SOCIAL_OPENING_IDENTITY_ONLY_REPAIR_V1
-                            # Em primeira abertura social pura, a pergunta de identidade
-                            # não deve virar o corpo inteiro da resposta.
+                            # FRONT_EARLY_DISCOVERY_IDENTITY_ONLY_REPAIR_V1
+                            # Quando raw discovery degrada para identity-only, a pergunta de
+                            # identidade não deve virar o corpo inteiro da resposta.
                             #
                             # Escopo:
                             # - apenas raw discovery;
                             # - apenas DISCOVERY;
-                            # - apenas tópico SOCIAL;
-                            # - apenas turno inicial;
+                            # - apenas corpo já detectado como degradado;
+                            # - apenas tópico inicial/genérico: OTHER, SOCIAL, BROAD ou vazio;
+                            # - apenas começo da conversa;
                             # - sem prompt novo;
                             # - sem IA adicional;
                             # - sem pack genérico;
                             # - preserva a pergunta canônica já calculada.
                             try:
-                                _social_opening_identity_only_repair_v1 = bool(
-                                    int(ai_turns or 0) == 0
+                                _early_discovery_identity_only_repair_v1 = bool(
+                                    int(ai_turns or 0) <= 1
                                     and locals().get("raw_unqualified_lead_discovery_state")
                                     and str(response_mode or "").strip().upper() == "DISCOVERY"
-                                    and str(topic or "").strip().upper() == "SOCIAL"
+                                    and str(topic or "").strip().upper() in ("", "OTHER", "SOCIAL", "BROAD")
                                     and str(_identity_question or "").strip()
                                 )
                             except Exception:
-                                _social_opening_identity_only_repair_v1 = False
+                                _early_discovery_identity_only_repair_v1 = False
 
-                            if _social_opening_identity_only_repair_v1:
-                                _social_intro_v1 = (
-                                    "Olá! Obrigado por chamar. O MEI Robô atende pelo WhatsApp, "
-                                    "entende mensagens e ajuda a conduzir o primeiro atendimento do negócio."
+                            if _early_discovery_identity_only_repair_v1:
+                                _early_intro_v1 = (
+                                    "Olá! Obrigado por chamar. Eu sou o MEI Robô e ajudo negócios a atender pelo WhatsApp "
+                                    "com respostas, organização e condução do primeiro atendimento."
                                 )
-                                _identity_only_reply = f"{_social_intro_v1} {_identity_question}".strip()
+                                _identity_only_reply = f"{_early_intro_v1} {_identity_question}".strip()
                                 try:
                                     logging.info(
-                                        "[FRONT_SOCIAL_OPENING_IDENTITY_ONLY_REPAIR_V1] applied=True reply_len=%s",
+                                        "[FRONT_EARLY_DISCOVERY_IDENTITY_ONLY_REPAIR_V1] applied=True reply_len=%s topic=%s ai_turns=%s",
                                         len(str(_identity_only_reply or "")),
+                                        str(topic or ""),
+                                        int(ai_turns or 0),
                                     )
                                 except Exception:
                                     pass
-
                             _free_reply = _identity_only_reply
                             _free_spoken = _identity_only_reply
                             out["replyText"] = _identity_only_reply
