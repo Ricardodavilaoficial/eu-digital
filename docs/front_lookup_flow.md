@@ -1,0 +1,434 @@
+# Lookup Flow Audit
+
+Objetivo: mapear o núcleo de segmentação/lookup do conversational_front.
+
+Relatório somente leitura.
+
+
+## _best_doc_match
+
+- lines: 25
+- risk: HIGH
+- called_by:
+  - _infer_segment_from_docs
+  - _infer_segment_from_text
+  - _kb_lookup_operational_docs
+- calls:
+  - _score_query_against_doc
+  - isinstance
+  - items
+  - str
+  - strip
+- referenced_names:
+  - Any
+  - Dict
+  - Exception
+  - _score_query_against_doc
+  - best_key
+  - best_score
+  - dict
+  - doc
+  - docs_map
+  - int
+  - isinstance
+  - key
+  - min_score
+  - q
+  - query
+  - score
+  - str
+
+## _best_lookup_key_match
+
+- lines: 21
+- risk: LOW
+- called_by:
+  - _infer_segment_from_docs
+  - _kb_lookup_operational_docs
+- calls:
+  - _lookup_token_overlap_score
+  - str
+  - strip
+- referenced_names:
+  - Exception
+  - _lookup_token_overlap_score
+  - best_key
+  - best_score
+  - c
+  - cand
+  - candidates
+  - int
+  - list
+  - min_score
+  - q
+  - query
+  - score
+  - str
+
+## _find_kb_map_anywhere
+
+- lines: 28
+- risk: HIGH
+- called_by:
+  - _clear_incompatible_kb_context_for_current_text
+  - _find_kb_map_anywhere
+  - _infer_segment_from_docs
+  - _infer_segment_from_text
+  - _kb_lookup_operational_docs
+  - _platform_get_map
+- calls:
+  - _find_kb_map_anywhere
+  - get
+  - isinstance
+  - items
+- referenced_names:
+  - Any
+  - Dict
+  - Exception
+  - _
+  - _find_kb_map_anywhere
+  - dict
+  - direct
+  - found
+  - int
+  - isinstance
+  - item
+  - list
+  - max_depth
+  - obj
+  - str
+  - target_key
+  - v
+
+## _infer_segment_from_docs
+
+- lines: 77
+- risk: MEDIUM
+- called_by:
+  - handle
+- calls:
+  - _best_doc_match
+  - _best_lookup_key_match
+  - _doc_identity_is_compatible_with_current_text
+  - _find_kb_map_anywhere
+  - _keyword_doc_match
+  - extend
+  - get
+  - isinstance
+  - join
+  - keys
+  - loads
+  - lower
+  - startswith
+  - str
+  - strip
+- referenced_names:
+  - Any
+  - Dict
+  - Exception
+  - _best_doc_match
+  - _best_lookup_key_match
+  - _doc_identity_is_compatible_with_current_text
+  - _find_kb_map_anywhere
+  - _keyword_doc_match
+  - best
+  - best_doc
+  - best_seg
+  - best_sub
+  - candidates
+  - dict
+  - hinted
+  - isinstance
+  - json
+  - k
+  - kb_context
+  - kb_seg
+  - kb_snapshot
+  - kb_sub
+  - keyword_seg
+  - keyword_sub
+  - list
+  - obj
+  - raw
+  - search_text
+  - str
+  - user_text
+
+## _infer_segment_from_text
+
+- lines: 126
+- risk: HIGH
+- called_by:
+  - handle
+- calls:
+  - _best_doc_match
+  - _find_kb_map_anywhere
+  - _key_matches_text
+  - _keyword_doc_match
+  - _norm
+  - _normalize_lookup_key
+  - _tokenize_lookup_text
+  - any
+  - append
+  - commonprefix
+  - dumps
+  - extend
+  - isinstance
+  - items
+  - keys
+  - len
+  - loads
+  - lower
+  - lstrip
+  - replace
+  - startswith
+  - str
+  - strip
+- referenced_names:
+  - Exception
+  - _best_doc_match
+  - _find_kb_map_anywhere
+  - _key_matches_text
+  - _keyword_doc_match
+  - _norm
+  - _normalize_lookup_key
+  - _preserve_continuity_reply
+  - _tokenize_lookup_text
+  - _txt
+  - any
+  - blob
+  - blob_norm
+  - bool
+  - candidates
+  - common
+  - dict
+  - isinstance
+  - json
+  - k
+  - kb_segments
+  - kb_snapshot
+  - kb_subsegments
+  - key
+  - key_norm
+  - key_tokens
+  - kt
+  - len
+  - m
+  - norm
+  - obj
+  - os
+  - profile
+  - s
+  - seg
+  - str
+  - sub
+  - sub_candidates
+  - svm
+  - t
+  - text_norm
+  - text_tokens
+  - tok
+  - tt
+  - user_text
+
+## _kb_lookup_operational_docs
+
+- lines: 182
+- risk: HIGH
+- called_by:
+  - _build_operational_contract
+  - handle
+- calls:
+  - _best_doc_match
+  - _best_lookup_key_match
+  - _find_kb_map_anywhere
+  - bool
+  - get
+  - info
+  - isinstance
+  - items
+  - join
+  - keys
+  - len
+  - list
+  - loads
+  - lower
+  - replace
+  - startswith
+  - str
+  - strip
+  - warning
+- referenced_names:
+  - Any
+  - Dict
+  - Exception
+  - _best_doc_match
+  - _best_lookup_key_match
+  - _find_kb_map_anywhere
+  - arch_doc
+  - archetype_id
+  - best_arch_key
+  - best_seg_key
+  - best_sub_key
+  - bool
+  - d
+  - dict
+  - e
+  - effective_segment
+  - hinted_sub
+  - isinstance
+  - json
+  - k
+  - kb_arch
+  - kb_context
+  - kb_seg
+  - kb_snapshot
+  - kb_sub
+  - kk
+  - len
+  - list
+  - logging
+  - norm_arch
+  - norm_segment
+  - norm_target
+  - obj
+  - promoted_sub_key
+  - raw
+  - seg_doc
+  - seg_key
+  - segment_id
+  - str
+  - sub_doc
+  - user_probe
+
+## _keyword_doc_match
+
+- lines: 38
+- risk: LOW
+- called_by:
+  - _infer_segment_from_docs
+  - _infer_segment_from_text
+- calls:
+  - _normalize_lookup_key
+  - escape
+  - get
+  - isinstance
+  - items
+  - len
+  - replace
+  - search
+  - str
+  - strip
+  - sub
+- referenced_names:
+  - Any
+  - Dict
+  - Exception
+  - _normalize_lookup_key
+  - dict
+  - doc
+  - docs_map
+  - isinstance
+  - item
+  - key
+  - keywords
+  - kw
+  - len
+  - list
+  - pattern
+  - q
+  - query
+  - re
+  - str
+
+## _lookup_token_overlap_score
+
+- lines: 38
+- risk: LOW
+- called_by:
+  - _best_lookup_key_match
+  - _score_query_against_doc
+- calls:
+  - _base
+  - _normalize_lookup_key
+  - _tokenize_lookup_text
+  - endswith
+  - intersection
+  - len
+  - max
+  - replace
+  - set
+  - str
+  - strip
+- referenced_names:
+  - Exception
+  - _base
+  - _normalize_lookup_key
+  - _tokenize_lookup_text
+  - base_overlap
+  - c_base
+  - c_norm
+  - c_norm_flat
+  - c_tokens
+  - candidate
+  - int
+  - len
+  - max
+  - overlap
+  - q_base
+  - q_norm
+  - q_norm_flat
+  - q_tokens
+  - query
+  - score
+  - set
+  - str
+  - t
+  - tok
+
+## _score_query_against_doc
+
+- lines: 30
+- risk: LOW
+- called_by:
+  - _best_doc_match
+  - _doc_identity_is_compatible_with_current_text
+- calls:
+  - _collect_doc_texts
+  - _lookup_token_overlap_score
+  - append
+  - get
+  - isinstance
+  - max
+  - str
+  - strip
+- referenced_names:
+  - Any
+  - Dict
+  - Exception
+  - _collect_doc_texts
+  - _lookup_token_overlap_score
+  - dict
+  - doc
+  - doc_key
+  - int
+  - isinstance
+  - item
+  - list
+  - max
+  - neg
+  - neg_hits
+  - part
+  - parts
+  - q
+  - query
+  - score
+  - str
+
+## Hipótese arquitetural atual
+
+- `_infer_segment_from_text` parece ser o principal ponto de entrada da inferência.
+- `_infer_segment_from_docs` atua como enriquecimento complementar.
+- `_kb_lookup_operational_docs` parece ser o hub principal de hidratação operacional.
+- `_find_kb_map_anywhere` parece ser infraestrutura compartilhada de busca.
+- possível origem de problemas atuais: fallback antes da hidratação completa.
