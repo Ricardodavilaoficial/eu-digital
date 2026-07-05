@@ -273,3 +273,44 @@ Observacao:
 
 A fixture internacional ja roda em ingles, mas a classificacao ainda e conservadora. Melhorias de idioma devem ser feitas em onda propria.
 
+---
+
+## 9. Como rodar a fila local de revisao humana
+
+A fila local de revisao humana processa todas as fixtures `.txt` de uma pasta e mostra uma lista consolidada de oportunidades.
+
+Comando:
+
+`python -m services.ponte.batch_fixture_runner tests\fixtures\ponte`
+
+O que este runner faz:
+
+- le varias fixtures locais;
+- infere a plataforma pelo nome do arquivo;
+- normaliza eventos;
+- classifica aderencia;
+- aplica trava de risco;
+- gera status `aguardando_revisao_humana`;
+- mostra dedupe key;
+- confirma politica dry-run/read-only;
+- bloqueia envio e mensagem.
+
+O que este runner nao faz:
+
+- nao acessa Gmail real;
+- nao acessa Workana real;
+- nao abre navegador;
+- nao clica em link;
+- nao envia proposta;
+- nao abre chat;
+- nao grava Firestore;
+- nao usa Cloud Run;
+- nao toca Base ou Institucional.
+
+Uso esperado:
+
+- validar varias oportunidades offline;
+- simular a futura fila de aprovacao humana;
+- preparar a etapa futura de Gmail read-only;
+- manter o Projeto Ponte pronto para multiplas plataformas.
+
