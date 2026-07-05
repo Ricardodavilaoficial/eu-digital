@@ -92,6 +92,11 @@ def classify_event(event):
 
     score = max(0, min(100, score))
 
+    # Safety guard: opportunities with explicit risk terms must remain under
+    # manual review, even when they also contain attractive technical terms.
+    if risk_hits:
+        score = min(score, 54)
+
     if score >= 75:
         fit_level = "alto"
         recommended_action = "preparar_proposta"
