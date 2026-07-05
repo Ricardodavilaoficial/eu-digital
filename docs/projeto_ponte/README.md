@@ -460,3 +460,41 @@ Comandos de retomada:
 
 Se esses comandos passarem, a base offline esta saudavel.
 
+---
+
+## 14. Adapter local Gmail read-only
+
+A Onda 2B adiciona um adapter local para simular a futura entrada Gmail read-only sem acessar Gmail real.
+
+Modulo:
+
+`services\ponte\gmail_readonly_adapter.py`
+
+O que ele faz:
+
+- recebe um dicionario local representando um e-mail ja lido;
+- normaliza metadados basicos;
+- limita o corpo textual;
+- preserva links apenas como texto;
+- detecta plataforma provavel;
+- converte o e-mail em evento Ponte;
+- aplica politica Gmail read-only;
+- mantem envio, clique, anexo, Workana real e navegador bloqueados.
+
+O que ele nao faz:
+
+- nao acessa Gmail real;
+- nao usa API Gmail;
+- nao envia e-mail;
+- nao cria rascunho no Gmail;
+- nao baixa anexo;
+- nao abre link;
+- nao abre Workana;
+- nao usa navegador.
+
+Comando de teste relacionado:
+
+`python -m unittest discover -s tests\ponte -p "test_*.py"`
+
+Este adapter prepara a forma tecnica da futura leitura real, mas nao autoriza acesso real por si so.
+
