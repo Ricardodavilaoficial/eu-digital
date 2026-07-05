@@ -1,0 +1,9 @@
+Subject: New project opportunity
+
+Title: Build an AI assistant for web-based customer support
+Category: Web automation
+Budget: USD 800 - 1500
+Deadline: 45 days
+Description: We need a safe browser-based assistant to help classify customer requests, draft replies and keep human approval before sending messages.
+Skills: Python, AI, browser automation, CRM, customer support
+Link: https://international.example/project/alpha

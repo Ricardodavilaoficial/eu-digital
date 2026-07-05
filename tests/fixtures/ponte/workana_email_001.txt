@@ -1,0 +1,9 @@
+Assunto: Novo projeto recomendado na Workana
+
+Titulo: Criar automacao para atendimento via WhatsApp
+Categoria: Programacao e tecnologia
+Orcamento: R$ 1500 - R$ 3000
+Prazo: 30 dias
+Descricao: Preciso de um sistema que ajude a responder clientes, organizar leads e automatizar parte do atendimento comercial via WhatsApp. Gostaria de algo com IA, controle humano e relatorios.
+Habilidades: Python, WhatsApp, IA, automacao, web
+Link: https://workana.example/project/001
