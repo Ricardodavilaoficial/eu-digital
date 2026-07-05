@@ -111,6 +111,41 @@ Status:
 
 ---
 
+
+
+---
+
+### 1.4. PROJETO_PONTE_GMAIL_READONLY_CONTRACT_V1.md
+
+Caminho:
+
+`docs\projeto_ponte\PROJETO_PONTE_GMAIL_READONLY_CONTRACT_V1.md`
+
+Quando usar:
+
+- antes de qualquer leitura real do Gmail;
+- antes de buscar notificacoes Workana no Gmail;
+- antes de conectar a conta `ricardodavilaoficial@gmail.com`;
+- quando houver duvida sobre o que e permitido na fase Gmail read-only;
+- antes de qualquer tentativa de avancar para navegador, Workana real ou WhatsApp Web.
+
+Funcao:
+
+- define o contrato da fase Gmail read-only;
+- separa leitura de qualquer acao externa;
+- define politica de permissao;
+- define filtros conservadores;
+- define conversao de e-mail para evento Ponte;
+- define deduplicacao com Gmail real;
+- define criterios para iniciar leitura real.
+
+Status:
+
+- documento de preparacao da Onda 2;
+- nao autoriza leitura real sozinho;
+- exige confirmacao operacional antes de qualquer acesso ao Gmail.
+
+
 ## 2. Ordem correta de leitura
 
 Para qualquer retomada do Projeto Ponte, ler nesta ordem:
@@ -119,6 +154,7 @@ Para qualquer retomada do Projeto Ponte, ler nesta ordem:
 2. `docs\projeto_ponte\PROJETO_PONTE_MARCO_ZERO_ARQUITETURA_V1.md`
 3. `docs\projeto_ponte\PROJETO_PONTE_CONVERGENCIA_3_VERTENTES_V1.md`
 4. `docs\projeto_ponte\PROJETO_PONTE_CAPTACAO_MARKETPLACES_READONLY_POC_V1.md`
+5. `docs\projeto_ponte\PROJETO_PONTE_GMAIL_READONLY_CONTRACT_V1.md`
 
 ---
 
