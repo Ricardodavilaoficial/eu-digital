@@ -54,6 +54,8 @@ class PonteMarketplaceParserTests(unittest.TestCase):
         self.assertEqual(event["source_currency"], "USD")
         self.assertEqual(draft["draft_language"], "en")
         self.assertIn("draft proposal", draft["draft_text"].lower())
+        self.assertGreaterEqual(event["classification"]["fit_score"], 75)
+        self.assertEqual(event["classification"]["fit_level"], "alto")
 
 
 if __name__ == "__main__":

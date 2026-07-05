@@ -3,6 +3,7 @@ import unicodedata
 
 
 POSITIVE_TERMS = [
+    # Portuguese / MEI Robo context
     "mei robo",
     "whatsapp",
     "chatbot",
@@ -20,6 +21,23 @@ POSITIVE_TERMS = [
     "integracao",
     "lead",
     "vendas",
+
+    # English / international marketplace context
+    "ai",
+    "assistant",
+    "customer support",
+    "customer service",
+    "browser automation",
+    "web automation",
+    "automation",
+    "draft replies",
+    "human approval",
+    "approval",
+    "crm",
+    "python",
+    "workflow",
+    "workflows",
+    "classify customer requests",
 ]
 
 RISK_TERMS = [
@@ -56,8 +74,15 @@ def classify_event(event):
     text = _normalize(joined)
 
     score = 35
-    positive_hits = [term for term in POSITIVE_TERMS if term in text]
-    risk_hits = [term for term in RISK_TERMS if term in text]
+    positive_hits = []
+    for term in POSITIVE_TERMS:
+        if term in text and term not in positive_hits:
+            positive_hits.append(term)
+
+    risk_hits = []
+    for term in RISK_TERMS:
+        if term in text and term not in risk_hits:
+            risk_hits.append(term)
 
     score += min(45, len(positive_hits) * 8)
 
