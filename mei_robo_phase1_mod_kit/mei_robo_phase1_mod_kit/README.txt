@@ -17,7 +17,7 @@ Como aplicar (Windows CMD)
 
 2) No CMD, execute:
    chcp 65001
-   python setup_routes_services.py
+   python tools\root_legacy\setup_routes_services.py
 
    - Isso criará as pastas/arquivos e vai PATCHAR o app.py com backup:
      app.py.bak-YYYYMMDD-HHMMSS
