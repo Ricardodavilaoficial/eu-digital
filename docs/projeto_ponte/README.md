@@ -314,3 +314,113 @@ Uso esperado:
 - preparar a etapa futura de Gmail read-only;
 - manter o Projeto Ponte pronto para multiplas plataformas.
 
+---
+
+## 10. Estado atual pratico do Projeto Ponte
+
+Estado atual apos a Onda 1G:
+
+- existe documentacao oficial indexada em `docs\projeto_ponte`;
+- existe nucleo offline isolado em `services\ponte`;
+- existem testes locais em `tests\ponte`;
+- existem fixtures versionadas em `tests\fixtures\ponte`;
+- existe runner de relatorio individual;
+- existe runner de fila local de revisao humana;
+- existe classificacao em portugues e ingles;
+- existe dedupe key para oportunidades;
+- existe trava contra oportunidades com termos de risco;
+- existe rascunho de proposta sempre em dry-run;
+- existe politica bloqueando envio, clique, Gmail real, plataforma real e Firestore.
+
+O Projeto Ponte, neste estado, ainda nao faz:
+
+- acesso a Gmail real;
+- acesso a Workana real;
+- acesso a qualquer plataforma real;
+- login;
+- navegador;
+- clique;
+- envio de proposta;
+- abertura de chat;
+- escrita em Firestore;
+- uso de Cloud Run;
+- uso de Storage;
+- alteracao no MEI Robo Base;
+- alteracao no MEI Robo Institucional.
+
+Resumo pratico:
+
+`fixture local -> parser -> evento normalizado -> dedupe -> classificacao -> trava de risco -> rascunho -> relatorio -> fila de revisao humana`
+
+---
+
+## 11. Comandos canonicos da POC offline
+
+Rodar todos os testes Ponte:
+
+`python -m unittest discover -s tests\ponte -p "test_*.py"`
+
+Rodar relatorio individual Workana:
+
+`python -m services.ponte.fixture_report_runner tests\fixtures\ponte\workana_email_001.txt --platform workana`
+
+Rodar relatorio individual de plataforma internacional:
+
+`python -m services.ponte.fixture_report_runner tests\fixtures\ponte\international_platform_001.txt --platform international_platform_01`
+
+Rodar fila local de revisao humana:
+
+`python -m services.ponte.batch_fixture_runner tests\fixtures\ponte`
+
+Validar py_compile dos modulos Ponte:
+
+`for %f in (services\ponte\*.py) do python -m py_compile "%f"`
+
+---
+
+## 12. Proxima fronteira planejada
+
+A proxima fronteira tecnica do Projeto Ponte e preparar Gmail read-only.
+
+Antes de acessar Gmail real, ainda deve existir uma onda de desenho e seguranca contendo:
+
+- filtro de busca Gmail conservador;
+- escopo de leitura;
+- regra para nao baixar anexo automaticamente;
+- regra para nao clicar em links;
+- regra para nao enviar e-mail;
+- regra para nao abrir Workana por navegador;
+- criterio de deduplicacao com dados reais;
+- plano de desligamento imediato;
+- confirmacao explicita do usuario antes de qualquer leitura real.
+
+Conta autorizada para teste futuro, somente quando a fase Gmail read-only for iniciada com aprovacao explicita:
+
+`ricardodavilaoficial@gmail.com`
+
+Mesmo com essa conta registrada, o estado atual permanece offline. Nenhum acesso real deve ser feito antes de nova autorizacao operacional.
+
+---
+
+## 13. Regra de continuidade
+
+Ao retomar o Projeto Ponte em qualquer instancia:
+
+1. ler este README;
+2. confirmar o ultimo commit;
+3. rodar testes Ponte;
+4. rodar a fila local;
+5. so entao decidir a proxima onda.
+
+Comandos de retomada:
+
+`git --no-pager log --oneline -10`
+
+`git --no-pager status --short`
+
+`python -m unittest discover -s tests\ponte -p "test_*.py"`
+
+`python -m services.ponte.batch_fixture_runner tests\fixtures\ponte`
+
+Se esses comandos passarem, a base offline esta saudavel.
+
