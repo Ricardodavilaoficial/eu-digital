@@ -220,3 +220,56 @@ A regra e:
 `documento criado -> documento registrado no indice -> uso claro -> proxima acao definida`
 
 O Projeto Ponte deve avancar com seguranca, rastreabilidade e separacao clara das demais vertentes do MEI Robo.
+
+---
+
+## 8. Como rodar a POC offline atual
+
+A primeira POC executavel do Projeto Ponte roda somente com fixtures locais.
+
+Ela usa:
+
+`services\ponte\fixture_report_runner.py`
+
+Comando Workana fixture:
+
+`python -m services.ponte.fixture_report_runner tests\fixtures\ponte\workana_email_001.txt --platform workana`
+
+Comando plataforma internacional fixture:
+
+`python -m services.ponte.fixture_report_runner tests\fixtures\ponte\international_platform_001.txt --platform international_platform_01`
+
+O que este runner faz:
+
+- le fixture local `.txt`;
+- normaliza evento;
+- classifica aderencia;
+- gera rascunho de proposta;
+- gera relatorio legivel;
+- mostra politica de bloqueio;
+- mostra auditoria;
+- opera em dry-run/read-only.
+
+O que este runner nao faz:
+
+- nao acessa Gmail real;
+- nao acessa Workana real;
+- nao abre navegador;
+- nao clica em link;
+- nao envia proposta;
+- nao abre chat;
+- nao grava Firestore;
+- nao usa Cloud Run;
+- nao toca Base ou Institucional.
+
+Uso esperado:
+
+- validar a POC offline;
+- testar fixtures anonimizadas;
+- avaliar qualidade do parser, classificador e rascunho;
+- preparar futuras ondas antes de qualquer integracao real.
+
+Observacao:
+
+A fixture internacional ja roda em ingles, mas a classificacao ainda e conservadora. Melhorias de idioma devem ser feitas em onda propria.
+
