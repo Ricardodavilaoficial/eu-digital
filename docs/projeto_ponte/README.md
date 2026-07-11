@@ -498,3 +498,37 @@ Comando de teste relacionado:
 
 Este adapter prepara a forma tecnica da futura leitura real, mas nao autoriza acesso real por si so.
 
+---
+
+## 15. WhatsApp Web Local Pilot / Modo operante
+
+Documento principal:
+
+`docs\projeto_ponte\PROJETO_PONTE_WHATSAPP_WEB_LOCAL_PILOT_CONTRACT_V1.md`
+
+Quando usar:
+
+- antes de qualquer trabalho com WhatsApp Web;
+- antes de criar adapter de mensagem WhatsApp Web;
+- antes de abrir navegador;
+- antes de testar leitura real local;
+- antes de pensar em servidor/nuvem;
+- sempre que uma nova instancia retomar o Projeto Ponte com foco em WhatsApp Web.
+
+Modo operante obrigatorio:
+
+1. ler o contrato WhatsApp Web Local Pilot;
+2. confirmar `git --no-pager status --short`;
+3. rodar testes Ponte;
+4. rodar fila local;
+5. fazer apenas uma onda pequena;
+6. atualizar README se criar documento/comando novo;
+7. commitar sem `git add .`;
+8. nao abrir WhatsApp Web real sem autorizacao operacional explicita naquele momento.
+
+Proxima onda recomendada:
+
+`WW-1 - adapter local de mensagem WhatsApp Web simulada`
+
+A WW-1 ainda nao deve abrir navegador real.
+
