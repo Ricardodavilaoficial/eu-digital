@@ -532,3 +532,46 @@ Proxima onda recomendada:
 
 A WW-1 ainda nao deve abrir navegador real.
 
+---
+
+## 16. Adapter local WhatsApp Web simulado
+
+A WW-1 adiciona um adapter local para simular mensagens do WhatsApp Web sem abrir navegador real.
+
+Modulo:
+
+`services\ponte\whatsapp_web_local_adapter.py`
+
+O que ele faz:
+
+- recebe uma mensagem local simulada;
+- normaliza dados do chat;
+- cria `whatsapp_web_message_event`;
+- mascara o identificador do chat com hash;
+- gera `conversation_id`;
+- gera `dedupe_key`;
+- identifica se deve rotear ao MEI Robo Base/Vendedor;
+- prepara payload conceitual para o Base/Vendedor;
+- mantem envio, navegador, clique e digitacao bloqueados.
+
+O que ele nao faz:
+
+- nao abre WhatsApp Web real;
+- nao abre navegador;
+- nao le tela;
+- nao digita;
+- nao envia mensagem;
+- nao baixa midia;
+- nao clica em links;
+- nao chama Cloud Run;
+- nao chama API GPT;
+- nao altera Firestore.
+
+Comando de teste relacionado:
+
+`python -m unittest discover -s tests\ponte -p "test_*.py"`
+
+Proxima etapa futura:
+
+`WW-2 - fila local unificada para eventos WhatsApp/Gmail/Workana/CRM`
+
