@@ -2854,9 +2854,10 @@ def _front_should_suppress_raw_discovery_sla(
     Não bloqueia SLA em PROCESS/PRECO/CLOSING/SEND_LINK/continuidade real.
 
     Observação crítica:
-    topic=OTHER sozinho pode ser apenas default inicial. Por isso, OTHER isolado
-    não basta para suprimir SLA; preferimos sinais de turno vindos de
-    canonical_topic/upstream_topic_hint ou topic=SOCIAL já classificado.
+    topic=OTHER isolado pode ser apenas default inicial. Ele só ativa supressão
+    no caso estreito de raw discovery amplo, sem docs/cena/SEND_LINK/simulation
+    e sem sinais operacionais reconhecidos. Quando há sinal operacional, as
+    saídas acima preservam SLA/processo.
     """
     try:
         if not raw_unqualified_lead_discovery_state:
@@ -2901,6 +2902,21 @@ def _front_should_suppress_raw_discovery_sla(
         # Só o SOCIAL já classificado pelo modelo/front pode ativar.
         # OTHER isolado é tratado como default e não ativa supressão.
         if topic_u == "SOCIAL":
+            return True
+
+        # FRONT_RAW_DISCOVERY_OTHER_SUPPRESS_SLA_V1
+        # Em raw discovery inicial sem contrato hidratado e sem sinal operacional,
+        # OTHER isolado também representa abertura ampla/default.
+        # Nesse estado, SLA/processo não deve virar assunto novo.
+        # Não usa texto do lead, não usa palavra-chave, não altera prompt
+        # e preserva exceções acima: SEND_LINK, simulation, docs hidratados,
+        # cena prática e tópicos operacionais reconhecidos.
+        qtype_u = str(question_type or "").strip().upper()
+        if (
+            topic_u == "OTHER"
+            and not structural_signals
+            and qtype_u in ("", "BROAD", "DISCOVERY", "OTHER", "UNKNOWN")
+        ):
             return True
 
         return False
