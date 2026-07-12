@@ -2886,20 +2886,40 @@ def _front_should_suppress_raw_discovery_sla(
         topic_u = str(topic or "").strip().upper()
         intent_u = str(intent or "").strip().upper()
 
-        # FRONT_RAW_DISCOVERY_SOCIAL_INTENT_ALIAS_V1
-        # Compatibiliza rótulos sociais produzidos pela IA com a taxonomia
-        # canônica do guard. Não usa texto do lead, não cria frase pronta
-        # e preserva as barreiras anteriores: SEND_LINK, simulation, docs,
-        # cena prática, CLOSING e question_type não amplo.
-        _social_default_intents_v1 = (
-            "OTHER",
-            "SOCIAL",
-            "BROAD",
-            "DISCOVERY",
-            "ABERTURA SOCIAL",
-            "ABERTURA_SOCIAL",
-        )
-        if intent_u and intent_u not in _social_default_intents_v1:
+        # FRONT_RAW_DISCOVERY_OPERATIONAL_INTENT_GATE_V1
+        # Intent livre/desconhecido da IA não deve autorizar SLA em raw discovery.
+        # Só intent canônico operacional bloqueia a supressão.
+        #
+        # Não usa texto do lead, não cria frase pronta e não caça aliases sociais
+        # como "SAUDAÇÃO", "ABERTURA SOCIAL" ou similares. A taxonomia canônica
+        # continua sendo a fonte do que é operacional.
+        try:
+            _canonical_topics_for_sla_v1 = set(TOPICS)
+        except Exception:
+            _canonical_topics_for_sla_v1 = {
+                "AGENDA",
+                "PRECO",
+                "ORCAMENTO",
+                "PRODUTO",
+                "SERVICOS",
+                "PEDIDOS",
+                "STATUS",
+                "PROCESSO",
+                "ATIVAR",
+                "WHAT_IS",
+                "VOZ",
+                "TRIAL",
+                "OTHER",
+                "SOCIAL",
+            }
+
+        _operational_intents_for_sla_v1 = {
+            str(x or "").strip().upper()
+            for x in _canonical_topics_for_sla_v1
+            if str(x or "").strip().upper() not in ("", "OTHER", "SOCIAL")
+        }
+
+        if intent_u and intent_u in _operational_intents_for_sla_v1:
             return False
 
         if topic_u and topic_u not in ("OTHER", "SOCIAL"):
