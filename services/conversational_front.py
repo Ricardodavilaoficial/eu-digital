@@ -10221,6 +10221,8 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception:
             pass
 
+        _front_finish_reason = ""
+
         if _HAS_OPENAI_CLIENT and _client is not None:
             req_kwargs = {
                 "model": MODEL,
@@ -10236,6 +10238,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
             resp = _client.chat.completions.create(**req_kwargs)
             raw = str(resp.choices[0].message.content or "").strip()
+            try:
+                _front_finish_reason = str(
+                    getattr(resp.choices[0], "finish_reason", "") or ""
+                ).strip()
+            except Exception:
+                _front_finish_reason = ""
             # usage no SDK novo
             token_usage = {}
             try:
@@ -10261,6 +10269,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                 },
             )
             raw = (resp["choices"][0]["message"]["content"] or "").strip()
+            try:
+                _front_finish_reason = str(
+                    (resp["choices"][0] or {}).get("finish_reason") or ""
+                ).strip()
+            except Exception:
+                _front_finish_reason = ""
             # usage no SDK antigo
             token_usage = {}
             try:
@@ -10283,6 +10297,49 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         raw_json = raw
         cleaned = str(raw or "").strip()
         json_fail_safe_used = False
+
+        try:
+            _front_raw_probe = str(raw or "")
+            _front_jsonish = bool(
+                cleaned.startswith("{")
+                or cleaned.startswith("```json")
+                or cleaned.startswith("```")
+            )
+
+            if _front_jsonish:
+                _front_reply_probe = _extract_json_string_field(
+                    _front_raw_probe,
+                    "replyText",
+                )
+
+                logging.info(
+                    "[FRONT_JSON_RESPONSE_META_V1] finish_reason=%s "
+                    "raw_len=%s output_tokens=%s ends_with_object=%s "
+                    "has_response_mode=%s has_understanding=%s "
+                    "has_next_step=%s has_reply_text=%s "
+                    "reply_extractable=%s reply_len=%s "
+                    "has_lead_name=%s has_lead_segment=%s",
+                    str(_front_finish_reason or ""),
+                    len(_front_raw_probe),
+                    int((token_usage or {}).get("output_tokens") or 0),
+                    bool(_front_raw_probe.rstrip().endswith("}")),
+                    bool('"response_mode"' in _front_raw_probe),
+                    bool('"understanding"' in _front_raw_probe),
+                    bool('"nextStep"' in _front_raw_probe),
+                    bool('"replyText"' in _front_raw_probe),
+                    bool(_front_reply_probe),
+                    len(str(_front_reply_probe or "")),
+                    bool(
+                        '"lead_name"' in _front_raw_probe
+                        or '"leadName"' in _front_raw_probe
+                    ),
+                    bool(
+                        '"lead_segment"' in _front_raw_probe
+                        or '"leadSegment"' in _front_raw_probe
+                    ),
+                )
+        except Exception:
+            pass
 
         if free_mode:
             looks_like_json = cleaned.startswith("{") or cleaned.startswith("```json") or cleaned.startswith("```")
@@ -10411,6 +10468,63 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                                     data = _merge_identity_fields_from_raw_ai_payload(data, raw or raw_json or "")
                                 else:
                                     data = {}
+
+            if json_fail_safe_used:
+                try:
+                    _salvage_understanding = (
+                        data.get("understanding")
+                        if isinstance(data, dict)
+                        and isinstance(data.get("understanding"), dict)
+                        else {}
+                    )
+
+                    _salvage_reply = str(
+                        (data or {}).get("replyText")
+                        or (data or {}).get("mensagem")
+                        or ""
+                    ).strip()
+
+                    _raw_container = str(
+                        (data or {}).get("reply")
+                        or ""
+                    ).strip()
+
+                    logging.info(
+                        "[FRONT_JSON_FAIL_SAFE_SALVAGE_V1] data_keys=%s "
+                        "reply_recovered=%s reply_len=%s "
+                        "raw_container_len=%s response_mode=%s "
+                        "topic=%s question_type=%s "
+                        "name_recovered=%s segment_recovered=%s",
+                        sorted((data or {}).keys())
+                        if isinstance(data, dict)
+                        else [],
+                        bool(_salvage_reply),
+                        len(_salvage_reply),
+                        len(_raw_container),
+                        str((data or {}).get("response_mode") or ""),
+                        str(
+                            (_salvage_understanding or {}).get("topic")
+                            or ""
+                        ),
+                        str(
+                            (_salvage_understanding or {}).get(
+                                "question_type"
+                            )
+                            or ""
+                        ),
+                        bool(
+                            (data or {}).get("lead_name")
+                            or (data or {}).get("leadName")
+                        ),
+                        bool(
+                            (data or {}).get("lead_segment")
+                            or (data or {}).get("leadSegment")
+                            or (data or {}).get("lead_segment_raw")
+                            or (data or {}).get("leadSegmentRaw")
+                        ),
+                    )
+                except Exception:
+                    pass
         else:
             # Fora do free_mode, mantém protocolo JSON.
             try:
