@@ -2886,7 +2886,20 @@ def _front_should_suppress_raw_discovery_sla(
         topic_u = str(topic or "").strip().upper()
         intent_u = str(intent or "").strip().upper()
 
-        if intent_u and intent_u not in ("OTHER", "SOCIAL", "BROAD", "DISCOVERY"):
+        # FRONT_RAW_DISCOVERY_SOCIAL_INTENT_ALIAS_V1
+        # Compatibiliza rótulos sociais produzidos pela IA com a taxonomia
+        # canônica do guard. Não usa texto do lead, não cria frase pronta
+        # e preserva as barreiras anteriores: SEND_LINK, simulation, docs,
+        # cena prática, CLOSING e question_type não amplo.
+        _social_default_intents_v1 = (
+            "OTHER",
+            "SOCIAL",
+            "BROAD",
+            "DISCOVERY",
+            "ABERTURA SOCIAL",
+            "ABERTURA_SOCIAL",
+        )
+        if intent_u and intent_u not in _social_default_intents_v1:
             return False
 
         if topic_u and topic_u not in ("OTHER", "SOCIAL"):
