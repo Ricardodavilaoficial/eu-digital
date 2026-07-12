@@ -6966,55 +6966,58 @@ SE o usuário quiser contratar, ativar ou pedir link
 
 REGRAS DE CONSTRUÇÃO DA RESPOSTA:
 
-1. Sempre escrever 1 único parágrafo.
+1. Escrever 1 único parágrafo.
 
-2. Antes de explicar o funcionamento, considere a mensagem atual do usuário.
-Se ele informou nome, profissão, segmento ou contexto de uso, use essas informações naturalmente na resposta.
+2. Usar primeiro a mensagem atual do usuário.
+→ Se a mensagem atual trouxer nome, profissão, segmento ou contexto de uso, incluir esse dado quando ele ajudar a responder o ponto atual.
 
 3. SE question_type = punctual:
-→ Inicie a resposta entregando a informação exata solicitada pelo usuário.
-→ Limite o texto a no máximo 2 frases.
-→ Inclua o nome do usuário ou o segmento dele na resposta, caso essas informações já existam no contexto.
+→ Começar pela informação pedida pelo usuário.
+→ Escrever até 2 frases.
+→ Usar nome ou segmento quando já existir no ESTADO.
 
 4. SE question_type = continuity:
-→ Responda diretamente à pergunta do usuário.
-→ Use apenas fatos do contexto.
-→ Escreva no máximo 2 frases.
-→ Inclua o nome do usuário ou o segmento dele na resposta, caso essas informações já existam no contexto.
+→ Responder o ponto atual do usuário.
+→ Usar fatos presentes no ESTADO, no KB ou na mensagem atual.
+→ Escrever até 2 frases.
+→ Usar nome ou segmento quando já existir no ESTADO.
 
 5. SE question_type = broad E existir conteúdo operacional:
-→ Descreva o fluxo de atendimento usando os passos listados no conteúdo operacional.
-→ Escreva o texto em ordem cronológica dos acontecimentos.
-→ Encerre o texto com exatamente uma frase afirmando o benefício final gerado para o dono do negócio.
+→ Explicar o fluxo usando os passos do conteúdo operacional.
+→ Manter a ordem dos passos.
+→ Encerrar com 1 frase de resultado para o dono do negócio.
 
 6. SE for SCENE:
-→ descrever ações reais, sem opinião
-→ usar frases curtas e conectadas
-→ encerrar na última ação
+→ Descrever ações reais do atendimento.
+→ Usar frases curtas.
+→ Manter a ordem dos acontecimentos.
+→ Encerrar na última ação.
 
 7. SE for DISCOVERY:
-→ escrever apenas o corpo útil do replyText
-→ começar com cumprimento curto e apresentação como "MEI Robô"
-→ para mensagem genérica, social, vaga ou sobre assunto externo: responder como abertura social; cumprimentar, fazer uma reação curta e simpática à mensagem, sem afirmar fatos externos; em seguida fazer ponte curta dizendo que o MEI Robô ajuda quem atende pelo WhatsApp a responder melhor, organizar demandas, ganhar tempo e gerar mais resultado
-→ para pergunta específica, comercial ou técnica: responder primeiro o ponto pedido usando os dados disponíveis
-→ terminar o corpo útil antes de qualquer solicitação de dados do lead
-→ a descoberta de nome e segmento é exclusiva do runtime
-→ encerrar com ponto final
+→ Escrever apenas o corpo útil do replyText.
+→ Ler `conversation_active` no ESTADO.
+→ Se conversation_active=false: iniciar com cumprimento curto e apresentação compacta como "MEI Robô".
+→ Se conversation_active=true: responder a mensagem atual como conversa em andamento; usar "MEI Robô" como nome do produto.
+→ Para mensagem genérica, social, vaga ou lateral: fazer uma reação curta ao tom do usuário e criar ponte curta para o valor do MEI Robô no WhatsApp.
+→ Para pergunta específica, comercial ou técnica: responder primeiro o ponto pedido usando os dados disponíveis.
+→ Encerrar o corpo útil antes da coleta de nome ou segmento.
+→ A coleta de nome e segmento é feita pelo runtime.
+→ Encerrar com ponto final.
 
 8. SE for CLOSING:
-→ agradecer
-→ usar nome se existir
-→ informar envio do link
-→ incluir a URL no final
+→ Agradecer.
+→ Usar nome quando existir no ESTADO.
+→ Informar que o link será enviado.
+→ Colocar a URL no final.
 
 
 REGRAS DE LINGUAGEM:
 
-- Não usar diálogos fictícios
-- Não usar aspas
-- Não inventar etapas não presentes no KB
-- Não repetir estruturas fixas
-- Usar linguagem natural de WhatsApp
+- Responder diretamente ao lead.
+- Usar apenas fatos do ESTADO, do KB, da mensagem atual e dos blocos factuais.
+- Usar frases próprias para este turno.
+- Usar linguagem curta de WhatsApp.
+- Usar tom comercial claro, humano e objetivo.
 
 
 FORMATO DE SAÍDA (OBRIGATÓRIO JSON):
@@ -8693,6 +8696,20 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         or state_summary.get("message_type")
         or ""
     ).strip().lower()
+
+    # FRONT_CONVERSATION_ACTIVE_DISCOVERY_V1
+    # Sinal estrutural de conversa já iniciada.
+    # Mantém a intenção atual como soberana e orienta apenas estilo
+    # de abertura em DISCOVERY.
+    conversation_active = bool(
+        is_lead
+        and (
+            int(ai_turns or 0) > 0
+            or int(lead_memory_turns or 0) > 0
+            or bool(lead_memory_summary)
+        )
+    )
+
     kb_snapshot, kb_compact, kb_snapshot_json_ok = _prepare_kb_snapshot_buffers(kb_snapshot)
 
     # ---------------------------------------------------------------
@@ -9897,6 +9914,9 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             discovery_contract_block = (
                 "[DISCOVERY_CONTRACT]\n"
                 "estado=lead_institucional_com_qualificacao_pendente\n"
+                f"conversation_active={'true' if conversation_active else 'false'}\n"
+                "prioridade=mensagem_atual_do_usuario_acima_de_ordem_de_funil\n"
+                f"estilo_de_abertura={'continuidade_com_resposta_atual' if conversation_active else 'primeira_abertura_compacta'}\n"
                 "objetivo=acolher_abertura_social_e_criar_ponte_institucional_para_identificacao\n"
                 "conteudo_atual=saudacao_brincadeira_comentario_duvida_simples_ou_inicio_sem_contexto\n"
                 "tratamento_do_conteudo_atual=tratar_como_abertura_social_quando_for_assunto_externo_ou_sem_contexto\n"
@@ -10048,6 +10068,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         f"[MENSAGEM DO USUÁRIO]\n{user_text}\n\n"
         f"[ESTADO]\n"
         f"turno={ai_turns}\n"
+        f"conversation_active={'true' if conversation_active else 'false'}\n"
         f"is_lead={'true' if is_lead else 'false'}\n"
         f"has_name={'true' if has_name else 'false'}\n"
         + (f"name_hint={name_hint}\n" if has_name else "")
