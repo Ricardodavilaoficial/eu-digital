@@ -2892,6 +2892,10 @@ def _front_should_suppress_raw_discovery_sla(
         if topic_u and topic_u not in ("OTHER", "SOCIAL"):
             return False
 
+        qtype_u = str(question_type or "").strip().upper()
+        if qtype_u and qtype_u not in ("BROAD", "DISCOVERY", "OTHER", "UNKNOWN"):
+            return False
+
         structural_signals = [x for x in (canonical_u, upstream_u) if x]
         if any(x not in ("OTHER", "SOCIAL") for x in structural_signals):
             return False
@@ -2911,7 +2915,6 @@ def _front_should_suppress_raw_discovery_sla(
         # Não usa texto do lead, não usa palavra-chave, não altera prompt
         # e preserva exceções acima: SEND_LINK, simulation, docs hidratados,
         # cena prática e tópicos operacionais reconhecidos.
-        qtype_u = str(question_type or "").strip().upper()
         if (
             topic_u == "OTHER"
             and not structural_signals
@@ -15652,6 +15655,79 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
                             pass
                 except Exception:
                     pass
+
+                # FRONT_FREE_MODE_SUPPRESS_SLA_BEFORE_RETURN_V1
+                # O free_mode retorna antes do polish final comum. Por isso,
+                # reaplicamos aqui o mesmo contrato estrutural de supressão de SLA
+                # antes de devolver o payload ao wa_bot.
+                #
+                # Não altera prompt, não usa palavra-chave do lead e não cria
+                # resposta pronta. Apenas reutiliza o saneador existente quando
+                # raw discovery amplo não deve transformar SLA/processo em assunto novo.
+                try:
+                    _free_mode_suppress_sla_before_return_v1 = _front_should_suppress_raw_discovery_sla(
+                        raw_unqualified_lead_discovery_state=bool(raw_unqualified_lead_discovery_state),
+                        response_mode=response_mode,
+                        topic=topic,
+                        intent=intent,
+                        canonical_topic=canonical_topic if 'canonical_topic' in locals() else "",
+                        upstream_topic_hint=upstream_topic_hint if 'upstream_topic_hint' in locals() else "",
+                        next_step=next_step,
+                        question_type=question_type,
+                        operational_contract=operational_contract if 'operational_contract' in locals() else {},
+                        base_operational_contract=base_operational_contract if 'base_operational_contract' in locals() else {},
+                    )
+
+                    if _free_mode_suppress_sla_before_return_v1:
+                        _kb_obj_for_free_sla = _try_parse_kb_json(kb_snapshot)
+                        _before_reply_free_sla = str(out.get("replyText") or "").strip()
+                        _before_spoken_free_sla = str(out.get("spokenText") or _before_reply_free_sla or "").strip()
+
+                        _after_reply_free_sla = _sanitize_unverified_time_claims(
+                            _before_reply_free_sla,
+                            _kb_obj_for_free_sla,
+                            kb_snapshot,
+                            suppress_sla_injection=True,
+                        )
+                        _after_spoken_free_sla = _sanitize_unverified_time_claims(
+                            _before_spoken_free_sla,
+                            _kb_obj_for_free_sla,
+                            kb_snapshot,
+                            suppress_sla_injection=True,
+                        )
+
+                        if str(_after_reply_free_sla or "").strip():
+                            out["replyText"] = str(_after_reply_free_sla or "").strip()
+                        if str(_after_spoken_free_sla or _after_reply_free_sla or "").strip():
+                            out["spokenText"] = str(_after_spoken_free_sla or _after_reply_free_sla or "").strip()
+
+                        try:
+                            logging.info(
+                                "[FRONT_FREE_MODE_SUPPRESS_SLA_BEFORE_RETURN_V1] applied=True before_reply_len=%s after_reply_len=%s before_spoken_len=%s after_spoken_len=%s",
+                                len(_before_reply_free_sla),
+                                len(str(out.get("replyText") or "")),
+                                len(_before_spoken_free_sla),
+                                len(str(out.get("spokenText") or "")),
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            logging.info(
+                                "[FRONT_FREE_MODE_SUPPRESS_SLA_BEFORE_RETURN_V1] applied=False response_mode=%s topic=%s intent=%s qtype=%s next=%s",
+                                str(response_mode or ""),
+                                str(topic or ""),
+                                str(intent or ""),
+                                str(question_type or ""),
+                                str(next_step or ""),
+                            )
+                        except Exception:
+                            pass
+                except Exception as _free_mode_sla_guard_error:
+                    try:
+                        logging.warning("[FRONT_FREE_MODE_SUPPRESS_SLA_BEFORE_RETURN_V1] error=%s", _free_mode_sla_guard_error)
+                    except Exception:
+                        pass
 
                 return out
             except Exception as _identity_finalizer_error:
