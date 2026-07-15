@@ -2533,30 +2533,174 @@ def _merge_identity_fields_from_raw_ai_payload(
         return data if isinstance(data, dict) else {}
 
 
+def _extract_lenient_json_text_field(
+    raw: str,
+    field_name: str,
+    *,
+    max_chars: int = 4000,
+) -> str:
+    """
+    Recovers long text fields from malformed JSON.
+
+    An unescaped quote closes the value only when the following
+    structure represents the end of the value: document end,
+    container closing, or a comma followed by another JSON key.
+
+    This helper is restricted to user-facing text fields.
+    Structural and identity fields keep the strict extractor.
+    """
+    try:
+        source = str(raw or "")
+        name = str(field_name or "").strip()
+        if not source or not name:
+            return ""
+
+        start = re.search(
+            rf'"{re.escape(name)}"\s*:\s*"',
+            source,
+            flags=re.DOTALL,
+        )
+        if not start:
+            return ""
+
+        fragment = source[start.end():]
+        buffer: list[str] = []
+        escaped = False
+
+        for index, char in enumerate(fragment):
+            if len(buffer) >= max_chars:
+                break
+
+            if escaped:
+                buffer.append(char)
+                escaped = False
+                continue
+
+            if char == "\\":
+                buffer.append(char)
+                escaped = True
+                continue
+
+            if char != '"':
+                buffer.append(char)
+                continue
+
+            tail = fragment[index + 1:]
+            stripped_tail = tail.lstrip()
+
+            closes_document = (
+                not stripped_tail
+                or stripped_tail.startswith("}")
+                or stripped_tail.startswith("]")
+                or stripped_tail.startswith("```")
+            )
+
+            next_field_probe = stripped_tail
+            if next_field_probe.startswith(","):
+                next_field_probe = (
+                    next_field_probe[1:].lstrip()
+                )
+
+            starts_next_field = bool(
+                re.match(
+                    r'"[^"]+"\s*:',
+                    next_field_probe,
+                    flags=re.DOTALL,
+                )
+            )
+
+            if closes_document or starts_next_field:
+                break
+
+            buffer.append('"')
+
+        value = "".join(buffer).strip()
+        if not value:
+            return ""
+
+        value = value.replace(r"\/", "/")
+        value = value.replace(r'\"', '"')
+        value = value.replace(r"\n", "\n")
+        value = value.replace(r"\t", "\t")
+        value = value.replace(r"\r", "")
+        return str(value).strip()
+
+    except Exception:
+        return ""
+
+
 def _salvage_free_mode_payload(raw: str) -> Dict[str, Any]:
     try:
-        reply = _extract_json_string_field(raw, "replyText")
+        reply = _extract_lenient_json_text_field(
+            raw,
+            "replyText",
+        )
         if not reply:
-            reply = _extract_json_string_field(raw, "mensagem")
-        spoken = _extract_json_string_field(raw, "spokenText")
-        next_step = _extract_json_string_field(raw, "nextStep") or "NONE"
-        understanding = _extract_json_object_field(raw, "understanding")
-        topic = str((understanding or {}).get("topic") or "").strip().upper() or "OTHER"
-        confidence = str((understanding or {}).get("confidence") or "").strip().lower() or "medium"
+            reply = _extract_lenient_json_text_field(
+                raw,
+                "mensagem",
+            )
+
+        spoken = _extract_lenient_json_text_field(
+            raw,
+            "spokenText",
+        )
+
+        next_step = (
+            _extract_json_string_field(raw, "nextStep")
+            or "NONE"
+        )
+        understanding = _extract_json_object_field(
+            raw,
+            "understanding",
+        )
+        topic = (
+            str(
+                (understanding or {}).get("topic")
+                or ""
+            ).strip().upper()
+            or "OTHER"
+        )
+        confidence = (
+            str(
+                (understanding or {}).get("confidence")
+                or ""
+            ).strip().lower()
+            or "medium"
+        )
+
         if reply:
             payload = {
-                "response_mode": _normalize_response_mode(_extract_json_string_field(raw, "response_mode")) or "DIRECT",
+                "response_mode": (
+                    _normalize_response_mode(
+                        _extract_json_string_field(
+                            raw,
+                            "response_mode",
+                        )
+                    )
+                    or "DIRECT"
+                ),
                 "replyText": reply,
                 "spokenText": spoken or reply,
                 "understanding": {
                     "topic": topic,
                     "confidence": confidence,
-                    "question_type": str((understanding or {}).get("question_type") or "broad").strip().lower(),
+                    "question_type": str(
+                        (understanding or {}).get(
+                            "question_type"
+                        )
+                        or "broad"
+                    ).strip().lower(),
                 },
                 "nextStep": next_step,
             }
-            return _merge_identity_fields_from_raw_ai_payload(payload, raw)
+            return _merge_identity_fields_from_raw_ai_payload(
+                payload,
+                raw,
+            )
+
         return {}
+
     except Exception:
         return {}
 
