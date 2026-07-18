@@ -10564,7 +10564,12 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
                         salvaged = {}
                         try:
-                            salvaged = _salvage_free_mode_payload(repaired or raw_json or raw)
+                            salvage_source = str(
+                                raw or raw_json or repaired or ""
+                            )
+                            salvaged = _salvage_free_mode_payload(
+                                salvage_source
+                            )
                         except Exception:
                             salvaged = {}
 
