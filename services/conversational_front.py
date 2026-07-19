@@ -5781,6 +5781,63 @@ def _normalize_response_mode(value: Any) -> str:
         return ""
 
 
+def _strip_downgraded_send_link_platform_url(
+    text: Any,
+    *,
+    signup_url: str = "",
+) -> str:
+    """
+    Remove somente a URL própria de contratação quando SEND_LINK foi
+    rebaixado estruturalmente para NONE.
+
+    Não é um filtro geral de URLs e não decide intenção.
+    """
+    try:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return ""
+
+        candidates = {
+            str(signup_url or "").strip().rstrip("/"),
+            str(os.getenv("FRONTEND_BASE") or "").strip().rstrip("/"),
+            "https://www.meirobo.com.br",
+        }
+
+        for candidate in sorted(
+            (value for value in candidates if value),
+            key=len,
+            reverse=True,
+        ):
+            cleaned = re.sub(
+                (
+                    rf"{re.escape(candidate)}/?"
+                    r"(?=$|[\s!?;:)\]]|[.,](?=\s|$))"
+                ),
+                "",
+                cleaned,
+                flags=re.IGNORECASE,
+            )
+
+        cleaned = re.sub(
+            r"[ \t]+([.,!?;:])",
+            r"\1",
+            cleaned,
+        )
+        cleaned = re.sub(
+            r"([.!?])(?:[ \t]*[.!?])+(?=\s|$)",
+            r"\1",
+            cleaned,
+        )
+
+        return "\n".join(
+            line.strip()
+            for line in cleaned.splitlines()
+            if line.strip()
+        ).strip()
+    except Exception:
+        return str(text or "").strip()
+
+
 def _infer_response_mode_from_signals(
     *,
     topic: str,
@@ -5796,23 +5853,21 @@ def _infer_response_mode_from_signals(
     """
     Decide o formato da resposta sem palavras-chave.
     Hierarquia:
-    1) CLOSING
-    2) DISCOVERY
-    3) DIRECT
-    4) SCENE
+    1) DISCOVERY
+    2) DIRECT
+    3) SCENE
+
+    SEND_LINK é uma ação possível da resposta, mas não define
+    sozinho o modo estrutural do turno.
     """
     try:
         t = str(topic or "").strip().upper()
         c = str(confidence or "").strip().lower()
         nc = str(needs_clarify or "").strip().lower()
         cq = str(clarify_q or "").strip()
-        ns = str(next_step or "").strip().upper()
         seg = str(effective_segment or "").strip()
         qt = str(question_type or "").strip().lower()
         contract = operational_contract if isinstance(operational_contract, dict) else {}
-
-        if ns == "SEND_LINK":
-            return "CLOSING"
 
         if nc == "yes" or cq:
             return "DISCOVERY"
@@ -6531,10 +6586,9 @@ def _apply_response_mode_arbitration(
     """
 
     try:
-        if str(next_step or "").strip().upper() == "SEND_LINK":
-            response_mode = "CLOSING"
-
-        elif (
+        # next_step representa uma ação, não substitui a decisão
+        # estrutural de response_mode produzida pela IA ou pelo fallback.
+        if (
             global_pack_scene_ready
             and str(question_type or "").strip().lower()
             not in ("punctual", "continuity", "simulation")
@@ -12688,19 +12742,30 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         if is_trial and next_step == "SEND_LINK":
             next_step = "NONE"
 
-        # IA Soberana: Se a IA decidiu SEND_LINK com confiança alta, liberamos mesmo no turno 0.
+        # Gate semântico de fechamento:
+        # SEND_LINK só é executado quando a própria IA classificou
+        # o turno como CLOSING. Confiança alta isolada não converte
+        # uma resposta DIRECT informativa em fechamento.
         _reply_has_visible_link = bool(
             "http://" in str(reply_text or "").lower()
             or "https://" in str(reply_text or "").lower()
         )
+
+        _closing_confidence_ok = bool(
+            confidence == "high"
+            or str(
+                locals().get("_raw_confidence_from_ai") or ""
+            ).strip().lower() == "high"
+            or _reply_has_visible_link
+        )
+
         allow_send_link = (
             next_step == "SEND_LINK"
             and (not is_trial)
-            and (
-                confidence == "high"
-                or str(locals().get("_raw_confidence_from_ai") or "").strip().lower() == "high"
-                or _reply_has_visible_link
-            )
+            and str(
+                response_mode or ""
+            ).strip().upper() == "CLOSING"
+            and _closing_confidence_ok
             and needs_clarify != "yes"
         )
 
@@ -12732,6 +12797,25 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
 
         elif next_step == "SEND_LINK" and not allow_send_link:
             # Bloqueia SEND_LINK automático quando não houve pedido explícito / sinais fortes
+            _automatic_signup_url = str(
+                (kb_context or {}).get("signup_url")
+                or os.getenv("FRONTEND_BASE")
+                or "https://www.meirobo.com.br"
+            ).strip()
+
+            reply_text = (
+                _strip_downgraded_send_link_platform_url(
+                    reply_text,
+                    signup_url=_automatic_signup_url,
+                )
+            )
+            spoken_text = (
+                _strip_downgraded_send_link_platform_url(
+                    spoken_text or reply_text,
+                    signup_url=_automatic_signup_url,
+                )
+            )
+
             next_step = "NONE"
             if response_mode == "CLOSING":
                 response_mode = "DIRECT"

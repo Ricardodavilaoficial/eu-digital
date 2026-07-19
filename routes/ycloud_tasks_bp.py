@@ -44,6 +44,52 @@ import datetime
 from typing import Any, Dict, Optional, Tuple
 
 
+def _send_link_platform_urls() -> tuple[str, ...]:
+    """Retorna somente as URLs próprias aceitas pelo contrato SEND_LINK."""
+    candidates = (
+        os.environ.get("FRONTEND_BASE"),
+        os.environ.get("FRONTEND_BASE_URL"),
+        "https://www.meirobo.com.br",
+    )
+    normalized: list[str] = []
+    for value in candidates:
+        candidate = str(value or "").strip().rstrip("/")
+        if candidate and candidate.casefold() not in {
+            item.casefold()
+            for item in normalized
+        }:
+            normalized.append(candidate)
+    return tuple(normalized)
+
+
+def _text_contains_send_link_platform_url(text: object) -> bool:
+    """Confirma URL própria; uma URL externa nunca satisfaz SEND_LINK."""
+    payload = str(text or "")
+    if not payload:
+        return False
+
+    url_tokens = re.findall(
+        r"https?://[^\s<>\"']+",
+        payload,
+        flags=re.IGNORECASE,
+    )
+    for raw_token in url_tokens:
+        token = raw_token.rstrip(".,!?;:)]}>")
+        token_folded = token.casefold()
+        for candidate in _send_link_platform_urls():
+            candidate_folded = candidate.casefold()
+            if not token_folded.startswith(candidate_folded):
+                continue
+            suffix = token[len(candidate):]
+            if (
+                not suffix
+                or suffix == "/"
+                or suffix.startswith(("?", "#", "/?", "/#"))
+            ):
+                return True
+    return False
+
+
 def _ensure_send_link_in_reply(reply: str, next_step: str) -> str:
     """
     Regra canônica: se next_step == SEND_LINK, a resposta precisa conter o link (FRONTEND_BASE).
@@ -55,21 +101,84 @@ def _ensure_send_link_in_reply(reply: str, next_step: str) -> str:
         if ns != "SEND_LINK":
             return r
 
-        base = (os.environ.get("FRONTEND_BASE") or "").strip().rstrip("/")
+        platform_urls = _send_link_platform_urls()
+        base = platform_urls[0] if platform_urls else ""
         if not base:
-            return r  # sem base configurada, não inventa
-        # já tem o link? não duplica
-        if base.lower() in r.lower():
             return r
-        # já tem algum http? não força (pode ser outro link gerado)
-        if re.search(r"https?://", r, re.I):
+        # já tem URL própria válida? não duplica
+        if _text_contains_send_link_platform_url(r):
             return r
-        # anexa o link no final
+        # URL externa não satisfaz o contrato; anexa a própria no final.
         if r and not r.endswith((".", "!", "?", ":")):
             r = r + "."
         return (r + "\n" + base).strip()
     except Exception:
         return str(reply or "").strip()
+
+
+def _attempt_send_link_text_delivery(
+    *,
+    send_text_fn: object,
+    to_e164: str,
+    text: str,
+    delivery_next_step: str,
+    already_sent: bool = False,
+) -> tuple[bool, bool, object]:
+    """
+    Tenta somente o texto obrigatório de SEND_LINK.
+
+    Retorna (attempted, sent, provider_response). NONE e uma entrega já
+    satisfeita nunca chamam o provider.
+    """
+    if bool(already_sent):
+        return False, True, None
+
+    if str(delivery_next_step or "").strip().upper() != "SEND_LINK":
+        return False, False, None
+
+    if not callable(send_text_fn):
+        return False, False, None
+
+    payload = str(text or "")
+    if not _text_contains_send_link_platform_url(payload):
+        return False, False, None
+
+    sent_ok, provider_response = send_text_fn(
+        str(to_e164 or ""),
+        payload,
+    )
+
+    return True, bool(sent_ok), provider_response
+
+
+def _build_worker_delivery_response(
+    *,
+    delivery_next_step: object,
+    sent_ok: bool,
+    link_text_sent: bool,
+) -> dict:
+    """Traduz estado de outbound sem confundir ACK com SEND_LINK entregue."""
+    is_send_link = (
+        str(delivery_next_step or "").strip().upper()
+        == "SEND_LINK"
+    )
+    if not is_send_link:
+        return {
+            "ok": True,
+            "sent": bool(sent_ok),
+        }
+
+    link_delivered = bool(link_text_sent)
+    pending = not link_delivered
+    return {
+        "ok": True,
+        "sent": link_delivered,
+        "outboundSent": bool(sent_ok),
+        "partial": bool(sent_ok and pending),
+        "linkTextSent": link_delivered,
+        "sendLinkPending": pending,
+    }
+
 
 import requests
 
@@ -1794,6 +1903,107 @@ def ycloud_flush_worker():
             pass
 
 
+def _resolve_sales_send_link_authority(
+    *,
+    plan_next_step: object = "",
+    understanding: object = None,
+    legacy_close_signal: bool = False,
+    transcript_close_signal: bool = False,
+    explicit_link_request: bool = False,
+) -> dict:
+    """
+    Resolve uma única autoridade para fechamento/link no worker.
+
+    Precedência:
+    1. planNextStep válido;
+    2. understanding.nextStep válido;
+    3. sinais legados somente sem decisão estrutural.
+
+    NONE e SEND_LINK são igualmente autoritativos.
+    """
+    valid_next_steps = {"NONE", "SEND_LINK"}
+
+    plan = str(
+        plan_next_step or ""
+    ).strip().upper()
+
+    und = (
+        understanding
+        if isinstance(understanding, dict)
+        else {}
+    )
+
+    und_next = str(
+        und.get("next_step")
+        or und.get("nextStep")
+        or ""
+    ).strip().upper()
+
+    decision_source = ""
+    effective_next_step = ""
+
+    if plan in valid_next_steps:
+        effective_next_step = plan
+        decision_source = "planNextStep"
+    elif und_next in valid_next_steps:
+        effective_next_step = und_next
+        decision_source = "understanding.nextStep"
+
+    has_structural_decision = bool(
+        effective_next_step
+    )
+
+    send_link_authorized = (
+        effective_next_step == "SEND_LINK"
+    )
+
+    if has_structural_decision:
+        close_signal = send_link_authorized
+        allow_explicit_cta = False
+    else:
+        close_signal = bool(
+            legacy_close_signal
+            or transcript_close_signal
+        )
+        allow_explicit_cta = bool(
+            explicit_link_request
+        )
+        decision_source = (
+            "legacy_close_signal"
+            if close_signal
+            else (
+                "explicit_link_request"
+                if allow_explicit_cta
+                else ""
+            )
+        )
+
+    append_link = bool(
+        send_link_authorized
+        or (
+            (not has_structural_decision)
+            and close_signal
+        )
+    )
+
+    delivery_next_step = (
+        "SEND_LINK"
+        if append_link
+        else effective_next_step
+    )
+
+    return {
+        "effective_next_step": effective_next_step,
+        "delivery_next_step": delivery_next_step,
+        "has_structural_decision": has_structural_decision,
+        "send_link_authorized": send_link_authorized,
+        "close_signal": close_signal,
+        "allow_explicit_cta": allow_explicit_cta,
+        "append_link": append_link,
+        "decision_source": decision_source,
+    }
+
+
 def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     """
     Implementação do worker. Conteúdo original (Render) foi movido para cá
@@ -1803,6 +2013,7 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
     send_text = None
     send_audio = None
     sent_ok = False
+    link_text_sent = False
 
 
     # Estado base do turno (evita variáveis não inicializadas em early-returns)
@@ -3312,40 +3523,206 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         reply_text = reply_text or ""
 
         # ==========================================================
-        # GUARD (produto): SEND_LINK => texto com link SEMPRE
-        # - Se planNextStep=SEND_LINK, manda link por texto mesmo quando a trilha principal é áudio.
-        # - Mantém rastreio/auditoria: outbox + deliveryMode=site_link.
-        # ==========================================================
-        force_send_link_text = False
-        try:
-            if str(plan_next_step or "").strip().upper() == "SEND_LINK":
-                force_send_link_text = True
-        except Exception:
-            force_send_link_text = False
-
-
-        # ==========================================================
-        # CTA Guard (produto): NÃO mandar link automático
-        # - Só permite CTA/link se:
-        #   a) planNextStep == SEND_LINK  (force_send_link_text=True), ou
-        #   b) o lead pediu link explicitamente ("me manda o link", "site", "onde assina", etc.)
+        # CTA explícito legado.
+        #
+        # A detecção lexical é apenas um sinal auxiliar. Ela nunca
+        # prevalece sobre planNextStep/understanding.nextStep válidos.
         # ==========================================================
         explicit_link_request = False
         try:
-            _trL = str(transcript or text_in or "").strip().lower()
+            _trL = str(
+                transcript
+                or text_in
+                or ""
+            ).strip().lower()
+
             if _trL:
                 link_words = (
-                    "me manda o link", "manda o link", "me envia o link", "envia o link",
-                    "o link", "qual o link", "tem o link",
-                    "site", "site de vocês", "site oficial",
-                    "onde assina", "como assino", "como assinar",
-                    "onde contratar", "como contratar",
-                    "procedimento pra assinar", "procedimento para assinar",
-                    "assinar", "assinatura", "contratar",
+                    "me manda o link",
+                    "manda o link",
+                    "me envia o link",
+                    "envia o link",
+                    "o link",
+                    "qual o link",
+                    "tem o link",
+                    "site",
+                    "site de vocês",
+                    "site oficial",
+                    "onde assina",
+                    "como assino",
+                    "como assinar",
+                    "onde contratar",
+                    "como contratar",
+                    "procedimento pra assinar",
+                    "procedimento para assinar",
+                    "assinar",
+                    "assinatura",
+                    "contratar",
                 )
-                explicit_link_request = any(w in _trL for w in link_words)
+
+                explicit_link_request = any(
+                    word in _trL
+                    for word in link_words
+                )
         except Exception:
             explicit_link_request = False
+
+        # ==========================================================
+        # Sinais legados de fechamento.
+        #
+        # São calculados separadamente e entregues à autoridade
+        # estrutural. Eles só podem decidir quando nenhum next step
+        # válido foi fornecido.
+        # ==========================================================
+        _legacy_close_signal_raw = False
+        _transcript_close_signal_raw = False
+
+        try:
+            _u_auth = (
+                understanding
+                if isinstance(understanding, dict)
+                else {}
+            )
+
+            _u_int_auth = str(
+                _u_auth.get("intent")
+                or ""
+            ).strip().upper()
+
+            _u_ns_auth = str(
+                _u_auth.get("next_step")
+                or _u_auth.get("nextStep")
+                or ""
+            ).strip().upper()
+
+            _kind_auth = str(
+                wa_kind or ""
+            ).strip().lower()
+
+            _intent_auth = str(
+                intent_final or ""
+            ).strip().upper()
+
+            _plan_auth = str(
+                plan_next_step or ""
+            ).strip().upper()
+
+            _pol_auth = [
+                str(item)
+                for item in (
+                    policies_applied
+                    if isinstance(
+                        policies_applied,
+                        list,
+                    )
+                    else []
+                )
+            ]
+
+            _legacy_close_signal_raw = bool(
+                _kind_auth == "sales_close"
+                or _plan_auth in ("CTA", "EXIT")
+                or _u_ns_auth in ("CTA", "EXIT")
+                or _intent_auth == "ACTIVATE"
+                or _u_int_auth in (
+                    "CLOSE",
+                    "ACTIVATE",
+                )
+                or (
+                    "hard_close:no_question"
+                    in _pol_auth
+                )
+                or (
+                    "policy:plan_send_link"
+                    in _pol_auth
+                )
+            )
+
+            if msg_type in (
+                "audio",
+                "voice",
+                "ptt",
+            ):
+                _trg_auth = str(
+                    transcript
+                    or text_in
+                    or ""
+                ).strip().lower()
+
+                if _trg_auth:
+                    close_words_auth = (
+                        "assinar",
+                        "assinatura",
+                        "contratar",
+                        "contrato",
+                        "ativar",
+                        "ativação",
+                        "procedimento",
+                        "como assino",
+                        "quero assinar",
+                        "quero contratar",
+                        "pode me enviar o procedimento",
+                    )
+
+                    _transcript_close_signal_raw = any(
+                        word in _trg_auth
+                        for word in close_words_auth
+                    )
+        except Exception:
+            _legacy_close_signal_raw = False
+            _transcript_close_signal_raw = False
+
+        _send_link_authority = (
+            _resolve_sales_send_link_authority(
+                plan_next_step=plan_next_step,
+                understanding=understanding,
+                legacy_close_signal=(
+                    _legacy_close_signal_raw
+                ),
+                transcript_close_signal=(
+                    _transcript_close_signal_raw
+                ),
+                explicit_link_request=(
+                    explicit_link_request
+                ),
+            )
+        )
+
+        _effective_next_step = str(
+            _send_link_authority.get(
+                "effective_next_step"
+            )
+            or ""
+        ).strip().upper()
+
+        _delivery_next_step = str(
+            _send_link_authority.get(
+                "delivery_next_step"
+            )
+            or ""
+        ).strip().upper()
+
+        if _effective_next_step in (
+            "NONE",
+            "SEND_LINK",
+        ):
+            plan_next_step = (
+                _effective_next_step
+            )
+
+        force_send_link_text = bool(
+            _send_link_authority.get(
+                "send_link_authorized"
+            )
+        )
+
+        if force_send_link_text:
+            reply_text = (
+                _ensure_send_link_in_reply(
+                    reply_text,
+                    "SEND_LINK",
+                )
+            )
 
 
         # SENTINELA: prova que gerou (ou não) conteúdo
@@ -3506,9 +3883,24 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                             _st = None
 
                     if _st:
-                        _rt_front = _clean_url_weirdness(_reply_now)
+                        _rt_front = _clean_url_weirdness(
+                            _ensure_send_link_in_reply(
+                                _reply_now,
+                                _delivery_next_step,
+                            )
+                        )
                         logger.info("[outbound] send_text (front_text_primary) to=%s chars=%d", from_e164, len(_rt_front))
                         _ok_front, _ = _st(from_e164, _rt_front)
+                        if _delivery_next_step == "SEND_LINK":
+                            link_text_sent = bool(
+                                link_text_sent
+                                or (
+                                    _ok_front
+                                    and _text_contains_send_link_platform_url(
+                                        _rt_front
+                                    )
+                                )
+                            )
                         try:
                             _wa_log_outbox_deterministic(
                                 route="send_text_front_primary",
@@ -3519,13 +3911,26 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         except Exception:
                             pass
                         sent_ok = sent_ok or bool(_ok_front)
-                        if _ok_front:
+                        if _ok_front and (
+                            _delivery_next_step != "SEND_LINK"
+                            or link_text_sent
+                        ):
                             try:
                                 _try_log_outbox_immediate(True, "send_text_front_primary")
                             except Exception:
                                 pass
                             logger.info("[tasks] end eventKey=%s wamid=%s sent_ok=%s", event_key, _wamid, bool(sent_ok))
-                            return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
+                            return jsonify(
+                                _build_worker_delivery_response(
+                                    delivery_next_step=(
+                                        _delivery_next_step
+                                    ),
+                                    sent_ok=bool(sent_ok),
+                                    link_text_sent=(
+                                        link_text_sent
+                                    ),
+                                )
+                            ), 200
                 except Exception:
                     logger.exception("[tasks] front_text_primary_failed")
         except Exception:
@@ -3688,32 +4093,17 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 pass
 
             # ==========================================================
-            # Se o usuário pediu "somente texto", respeita.
-            # Pacote 2: se o lead FECHOU por áudio ("assinar/procedimento"), também entra no modo
-            # ACK em áudio + texto com link, mesmo quando prefersText=false.
-            close_heur_global = False
-            try:
-                # IA-first: se o cérebro já sinalizou fechamento/CTA, não dependa de transcript.
-                try:
-                    _u = understanding if isinstance(understanding, dict) else {}
-                    _u_int = str(_u.get("intent") or "").strip().upper()
-                    _u_ns = str(_u.get("next_step") or "").strip().upper()
-                    if (_u_int in ("CLOSE", "ACTIVATE")) or (_u_ns in ("SEND_LINK", "CTA", "EXIT")):
-                        close_heur_global = True
-                except Exception:
-                    pass
-
-                if msg_type in ("audio", "voice", "ptt"):
-                    _trg = str(transcript or "").strip().lower()
-                    if _trg:
-                        close_words_g = (
-                            "assinar", "assinatura", "contratar", "contrato",
-                            "ativar", "ativação", "procedimento", "como assino",
-                            "quero assinar", "quero contratar", "pode me enviar o procedimento",
-                        )
-                        close_heur_global = any(w in _trg for w in close_words_g)
-            except Exception:
-                close_heur_global = False
+            # Autoridade única de fechamento para áudio/texto.
+            #
+            # NONE bloqueia intent, transcript e CTA explícito.
+            # SEND_LINK autoriza áudio + texto com link.
+            # ==========================================================
+            close_heur_global = bool(
+                (
+                    _send_link_authority
+                    or {}
+                ).get("close_signal")
+            )
 
             if (prefers_text or close_heur_global) and msg_type in ("audio", "voice", "ptt", "text"):
                 # PATCH: Se a entrada foi ÁUDIO e a resposta contém LINK/CTA,
@@ -3735,22 +4125,14 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 audio_debug = dict(audio_debug or {})
                 _rt = (reply_text or "").strip()
 
-                # prefersText por link (não é "usuário pediu texto")
-                # Só vira audio_plus_text_link quando o handler sinalizou FECHAMENTO/CTA (contrato).
-                try:
-                    _kind = str(wa_kind or "").strip().lower()
-                    _ns = str(plan_next_step or "").strip().upper()
-                    _intent = str(intent_final or "").strip().upper()
-                    _pol = policies_applied if isinstance(policies_applied, list) else []
-                    is_close_signal = (
-                        (_kind == "sales_close")
-                        or (_ns in ("SEND_LINK", "CTA", "EXIT"))
-                        or (_intent == "ACTIVATE")
-                        or ("hard_close:no_question" in _pol)
-                        or ("policy:plan_send_link" in _pol)
-                    )
-                except Exception:
-                    is_close_signal = False
+                # A decisão de fechamento já foi consolidada pela
+                # autoridade estrutural antes do bloco de áudio.
+                is_close_signal = bool(
+                    (
+                        _send_link_authority
+                        or {}
+                    ).get("close_signal")
+                )
 
                 # Se fechou por áudio, força o close_signal (Pacote 2)
                 is_close_signal = bool(is_close_signal or close_heur_global)
@@ -4485,11 +4867,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         # PATCH B: se prefersText veio do handler e é FECHAMENTO com link => áudio curto + texto com link.
             # (o worker NÃO decide; só executa o contrato do handler)
             has_link = ("http://" in (reply_text or "").lower()) or ("https://" in (reply_text or "").lower()) or ("www." in (reply_text or "").lower()) or ("meirobo.com.br" in (reply_text or "").lower())
-            is_close_signal = (
-                str(wa_kind or "").strip().lower() == "sales_close"
-                or plan_next_step in ("SEND_LINK", "CTA", "EXIT")
-                or intent_final == "ACTIVATE"
-                or ("hard_close:no_question" in [str(x) for x in (policies_applied or [])])
+            is_close_signal = bool(
+                (
+                    _send_link_authority
+                    or {}
+                ).get("close_signal")
             )
             # Se o bloco anterior (prefers_text) já decidiu "audio_plus_text_link" e até gerou ttsAck/audioUrl,
             # o outbound NÃO pode rebaixar para "send_text_prefersText".
@@ -4559,7 +4941,23 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     try:
                         # Regra de UX: quando houver áudio, o texto é só ação (CTA) — nunca eco do áudio
                         _rt = "https://www.meirobo.com.br"
-                        _ok3, _ = send_text(from_e164, _rt)
+                        (
+                            _link_attempted3,
+                            _ok3,
+                            _,
+                        ) = _attempt_send_link_text_delivery(
+                            send_text_fn=send_text,
+                            to_e164=from_e164,
+                            text=_rt,
+                            delivery_next_step=(
+                                _delivery_next_step
+                            ),
+                            already_sent=link_text_sent,
+                        )
+                        link_text_sent = bool(
+                            link_text_sent
+                            or _ok3
+                        )
                         try:
                             _wa_log_outbox_deterministic(route="send_text_audio_plus_text_link", to_e164=from_e164, reply_text=(_rt or ""), sent_ok=bool(_ok3))
                         except Exception:
@@ -4577,6 +4975,19 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     if (_rt2 or "").strip():
                         logger.info("[outbound] send_text (inbound_text_default) to=%s chars=%d", from_e164, len(_rt2))
                         _okT, _ = send_text(from_e164, _rt2)
+                        if (
+                            _delivery_next_step
+                            == "SEND_LINK"
+                        ):
+                            link_text_sent = bool(
+                                link_text_sent
+                                or (
+                                    _okT
+                                    and _text_contains_send_link_platform_url(
+                                        _rt2
+                                    )
+                                )
+                            )
                         try:
                             _wa_log_outbox_deterministic(route="send_text_inbound_text_default", to_e164=from_e164, reply_text=(_rt2 or ""), sent_ok=bool(_okT))
                         except Exception:
@@ -4593,6 +5004,19 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     _rt2 = _clean_url_weirdness(reply_text)
                     logger.info("[outbound] send_text (prefersText) to=%s chars=%d", from_e164, len(_rt2 or ""))
                     _okP, _ = send_text(from_e164, _rt2)
+                    if (
+                        _delivery_next_step
+                        == "SEND_LINK"
+                    ):
+                        link_text_sent = bool(
+                            link_text_sent
+                            or (
+                                _okP
+                                and _text_contains_send_link_platform_url(
+                                    _rt2
+                                )
+                            )
+                        )
                     try:
                         _wa_log_outbox_deterministic(route="send_text_prefersText", to_e164=from_e164, reply_text=(_rt2 or ""), sent_ok=bool(_okP))
                     except Exception:
@@ -4635,7 +5059,23 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                         # Regra de UX: quando houver áudio, o texto é só CTA fixo (clicável)
                         _rtL = "https://www.meirobo.com.br"
                         if _rtL:
-                            _okL, _ = send_text(from_e164, _rtL)
+                            (
+                                _link_attempted_l,
+                                _okL,
+                                _,
+                            ) = _attempt_send_link_text_delivery(
+                                send_text_fn=send_text,
+                                to_e164=from_e164,
+                                text=_rtL,
+                                delivery_next_step=(
+                                    _delivery_next_step
+                                ),
+                                already_sent=link_text_sent,
+                            )
+                            link_text_sent = bool(
+                                link_text_sent
+                                or _okL
+                            )
                             try:
                                 _wa_log_outbox_deterministic(route="send_text_force_link", to_e164=from_e164, reply_text=(_rtL or ""), sent_ok=bool(_okL), extra={"ctaReason": "next_step_send_link"})
                             except Exception:
@@ -4662,7 +5102,9 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     _block_text_after_audio = False
 
                 try:
-                    ia_next_step = str((understanding or {}).get("next_step") or "").strip().upper()
+                    ia_next_step = (
+                        _delivery_next_step
+                    )
                 except Exception:
                     ia_next_step = ""
 
@@ -4672,6 +5114,14 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     if (
                         (not _block_text_after_audio)
                         and (not force_send_link_text)
+                        and bool(
+                            (
+                                _send_link_authority
+                                or {}
+                            ).get(
+                                "allow_explicit_cta"
+                            )
+                        )
                         and (not bool(uid))
                         and send_text
                         and bool(explicit_link_request)
@@ -4718,16 +5168,14 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     except Exception:
                         _already_audio_plus_text = bool(audio_plus_text_link)
 
-                    close_heur2 = False
+                    close_heur2 = bool(
+                        (
+                            _send_link_authority
+                            or {}
+                        ).get("close_signal")
+                    )
+
                     if not _already_audio_plus_text:
-                        _tr2 = str(text_in or "").strip().lower()
-                        if _tr2 and msg_type in ("audio", "voice", "ptt"):
-                            close_words2 = (
-                                "assinar", "assinatura", "contratar", "contrato",
-                                "ativar", "ativação", "procedimento", "como assino",
-                                "quero assinar", "quero contratar", "pode me enviar o procedimento",
-                            )
-                            close_heur2 = any(w in _tr2 for w in close_words2)
                         if (not _block_text_after_audio) and close_heur2 and send_text:
                             _rt = (reply_text or "").strip()
                             if _rt:
@@ -4743,7 +5191,25 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                                            .replace("meirobo.com.br", "https://www.meirobo.com.br")
 
                                     )
-                                _okT2, _ = send_text(from_e164, _rt)
+                                (
+                                    _link_attempted_t2,
+                                    _okT2,
+                                    _,
+                                ) = _attempt_send_link_text_delivery(
+                                    send_text_fn=send_text,
+                                    to_e164=from_e164,
+                                    text=_rt,
+                                    delivery_next_step=(
+                                        _delivery_next_step
+                                    ),
+                                    already_sent=(
+                                        link_text_sent
+                                    ),
+                                )
+                                link_text_sent = bool(
+                                    link_text_sent
+                                    or _okT2
+                                )
                                 try:
                                     _wa_log_outbox_deterministic(route="send_text_close_after_audio", to_e164=from_e164, reply_text=(_rt or ""), sent_ok=bool(_okT2))
                                 except Exception:
@@ -4761,7 +5227,41 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             # Fallback: se nada foi, tenta texto
             if (not sent_ok) and send_text:
                 try:
-                    sent_ok, _ = send_text(from_e164, _clean_url_weirdness(reply_text))
+                    _fallback_reply = (
+                        _clean_url_weirdness(
+                            reply_text
+                        )
+                    )
+                    if (
+                        _delivery_next_step
+                        == "SEND_LINK"
+                    ):
+                        (
+                            _link_attempted_fallback,
+                            _fallback_sent,
+                            _,
+                        ) = _attempt_send_link_text_delivery(
+                            send_text_fn=send_text,
+                            to_e164=from_e164,
+                            text=_fallback_reply,
+                            delivery_next_step=(
+                                _delivery_next_step
+                            ),
+                            already_sent=link_text_sent,
+                        )
+                        link_text_sent = bool(
+                            link_text_sent
+                            or _fallback_sent
+                        )
+                        sent_ok = bool(
+                            sent_ok
+                            or _fallback_sent
+                        )
+                    else:
+                        sent_ok, _ = send_text(
+                            from_e164,
+                            _fallback_reply,
+                        )
                 except Exception:
                     logger.exception("[tasks] lead: falha send_text")
 
@@ -4873,7 +5373,9 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                 _ia_src_l = (_ia_src or "").strip().lower()
                 _ia_sov = bool(_ia_src) and (not _ia_src_l.startswith("fallback_")) and (_ia_src_l not in ("worker_fallback_from_wa_out", "sales_lead_exception_fallback", "no_sender"))
                 try:
-                    _ia_next = str(((understanding or {}).get("next_step") if isinstance(understanding, dict) else "") or "").strip().upper()
+                    _ia_next = (
+                        _delivery_next_step
+                    )
                 except Exception:
                     _ia_next = ""
                 _db().collection("platform_wa_outbox_logs").add({
@@ -4896,6 +5398,11 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
                     "spokenText": (tts_text_final_used or "")[:600],
                     "eventKey": event_key,
                     "sentOk": bool(sent_ok),
+                    "linkTextSent": bool(link_text_sent),
+                    "sendLinkPending": bool(
+                        _ia_next == "SEND_LINK"
+                        and not link_text_sent
+                    ),
                 })
             except Exception:
                 logger.warning("[tasks] outbox_log_failed from=%s to=%s wamid=%s eventKey=%s", from_e164, to_e164, wamid, event_key, exc_info=True)
@@ -4906,7 +5413,20 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
             except Exception:
                 logger.info("[tasks] end eventKey=%s sent_ok=%s", event_key, bool(sent_ok))
 
-            return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
+            _normal_send_link_pending = bool(
+                _delivery_next_step == "SEND_LINK"
+                and not link_text_sent
+            )
+            if not _normal_send_link_pending:
+                return jsonify(
+                    _build_worker_delivery_response(
+                        delivery_next_step=(
+                            _delivery_next_step
+                        ),
+                        sent_ok=bool(sent_ok),
+                        link_text_sent=link_text_sent,
+                    )
+                ), 200
         # Fallback de segurança: se chegamos até aqui com reply_text e inbound é TEXTO,
         # não podemos ficar mudos. Tenta enviar texto best-effort.
         try:
@@ -4917,16 +5437,40 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
         # ✅ Regra canônica: se a decisão foi SEND_LINK (ex.: policy_link_request),
         # o fellthrough também precisa carregar o link (FRONTEND_BASE).
         try:
-            _rt_final = _ensure_send_link_in_reply(_rt_final, ia_next_step)
+            _rt_final = _ensure_send_link_in_reply(
+                _rt_final,
+                _delivery_next_step,
+            )
         except Exception:
             pass
 
-        # Anti-duplicidade: se já enviamos algo (ex.: send_text(prefersText) ou audio_plus_text_link),
-        # NUNCA cair no fellthrough para mandar de novo.
+        # Anti-duplicidade com contrato de entrega:
+        # - qualquer outbound satisfaz o turno comum;
+        # - ACK de áudio sozinho não satisfaz SEND_LINK;
+        # - texto com link confirmado impede duplicação.
+        _send_link_delivery_pending = bool(
+            _delivery_next_step == "SEND_LINK"
+            and not link_text_sent
+        )
+
         try:
-            if bool(sent_ok):
+            if bool(sent_ok) and not (
+                _send_link_delivery_pending
+            ):
                 logger.info("[tasks] fellthrough_skipped (already_sent) eventKey=%s wamid=%s", event_key, _wamid)
-                return jsonify({"ok": True, "sent": True, "dedup": "fellthrough_skipped"}), 200
+                _dedup_response = (
+                    _build_worker_delivery_response(
+                        delivery_next_step=(
+                            _delivery_next_step
+                        ),
+                        sent_ok=True,
+                        link_text_sent=link_text_sent,
+                    )
+                )
+                _dedup_response["dedup"] = (
+                    "fellthrough_skipped"
+                )
+                return jsonify(_dedup_response), 200
         except Exception:
             pass
 
@@ -4945,22 +5489,99 @@ def _ycloud_inbound_worker_impl(*, event_key: str, payload: dict, data: dict):
 
                 if _st:
                     logger.info("[outbound] send_text (fellthrough_fallback) to=%s chars=%d", from_e164, len(_rt_final))
-                    _okF, _ = _st(from_e164, _clean_url_weirdness(_rt_final))
+                    _rt_fallback = (
+                        _clean_url_weirdness(
+                            _rt_final
+                        )
+                    )
+
+                    if _send_link_delivery_pending:
+                        (
+                            _link_attempted_f,
+                            _okF,
+                            _,
+                        ) = _attempt_send_link_text_delivery(
+                            send_text_fn=_st,
+                            to_e164=from_e164,
+                            text=_rt_fallback,
+                            delivery_next_step=(
+                                _delivery_next_step
+                            ),
+                            already_sent=link_text_sent,
+                        )
+                        link_text_sent = bool(
+                            link_text_sent
+                            or _okF
+                        )
+                    else:
+                        _okF, _ = _st(
+                            from_e164,
+                            _rt_fallback,
+                        )
                     try:
-                        _wa_log_outbox_deterministic(route="send_text_fellthrough", to_e164=from_e164, reply_text=(_rt_final or ""), sent_ok=bool(_okF))
+                        _wa_log_outbox_deterministic(
+                            route="send_text_fellthrough",
+                            to_e164=from_e164,
+                            reply_text=(_rt_final or ""),
+                            sent_ok=bool(_okF),
+                            extra={
+                                "linkTextSent": bool(
+                                    link_text_sent
+                                ),
+                                "sendLinkPending": bool(
+                                    _delivery_next_step
+                                    == "SEND_LINK"
+                                    and not link_text_sent
+                                ),
+                            },
+                        )
                     except Exception:
                         pass
                     sent_ok = sent_ok or bool(_okF)
                     if _okF:
                         _try_log_outbox_immediate(True, "send_text_fellthrough")
                     logger.info("[tasks] end eventKey=%s wamid=%s sent_ok=%s", event_key, _wamid, bool(sent_ok))
-                    return jsonify({"ok": True, "sent": bool(sent_ok)}), 200
+                    return jsonify(
+                        _build_worker_delivery_response(
+                            delivery_next_step=(
+                                _delivery_next_step
+                            ),
+                            sent_ok=bool(sent_ok),
+                            link_text_sent=link_text_sent,
+                        )
+                    ), 200
                 else:
                     logger.warning("[tasks] fellthrough_fallback: send_text is None (no provider)")
             except Exception:
                 logger.exception("[tasks] fellthrough_fallback: send_text failed")
+        if (
+            _delivery_next_step == "SEND_LINK"
+            and not link_text_sent
+        ):
+            try:
+                _wa_log_outbox_deterministic(
+                    route="send_link_pending_final",
+                    to_e164=from_e164,
+                    reply_text=(_rt_final or ""),
+                    sent_ok=False,
+                    extra={
+                        "linkTextSent": False,
+                        "sendLinkPending": True,
+                        "outboundSent": bool(sent_ok),
+                    },
+                )
+            except Exception:
+                pass
         logger.info("[tasks] early_return reason=%s eventKey=%s wamid=%s", "FELLTHROUGH_NOOP", event_key, _wamid)
-        return jsonify({"ok": True}), 200
+        return jsonify(
+            _build_worker_delivery_response(
+                delivery_next_step=(
+                    _delivery_next_step
+                ),
+                sent_ok=bool(sent_ok),
+                link_text_sent=link_text_sent,
+            )
+        ), 200
     except Exception:
         logger.exception("[tasks] worker_unhandled_exception")
         try:

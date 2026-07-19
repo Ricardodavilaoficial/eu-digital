@@ -354,14 +354,18 @@ def _is_sales_text_only_closure(out: Dict[str, Any]) -> bool:
             und_intent = ""
             und_next = ""
 
-        # Fonte principal: fluxo definido pelo sistema
-        if plan_next == "SEND_LINK":
-            return True
+        # Fonte principal: decisão estrutural já validada pelo pipeline.
+        # NONE e SEND_LINK são ambos autoritativos quando presentes.
+        valid_next_steps = {"NONE", "SEND_LINK"}
 
-        if und_next == "SEND_LINK":
-            return True
+        if plan_next in valid_next_steps:
+            return plan_next == "SEND_LINK"
 
-        # Fonte secundária: intenção semântica consolidada
+        if und_next in valid_next_steps:
+            return und_next == "SEND_LINK"
+
+        # Compatibilidade legada: intenção semântica só decide quando
+        # nenhum next step estrutural válido foi entregue.
         closing_intents = {"ACTIVATE","ACTIVATE_SEND_LINK","SIGNUP_LINK","ATIVAR"}
 
         if intent_final in closing_intents:
@@ -4062,61 +4066,10 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         except Exception:
                             pass
 
-                        # ✅ Regra de canal (sem alterar linguagem)
-                        # Preserva a superfície do front antes da closure.
-                        # Se o SEND_LINK for rebaixado por não haver pedido explícito de link,
-                        # a resposta comercial original não pode continuar substituída por frase fixa.
-                        try:
-                            _pre_closure_reply = str(out.get("replyText") or "").strip()
-                            _pre_closure_spoken = str(out.get("spokenText") or "").strip()
-                            _pre_closure_prefers_text = bool(out.get("prefersText"))
-                            _pre_closure_intent_final = str(out.get("intentFinal") or "").strip()
-                        except Exception:
-                            _pre_closure_reply = ""
-                            _pre_closure_spoken = ""
-                            _pre_closure_prefers_text = False
-                            _pre_closure_intent_final = ""
-
+                        # ✅ Regra de canal:
+                        # no caminho do conversational front, planNextStep já foi
+                        # validado semanticamente. O worker apenas aplica o canal.
                         out = _apply_sales_text_only_closure(out, ctx)
-
-                        # ✅ Produto: SEND_LINK = venda fechada (link-only, sem pergunta)
-                        # Guard-rail: NÃO mandar link cedo se o usuário não pediu link/site.
-                        try:
-                            if str(out.get("planNextStep") or "").strip().upper() == "SEND_LINK":
-                                _wants_link = _looks_like_link_request(text or "")
-                                if _wants_link:
-                                    _url = "https://www.meirobo.com.br"
-                                    _rt0 = (out.get("replyText") or "").strip()
-                                    if ("http://" not in _rt0) and ("https://" not in _rt0):
-                                        out["replyText"] = f"Perfeito. Aqui está o link pra assinar agora:\n{_url}"
-                                    else:
-                                        # se já tem link, garante que não termina com pergunta
-                                        qpos = _rt0.find("?")
-                                        if qpos != -1:
-                                            out["replyText"] = (_rt0[: qpos]).rstrip()
-                                    # ÁUDIO (humanizado): o front pode ter montado spokenText (com nome).
-                                    # Se não vier, usamos um fallback curto (sem falar URL).
-                                    out["spokenText"] = (out.get("spokenText") or (
-                                        "Fechado. Te enviei o link no texto agora pra você copiar e assinar."
-                                    )).strip()
-                                else:
-                                    # Downgrade seguro: mantém a resposta do front e não força link-only.
-                                    out["planNextStep"] = "NONE"
-                                    if str(out.get("textOnlyReason") or "").strip() == "sales_closure_send_link":
-                                        if _pre_closure_reply:
-                                            out["replyText"] = _pre_closure_reply
-                                        if _pre_closure_spoken:
-                                            out["spokenText"] = _pre_closure_spoken
-                                        else:
-                                            out["spokenText"] = out.get("replyText") or ""
-                                        out["prefersText"] = _pre_closure_prefers_text
-                                        out.pop("textOnlyReason", None)
-                                        if _pre_closure_intent_final:
-                                            out["intentFinal"] = _pre_closure_intent_final
-                                        elif str(out.get("intentFinal") or "").strip().upper() == "ATIVAR":
-                                            out.pop("intentFinal", None)
-                        except Exception:
-                            pass
 
                         # 🔧 Polimento vendedor (mínimo): evita CTA "como configurar/cadastrar" no modo VENDAS.
                         # O front pode evoluir isso, mas aqui garantimos que não escapa um "suporte disfarçado".
