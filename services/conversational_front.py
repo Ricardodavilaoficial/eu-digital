@@ -17045,6 +17045,21 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
         except Exception as e:
             logging.warning("[FINAL_IDENTITY_FIELD_GUARD_FAIL] %s", e)
 
+        common_operational_contract = dict(
+            operational_contract
+            if isinstance(operational_contract, dict)
+            else {}
+        )
+        common_operational_contract["response_mode"] = response_mode
+        if (
+            str(response_mode or "").strip().upper() == "CLOSING"
+            and str(next_step or "").strip().upper() == "SEND_LINK"
+        ):
+            # Fechamento estrutural não exige hidratação operacional para ser
+            # válido; a decisão soberana CLOSING + SEND_LINK já satisfaz o
+            # requisito de KB desse envelope.
+            common_operational_contract["kbRequiredOk"] = True
+
         out = {
             "response_mode": response_mode,
             "replyText": reply_text,
@@ -17085,6 +17100,7 @@ def handle(*, user_text: str, state_summary: Dict[str, Any], kb_snapshot: str = 
             # Telemetria de custo (best-effort)
             "tokenUsage": token_usage,
             "replySizePolicy": reply_size_policy if isinstance(reply_size_policy, dict) else {},
+            "operationalContract": common_operational_contract,
         }
 
         # Mantém o decider no retorno quando existir (p/ roteamento/auditoria downstream).

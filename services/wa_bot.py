@@ -2940,7 +2940,11 @@ def _front_select_kb_subsegment_ids_from_text_v1(
     except Exception:
         return []
 
-def _build_front_kb_snapshot(topic: str, user_text: str = "") -> str:
+def _build_front_kb_snapshot(
+    topic: str,
+    user_text: str = "",
+    segment_hint: str = "",
+) -> str:
     """
     Monta snapshot textual compacto com teto de chars.
     """
@@ -3131,6 +3135,41 @@ def _build_front_kb_snapshot(topic: str, user_text: str = "") -> str:
                     )
                 except Exception:
                     pass
+
+            # Continuidade entre turnos: os seletores do texto atual são
+            # soberanos. Somente quando nenhum deles protegeu um subsegmento,
+            # reutiliza o ID estruturado persistido se ele existir no KB.
+            # Não há inferência lexical nova nem promoção de segmento macro.
+            try:
+                _has_current_turn_target = bool(
+                    payload.get("_protected_subsegment_ids")
+                )
+                _persisted_subsegment_id = str(segment_hint or "").strip()
+                if (
+                    not _has_current_turn_target
+                    and _persisted_subsegment_id
+                    and isinstance(compact_subsegments, dict)
+                    and _persisted_subsegment_id in compact_subsegments
+                ):
+                    _sub, _seg, _arch, _protected_subsegment_ids = (
+                        _front_reduce_kb_docs_to_selected_subsegments(
+                            selected_ids=[_persisted_subsegment_id],
+                            compact_subsegments=compact_subsegments,
+                            compact_segments=compact_segments,
+                            compact_archetypes=compact_archetypes,
+                            raw_subsegments=subsegments,
+                        )
+                    )
+                    if _sub:
+                        payload["kb_subsegments_v1"] = _sub
+                        payload["kb_segments_v1"] = _seg
+                        payload["kb_archetypes_v1"] = _arch
+                        payload["_protected_subsegment_ids"] = (
+                            _protected_subsegment_ids
+                        )
+            except Exception:
+                pass
+
             payload = _prune_front_kb_payload(payload, snapshot_limit)
 
             logging.info(
@@ -3698,9 +3737,8 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                         front_attempted = True
                         from services.conversational_front import handle as _front_handle  # type: ignore
 
-                        # Monta KB Snapshot compacto (Firestore->wa_bot) com teto.
+                        # Classifica o tópico antes de montar o snapshot.
                         topic_hint = _front_topic_hint(text or "")
-                        kb_snapshot = _build_front_kb_snapshot(topic_hint, text or "")
 
                         # FRONT_STATE_TOPIC_SOCIAL_DEAUTH_V1
                         # O hint determinístico pode escolher snapshot, mas SOCIAL não deve virar
@@ -3772,6 +3810,15 @@ def reply_to_text(uid: str, text: str, ctx: Optional[Dict[str, Any]] = None) -> 
                             if _candidate:
                                 _state_segment_hint = _candidate
                                 break
+
+                        # Monta o snapshot depois de normalizar a continuidade.
+                        # A seleção do turno atual continua soberana; o hint
+                        # persistido entra apenas como fallback estruturado.
+                        kb_snapshot = _build_front_kb_snapshot(
+                            topic_hint,
+                            text or "",
+                            segment_hint=_state_segment_hint,
+                        )
 
                         state_summary = {
                             "ai_turns": ai_turns,
